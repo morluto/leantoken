@@ -1,7 +1,7 @@
 // Re-tokenize bounded candidate windows instead of guessing a byte/token ratio.
 // The hard cap prevents pathological low-token inputs from growing forever.
-const LIVE_READ_TOKEN_CHECK_BYTES: usize = 64 * 1024;
-const MAX_LIVE_READ_BYTES: usize = 8 * 1024 * 1024;
+pub(super) const LIVE_READ_TOKEN_CHECK_BYTES: usize = 64 * 1024;
+pub(super) const MAX_LIVE_READ_BYTES: usize = 8 * 1024 * 1024;
 
 pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Result<File> {
     services
@@ -18,7 +18,7 @@ pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Re
         })
 }
 
-fn resolve_read_target(
+pub(super) fn resolve_read_target(
     session: &ReadSession,
     file_id: i64,
     request: &ReadRequest,
@@ -81,7 +81,7 @@ fn resolve_read_target(
 }
 
 /// Stream a file without loading it into memory and capture its live identity.
-fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
+pub(super) fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
     let mut file = file.try_clone()?;
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
@@ -114,7 +114,7 @@ fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
 }
 
 /// Hash the live file and read a resolved range in one forward stream.
-fn observe_live_range(
+pub(super) fn observe_live_range(
     file: &File,
     target_start_line: usize,
     target_end_line: Option<usize>,
@@ -253,7 +253,11 @@ fn observe_live_range(
     })
 }
 
-fn validate_utf8_chunk(pending: &mut Vec<u8>, bytes: &[u8], final_chunk: bool) -> Result<()> {
+pub(super) fn validate_utf8_chunk(
+    pending: &mut Vec<u8>,
+    bytes: &[u8],
+    final_chunk: bool,
+) -> Result<()> {
     pending.extend_from_slice(bytes);
     match std::str::from_utf8(pending) {
         Ok(_) => {
@@ -272,9 +276,10 @@ fn validate_utf8_chunk(pending: &mut Vec<u8>, bytes: &[u8], final_chunk: bool) -
     }
 }
 
-fn invalid_line_range() -> Error {
+pub(super) fn invalid_line_range() -> Error {
     Error::InvalidInput {
         field: "line range",
         reason: "must be ordered and within the requested file",
     }
 }
+use super::*;

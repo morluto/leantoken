@@ -539,7 +539,7 @@ fn git_output(repository: &Path, args: &[&str]) -> AnyResult<String> {
 }
 
 fn leantoken_source_identity() -> (Option<String>, Option<bool>) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let revision = git_output(root, &["rev-parse", "HEAD"]).ok();
     let dirty = git_output(root, &["status", "--porcelain", "--untracked-files=normal"])
         .ok()
@@ -561,9 +561,7 @@ mod tests {
 
     #[test]
     fn percentile_uses_nearest_rank() {
-        let stats = TimingStats::from_durations(
-            (1..=20).map(|value| Duration::from_micros(value)).collect(),
-        );
+        let stats = TimingStats::from_durations((1..=20).map(Duration::from_micros).collect());
         assert_eq!(stats.p50_us, 10.0);
         assert_eq!(stats.p95_us, 19.0);
     }

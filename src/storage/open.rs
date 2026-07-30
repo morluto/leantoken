@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 impl Storage {
     /// Open or migrate a SQLite index without binding it to a repository root.
     ///
@@ -30,7 +32,7 @@ impl Storage {
         conn.busy_timeout(READ_ONLY_STATUS_BUSY_TIMEOUT)?;
         conn.execute_batch("BEGIN DEFERRED")?;
 
-        if !table_exists(&conn, "meta")? {
+        if !table_exists(&conn, StorageTable::Meta)? {
             return Ok(ReadOnlyStatusSnapshot {
                 generation: 0,
                 counts: StorageCounts {
@@ -43,8 +45,8 @@ impl Storage {
             });
         }
 
-        let has_repository_root = column_exists(&conn, "meta", "repository_root")?;
-        let has_repository_identity = column_exists(&conn, "meta", "repository_identity")?;
+        let has_repository_root = column_exists(&conn, StorageColumn::MetaRepositoryRoot)?;
+        let has_repository_identity = column_exists(&conn, StorageColumn::MetaRepositoryIdentity)?;
         let expected_repository = if has_repository_root {
             conn.query_row("SELECT repository_root FROM meta WHERE id = 1", [], |row| {
                 row.get::<_, String>(0)
@@ -81,7 +83,7 @@ impl Storage {
             });
         }
 
-        let generation = if column_exists(&conn, "meta", "repository_generation")? {
+        let generation = if column_exists(&conn, StorageColumn::MetaRepositoryGeneration)? {
             i64_to_u64(conn.query_row(
                 "SELECT repository_generation FROM meta WHERE id = 1",
                 [],
@@ -90,20 +92,21 @@ impl Storage {
         } else {
             0
         };
-        let files = count_table_rows(&conn, "files")?;
-        let chunks = count_table_rows(&conn, "chunks")?;
-        let symbols = count_table_rows(&conn, "symbols")?;
-        let source_bytes =
-            if table_exists(&conn, "files")? && column_exists(&conn, "files", "size_bytes")? {
-                i64_to_u64(conn.query_row(
-                    "SELECT coalesce(sum(size_bytes), 0) FROM files",
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )?)?
-            } else {
-                0
-            };
-        let languages = if table_exists(&conn, "files")? {
+        let files = count_table_rows(&conn, StorageTable::Files)?;
+        let chunks = count_table_rows(&conn, StorageTable::Chunks)?;
+        let symbols = count_table_rows(&conn, StorageTable::Symbols)?;
+        let source_bytes = if table_exists(&conn, StorageTable::Files)?
+            && column_exists(&conn, StorageColumn::FilesSizeBytes)?
+        {
+            i64_to_u64(conn.query_row(
+                "SELECT coalesce(sum(size_bytes), 0) FROM files",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)?
+        } else {
+            0
+        };
+        let languages = if table_exists(&conn, StorageTable::Files)? {
             let mut statement = conn.prepare(
                 "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
             )?;
@@ -200,7 +203,7 @@ impl Storage {
         Ok(storage)
     }
 
-    fn bind_repository(
+    pub(crate) fn bind_repository(
         &self,
         repository_root: &Path,
         index_scope_digest: Option<&str>,
@@ -212,7 +215,7 @@ impl Storage {
         )
     }
 
-    fn bind_repository_at(
+    pub(crate) fn bind_repository_at(
         &self,
         repository_root: &Path,
         index_scope_digest: Option<&str>,
@@ -261,15 +264,33 @@ impl Storage {
         Ok(())
     }
 
-    fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
+    pub(crate) fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
         conn.busy_timeout(startup_timeout)?;
+        let started = Instant::now();
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        tracing::debug!(
+            pragma = "journal_mode",
+            elapsed_us = started.elapsed().as_micros(),
+            "storage startup pragma completed"
+        );
+        let started = Instant::now();
         conn.pragma_update(None, "journal_size_limit", WAL_JOURNAL_SIZE_LIMIT_BYTES)?;
+        tracing::debug!(
+            pragma = "journal_size_limit",
+            elapsed_us = started.elapsed().as_micros(),
+            "storage startup pragma completed"
+        );
+        let started = Instant::now();
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        tracing::debug!(
+            pragma = "foreign_keys",
+            elapsed_us = started.elapsed().as_micros(),
+            "storage startup pragma completed"
+        );
         Ok(())
     }
 
-    fn validate_fts5(conn: &mut Connection) -> Result<()> {
+    pub(crate) fn validate_fts5(conn: &mut Connection) -> Result<()> {
         let probe = "leantoken_fts5_probe";
         conn.execute(
             &format!("CREATE VIRTUAL TABLE temp.{probe} USING fts5(text, tokenize='trigram')"),
@@ -299,7 +320,7 @@ impl Storage {
         }
     }
 
-    fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
+    pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
         let file_count: i64 = conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
         let projected_files: i64 = conn.query_row(
             "SELECT count(*) FROM path_entries WHERE kind = 1",
@@ -323,7 +344,7 @@ impl Storage {
         Ok(())
     }
 
-    fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
+    pub(crate) fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
         // These additive fields are intentionally outside the numbered cache
         // schema so older LeanToken versions can still open and rebuild it.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -419,3 +440,4 @@ impl Storage {
         Ok(())
     }
 }
+use super::*;

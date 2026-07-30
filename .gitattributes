@@ -1,1 +1,6 @@
 *.md text eol=lf
+benchmarks/mcp_response_ablation.json text eol=lf
+benchmarks/reports/mcp-response-ablation-v1-2026-07-21.json text eol=lf
+benchmarks/context_concept_coverage.json text eol=lf
+benchmarks/validation.json text eol=lf
+benchmarks/swift_structural_validation.json text eol=lf

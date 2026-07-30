@@ -1,63 +1,63 @@
 #[derive(Clone, Copy)]
-struct ContextSignals {
-    import_neighbor: bool,
-    reverse_dependency: bool,
-    caller: bool,
+pub(super) struct ContextSignals {
+    pub(super) import_neighbor: bool,
+    pub(super) reverse_dependency: bool,
+    pub(super) caller: bool,
 }
 
 #[derive(Default)]
-struct CandidateBatch {
-    candidates: Vec<Candidate>,
-    path_excluded_candidates: Vec<String>,
-    query_fusion: HashMap<String, HashMap<String, f64>>,
-    coverage: ContextCoverageReceipt,
-    warnings: Vec<String>,
-    workflow_receipt: Option<WorkflowReceipt>,
+pub(super) struct CandidateBatch {
+    pub(super) candidates: Vec<Candidate>,
+    pub(super) path_excluded_candidates: Vec<String>,
+    pub(super) query_fusion: HashMap<String, HashMap<String, f64>>,
+    pub(super) coverage: ContextCoverageReceipt,
+    pub(super) warnings: Vec<String>,
+    pub(super) workflow_receipt: Option<WorkflowReceipt>,
 }
 
 #[derive(Clone, Copy)]
-struct QueryCandidateExpansion<'a> {
-    session: &'a ReadSession,
-    request: &'a ContextRequest,
-    query: &'a ContextQuery,
-    path_filter: &'a PathFilter,
-    strict_changed_paths: Option<&'a HashSet<&'a str>>,
-    changed_paths: &'a HashSet<String>,
-    path_scorer: &'a ContextPathScorer,
-    cancellation: &'a CancellationToken,
-    signals: ContextSignals,
+pub(super) struct QueryCandidateExpansion<'a> {
+    pub(super) session: &'a ReadSession,
+    pub(super) request: &'a ContextRequest,
+    pub(super) query: &'a ContextQuery,
+    pub(super) path_filter: &'a PathFilter,
+    pub(super) strict_changed_paths: Option<&'a HashSet<&'a str>>,
+    pub(super) changed_paths: &'a HashSet<String>,
+    pub(super) path_scorer: &'a ContextPathScorer,
+    pub(super) cancellation: &'a CancellationToken,
+    pub(super) signals: ContextSignals,
 }
 
-struct ContextFinalization<'a> {
-    session: &'a ReadSession,
-    request: &'a ContextRequest,
-    scoped_request: &'a ContextRequest,
-    handoff: Option<&'a HandoffManifestRequest>,
-    options: ServiceCallOptions,
-    response_profile: ContextResponseProfile,
-    cancellation: &'a CancellationToken,
-    diagnostics: CandidateDiagnostics,
-    generation: u64,
-    diff_scope: Option<&'a DiffScopeReceipt>,
-    working_tree_state: HandoffWorkingTreeState,
-    working_tree_paths: &'a [String],
-    resolved_workflow: ContextWorkflow,
+pub(super) struct ContextFinalization<'a> {
+    pub(super) session: &'a ReadSession,
+    pub(super) request: &'a ContextRequest,
+    pub(super) scoped_request: &'a ContextRequest,
+    pub(super) handoff: Option<&'a HandoffManifestRequest>,
+    pub(super) options: ServiceCallOptions,
+    pub(super) response_profile: ContextResponseProfile,
+    pub(super) cancellation: &'a CancellationToken,
+    pub(super) diagnostics: CandidateDiagnostics,
+    pub(super) generation: u64,
+    pub(super) diff_scope: Option<&'a DiffScopeReceipt>,
+    pub(super) working_tree_state: HandoffWorkingTreeState,
+    pub(super) working_tree_paths: &'a [String],
+    pub(super) resolved_workflow: ContextWorkflow,
 }
 
-struct AccountedContextResponse {
-    response: ContextResponse,
-    baseline_source_tokens: Option<usize>,
-    operation: TokenAccountingOperation,
+pub(super) struct AccountedContextResponse {
+    pub(super) response: ContextResponse,
+    pub(super) baseline_source_tokens: Option<usize>,
+    pub(super) operation: TokenAccountingOperation,
 }
 
-struct ContextExecution {
-    handoff: Option<HandoffManifestRequest>,
-    workflow: ContextWorkflow,
-    workflow_evidence: WorkflowEvidence,
+pub(super) struct ContextExecution {
+    pub(super) handoff: Option<HandoffManifestRequest>,
+    pub(super) workflow: ContextWorkflow,
+    pub(super) workflow_evidence: WorkflowEvidence,
 }
 
 impl ContextExecution {
-    fn new(workflow: ContextWorkflow) -> Self {
+    pub(super) fn new(workflow: ContextWorkflow) -> Self {
         Self {
             handoff: None,
             workflow,
@@ -65,25 +65,25 @@ impl ContextExecution {
         }
     }
 
-    fn with_handoff(mut self, handoff: HandoffManifestRequest) -> Self {
+    pub(super) fn with_handoff(mut self, handoff: HandoffManifestRequest) -> Self {
         self.handoff = Some(handoff);
         self
     }
 
-    fn with_workflow_evidence(mut self, workflow_evidence: WorkflowEvidence) -> Self {
+    pub(super) fn with_workflow_evidence(mut self, workflow_evidence: WorkflowEvidence) -> Self {
         self.workflow_evidence = workflow_evidence;
         self
     }
 }
 
 impl ContextSignals {
-    const PRODUCTION: Self = Self {
+    pub(super) const PRODUCTION: Self = Self {
         import_neighbor: true,
         reverse_dependency: false,
         caller: true,
     };
 
-    const fn evaluation(policy: ContextSignalPolicy) -> Self {
+    pub(super) const fn evaluation(policy: ContextSignalPolicy) -> Self {
         match policy {
             ContextSignalPolicy::LexicalSyntax => Self {
                 import_neighbor: false,
@@ -109,7 +109,7 @@ impl ContextSignals {
     }
 }
 
-fn qualified_symbol_match(
+pub(super) fn qualified_symbol_match(
     concept: &str,
     name: &str,
     parent: Option<&str>,
@@ -137,7 +137,7 @@ fn qualified_symbol_match(
     f64::from(parts.iter().all(|part| haystack.contains(part)))
 }
 
-fn record_query_hit(
+pub(super) fn record_query_hit(
     fusion: &mut HashMap<String, HashMap<String, f64>>,
     path: &str,
     fusion_key: &str,
@@ -147,7 +147,7 @@ fn record_query_hit(
     if weight < MIN_CORROBORATED_QUERY_WEIGHT {
         return;
     }
-    const RRF_K: f64 = 60.0;
+    pub(super) const RRF_K: f64 = 60.0;
     #[allow(clippy::cast_precision_loss)]
     let score = weight * RRF_K / (RRF_K + rank as f64 + 1.0);
     fusion
@@ -158,7 +158,7 @@ fn record_query_hit(
         .or_insert(score);
 }
 
-fn apply_query_fusion(
+pub(super) fn apply_query_fusion(
     candidates: &mut [Candidate],
     fusion: &HashMap<String, HashMap<String, f64>>,
 ) {
@@ -181,7 +181,7 @@ fn apply_query_fusion(
     }
 }
 
-fn annotate_candidate(
+pub(super) fn annotate_candidate(
     mut candidate: Candidate,
     query: &ContextQuery,
     channel: &str,
@@ -193,7 +193,7 @@ fn annotate_candidate(
     candidate.channel(channel, rank)
 }
 
-fn low_cardinality_exact_query(queries: &[ContextQuery]) -> bool {
+pub(super) fn low_cardinality_exact_query(queries: &[ContextQuery]) -> bool {
     queries
         .iter()
         .filter(|query| query.has_facet(FacetKind::ExactAtom))
@@ -203,7 +203,7 @@ fn low_cardinality_exact_query(queries: &[ContextQuery]) -> bool {
         == 1
 }
 
-fn corroborated_import_symbol<'a>(
+pub(super) fn corroborated_import_symbol<'a>(
     symbols: Vec<SymbolRecord>,
     queries: &'a [ContextQuery],
     seed_concepts: &BTreeSet<String>,
@@ -249,7 +249,7 @@ fn corroborated_import_symbol<'a>(
     best.map(|(_, _, _, symbol, query, evidence)| (symbol, query, evidence))
 }
 
-fn import_seed_paths(
+pub(super) fn import_seed_paths(
     candidates: &[Candidate],
     queries: &[ContextQuery],
     tokenizer: crate::tokens::Tokenizer,
@@ -285,16 +285,16 @@ fn import_seed_paths(
         .collect()
 }
 
-struct ImportExpansion<'a> {
-    session: &'a ReadSession,
-    request: &'a ContextRequest,
-    queries: &'a [ContextQuery],
-    terms: &'a [String],
-    changed_paths: &'a HashSet<String>,
-    cancellation: &'a CancellationToken,
+pub(super) struct ImportExpansion<'a> {
+    pub(super) session: &'a ReadSession,
+    pub(super) request: &'a ContextRequest,
+    pub(super) queries: &'a [ContextQuery],
+    pub(super) terms: &'a [String],
+    pub(super) changed_paths: &'a HashSet<String>,
+    pub(super) cancellation: &'a CancellationToken,
 }
 
-fn task_mentions_language(task: &str, language: &str) -> bool {
+pub(super) fn task_mentions_language(task: &str, language: &str) -> bool {
     task.split(|character: char| !character.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .any(|word| {
@@ -305,3 +305,4 @@ fn task_mentions_language(task: &str, language: &str) -> bool {
             }
         })
 }
+use super::*;

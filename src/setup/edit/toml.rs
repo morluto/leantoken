@@ -1,5 +1,7 @@
+use super::*;
+
 #[cfg(test)]
-fn edit_toml_config(
+pub(super) fn edit_toml_config(
     operation: SetupOperation,
     path: &Path,
     launcher: &McpLauncher,
@@ -20,7 +22,7 @@ fn edit_toml_config(
     Ok(status)
 }
 
-fn resolve_toml_edit(
+pub(super) fn resolve_toml_edit(
     operation: SetupOperation,
     path: &Path,
     launcher: &McpLauncher,
@@ -81,7 +83,7 @@ fn resolve_toml_edit(
     Ok((status, original, Some(document.to_string())))
 }
 
-fn ensure_toml_table<'a>(
+pub(super) fn ensure_toml_table<'a>(
     document: &'a mut DocumentMut,
     name: &str,
     path: &Path,
@@ -95,7 +97,7 @@ fn ensure_toml_table<'a>(
         .ok_or_else(|| invalid_config(path, format!("{name} must be a table")))
 }
 
-fn toml_entry_matches(item: &Item, command: &str, expected_args: &[String]) -> bool {
+pub(super) fn toml_entry_matches(item: &Item, command: &str, expected_args: &[String]) -> bool {
     let Some(table) = item.as_table() else {
         return false;
     };

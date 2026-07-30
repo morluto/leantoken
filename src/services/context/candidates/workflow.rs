@@ -1,5 +1,5 @@
 impl Services {
-    fn append_workflow_candidates(
+    pub(in crate::services::context) fn append_workflow_candidates(
         &self,
         session: &ReadSession,
         request: &ContextRequest,
@@ -118,3 +118,4 @@ impl Services {
         ))
     }
 }
+use super::*;

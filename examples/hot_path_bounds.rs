@@ -4,7 +4,7 @@
 //! then reports p50/p95 wall time for regex search and context assembly.
 //!
 //! ```bash
-//! cargo run --example hot_path_bounds --release -- --files 10000 --iterations 20
+//! cargo run --release --package leantoken-benchmarks --bin hot_path_bounds -- --files 10000 --iterations 20
 //! ```
 
 use std::path::PathBuf;

@@ -1,3 +1,4 @@
+use super::*;
 /// Select the highest-relevance candidates that fit within the token budget
 /// while preserving file diversity and bounding protocol metadata.
 #[must_use]
@@ -88,12 +89,12 @@ pub fn select_with_weights_and_tokenizer(
     )
 }
 
-struct SelectionScope<'request> {
-    focus_paths: PathMatcher,
-    include_paths: PathMatcher,
-    exclude_paths: PathMatcher,
-    context_exclude_paths: PathMatcher,
-    changed_paths: HashSet<&'request str>,
+pub(in crate::ranking) struct SelectionScope<'request> {
+    pub(in crate::ranking) focus_paths: PathMatcher,
+    pub(in crate::ranking) include_paths: PathMatcher,
+    pub(in crate::ranking) exclude_paths: PathMatcher,
+    pub(in crate::ranking) context_exclude_paths: PathMatcher,
+    pub(in crate::ranking) changed_paths: HashSet<&'request str>,
 }
 
 impl<'request> SelectionScope<'request> {
@@ -108,14 +109,14 @@ impl<'request> SelectionScope<'request> {
     }
 }
 
-struct CandidatePartition {
-    eligible: Vec<Candidate>,
-    path_omitted: Vec<ScoredCandidate>,
-    known_omitted: Vec<ScoredCandidate>,
-    generated_artifact_warning: bool,
+pub(in crate::ranking) struct CandidatePartition {
+    pub(in crate::ranking) eligible: Vec<Candidate>,
+    pub(in crate::ranking) path_omitted: Vec<ScoredCandidate>,
+    pub(in crate::ranking) known_omitted: Vec<ScoredCandidate>,
+    pub(in crate::ranking) generated_artifact_warning: bool,
 }
 
-fn partition_candidates(
+pub(in crate::ranking) fn partition_candidates(
     candidates: Vec<Candidate>,
     request: &ContextRequest,
     scope: &SelectionScope<'_>,
@@ -160,14 +161,14 @@ fn partition_candidates(
     partition
 }
 
-struct CandidateSelection {
-    selected: Vec<ScoredCandidate>,
-    omitted: Vec<ScoredCandidate>,
-    candidate_paths_total: usize,
-    result_complete: bool,
+pub(in crate::ranking) struct CandidateSelection {
+    pub(in crate::ranking) selected: Vec<ScoredCandidate>,
+    pub(in crate::ranking) omitted: Vec<ScoredCandidate>,
+    pub(in crate::ranking) candidate_paths_total: usize,
+    pub(in crate::ranking) result_complete: bool,
 }
 
-fn select_candidates(
+pub(in crate::ranking) fn select_candidates(
     candidates: Vec<Candidate>,
     request: &ContextRequest,
     weights: &Weights,
@@ -204,7 +205,7 @@ fn select_candidates(
     }
 }
 
-fn select_with_options(
+pub(in crate::ranking) fn select_with_options(
     mut candidates: Vec<Candidate>,
     request: &ContextRequest,
     repository_generation: u64,
@@ -215,10 +216,9 @@ fn select_with_options(
 ) -> ContextResponse {
     let scope = SelectionScope::new(request, context_exclude_paths);
     apply_request_signals(&mut candidates, request, &scope.focus_paths);
-    let generated_focus =
-        request
-            .verbose_diagnostics
-            .then(|| generated_focus_facts(&candidates, request));
+    let generated_focus = request
+        .verbose_diagnostics
+        .then(|| generated_focus_facts(&candidates, request));
     let partition = partition_candidates(candidates, request, &scope, weights, tokenizer);
     let selection = select_candidates(partition.eligible, request, weights, tokenizer);
     let mut coverage =

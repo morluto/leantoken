@@ -30,7 +30,7 @@ script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 manifest="$script_directory/multi_agent_context_pilot.json"
 codex_binary=${CODEX_PILOT_CODEX_BINARY:-codex}
 leantoken_binary=${CODEX_PILOT_LEANTOKEN_BINARY:-"$script_directory/../target/release/leantoken"}
-receipt_binary=${CODEX_PILOT_RECEIPT_BINARY:-"$script_directory/../target/release/examples/codex_multi_agent_receipt"}
+receipt_binary=${CODEX_PILOT_RECEIPT_BINARY:-"$script_directory/../target/release/codex_multi_agent_receipt"}
 codex_state_directory=${CODEX_PILOT_STATE_DIRECTORY:-"${CODEX_HOME:-$HOME/.codex}"}
 sessions_root="$codex_state_directory/sessions"
 

@@ -1,29 +1,31 @@
-#[derive(Debug)]
-struct PlannedClientEdit {
-    public: ClientSetupPlan,
-    status: EditStatus,
-    original: Option<String>,
-    updated: Option<String>,
-}
+use super::*;
 
 #[derive(Debug)]
-struct PlannedDiscoveryEdit {
-    public: DiscoverySetupPlan,
-    original: Option<String>,
-    updated: Option<String>,
+pub(super) struct PlannedClientEdit {
+    pub(super) public: ClientSetupPlan,
+    pub(super) status: EditStatus,
+    pub(super) original: Option<String>,
+    pub(super) updated: Option<String>,
 }
 
-struct PlanEnvironment<'a> {
-    detected: &'a [SetupClient],
-    home: &'a Path,
-    launcher: &'a McpLauncher,
-    persistent_cli: bool,
-    runtime: Option<RuntimeInstallPlan>,
-    manage_discovery: bool,
-    transaction_root: &'a Path,
+#[derive(Debug)]
+pub(super) struct PlannedDiscoveryEdit {
+    pub(super) public: DiscoverySetupPlan,
+    pub(super) original: Option<String>,
+    pub(super) updated: Option<String>,
 }
 
-fn resolve_plan(
+pub(super) struct PlanEnvironment<'a> {
+    pub(super) detected: &'a [SetupClient],
+    pub(super) home: &'a Path,
+    pub(super) launcher: &'a McpLauncher,
+    pub(super) persistent_cli: bool,
+    pub(super) runtime: Option<RuntimeInstallPlan>,
+    pub(super) manage_discovery: bool,
+    pub(super) transaction_root: &'a Path,
+}
+
+pub(super) fn resolve_plan(
     operation: SetupOperation,
     clients: &[SetupClient],
     environment: PlanEnvironment<'_>,
@@ -60,7 +62,7 @@ fn resolve_plan(
     })
 }
 
-fn launcher_plan(
+pub(super) fn launcher_plan(
     launcher: &McpLauncher,
     runtime: Option<&RuntimeInstallPlan>,
 ) -> Result<LauncherPlan> {
@@ -75,7 +77,7 @@ fn launcher_plan(
     })
 }
 
-fn resolve_discovery_edits(
+pub(super) fn resolve_discovery_edits(
     operation: SetupOperation,
     home: &Path,
     launcher: Option<&McpLauncher>,
@@ -105,7 +107,7 @@ fn resolve_discovery_edits(
                         content.clone(),
                     )
                 } else {
-                    return Err(Error::InternalFailure(format!(
+                    return Err(Error::SetupFailure(format!(
                         "refusing to overwrite unowned discovery skill {}",
                         path.display()
                     )));
@@ -123,7 +125,7 @@ fn resolve_discovery_edits(
     .collect()
 }
 
-fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
+pub(super) fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
     let doctor = if launcher.uses_npx() {
         format!(
             "npx --yes {} doctor --json",
@@ -137,7 +139,7 @@ fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
     ))
 }
 
-fn resolve_client_edit(
+pub(super) fn resolve_client_edit(
     operation: SetupOperation,
     client: SetupClient,
     detected: &[SetupClient],

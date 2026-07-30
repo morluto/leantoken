@@ -1,3 +1,5 @@
+use super::*;
+
 impl Indexer {
     /// Reconcile watcher-reported paths without walking the full repository.
     ///
@@ -40,7 +42,7 @@ impl Indexer {
         Err(Error::RetryableConflict(RetryableOperation::Reconciliation))
     }
 
-    fn reconcile_paths_once(
+    pub(super) fn reconcile_paths_once(
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
@@ -48,7 +50,7 @@ impl Indexer {
         self.reconcile_paths_once_with_preparation_hook(paths, cancellation, || {})
     }
 
-    fn reconcile_paths_once_with_preparation_hook(
+    pub(super) fn reconcile_paths_once_with_preparation_hook(
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
@@ -57,7 +59,7 @@ impl Indexer {
         self.reconcile_paths_once_with_hooks(paths, cancellation, || {}, before_preparation)
     }
 
-    fn observe_visibility_delta(
+    pub(super) fn observe_visibility_delta(
         &self,
         paths: &[String],
         existing: &HashMap<String, crate::storage::FileRecord>,
@@ -110,7 +112,7 @@ impl Indexer {
         (visibility_delta, observed_deletions)
     }
 
-    fn reconcile_paths_once_with_hooks(
+    pub(super) fn reconcile_paths_once_with_hooks(
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
@@ -211,9 +213,7 @@ impl Indexer {
                     }
                     Err(error) => return Err(error.into()),
                 };
-                if !discovery_policy
-                    .includes_path(&relative_path, metadata.file_type().is_dir())
-                {
+                if !discovery_policy.includes_path(&relative_path, metadata.file_type().is_dir()) {
                     if existing.contains_key(&relative_path) {
                         directly_observed_deletions.insert(relative_path.clone());
                         deletions.insert(relative_path);

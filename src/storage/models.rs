@@ -292,19 +292,19 @@ pub(crate) struct TokenSavingsObservation<'a> {
 /// process-local; repository ownership and cross-process write serialization are
 /// enforced separately by the services and coordination layers.
 pub struct Storage {
-    writer: Arc<Mutex<Connection>>,
-    readers: r2d2::Pool<SqliteConnectionManager>,
-    path: PathBuf,
+    pub(crate) writer: Arc<Mutex<Connection>>,
+    pub(crate) readers: r2d2::Pool<SqliteConnectionManager>,
+    pub(crate) path: PathBuf,
     #[cfg(test)]
-    diagnostics: Arc<StorageDiagnostics>,
+    pub(crate) diagnostics: Arc<StorageDiagnostics>,
 }
 
 #[cfg(test)]
 #[derive(Debug, Default)]
-struct StorageDiagnostics {
-    active_snapshots: AtomicUsize,
-    peak_active_snapshots: AtomicUsize,
-    reader_checkout_wait_micros: Mutex<Vec<u64>>,
+pub(crate) struct StorageDiagnostics {
+    pub(crate) active_snapshots: AtomicUsize,
+    pub(crate) peak_active_snapshots: AtomicUsize,
+    pub(crate) reader_checkout_wait_micros: Mutex<Vec<u64>>,
 }
 
 #[cfg(test)]
@@ -317,9 +317,10 @@ pub(crate) struct StorageDiagnosticsSnapshot {
 
 /// Restricted writer for one uncommitted repository generation.
 pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
-    transaction: &'transaction Transaction<'connection>,
-    generation: i64,
-    rebuild: bool,
-    replacements: usize,
-    deletions: HashSet<String>,
+    pub(crate) transaction: &'transaction Transaction<'connection>,
+    pub(crate) generation: i64,
+    pub(crate) rebuild: bool,
+    pub(crate) replacements: usize,
+    pub(crate) deletions: HashSet<String>,
 }
+use super::*;

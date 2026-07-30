@@ -16,7 +16,7 @@ impl RegexCandidateExpr {
     }
 }
 
-fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
+pub(super) fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
     // SQLite's default trigram tokenizer folds ASCII only. Rust regexes use
     // Unicode simple case folding, so a case-insensitive ASCII literal can
     // also match non-ASCII code points (for example, Kelvin sign for `k`).
@@ -79,11 +79,10 @@ fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
     }
 }
 
-fn bounded_hir_node_count(hir: &Hir) -> std::result::Result<usize, RegexPlanBudgetExceeded> {
-    fn visit(
-        hir: &Hir,
-        nodes: &mut usize,
-    ) -> std::result::Result<(), RegexPlanBudgetExceeded> {
+pub(super) fn bounded_hir_node_count(
+    hir: &Hir,
+) -> std::result::Result<usize, RegexPlanBudgetExceeded> {
+    fn visit(hir: &Hir, nodes: &mut usize) -> std::result::Result<(), RegexPlanBudgetExceeded> {
         *nodes = nodes.saturating_add(1);
         if *nodes > MAX_REGEX_PLAN_NODES {
             return Err(RegexPlanBudgetExceeded::Nodes);
@@ -106,7 +105,7 @@ fn bounded_hir_node_count(hir: &Hir) -> std::result::Result<usize, RegexPlanBudg
     Ok(nodes)
 }
 
-fn regex_plan_budget_fallback(
+pub(super) fn regex_plan_budget_fallback(
     error: RegexPlanBudgetExceeded,
     budget: RegexPlanBudget,
 ) -> RegexPlanDecision {
@@ -123,7 +122,7 @@ fn regex_plan_budget_fallback(
     })
 }
 
-fn regex_candidate_expr(
+pub(super) fn regex_candidate_expr(
     hir: &Hir,
     budget: &mut RegexPlanBudget,
 ) -> std::result::Result<Option<RegexCandidateExpr>, RegexPlanBudgetExceeded> {
@@ -156,7 +155,7 @@ fn regex_candidate_expr(
     }
 }
 
-fn literal_candidate_expr(
+pub(super) fn literal_candidate_expr(
     literal: &[u8],
     budget: &mut RegexPlanBudget,
 ) -> std::result::Result<Option<RegexCandidateExpr>, RegexPlanBudgetExceeded> {
@@ -174,7 +173,10 @@ fn literal_candidate_expr(
     Ok(combine_candidate_expr(terms, true))
 }
 
-fn extracted_regex_candidate_plan(hir: &Hir, nodes_visited: usize) -> Option<RegexPlanDecision> {
+pub(super) fn extracted_regex_candidate_plan(
+    hir: &Hir,
+    nodes_visited: usize,
+) -> Option<RegexPlanDecision> {
     let mut plans = Vec::new();
     let mut first_limit = None;
     for (kind, source) in [
@@ -197,20 +199,19 @@ fn extracted_regex_candidate_plan(hir: &Hir, nodes_visited: usize) -> Option<Reg
             .cmp(&right.alternative_count)
             .then_with(|| right.min_literal_len.cmp(&left.min_literal_len))
             .then_with(|| right.term_bytes.cmp(&left.term_bytes))
-            .then_with(|| regex_plan_source_order(left.source).cmp(&regex_plan_source_order(right.source)))
+            .then_with(|| {
+                regex_plan_source_order(left.source).cmp(&regex_plan_source_order(right.source))
+            })
     });
     Some(RegexPlanDecision::Planned(plans.remove(0)))
 }
 
-fn extracted_literal_plan(
+pub(super) fn extracted_literal_plan(
     hir: &Hir,
     nodes_visited: usize,
     kind: ExtractKind,
     source: RegexPlanSource,
-) -> std::result::Result<
-    Option<RegexCandidatePlan>,
-    (RegexPlanBudgetExceeded, RegexPlanBudget),
-> {
+) -> std::result::Result<Option<RegexCandidatePlan>, (RegexPlanBudgetExceeded, RegexPlanBudget)> {
     let mut extractor = Extractor::new();
     extractor
         .kind(kind)
@@ -255,7 +256,7 @@ fn extracted_literal_plan(
     }))
 }
 
-const fn regex_plan_source_order(source: RegexPlanSource) -> u8 {
+pub(super) const fn regex_plan_source_order(source: RegexPlanSource) -> u8 {
     match source {
         RegexPlanSource::MandatoryLiterals => 0,
         RegexPlanSource::PrefixLiterals => 1,
@@ -263,7 +264,7 @@ const fn regex_plan_source_order(source: RegexPlanSource) -> u8 {
     }
 }
 
-fn combine_candidate_expr(
+pub(super) fn combine_candidate_expr(
     mut expressions: Vec<RegexCandidateExpr>,
     all: bool,
 ) -> Option<RegexCandidateExpr> {
@@ -275,7 +276,7 @@ fn combine_candidate_expr(
     }
 }
 
-fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
+pub(super) fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
     Ok(regex::RegexBuilder::new(&request.query)
         .case_insensitive(!request.case_sensitive)
         .size_limit(1 << 20)
@@ -283,7 +284,7 @@ fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
         .build()?)
 }
 
-fn compile_occurrence_literal_regex(request: &SearchRequest) -> Result<regex::Regex> {
+pub(super) fn compile_occurrence_literal_regex(request: &SearchRequest) -> Result<regex::Regex> {
     Ok(regex::RegexBuilder::new(&regex::escape(&request.query))
         .case_insensitive(!request.case_sensitive)
         .size_limit(1 << 20)
@@ -296,7 +297,7 @@ fn compile_occurrence_literal_regex(request: &SearchRequest) -> Result<regex::Re
 /// In Auto/Text/Identifier modes the query is a literal string, not a regex
 /// pattern. Compile it once per request so every lexical hit reuses the same
 /// matcher. Case-sensitive search uses `str::find` without compilation.
-pub(super) fn compile_literal_regex(
+pub(in crate::services) fn compile_literal_regex(
     query: &str,
     case_sensitive: bool,
 ) -> Result<Option<regex::Regex>> {
@@ -313,7 +314,7 @@ pub(super) fn compile_literal_regex(
 }
 
 impl Services {
-    fn regex_hits(
+    pub(super) fn regex_hits(
         &self,
         session: &ReadSession,
         request: &SearchRequest,
@@ -404,8 +405,7 @@ impl Services {
                             limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
                         });
                     }
-                    phases.regex_retained_chunks =
-                        phases.regex_retained_chunks.saturating_add(1);
+                    phases.regex_retained_chunks = phases.regex_retained_chunks.saturating_add(1);
                     hits.push(ChunkHit {
                         chunk_id: chunk.id,
                         file_id: chunk.file_id,
@@ -426,7 +426,7 @@ impl Services {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn regex_candidate_hits(
+    pub(super) fn regex_candidate_hits(
         &self,
         session: &ReadSession,
         regex: &regex::Regex,
@@ -515,8 +515,7 @@ impl Services {
                             limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
                         });
                     }
-                    phases.regex_retained_chunks =
-                        phases.regex_retained_chunks.saturating_add(1);
+                    phases.regex_retained_chunks = phases.regex_retained_chunks.saturating_add(1);
                     hits.push(hit);
                 }
             }
@@ -528,3 +527,4 @@ impl Services {
         Ok(RegexScan { hits, phases })
     }
 }
+use super::*;

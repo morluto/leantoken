@@ -1,5 +1,5 @@
 impl Services {
-    fn validate_workflow_evidence(&self, evidence: &WorkflowEvidence) -> Result<()> {
+    pub(super) fn validate_workflow_evidence(&self, evidence: &WorkflowEvidence) -> Result<()> {
         let classes = [
             ("failure_traces", &evidence.failure_traces),
             ("symbols", &evidence.symbols),
@@ -39,7 +39,7 @@ impl Services {
         Ok(())
     }
 
-    fn validate_context_request(
+    pub(super) fn validate_context_request(
         &self,
         request: &ContextRequest,
         handoff: Option<&HandoffManifestRequest>,
@@ -231,7 +231,7 @@ impl Services {
     }
 }
 
-fn validate_context_option_constraints(
+pub(super) fn validate_context_option_constraints(
     request: &ContextRequest,
     handoff: Option<&HandoffManifestRequest>,
 ) -> Result<()> {
@@ -271,7 +271,7 @@ fn validate_context_option_constraints(
     }
 }
 
-fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOperation {
+pub(super) fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOperation {
     if request.plan_only {
         TokenAccountingOperation::ContextPlan
     } else {
@@ -279,8 +279,12 @@ fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOper
     }
 }
 
-fn set_routing_consistency(response: &mut ContextResponse, consistency: IndexConsistency) {
+pub(super) fn set_routing_consistency(
+    response: &mut ContextResponse,
+    consistency: IndexConsistency,
+) {
     if let Some(routing) = &mut response.routing {
         routing.consistency = consistency;
     }
 }
+use super::*;

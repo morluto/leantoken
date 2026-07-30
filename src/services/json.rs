@@ -214,7 +214,7 @@ fn json_query_hash(operation: &JsonOperation, execution: JsonExecutionOptions) -
             "order": "depth_then_pointer",
         }))
     }
-    .map_err(|error| Error::InternalFailure(error.to_string()))?;
+    .map_err(|error| Error::SerializationFailure(error.to_string()))?;
     Ok(crate::text::hash(&serialized))
 }
 
@@ -783,7 +783,7 @@ fn select_json(value: &Value, selector: Option<&JsonSelector>) -> Result<Selecte
                 .search(value)
                 .map_err(|error| invalid_json_selector("evaluate", error))?;
             let selected = serde_json::to_value(selected.as_ref())
-                .map_err(|error| Error::InternalFailure(error.to_string()))?;
+                .map_err(|error| Error::SerializationFailure(error.to_string()))?;
             Ok(SelectedJson {
                 present: true,
                 value: Some(selected),
@@ -1413,8 +1413,8 @@ fn collect_numbers(value: &Value, values: &mut Vec<f64>, non_numeric_count: &mut
 }
 
 fn json_tokens(services: &Services, value: &Value) -> Result<usize> {
-    let serialized =
-        serde_json::to_string(value).map_err(|error| Error::InternalFailure(error.to_string()))?;
+    let serialized = serde_json::to_string(value)
+        .map_err(|error| Error::SerializationFailure(error.to_string()))?;
     Ok(services.config.tokenizer.count(&serialized))
 }
 

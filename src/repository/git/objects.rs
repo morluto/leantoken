@@ -25,7 +25,7 @@ pub(crate) fn git_blob_at_revision(
     let size = std::str::from_utf8(&size_output)
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
-        .ok_or_else(|| Error::InternalFailure("invalid git blob size".into()))?;
+        .ok_or_else(|| Error::OperationFailure("invalid git blob size".into()))?;
     if size > max_bytes {
         return Err(Error::RequestLimitExceeded {
             field: "historical file bytes",
@@ -131,17 +131,17 @@ pub(crate) fn git_blobs_at_resolved_revision(
         .filter(|record| !record.is_empty())
     {
         let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
-            return Err(Error::InternalFailure("invalid git ls-tree record".into()));
+            return Err(Error::OperationFailure("invalid git ls-tree record".into()));
         };
         let metadata = std::str::from_utf8(&record[..tab])
-            .map_err(|_| Error::InternalFailure("invalid git ls-tree metadata".into()))?;
+            .map_err(|_| Error::OperationFailure("invalid git ls-tree metadata".into()))?;
         let mut fields = metadata.split_whitespace();
         let _mode = fields.next();
         let object_type = fields.next();
         let object_id = fields.next();
         let size = fields.next().and_then(|value| value.parse::<usize>().ok());
         let path = std::str::from_utf8(&record[tab + 1..])
-            .map_err(|_| Error::InternalFailure("invalid git ls-tree path".into()))?;
+            .map_err(|_| Error::OperationFailure("invalid git ls-tree path".into()))?;
         let Some(path) = path.strip_prefix(&prefix) else {
             continue;
         };
@@ -218,9 +218,9 @@ pub(crate) fn git_blobs_at_resolved_revision(
             .iter()
             .position(|byte| *byte == b'\n')
             .map(|offset| cursor + offset)
-            .ok_or_else(|| Error::InternalFailure("invalid git cat-file header".into()))?;
+            .ok_or_else(|| Error::OperationFailure("invalid git cat-file header".into()))?;
         let header = std::str::from_utf8(&batch_output[cursor..header_end])
-            .map_err(|_| Error::InternalFailure("invalid git cat-file header".into()))?;
+            .map_err(|_| Error::OperationFailure("invalid git cat-file header".into()))?;
         let mut fields = header.split_whitespace();
         let object_id = fields.next();
         let object_type = fields.next();
@@ -229,16 +229,16 @@ pub(crate) fn git_blobs_at_resolved_revision(
             || object_type != Some("blob")
             || size != Some(*expected_size)
         {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "unexpected git cat-file batch response".into(),
             ));
         }
         let content_start = header_end + 1;
         let content_end = content_start
             .checked_add(*expected_size)
-            .ok_or_else(|| Error::InternalFailure("git blob size overflow".into()))?;
+            .ok_or_else(|| Error::OperationFailure("git blob size overflow".into()))?;
         if batch_output.get(content_end) != Some(&b'\n') {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "truncated git cat-file batch response".into(),
             ));
         }
@@ -249,7 +249,7 @@ pub(crate) fn git_blobs_at_resolved_revision(
         cursor = content_end + 1;
     }
     if cursor != batch_output.len() {
-        return Err(Error::InternalFailure(
+        return Err(Error::OperationFailure(
             "unexpected trailing git cat-file output".into(),
         ));
     }
@@ -259,7 +259,7 @@ pub(crate) fn git_blobs_at_resolved_revision(
     for (path, object_id, _) in selected {
         let content = contents
             .get(&object_id)
-            .ok_or_else(|| Error::InternalFailure("missing batched git blob".into()))?
+            .ok_or_else(|| Error::OperationFailure("missing batched git blob".into()))?
             .clone();
         match String::from_utf8(content) {
             Ok(content) => {
@@ -321,14 +321,16 @@ pub(crate) fn git_commit_metadata(
         let subject = fields.next();
         let (Some(revision), Some(authored_at), Some(subject)) = (revision, authored_at, subject)
         else {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "invalid git commit metadata record".into(),
             ));
         };
         let revision = std::str::from_utf8(revision)
-            .map_err(|_| Error::InternalFailure("invalid git commit identity".into()))?;
+            .map_err(|_| Error::OperationFailure("invalid git commit identity".into()))?;
         if revision.len() < 12 || !revision.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(Error::InternalFailure("invalid git commit identity".into()));
+            return Err(Error::OperationFailure(
+                "invalid git commit identity".into(),
+            ));
         }
         let short_revision = revision[..12].to_ascii_lowercase();
         metadata.insert(
@@ -342,7 +344,7 @@ pub(crate) fn git_commit_metadata(
     }
     for revision in requested {
         if !metadata.contains_key(&revision) {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::OperationFailure(format!(
                 "missing commit metadata for resolved revision {revision}"
             )));
         }
@@ -396,7 +398,7 @@ pub(crate) fn git_line_history(
         let subject = fields.next();
         let (Some(commit), Some(authored_at), Some(subject)) = (commit, authored_at, subject)
         else {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "invalid git line history record".into(),
             ));
         };
@@ -408,3 +410,4 @@ pub(crate) fn git_line_history(
     }
     Ok(commits)
 }
+use super::*;

@@ -1,5 +1,5 @@
 impl Storage {
-    fn map_file(row: &Row) -> std::result::Result<FileRecord, rusqlite::Error> {
+    pub(crate) fn map_file(row: &Row) -> std::result::Result<FileRecord, rusqlite::Error> {
         Ok(FileRecord {
             id: row.get(0)?,
             path: row.get(1)?,
@@ -12,7 +12,7 @@ impl Storage {
         })
     }
 
-    fn map_chunk(row: &Row) -> std::result::Result<ChunkRecord, rusqlite::Error> {
+    pub(crate) fn map_chunk(row: &Row) -> std::result::Result<ChunkRecord, rusqlite::Error> {
         Ok(ChunkRecord {
             id: row.get(0)?,
             file_id: row.get(1)?,
@@ -25,7 +25,7 @@ impl Storage {
         })
     }
 
-    fn map_symbol(row: &Row) -> std::result::Result<SymbolRecord, rusqlite::Error> {
+    pub(crate) fn map_symbol(row: &Row) -> std::result::Result<SymbolRecord, rusqlite::Error> {
         Ok(SymbolRecord {
             id: row.get(0)?,
             file_id: row.get(1)?,
@@ -40,7 +40,9 @@ impl Storage {
         })
     }
 
-    fn map_reference(row: &Row) -> std::result::Result<ReferenceRecord, rusqlite::Error> {
+    pub(crate) fn map_reference(
+        row: &Row,
+    ) -> std::result::Result<ReferenceRecord, rusqlite::Error> {
         Ok(ReferenceRecord {
             id: row.get(0)?,
             file_id: row.get(1)?,
@@ -55,7 +57,7 @@ impl Storage {
         })
     }
 
-    fn map_import(row: &Row) -> std::result::Result<ImportRecord, rusqlite::Error> {
+    pub(crate) fn map_import(row: &Row) -> std::result::Result<ImportRecord, rusqlite::Error> {
         Ok(ImportRecord {
             id: row.get(0)?,
             file_id: row.get(1)?,
@@ -65,7 +67,7 @@ impl Storage {
         })
     }
 
-    fn map_chunk_hit(row: &Row) -> std::result::Result<ChunkHit, rusqlite::Error> {
+    pub(crate) fn map_chunk_hit(row: &Row) -> std::result::Result<ChunkHit, rusqlite::Error> {
         Ok(ChunkHit {
             chunk_id: row.get(0)?,
             file_id: row.get(1)?,
@@ -81,7 +83,7 @@ impl Storage {
         })
     }
 
-    fn map_symbol_hit(row: &Row) -> std::result::Result<SymbolHit, rusqlite::Error> {
+    pub(crate) fn map_symbol_hit(row: &Row) -> std::result::Result<SymbolHit, rusqlite::Error> {
         Ok(SymbolHit {
             path: row.get(0)?,
             content_hash: row.get(1)?,
@@ -101,7 +103,9 @@ impl Storage {
         })
     }
 
-    fn map_reference_hit(row: &Row) -> std::result::Result<ReferenceHit, rusqlite::Error> {
+    pub(crate) fn map_reference_hit(
+        row: &Row,
+    ) -> std::result::Result<ReferenceHit, rusqlite::Error> {
         Ok(ReferenceHit {
             path: row.get(0)?,
             content_hash: row.get(1)?,
@@ -121,3 +125,4 @@ impl Storage {
         })
     }
 }
+use super::*;

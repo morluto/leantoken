@@ -1,3 +1,5 @@
+use super::*;
+
 fn scope_label(entry: &CacheEntry) -> String {
     match entry.index_scope {
         IndexScopeMode::Full => "scope=full".into(),

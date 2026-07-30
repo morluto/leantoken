@@ -27,12 +27,8 @@ impl Services {
     ) -> Result<ContextResponse> {
         self.context_execute(
             request,
-            ContextExecution::new(ContextWorkflow::Auto)
-                .with_workflow_evidence(workflow_evidence),
-            RetrievalExecution::direct(
-                ServiceCallOptions::default(),
-                CancellationToken::new(),
-            ),
+            ContextExecution::new(ContextWorkflow::Auto).with_workflow_evidence(workflow_evidence),
+            RetrievalExecution::direct(ServiceCallOptions::default(), CancellationToken::new()),
         )
         .await
     }
@@ -46,10 +42,7 @@ impl Services {
         self.context_execute(
             request,
             ContextExecution::new(ContextWorkflow::Auto).with_handoff(handoff),
-            RetrievalExecution::direct(
-                ServiceCallOptions::default(),
-                CancellationToken::new(),
-            ),
+            RetrievalExecution::direct(ServiceCallOptions::default(), CancellationToken::new()),
         )
         .await
     }
@@ -360,3 +353,4 @@ impl Services {
             .await
     }
 }
+use super::*;

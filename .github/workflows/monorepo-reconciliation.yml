@@ -65,14 +65,14 @@ jobs:
           test "$(git -C "$repository" rev-parse HEAD)" = "${{ matrix.revision }}"
 
       - name: Build release profiler
-        run: cargo build --release --example indexing_profile
+        run: cargo build --release --package leantoken-benchmarks --bin indexing_profile
 
       - name: Profile on Linux
         if: runner.os == 'Linux'
         run: |
           mkdir -p target/monorepo-profile
           /usr/bin/time -v -o target/monorepo-profile/process.txt \
-            target/release/examples/indexing_profile \
+            target/release/indexing_profile \
               --repository "$RUNNER_TEMP/monorepo-profile/${{ matrix.corpus }}" \
               --repository-label "${{ matrix.repository }}" \
               --iterations "${{ matrix.iterations }}" \
@@ -91,7 +91,7 @@ jobs:
         run: |
           mkdir -p target/monorepo-profile
           /usr/bin/time -l \
-            target/release/examples/indexing_profile \
+            target/release/indexing_profile \
               --repository "$RUNNER_TEMP/monorepo-profile/${{ matrix.corpus }}" \
               --repository-label "${{ matrix.repository }}" \
               --iterations "${{ matrix.iterations }}" \
@@ -121,7 +121,7 @@ jobs:
             '--output', 'target/monorepo-profile/profile.json'
           )
           $start = @{
-            FilePath = 'target/release/examples/indexing_profile.exe'
+            FilePath = 'target/release/indexing_profile.exe'
             ArgumentList = $arguments
             NoNewWindow = $true
             PassThru = $true
@@ -191,7 +191,7 @@ jobs:
 
       - name: Aggregate frozen matrix
         run: |
-          cargo run --release --example monorepo_reconciliation_report -- \
+          cargo run --release -p leantoken-benchmarks --bin monorepo_reconciliation_report -- \
             --manifest benchmarks/monorepo_reconciliation.json \
             --artifacts target/monorepo-profile-artifacts \
             --output target/monorepo-reconciliation-report.json \

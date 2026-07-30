@@ -1,5 +1,7 @@
+use super::*;
+
 #[derive(Debug, Clone, Copy)]
-enum EditStatus {
+pub(super) enum EditStatus {
     Configured,
     Updated,
     AlreadyConfigured,
@@ -20,7 +22,7 @@ impl fmt::Display for EditStatus {
     }
 }
 
-fn read_optional(path: &Path) -> Result<Option<String>> {
+pub(super) fn read_optional(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(contents) => Ok(Some(contents)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -28,12 +30,12 @@ fn read_optional(path: &Path) -> Result<Option<String>> {
     }
 }
 
-fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
+pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
     if original == updated {
         return Ok(());
     }
     let parent = path.parent().ok_or_else(|| {
-        Error::InternalFailure(format!("config path has no parent: {}", path.display()))
+        Error::SetupFailure(format!("config path has no parent: {}", path.display()))
     })?;
     fs::create_dir_all(parent)?;
     let mut temporary = NamedTempFile::new_in(parent)?;
@@ -52,23 +54,23 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn sync_parent_directory(path: &Path) -> Result<()> {
+pub(super) fn sync_parent_directory(path: &Path) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| Error::InternalFailure(format!("path has no parent: {}", path.display())))?;
+        .ok_or_else(|| Error::SetupFailure(format!("path has no parent: {}", path.display())))?;
     fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn sync_parent_directory(_path: &Path) -> Result<()> {
+pub(super) fn sync_parent_directory(_path: &Path) -> Result<()> {
     // Windows does not expose the Unix directory-fsync contract through
     // std::fs. File contents are still synced before atomic replacement.
     Ok(())
 }
 
-fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
-    Error::InternalFailure(format!(
+pub(super) fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
+    Error::SetupFailure(format!(
         "refusing to overwrite malformed config {}: {error}",
         path.display()
     ))

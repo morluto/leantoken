@@ -1,4 +1,6 @@
-fn append_csharp_structure(
+use super::*;
+
+pub(super) fn append_csharp_structure(
     source: &str,
     root: Node<'_>,
     symbols: &mut Vec<Symbol>,
@@ -177,7 +179,7 @@ fn append_csharp_structure(
     Ok(())
 }
 
-fn append_csharp_field(source: &str, node: Node<'_>, symbols: &mut Vec<Symbol>) {
+pub(super) fn append_csharp_field(source: &str, node: Node<'_>, symbols: &mut Vec<Symbol>) {
     let Some(name) = node.child_by_field_name("name") else {
         return;
     };
@@ -204,7 +206,7 @@ fn append_csharp_field(source: &str, node: Node<'_>, symbols: &mut Vec<Symbol>) 
     }
 }
 
-fn csharp_terminal_name(node: Node<'_>) -> Option<Node<'_>> {
+pub(super) fn csharp_terminal_name(node: Node<'_>) -> Option<Node<'_>> {
     if node.kind() == "identifier" {
         return Some(node);
     }
@@ -238,7 +240,7 @@ fn csharp_terminal_name(node: Node<'_>) -> Option<Node<'_>> {
     found
 }
 
-fn csharp_using_target(directive: &str) -> Option<String> {
+pub(super) fn csharp_using_target(directive: &str) -> Option<String> {
     let mut target = directive.trim().trim_end_matches(';').trim();
     target = target.strip_prefix("global ").unwrap_or(target).trim();
     target = target.strip_prefix("using ").unwrap_or(target).trim();

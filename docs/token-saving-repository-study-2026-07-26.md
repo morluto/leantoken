@@ -99,7 +99,7 @@ already has:
 
 The relevant implementation owners are:
 
-- [`src/services/context.rs`](../src/services/context.rs) for query facets,
+- [`src/services/context/mod.rs`](../src/services/context/mod.rs) for query facets,
   ranking channels, RRF-style corroboration, workflow routing, and diff scopes;
 - [`src/services/receipts.rs`](../src/services/receipts.rs) for bounded
   repeated-evidence suppression;

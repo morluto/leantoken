@@ -13,21 +13,26 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::{
     sync::{mpsc, mpsc::error::TrySendError, oneshot},
     task::JoinHandle,
-    time::{Instant, interval_at, sleep},
+    time::{Instant, interval_at, sleep, timeout},
 };
 use tokio_util::sync::CancellationToken;
 
 use crate::repository::{DiscoveryPolicy, checked_slash_path};
 use crate::{Error, Result};
 
-// The scheduler is a pure state machine; backend lifecycle, event
-// normalization, and bounded delivery remain separate physical owners.
-include!("watcher/types.rs");
-include!("watcher/scheduler.rs");
-include!("watcher/runtime.rs");
-include!("watcher/discovery.rs");
-include!("watcher/events.rs");
-include!("watcher/delivery.rs");
+mod delivery;
+
+use delivery::*;
+use discovery::*;
+use events::*;
+pub use runtime::*;
+pub use scheduler::*;
+pub use types::*;
+mod discovery;
+mod events;
+mod runtime;
+mod scheduler;
+mod types;
 
 #[cfg(test)]
 mod tests;

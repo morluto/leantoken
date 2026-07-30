@@ -1,3 +1,5 @@
+use super::*;
+
 /// Joined filesystem watcher for one repository root.
 pub struct RepositoryWatcher {
     root: PathBuf,
@@ -5,6 +7,17 @@ pub struct RepositoryWatcher {
     handle: JoinHandle<()>,
     ready: WatcherReady,
     counters: Arc<WatcherCounters>,
+}
+
+pub(super) const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(crate) async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
+    timeout(PRODUCTION_SHUTDOWN_TIMEOUT, handle)
+        .await
+        .map_err(|_| Error::ShutdownTimeout {
+            component: "repository watcher",
+        })??;
+    Ok(())
 }
 
 impl RepositoryWatcher {
@@ -43,7 +56,7 @@ impl RepositoryWatcher {
         .await
     }
 
-    async fn start_with_factory(
+    pub(crate) async fn start_with_factory(
         root: impl AsRef<Path>,
         capacity: usize,
         debounce: Duration,
@@ -280,7 +293,7 @@ impl RepositoryWatcher {
             )),
             Err(_) => {
                 let _ = handle.await;
-                Err(Error::InternalFailure(
+                Err(Error::OperationFailure(
                     "watcher task terminated unexpectedly".into(),
                 ))
             }
@@ -313,12 +326,12 @@ impl RepositoryWatcher {
             ..
         } = self;
         token.cancel();
-        handle.await?;
+        join_watcher(handle).await?;
         Ok(diagnostics_snapshot(&ready, &counters))
     }
 }
 
-fn diagnostics_snapshot(
+pub(super) fn diagnostics_snapshot(
     ready: &WatcherReady,
     counters: &WatcherCounters,
 ) -> WatcherDiagnostics {

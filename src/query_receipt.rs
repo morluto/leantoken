@@ -164,7 +164,7 @@ impl QueryReceiptRecord {
             .and_then(|bytes| bytes.checked_add(self.predicate_blake3.len()))
             .and_then(|bytes| bytes.checked_add(self.partition.digest.len()))
             .and_then(|bytes| bytes.checked_add(self.result_blake3.len()))
-            .ok_or_else(|| Error::InternalFailure("query receipt byte accounting overflow".into()))
+            .ok_or_else(|| Error::OperationFailure("query receipt byte accounting overflow".into()))
     }
 }
 

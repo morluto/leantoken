@@ -1,18 +1,20 @@
-const DATABASE_NAME: &str = DEFAULT_INDEX_DATABASE_NAME;
-const WAL_NAME: &str = "index.sqlite-wal";
-const PRUNABLE_ARTIFACTS: &[&str] = &[
+use super::*;
+
+pub(super) const DATABASE_NAME: &str = DEFAULT_INDEX_DATABASE_NAME;
+pub(super) const WAL_NAME: &str = "index.sqlite-wal";
+pub(super) const PRUNABLE_ARTIFACTS: &[&str] = &[
     DATABASE_NAME,
     WAL_NAME,
     "index.sqlite-shm",
     "index.sqlite-journal",
 ];
-const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
-const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
-const CACHE_LIST_V2_CURSOR_PREFIX: &str = "cl2";
-const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
-const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
-const MAX_CACHE_COMPATIBILITY_FILTERS: usize = 5;
-const MAX_CACHE_CONTENT_VERSION_FILTERS: usize = 32;
+pub(super) const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+pub(super) const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
+pub(super) const CACHE_LIST_V2_CURSOR_PREFIX: &str = "cl2";
+pub(super) const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
+pub(super) const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
+pub(super) const MAX_CACHE_COMPATIBILITY_FILTERS: usize = 5;
+pub(super) const MAX_CACHE_CONTENT_VERSION_FILTERS: usize = 32;
 
 /// Default number of cache entries returned by one list page.
 pub const DEFAULT_CACHE_LIST_LIMIT: usize = 20;
@@ -332,7 +334,7 @@ impl CachePruneReport {
 }
 
 impl CacheState {
-    const ALL: [Self; 6] = [
+    pub(super) const ALL: [Self; 6] = [
         Self::Current,
         Self::Legacy,
         Self::Incomplete,
@@ -341,7 +343,7 @@ impl CacheState {
         Self::Unrecognized,
     ];
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Current => "current",
             Self::Legacy => "legacy",
@@ -354,7 +356,7 @@ impl CacheState {
 }
 
 impl CacheCompatibility {
-    const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 5] = [
         Self::CompatibleCurrent,
         Self::ObsoleteOlder,
         Self::LegacyUnversioned,
@@ -362,7 +364,7 @@ impl CacheCompatibility {
         Self::Unknown,
     ];
 
-    fn classify(entry: &CacheEntry) -> Self {
+    pub(super) fn classify(entry: &CacheEntry) -> Self {
         if matches!(entry.state, CacheState::Corrupt | CacheState::Unrecognized) {
             return Self::Unknown;
         }
@@ -374,7 +376,7 @@ impl CacheCompatibility {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::CompatibleCurrent => "compatible_current",
             Self::ObsoleteOlder => "obsolete_older",
@@ -384,13 +386,13 @@ impl CacheCompatibility {
         }
     }
 
-    fn safely_incompatible(self) -> bool {
+    pub(super) fn safely_incompatible(self) -> bool {
         matches!(self, Self::ObsoleteOlder | Self::LegacyUnversioned)
     }
 }
 
 impl CachePruneAction {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Kept => "kept",
             Self::WouldDelete => "would_delete",
@@ -403,22 +405,22 @@ impl CachePruneAction {
 }
 
 #[derive(Debug)]
-struct CacheManager {
-    root: PathBuf,
-    now: u64,
+pub(super) struct CacheManager {
+    pub(super) root: PathBuf,
+    pub(super) now: u64,
 }
 
 #[derive(Debug)]
-struct InspectedCache {
-    entry: CacheEntry,
-    compatibility: CacheCompatibility,
-    safe_to_prune: bool,
+pub(super) struct InspectedCache {
+    pub(super) entry: CacheEntry,
+    pub(super) compatibility: CacheCompatibility,
+    pub(super) safe_to_prune: bool,
 }
 
 #[derive(Debug)]
-struct ArtifactScan {
-    size_bytes: u64,
-    latest_access_mtime: Option<u64>,
-    has_artifacts: bool,
-    unexpected: bool,
+pub(super) struct ArtifactScan {
+    pub(super) size_bytes: u64,
+    pub(super) latest_access_mtime: Option<u64>,
+    pub(super) has_artifacts: bool,
+    pub(super) unexpected: bool,
 }

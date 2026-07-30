@@ -1,3 +1,6 @@
+use super::coverage::{MAX_PARSER_COVERAGE_GROUPS, parser_coverage_summary, safe_extension_family};
+use super::savings::signed_token_difference;
+use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
 use std::fs;
 use std::sync::{Condvar, Mutex};
@@ -88,7 +91,7 @@ async fn poisoned_reconciliation_state_returns_a_typed_error() {
 
     assert!(matches!(
         result,
-        Err(Error::InternalFailure(message))
+        Err(Error::OperationFailure(message))
             if message == "reconciliation coordinator state poisoned"
     ));
 }

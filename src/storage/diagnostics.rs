@@ -12,7 +12,7 @@ pub(crate) enum ReconciliationPublicationPhase {
 // SQLite normally recycles a completed WAL without shrinking it. Retain four
 // default auto-checkpoint windows for reuse while bounding the steady-state
 // disk footprint after a large initial publication.
-const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
+pub(crate) const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
 
 pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 10;
 
@@ -21,8 +21,8 @@ pub const DEFAULT_MAX_RESULTS: usize = 100;
 /// Absolute row limit applied by storage queries, including internal batch reads.
 pub const HARD_MAX_RESULTS: usize = 10_000;
 
-const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
-const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
+pub(crate) const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
+pub(crate) const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) fn process_write_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -39,7 +39,7 @@ pub(crate) fn process_write_bytes() -> Option<u64> {
     }
 }
 
-fn measured_storage_phase<T>(
+pub(crate) fn measured_storage_phase<T>(
     enabled: bool,
     operation: impl FnOnce() -> Result<T>,
 ) -> Result<(T, f64, Option<u64>)> {
@@ -56,13 +56,13 @@ fn measured_storage_phase<T>(
     Ok((output, elapsed_ms, write_bytes))
 }
 
-fn wal_path(database: &Path) -> PathBuf {
+pub(crate) fn wal_path(database: &Path) -> PathBuf {
     let mut path = database.as_os_str().to_os_string();
     path.push("-wal");
     PathBuf::from(path)
 }
 
-fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootprint> {
+pub(crate) fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootprint> {
     let (chunk_word, chunk_trigram, symbol, reference) = conn.query_row(
         "SELECT
              COALESCE(SUM(CASE WHEN name GLOB 'chunks_fts_word_*' THEN pgsize ELSE 0 END), 0),
@@ -88,7 +88,7 @@ fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootprint> {
     })
 }
 
-fn populate_post_commit_diagnostics(
+pub(crate) fn populate_post_commit_diagnostics(
     conn: &Connection,
     database: &Path,
     diagnostics: &mut PublicationDiagnostics,
@@ -187,13 +187,13 @@ pub struct PublicationDiagnostics {
     pub post_commit_diagnostics_complete: bool,
 }
 
-struct DatabaseTriggerGuard<'connection> {
-    connection: &'connection Connection,
-    previous: Option<bool>,
+pub(crate) struct DatabaseTriggerGuard<'connection> {
+    pub(crate) connection: &'connection Connection,
+    pub(crate) previous: Option<bool>,
 }
 
 impl<'connection> DatabaseTriggerGuard<'connection> {
-    fn disable(connection: &'connection Connection) -> rusqlite::Result<Self> {
+    pub(crate) fn disable(connection: &'connection Connection) -> rusqlite::Result<Self> {
         let previous = connection.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)?;
         connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
         Ok(Self {
@@ -202,11 +202,11 @@ impl<'connection> DatabaseTriggerGuard<'connection> {
         })
     }
 
-    fn restore(mut self) -> rusqlite::Result<()> {
+    pub(crate) fn restore(mut self) -> rusqlite::Result<()> {
         self.restore_inner()
     }
 
-    fn restore_inner(&mut self) -> rusqlite::Result<()> {
+    pub(crate) fn restore_inner(&mut self) -> rusqlite::Result<()> {
         let Some(previous) = self.previous else {
             return Ok(());
         };
@@ -222,3 +222,4 @@ impl Drop for DatabaseTriggerGuard<'_> {
         let _ = self.restore_inner();
     }
 }
+use super::*;

@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("--iterations must be greater than zero".into());
     }
 
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repository = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let harness_revision = git_output(&repository, &["rev-parse", "HEAD"]);
     let harness_tracked_worktree_dirty = git_output(
         &repository,

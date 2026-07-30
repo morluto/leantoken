@@ -1403,12 +1403,18 @@ Current category values are:
 | `repository_index_limit` | Repository discovery crossed a hard bound |
 | `runtime_unavailable` | A required runtime capability is unavailable |
 | `retryable_conflict` | Concurrent repository state requires a retry |
+| `serialization_failure` | A response or persisted value could not be serialized |
+| `response_accounting_invariant` | Response token accounting failed to converge |
+| `cache_prune_failure` | Cache maintenance could not prune an artifact |
+| `setup_failure` | Setup or installation state violated an invariant |
+| `operation_failure` | A product operation reached an unexpected state |
 | `internal_error` | An implementation, storage, I/O, or other unexpected failure |
 
-The structured fields are an allowlist. I/O, SQLite, serialization, and other
-unexpected failures use `category: "internal_error"` and expose no additional
-machine-readable details. Future releases may add categories or optional
-fields, so consumers should ignore keys and category values they do not know.
+The structured fields are an allowlist. I/O and SQLite failures use
+`category: "internal_error"`; the typed failure categories above identify
+other audited boundaries without exposing additional implementation details.
+Future releases may add categories or optional fields, so consumers should
+ignore keys and category values they do not know.
 
 Oversized inputs, invalid regular expressions or globs, stale cursors,
 unsupported structured reads, and unsafe paths return request errors without

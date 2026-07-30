@@ -1,5 +1,5 @@
 impl Services {
-    fn append_query_candidates(
+    pub(in crate::services::context) fn append_query_candidates(
         &self,
         expansion: QueryCandidateExpansion<'_>,
         batch: &mut CandidateBatch,
@@ -343,5 +343,5 @@ impl Services {
         }
         Ok(())
     }
-
 }
+use super::*;

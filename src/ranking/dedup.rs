@@ -1,3 +1,4 @@
+use super::*;
 /// Remove content-identical candidates and candidates whose line ranges
 /// overlap the same file by at least the module's overlap threshold. The higher-scored
 /// copy is kept.
@@ -8,7 +9,7 @@ pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn deduplicate_with_options(
+pub(crate) fn deduplicate_with_options(
     candidates: Vec<ScoredCandidate>,
     weights: &Weights,
 ) -> Vec<ScoredCandidate> {
@@ -94,7 +95,7 @@ fn deduplicate_with_options(
     kept
 }
 
-fn merge_scored_candidate(
+pub(in crate::ranking) fn merge_scored_candidate(
     existing: &mut ScoredCandidate,
     duplicate: &ScoredCandidate,
     weights: &Weights,
@@ -104,7 +105,7 @@ fn merge_scored_candidate(
     existing.marginal_score = existing.score / existing.token_count as f64;
 }
 
-fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {
+pub(in crate::ranking) fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {
     for kind in &duplicate.match_kinds {
         if !existing.match_kinds.contains(kind) {
             existing.match_kinds.push(kind.clone());

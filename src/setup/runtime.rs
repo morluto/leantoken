@@ -1,4 +1,6 @@
-fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstallPlan> {
+use super::*;
+
+pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstallPlan> {
     let digest = file_digest(&environment.native_executable)?;
     let executable_name = runtime_executable_name(cfg!(windows));
     let destination = environment
@@ -8,7 +10,7 @@ fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstall
     let install_required = if destination.exists() {
         let installed_digest = file_digest(&destination)?;
         if installed_digest != digest {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "private runtime identity mismatch at {}",
                 destination.display()
             )));
@@ -25,7 +27,7 @@ fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstall
     })
 }
 
-fn runtime_executable_name(windows: bool) -> &'static str {
+pub(super) fn runtime_executable_name(windows: bool) -> &'static str {
     if windows {
         "leantoken.exe"
     } else {
@@ -33,7 +35,7 @@ fn runtime_executable_name(windows: bool) -> &'static str {
     }
 }
 
-fn file_digest(path: &Path) -> Result<String> {
+pub(super) fn file_digest(path: &Path) -> Result<String> {
     let mut input = fs::File::open(path)?;
     let mut hasher = blake3::Hasher::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -47,13 +49,14 @@ fn file_digest(path: &Path) -> Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
+pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
     if !plan.install_required {
         return Ok(false);
     }
-    let parent = plan.destination.parent().ok_or_else(|| {
-        Error::InternalFailure("private runtime destination has no parent".into())
-    })?;
+    let parent = plan
+        .destination
+        .parent()
+        .ok_or_else(|| Error::SetupFailure("private runtime destination has no parent".into()))?;
     fs::create_dir_all(parent)?;
     let mut staged = NamedTempFile::new_in(parent)?;
     let mut source = fs::File::open(&plan.source)?;
@@ -63,7 +66,7 @@ fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
         .set_permissions(source.metadata()?.permissions())?;
     staged.as_file_mut().sync_all()?;
     if file_digest(staged.path())? != plan.digest {
-        return Err(Error::InternalFailure(
+        return Err(Error::SetupFailure(
             "staged private runtime digest mismatch".into(),
         ));
     }
@@ -73,7 +76,7 @@ fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
             if file_digest(&plan.destination)? == plan.digest {
                 Ok(false)
             } else {
-                Err(Error::InternalFailure(format!(
+                Err(Error::SetupFailure(format!(
                     "private runtime identity mismatch at {}",
                     plan.destination.display()
                 )))
@@ -84,9 +87,9 @@ fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
 }
 
 #[derive(Debug)]
-struct RuntimeInstallPlan {
-    source: PathBuf,
-    destination: PathBuf,
-    digest: String,
-    install_required: bool,
+pub(super) struct RuntimeInstallPlan {
+    pub(super) source: PathBuf,
+    pub(super) destination: PathBuf,
+    pub(super) digest: String,
+    pub(super) install_required: bool,
 }

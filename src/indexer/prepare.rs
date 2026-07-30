@@ -1,4 +1,6 @@
-fn prepare_batch_end(
+use super::*;
+
+pub(super) fn prepare_batch_end(
     candidates: &[DiscoveredFile],
     start: usize,
     limits: crate::DiscoveryLimits,
@@ -20,11 +22,11 @@ fn prepare_batch_end(
     }
 }
 
-fn duration_ms(duration: Duration) -> f64 {
+pub(super) fn duration_ms(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
 
-fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
+pub(super) fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     if cancellation.is_cancelled() {
         Err(Error::Cancelled)
     } else {
@@ -32,7 +34,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     }
 }
 
-fn prepare_file(
+pub(super) fn prepare_file(
     root: &Dir,
     file: &DiscoveredFile,
     chunk_lines: usize,
@@ -54,7 +56,7 @@ fn prepare_file(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_file_profiled(
+pub(super) fn prepare_file_profiled(
     root: &Dir,
     file: &DiscoveredFile,
     chunk_lines: usize,
@@ -81,7 +83,7 @@ fn prepare_file_profiled(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_file_inner(
+pub(super) fn prepare_file_inner(
     root: &Dir,
     file: &DiscoveredFile,
     chunk_lines: usize,
@@ -236,7 +238,7 @@ fn prepare_file_inner(
     ))
 }
 
-fn record_preparation_duration(
+pub(super) fn record_preparation_duration(
     diagnostics: Option<&mut FilePreparationDiagnostics>,
     started: Option<Instant>,
     select: impl FnOnce(&mut FilePreparationDiagnostics) -> &mut Duration,
@@ -246,16 +248,23 @@ fn record_preparation_duration(
     }
 }
 
-fn read_bounded(root: &Dir, path: &str, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+pub(super) fn read_bounded(
+    root: &Dir,
+    path: &str,
+    max_bytes: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
     read_bounded_file(root.open(path)?.into_std(), max_bytes)
 }
 
 #[cfg(test)]
-fn read_bounded_path(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+pub(super) fn read_bounded_path(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
     read_bounded_file(fs::File::open(path)?, max_bytes)
 }
 
-fn read_bounded_file(file: fs::File, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
+pub(super) fn read_bounded_file(
+    file: fs::File,
+    max_bytes: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
     let mut bytes =
         Vec::with_capacity(usize::try_from(max_bytes.min(64 * 1024)).unwrap_or(64 * 1024));
     file.take(max_bytes.saturating_add(1))
@@ -267,7 +276,7 @@ fn read_bounded_file(file: fs::File, max_bytes: u64) -> std::io::Result<Option<V
     }
 }
 
-fn push_warning(warnings: &mut Vec<String>, warning: String) {
+pub(super) fn push_warning(warnings: &mut Vec<String>, warning: String) {
     const MAX_WARNINGS: usize = 100;
     if warnings.len() < MAX_WARNINGS {
         warnings.push(warning);
@@ -278,7 +287,12 @@ fn push_warning(warnings: &mut Vec<String>, warning: String) {
 ///
 /// Used when size and mtime look unchanged so full reconcile cannot skip a
 /// content rewrite that preserved those metadata fields.
-fn content_unchanged(root: &Dir, path: &str, expected_hash: &str, max_file_bytes: u64) -> bool {
+pub(super) fn content_unchanged(
+    root: &Dir,
+    path: &str,
+    expected_hash: &str,
+    max_file_bytes: u64,
+) -> bool {
     match read_bounded(root, path, max_file_bytes) {
         Ok(Some(bytes)) => hash_bytes(&bytes) == expected_hash,
         Err(_) => false,

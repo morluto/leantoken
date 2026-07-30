@@ -321,7 +321,7 @@ async fn main() -> Result<(), DynError> {
     validate_manifest(&manifest, &source)?;
     preflight_repositories(&source, &args.repos_root)?;
 
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let harness_revision = git_output(source_root, &["rev-parse", "HEAD"])?;
     let harness_dirty = !git_output(
         source_root,

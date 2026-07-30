@@ -1,8 +1,8 @@
-const LEANTOKEN_IGNORE_FILE: &str = ".leantokenignore";
-const GIT_PATH_OUTPUT_BYTES_PER_RESULT: usize = 4_096;
-const GIT_HUNK_OUTPUT_BYTES_PER_RESULT: usize = 64 * 1024;
-const MAX_GIT_DISCOVERY_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-const GENERATED_DIRECTORY_NAMES: &[&str] = &[
+pub(crate) const LEANTOKEN_IGNORE_FILE: &str = ".leantokenignore";
+pub(crate) const GIT_PATH_OUTPUT_BYTES_PER_RESULT: usize = 4_096;
+pub(crate) const GIT_HUNK_OUTPUT_BYTES_PER_RESULT: usize = 64 * 1024;
+pub(crate) const MAX_GIT_DISCOVERY_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const GENERATED_DIRECTORY_NAMES: &[&str] = &[
     ".cache",
     ".gradle",
     ".mypy_cache",
@@ -18,7 +18,7 @@ const GENERATED_DIRECTORY_NAMES: &[&str] = &[
     "target",
     "venv",
 ];
-const GENERATED_DIRECTORY_PATHS: &[&[&str]] = &[
+pub(crate) const GENERATED_DIRECTORY_PATHS: &[&[&str]] = &[
     &[".bun", "install", "cache"],
     &[".local", "share"],
     &[".yarn", "cache"],
@@ -78,18 +78,16 @@ impl DiscoveryPolicy {
             || relative_path.ends_with("/.leantokenignore")
     }
 
-    pub(crate) fn includes_watch_path(
-        &self,
-        relative_path: &str,
-        path_is_directory: bool,
-    ) -> bool {
+    pub(crate) fn includes_watch_path(&self, relative_path: &str, path_is_directory: bool) -> bool {
         if self.includes_path(relative_path, path_is_directory) {
             return true;
         }
         if !self.is_ignore_control_path(relative_path) {
             return false;
         }
-        let parent = relative_path.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let parent = relative_path
+            .rsplit_once('/')
+            .map_or("", |(parent, _)| parent);
         self.index_scope.may_include_descendant(parent)
     }
 }
@@ -210,7 +208,7 @@ pub(crate) fn discover_files_with_limits_policy_and_filter(
     )
 }
 
-const DISCOVERY_PROGRESS_INTERVAL_ENTRIES: u64 = 256;
+pub(crate) const DISCOVERY_PROGRESS_INTERVAL_ENTRIES: u64 = 256;
 
 pub(crate) fn discover_files_with_limits_policy_filter_and_progress(
     root: &Path,
@@ -309,11 +307,11 @@ pub(crate) fn discover_files_with_limits_policy_filter_and_progress(
     Ok(DiscoveryResult { files, stats })
 }
 
-fn entry_metadata(entry: &ignore::DirEntry) -> Result<std::fs::Metadata> {
+pub(crate) fn entry_metadata(entry: &ignore::DirEntry) -> Result<std::fs::Metadata> {
     entry.metadata().map_err(Error::RepositoryTraversal)
 }
 
-fn is_generated_path(relative_path: &str, path_is_directory: bool) -> bool {
+pub(crate) fn is_generated_path(relative_path: &str, path_is_directory: bool) -> bool {
     let components = relative_path
         .split('/')
         .filter(|component| !component.is_empty())
@@ -341,7 +339,7 @@ fn is_generated_path(relative_path: &str, path_is_directory: bool) -> bool {
     false
 }
 
-fn component_eq(actual: &str, expected: &str) -> bool {
+pub(crate) fn component_eq(actual: &str, expected: &str) -> bool {
     if cfg!(windows) {
         actual.eq_ignore_ascii_case(expected)
     } else {
@@ -349,7 +347,7 @@ fn component_eq(actual: &str, expected: &str) -> bool {
     }
 }
 
-fn increment_limit(current: &mut u64, limit: u64, kind: IndexLimitKind) -> Result<()> {
+pub(crate) fn increment_limit(current: &mut u64, limit: u64, kind: IndexLimitKind) -> Result<()> {
     *current = current.saturating_add(1);
     enforce_limit(kind, *current, limit)
 }
@@ -366,6 +364,7 @@ pub(crate) fn enforce_limit(kind: IndexLimitKind, observed: u64, limit: u64) -> 
     }
 }
 
-fn is_git_metadata_path(path: &str) -> bool {
+pub(crate) fn is_git_metadata_path(path: &str) -> bool {
     path.split('/').any(|component| component == ".git")
 }
+use super::*;

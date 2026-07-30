@@ -1,4 +1,5 @@
-fn build_context_coverage(
+use super::*;
+pub(in crate::ranking) fn build_context_coverage(
     request: &ContextRequest,
     selected: &[ScoredCandidate],
     known_omitted: &[ScoredCandidate],

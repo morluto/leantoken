@@ -1,3 +1,5 @@
+use super::*;
+
 /// List the first bounded page of centrally managed caches for the current user.
 pub fn list() -> Result<CacheListReport> {
     list_with(&CacheListRequest::default())

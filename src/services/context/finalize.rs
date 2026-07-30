@@ -1,5 +1,5 @@
 impl Services {
-    fn context_response_with_receipt_reserve(
+    pub(super) fn context_response_with_receipt_reserve(
         &self,
         response: &ContextResponse,
         request: &ContextRequest,
@@ -30,7 +30,7 @@ impl Services {
         Ok(sized)
     }
 
-    fn context_response_tokens_with_receipt_reserve(
+    pub(super) fn context_response_tokens_with_receipt_reserve(
         &self,
         response: &ContextResponse,
         request: &ContextRequest,
@@ -42,7 +42,7 @@ impl Services {
         Ok(serialized_tokens)
     }
 
-    fn context_response_budget_error(
+    pub(super) fn context_response_budget_error(
         &self,
         response: &ContextResponse,
         request: &ContextRequest,
@@ -51,10 +51,7 @@ impl Services {
         let minimum_required_response_tokens =
             self.context_response_tokens_with_receipt_reserve(response, request)?;
         let mut mandatory = response.clone();
-        set_routing_consistency(
-            &mut mandatory,
-            IndexConsistency::ReconcileWorkingTree,
-        );
+        set_routing_consistency(&mut mandatory, IndexConsistency::ReconcileWorkingTree);
         self.finalize_response(&mut mandatory)?;
         Ok(Self::response_budget_exceeded(
             &mandatory.meta,
@@ -63,7 +60,7 @@ impl Services {
         ))
     }
 
-    fn context_response_fits(
+    pub(super) fn context_response_fits(
         &self,
         response: &ContextResponse,
         request: &ContextRequest,
@@ -75,7 +72,7 @@ impl Services {
             .map_err(Into::into)
     }
 
-    fn refresh_context_omission_warning(response: &mut ContextResponse) {
+    pub(super) fn refresh_context_omission_warning(response: &mut ContextResponse) {
         response.warnings.retain(|warning| {
             warning
                 .strip_suffix(" omitted")
@@ -91,7 +88,7 @@ impl Services {
         }
     }
 
-    fn trim_context_selection(response: &mut ContextResponse, keep: usize) {
+    pub(super) fn trim_context_selection(response: &mut ContextResponse, keep: usize) {
         let (removed, removed_tokens) = if let Some(plan) = &mut response.plan {
             let removed = plan.candidates.len().saturating_sub(keep);
             let removed_tokens = plan
@@ -125,7 +122,7 @@ impl Services {
         Self::refresh_context_omission_warning(response);
     }
 
-    fn fit_context_response(
+    pub(super) fn fit_context_response(
         &self,
         response: &mut ContextResponse,
         request: &ContextRequest,
@@ -208,7 +205,7 @@ impl Services {
                 if self.context_response_fits(response, request, max_response_tokens)? {
                     return Ok(());
                 }
-                return Err(Error::InternalFailure(
+                return Err(Error::ResponseAccountingInvariant(
                     "context prefix fitting violated its monotonic sizing reserve".into(),
                 ));
             }
@@ -218,7 +215,7 @@ impl Services {
         Err(self.context_response_budget_error(response, request, max_response_tokens)?)
     }
 
-    fn finalize_context_pipeline(
+    pub(super) fn finalize_context_pipeline(
         &self,
         finalization: ContextFinalization<'_>,
         batch: CandidateBatch,
@@ -413,3 +410,4 @@ impl Services {
         ))
     }
 }
+use super::*;

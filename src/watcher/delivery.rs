@@ -1,4 +1,6 @@
-fn flush(
+use super::*;
+
+pub(super) fn flush(
     pending: &mut BTreeSet<String>,
     rename_from: &mut HashMap<usize, String>,
     rename_to: &mut HashMap<usize, String>,

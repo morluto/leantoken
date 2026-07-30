@@ -1,5 +1,7 @@
-const SERVER_NAME: &str = "leantoken";
-const DISCOVERY_SKILL_MARKER: &str = "<!-- managed by leantoken setup -->";
+use super::*;
+
+pub(super) const SERVER_NAME: &str = "leantoken";
+pub(super) const DISCOVERY_SKILL_MARKER: &str = "<!-- managed by leantoken setup -->";
 
 #[derive(Debug)]
 pub(crate) struct SetupDiagnostic {
@@ -50,7 +52,7 @@ impl SetupClient {
         Self::Antigravity,
     ];
 
-    fn display_name(self) -> &'static str {
+    pub(super) fn display_name(self) -> &'static str {
         match self {
             Self::Claude => "Claude Code",
             Self::Cursor => "Cursor",
@@ -61,7 +63,7 @@ impl SetupClient {
         }
     }
 
-    fn definition(self, home: &Path) -> ClientDefinition {
+    pub(super) fn definition(self, home: &Path) -> ClientDefinition {
         match self {
             Self::Claude => ClientDefinition::json(
                 home.join(".claude.json"),
@@ -105,7 +107,7 @@ impl SetupClient {
         }
     }
 
-    fn is_detected(self, home: &Path) -> bool {
+    pub(super) fn is_detected(self, home: &Path) -> bool {
         match self {
             Self::Claude => home.join(".claude").exists() || home.join(".claude.json").exists(),
             Self::Cursor => home.join(".cursor").exists(),
@@ -120,13 +122,13 @@ impl SetupClient {
 }
 
 #[derive(Debug, Clone)]
-struct ClientDefinition {
-    path: PathBuf,
-    format: ConfigFormat,
+pub(super) struct ClientDefinition {
+    pub(super) path: PathBuf,
+    pub(super) format: ConfigFormat,
 }
 
 impl ClientDefinition {
-    fn json(path: PathBuf, section: &'static str, shape: JsonEntryShape) -> Self {
+    pub(super) fn json(path: PathBuf, section: &'static str, shape: JsonEntryShape) -> Self {
         Self {
             path,
             format: ConfigFormat::Json { section, shape },
@@ -135,7 +137,7 @@ impl ClientDefinition {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum ConfigFormat {
+pub(super) enum ConfigFormat {
     Json {
         section: &'static str,
         shape: JsonEntryShape,
@@ -144,7 +146,7 @@ enum ConfigFormat {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum JsonEntryShape {
+pub(super) enum JsonEntryShape {
     CommandAndArgs,
     OpenCode,
 }

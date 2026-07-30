@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Debug, Clone, Parser)]
 pub struct JsonArgs {
     #[command(subcommand)]
@@ -94,7 +96,10 @@ pub enum JsonCommand {
     },
 }
 
-fn json_selector(pointer: Option<String>, jmespath: Option<String>) -> Option<JsonSelector> {
+pub(super) fn json_selector(
+    pointer: Option<String>,
+    jmespath: Option<String>,
+) -> Option<JsonSelector> {
     pointer
         .map(|pointer| JsonSelector::Pointer { pointer })
         .or_else(|| jmespath.map(|expression| JsonSelector::Jmespath { expression }))

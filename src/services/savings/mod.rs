@@ -1,3 +1,5 @@
+use super::*;
+
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str = "represented-source baseline minus source tokens emitted in successful useful responses for \
     newly classified records; incomplete, unsupported, hash-suppressed, and failed requests are \
     excluded, while upgraded lifetime totals may retain legacy unclassified comparisons";
@@ -255,14 +257,14 @@ fn subtract_service_failures(
     Ok(delta)
 }
 
-fn signed_token_difference(baseline: u64, response: u64) -> i64 {
+pub(super) fn signed_token_difference(baseline: u64, response: u64) -> i64 {
     let difference = i128::from(baseline) - i128::from(response);
     difference.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 fn service_failure_observation(record: ServiceFailureRecord) -> Result<ServiceFailureObservation> {
     let operation = TokenAccountingOperation::from_str(&record.operation).ok_or_else(|| {
-        Error::InternalFailure(format!(
+        Error::OperationFailure(format!(
             "unknown observed service operation: {}",
             record.operation
         ))
@@ -275,7 +277,6 @@ fn service_failure_observation(record: ServiceFailureRecord) -> Result<ServiceFa
 }
 
 impl Services {
-
     /// Return cumulative source-token savings estimates for this repository and tokenizer.
     pub async fn token_savings(&self) -> Result<TokenSavingsResponse> {
         let this = self.clone();
@@ -634,27 +635,6 @@ impl Services {
                 %error,
                 operation = operation.as_str(),
                 "token-savings accounting was skipped"
-            ),
-        }
-    }
-
-    fn record_service_failure(&self, operation: TokenAccountingOperation, error: &Error) {
-        let category = error.observation_category();
-        match self
-            .storage
-            .record_service_failure(self.config.tokenizer.name(), operation, category)
-        {
-            Ok(true) => {}
-            Ok(false) => tracing::debug!(
-                operation = operation.as_str(),
-                error_category = category,
-                "service-failure observation skipped a busy writer"
-            ),
-            Err(observation_error) => tracing::warn!(
-                error = %observation_error,
-                operation = operation.as_str(),
-                error_category = category,
-                "service-failure observation was skipped"
             ),
         }
     }

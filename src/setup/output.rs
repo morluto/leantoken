@@ -1,4 +1,6 @@
-fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
+use super::*;
+
+pub(super) fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
     let stderr = std::io::stderr();
     let mut output = stderr.lock();
     writeln!(output)?;
@@ -64,14 +66,14 @@ fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
     Ok(())
 }
 
-fn plan_symbol(action: ClientPlanAction) -> &'static str {
+pub(super) fn plan_symbol(action: ClientPlanAction) -> &'static str {
     match action {
         ClientPlanAction::Create | ClientPlanAction::Update | ClientPlanAction::Remove => "◇",
         ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => "─",
     }
 }
 
-fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()> {
+pub(super) fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()> {
     writeln!(output, "◆ LeanToken dry-run")?;
     writeln!(output, "  No changes were made.")?;
     for effect in &report.plan {

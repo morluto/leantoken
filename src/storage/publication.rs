@@ -88,14 +88,7 @@ impl Storage {
         rebuild: bool,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
-        self.publish_reconciliation_inner(
-            baseline,
-            config_hash,
-            rebuild,
-            false,
-            |_| Ok(()),
-            write,
-        )
+        self.publish_reconciliation_inner(baseline, config_hash, rebuild, false, |_| Ok(()), write)
             .map(|(generation, output, _)| (generation, output))
     }
 
@@ -108,15 +101,8 @@ impl Storage {
         observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
-        self.publish_reconciliation_inner(
-            baseline,
-            config_hash,
-            rebuild,
-            false,
-            observe,
-            write,
-        )
-        .map(|(generation, output, _)| (generation, output))
+        self.publish_reconciliation_inner(baseline, config_hash, rebuild, false, observe, write)
+            .map(|(generation, output, _)| (generation, output))
     }
 
     /// Build and publish one generation with storage-level profiling enabled.
@@ -128,14 +114,7 @@ impl Storage {
         rebuild: bool,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
-        self.publish_reconciliation_inner(
-            baseline,
-            config_hash,
-            rebuild,
-            true,
-            |_| Ok(()),
-            write,
-        )
+        self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, |_| Ok(()), write)
     }
 
     /// Build and publish with profiling plus bounded storage-phase reporting.
@@ -150,7 +129,7 @@ impl Storage {
         self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, observe, write)
     }
 
-    fn publish_reconciliation_inner<T>(
+    pub(crate) fn publish_reconciliation_inner<T>(
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
@@ -291,7 +270,7 @@ impl Storage {
         })()
     }
 
-    fn insert_file(
+    pub(crate) fn insert_file(
         tx: &Transaction,
         file: &IndexedFile,
         generation: i64,
@@ -393,7 +372,7 @@ impl Storage {
         Ok(())
     }
 
-    fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
+    pub(crate) fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
         let parts = path.split('/').collect::<Vec<_>>();
         let mut insert_directory = tx.prepare_cached(
             "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
@@ -410,7 +389,7 @@ impl Storage {
         Ok(())
     }
 
-    fn remove_orphan_path_entries(tx: &Transaction) -> Result<()> {
+    pub(crate) fn remove_orphan_path_entries(tx: &Transaction) -> Result<()> {
         tx.execute(
             "DELETE FROM path_entries
              WHERE kind = 0
@@ -424,3 +403,4 @@ impl Storage {
         Ok(())
     }
 }
+use super::*;

@@ -345,7 +345,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let manifest_blake3 = blake3::hash(manifest_json.as_bytes()).to_hex().to_string();
     let manifest: Manifest = serde_json::from_str(&manifest_json)?;
     validate_manifest(&manifest)?;
-    let harness_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let harness_root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let harness_identity = source_identity(harness_root)?;
     if harness_identity.dirty {
         return Err("model A/B harness worktree must be clean".into());
@@ -1721,7 +1721,7 @@ mod tests {
 
     #[test]
     fn checked_four_arm_report_preserves_decision_and_redaction_contract() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let path = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"))
             .join("benchmarks/reports/swe-bench-multilingual-four-arm-v2.json");
         let bytes = fs::read(path).expect("checked four-arm report");
         let report: serde_json::Value =

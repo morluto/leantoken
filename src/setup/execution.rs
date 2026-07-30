@@ -1,3 +1,5 @@
+use super::*;
+
 /// Run global MCP setup or removal using the current user environment.
 pub fn run(
     operation: SetupOperation,
@@ -5,7 +7,7 @@ pub fn run(
     json_output: bool,
 ) -> Result<SetupReport> {
     let home = home_directory()
-        .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
+        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
     let native_executable = std::env::current_exe()?.canonicalize()?;
     if operation == SetupOperation::Setup
@@ -32,7 +34,7 @@ pub fn run(
     run_with(operation, request, &environment, &InteractivePrompt)
 }
 
-fn run_with(
+pub(super) fn run_with(
     operation: SetupOperation,
     request: SetupRequest,
     environment: &SetupEnvironment,
@@ -40,7 +42,7 @@ fn run_with(
 ) -> Result<SetupReport> {
     let recovery_path = transaction_path(&environment.runtime_root);
     if request.dry_run && recovery_path.exists() {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "interrupted setup requires recovery before dry-run: {}",
             recovery_path.display()
         )));
@@ -155,7 +157,7 @@ fn run_with(
     Ok(report_from_plan(&plan, false, false, results))
 }
 
-fn report_from_plan(
+pub(super) fn report_from_plan(
     plan: &ResolvedSetupPlan,
     cancelled: bool,
     dry_run: bool,
@@ -184,7 +186,7 @@ fn report_from_plan(
     }
 }
 
-fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
+pub(super) fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport {
     SetupReport {
         operation,
         cancelled: true,
@@ -198,7 +200,7 @@ fn empty_report(operation: SetupOperation, persistent_cli: bool) -> SetupReport 
     }
 }
 
-fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
+pub(super) fn deduplicate(clients: Vec<SetupClient>) -> Vec<SetupClient> {
     SetupClient::ALL
         .into_iter()
         .filter(|client| clients.contains(client))

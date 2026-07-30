@@ -111,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else {
         1.0 - aggregate.returned_response_tokens as f64 / aggregate.full_response_tokens as f64
     };
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repository = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
     let harness_revision = git_output(&repository, &["rev-parse", "HEAD"]);
     let harness_worktree_dirty = git_output(
         &repository,
@@ -280,7 +280,7 @@ fn request(target: Target, expected_hash: Option<String>, delta: bool) -> ReadRe
 }
 
 fn cases() -> Vec<Case> {
-    let real_source = include_str!("../src/services/read.rs").to_owned();
+    let real_source = include_str!("../src/services/read/mod.rs").to_owned();
     let real_changed = real_source.replacen(
         "const MIN_CONTEXT_RANGE_LINES: usize = 12;",
         "const MIN_CONTEXT_RANGE_LINES: usize = 16;",

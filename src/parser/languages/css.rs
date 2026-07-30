@@ -1,4 +1,6 @@
-fn append_css_structure(
+use super::*;
+
+pub(super) fn append_css_structure(
     source: &str,
     root: Node<'_>,
     symbols: &mut Vec<Symbol>,
@@ -89,7 +91,7 @@ fn append_css_structure(
     Ok(())
 }
 
-fn append_css_selector_references(
+pub(super) fn append_css_selector_references(
     source: &str,
     selectors: Node<'_>,
     references: &mut Vec<Reference>,
@@ -123,12 +125,17 @@ fn append_css_selector_references(
     Ok(())
 }
 
-fn push_css_at_rule(source: &str, node: Node<'_>, kind: &str, symbols: &mut Vec<Symbol>) {
+pub(super) fn push_css_at_rule(
+    source: &str,
+    node: Node<'_>,
+    kind: &str,
+    symbols: &mut Vec<Symbol>,
+) {
     let header = css_header(source, node);
     push_structural_symbol(source, node, header.clone(), kind, Some(header), symbols);
 }
 
-fn css_header(source: &str, node: Node<'_>) -> String {
+pub(super) fn css_header(source: &str, node: Node<'_>) -> String {
     node_text(source, node)
         .split_once('{')
         .map_or_else(|| node_text(source, node), |(header, _)| header.to_string())

@@ -1,34 +1,33 @@
 use crate::receipt::{
-    MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT,
-    MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES, MAX_RECEIPT_ID_BYTES, MAX_RECEIPTS,
-    MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES, MAX_TOTAL_RECEIPT_BYTES,
-    RECEIPT_TOUCH_INTERVAL_MILLIS, RECEIPT_TTL_MILLIS, ReceiptDecision, ReceiptEvaluation,
-    ReceiptEvidence, ReceiptRebaseSource, StoredReceipt, decide, format_receipt_id,
-    parse_receipt_id,
+    MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT, MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES,
+    MAX_RECEIPT_ID_BYTES, MAX_RECEIPTS, MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES,
+    MAX_TOTAL_RECEIPT_BYTES, RECEIPT_TOUCH_INTERVAL_MILLIS, RECEIPT_TTL_MILLIS, ReceiptDecision,
+    ReceiptEvaluation, ReceiptEvidence, ReceiptRebaseSource, StoredReceipt, decide,
+    format_receipt_id, parse_receipt_id,
 };
 
-const RECEIPT_HEADER_FIXED_LOGICAL_BYTES: usize = 9 * size_of::<u64>();
+pub(crate) const RECEIPT_HEADER_FIXED_LOGICAL_BYTES: usize = 9 * size_of::<u64>();
 
 #[derive(Debug)]
-struct PersistentReceiptRow {
-    id: i64,
-    repository_identity: String,
-    repository_generation: u64,
-    created_unix_millis: i64,
-    last_access_unix_millis: i64,
-    expires_unix_millis: i64,
-    evidence_count: usize,
-    evidence_bytes: usize,
+pub(crate) struct PersistentReceiptRow {
+    pub(crate) id: i64,
+    pub(crate) repository_identity: String,
+    pub(crate) repository_generation: u64,
+    pub(crate) created_unix_millis: i64,
+    pub(crate) last_access_unix_millis: i64,
+    pub(crate) expires_unix_millis: i64,
+    pub(crate) evidence_count: usize,
+    pub(crate) evidence_bytes: usize,
 }
 
 #[derive(Debug)]
-struct PersistentReceiptUsage {
-    namespace: String,
-    next_access_sequence: i64,
-    receipt_count: usize,
-    receipt_bytes: usize,
-    evidence_count: usize,
-    evidence_bytes: usize,
+pub(crate) struct PersistentReceiptUsage {
+    pub(crate) namespace: String,
+    pub(crate) next_access_sequence: i64,
+    pub(crate) receipt_count: usize,
+    pub(crate) receipt_bytes: usize,
+    pub(crate) evidence_count: usize,
+    pub(crate) evidence_bytes: usize,
 }
 
 impl Storage {
@@ -71,7 +70,7 @@ impl Storage {
             || evidence.len() > MAX_EVIDENCE_PER_RECEIPT
             || receipt.evidence_bytes > MAX_EVIDENCE_BYTES_PER_RECEIPT
         {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "retrieval receipt storage bounds are inconsistent".into(),
             ));
         }
@@ -107,7 +106,7 @@ impl Storage {
         )
     }
 
-    fn evaluate_receipt_at(
+    pub(crate) fn evaluate_receipt_at(
         &self,
         requested_id: Option<&str>,
         generation: u64,
@@ -122,7 +121,7 @@ impl Storage {
             });
         }
         if now_unix_millis < 0 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "system clock precedes the Unix epoch".into(),
             ));
         }
@@ -137,7 +136,7 @@ impl Storage {
         }
         let expires_unix_millis = now_unix_millis
             .checked_add(RECEIPT_TTL_MILLIS)
-            .ok_or_else(|| Error::InternalFailure("retrieval receipt expiry overflow".into()))?;
+            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
         let mut conn = self
             .writer
             .lock()
@@ -189,10 +188,10 @@ impl Storage {
             let logical_bytes = RECEIPT_HEADER_FIXED_LOGICAL_BYTES
                 .checked_add(repository_identity.len())
                 .ok_or_else(|| {
-                    Error::InternalFailure("retrieval receipt byte accounting overflow".into())
+                    Error::OperationFailure("retrieval receipt byte accounting overflow".into())
                 })?;
             if logical_bytes > MAX_TOTAL_RECEIPT_BYTES {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "repository identity exceeds the retrieval receipt byte quota".into(),
                 ));
             }
@@ -200,7 +199,7 @@ impl Storage {
                 || usage.receipt_bytes.saturating_add(logical_bytes) > MAX_TOTAL_RECEIPT_BYTES
             {
                 if !evict_oldest_receipt_except(&tx, None)? {
-                    return Err(Error::InternalFailure(
+                    return Err(Error::OperationFailure(
                         "retrieval receipt quota could not evict a receipt".into(),
                     ));
                 }
@@ -264,8 +263,7 @@ impl Storage {
         let mut append_bytes = 0usize;
         for evidence in returned {
             let logical_bytes = evidence.logical_bytes();
-            if receipt.evidence_count.saturating_add(append.len())
-                >= MAX_EVIDENCE_PER_RECEIPT
+            if receipt.evidence_count.saturating_add(append.len()) >= MAX_EVIDENCE_PER_RECEIPT
                 || receipt
                     .evidence_bytes
                     .saturating_add(append_bytes)
@@ -298,12 +296,9 @@ impl Storage {
 
         let append_count = append.len();
         for (index, (evidence, logical_bytes)) in append.into_iter().enumerate() {
-            let ordinal = receipt
-                .evidence_count
-                .checked_add(index)
-                .ok_or_else(|| {
-                    Error::InternalFailure("retrieval receipt ordinal overflow".into())
-                })?;
+            let ordinal = receipt.evidence_count.checked_add(index).ok_or_else(|| {
+                Error::OperationFailure("retrieval receipt ordinal overflow".into())
+            })?;
             tx.execute(
                 "INSERT INTO retrieval_receipt_evidence(
                     receipt_id,
@@ -323,7 +318,9 @@ impl Storage {
                     usize_to_i64(evidence.start_line)?,
                     usize_to_i64(evidence.end_line)?,
                     evidence.content_hash,
-                    evidence.semantic_signature.map(|signature| signature as i64),
+                    evidence
+                        .semantic_signature
+                        .map(|signature| signature as i64),
                     i64::from(evidence.exact_only),
                     usize_to_i64(logical_bytes)?
                 ],
@@ -340,7 +337,7 @@ impl Storage {
                 params![append_count, append_bytes, receipt.id],
             )?;
             if updated != 1 {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "retrieval receipt disappeared before counter update".into(),
                 ));
             }
@@ -352,8 +349,7 @@ impl Storage {
                 params![append_count, append_bytes],
             )?;
         }
-        let touch_due = now_unix_millis
-            .saturating_sub(receipt.last_access_unix_millis)
+        let touch_due = now_unix_millis.saturating_sub(receipt.last_access_unix_millis)
             >= RECEIPT_TOUCH_INTERVAL_MILLIS;
         if requested_existing && (append_count > 0 || touch_due) {
             let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
@@ -385,7 +381,7 @@ impl Storage {
         self.load_receipt_rebase_source_at(requested_id, unix_millis(SystemTime::now()))
     }
 
-    fn load_receipt_rebase_source_at(
+    pub(crate) fn load_receipt_rebase_source_at(
         &self,
         requested_id: &str,
         now_unix_millis: i64,
@@ -397,7 +393,7 @@ impl Storage {
             });
         }
         if now_unix_millis < 0 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "system clock precedes the Unix epoch".into(),
             ));
         }
@@ -433,7 +429,7 @@ impl Storage {
         }
         let evidence = load_receipt_evidence(&tx, receipt.id)?;
         if evidence.len() != receipt.evidence_count {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "retrieval receipt evidence count is inconsistent".into(),
             ));
         }
@@ -460,7 +456,7 @@ impl Storage {
         )
     }
 
-    fn persist_rebased_receipt_at(
+    pub(crate) fn persist_rebased_receipt_at(
         &self,
         source: &ReceiptRebaseSource,
         expected_repository_generation: u64,
@@ -468,13 +464,13 @@ impl Storage {
         now_unix_millis: i64,
     ) -> Result<String> {
         if now_unix_millis < 0 {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "system clock precedes the Unix epoch".into(),
             ));
         }
         let expires_unix_millis = now_unix_millis
             .checked_add(RECEIPT_TTL_MILLIS)
-            .ok_or_else(|| Error::InternalFailure("retrieval receipt expiry overflow".into()))?;
+            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
         let mut conn = self
             .writer
             .lock()
@@ -526,7 +522,7 @@ impl Storage {
                 .iter()
                 .position(|candidate| candidate == evidence)
             else {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "rebased receipt evidence is not an ordered source subset".into(),
                 ));
             };
@@ -542,18 +538,18 @@ impl Storage {
         let logical_bytes = RECEIPT_HEADER_FIXED_LOGICAL_BYTES
             .checked_add(repository_identity.len())
             .ok_or_else(|| {
-                Error::InternalFailure("retrieval receipt byte accounting overflow".into())
+                Error::OperationFailure("retrieval receipt byte accounting overflow".into())
             })?;
         let evidence_bytes = carried.iter().try_fold(0usize, |total, evidence| {
             total.checked_add(evidence.logical_bytes()).ok_or_else(|| {
-                Error::InternalFailure("retrieval receipt byte accounting overflow".into())
+                Error::OperationFailure("retrieval receipt byte accounting overflow".into())
             })
         })?;
         if carried.len() > MAX_EVIDENCE_PER_RECEIPT
             || evidence_bytes > MAX_EVIDENCE_BYTES_PER_RECEIPT
             || logical_bytes > MAX_TOTAL_RECEIPT_BYTES
         {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "rebased retrieval receipt exceeds its source-derived quota".into(),
             ));
         }
@@ -563,7 +559,7 @@ impl Storage {
             || usage.evidence_bytes.saturating_add(evidence_bytes) > MAX_TOTAL_EVIDENCE_BYTES
         {
             if !evict_oldest_receipt_except(&tx, Some(source_row_id))? {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "retrieval receipt quota cannot preserve the rebase source".into(),
                 ));
             }
@@ -614,7 +610,9 @@ impl Storage {
                     usize_to_i64(evidence.start_line)?,
                     usize_to_i64(evidence.end_line)?,
                     evidence.content_hash,
-                    evidence.semantic_signature.map(|signature| signature as i64),
+                    evidence
+                        .semantic_signature
+                        .map(|signature| signature as i64),
                     1_i64,
                     usize_to_i64(evidence.logical_bytes())?,
                 ],
@@ -626,10 +624,7 @@ impl Storage {
                  SET evidence_count = evidence_count + ?1,
                      evidence_bytes = evidence_bytes + ?2
                  WHERE id = 1",
-                params![
-                    usize_to_i64(carried.len())?,
-                    usize_to_i64(evidence_bytes)?
-                ],
+                params![usize_to_i64(carried.len())?, usize_to_i64(evidence_bytes)?],
             )?;
         }
         let receipt_id = format_receipt_id(&usage.namespace, row_id);
@@ -638,7 +633,7 @@ impl Storage {
     }
 }
 
-fn receipt_usage(tx: &Transaction<'_>) -> Result<PersistentReceiptUsage> {
+pub(crate) fn receipt_usage(tx: &Transaction<'_>) -> Result<PersistentReceiptUsage> {
     tx.query_row(
         "SELECT namespace,
                 next_access_sequence,
@@ -663,9 +658,9 @@ fn receipt_usage(tx: &Transaction<'_>) -> Result<PersistentReceiptUsage> {
     .map_err(Into::into)
 }
 
-fn next_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Result<i64> {
+pub(crate) fn next_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Result<i64> {
     let next = current.checked_add(1).ok_or_else(|| {
-        Error::InternalFailure("retrieval receipt access sequence overflow".into())
+        Error::OperationFailure("retrieval receipt access sequence overflow".into())
     })?;
     let updated = tx.execute(
         "UPDATE retrieval_receipt_usage
@@ -674,23 +669,27 @@ fn next_receipt_access_sequence(tx: &Transaction<'_>, current: i64) -> Result<i6
         params![next, current],
     )?;
     if updated != 1 {
-        return Err(Error::InternalFailure(
+        return Err(Error::OperationFailure(
             "retrieval receipt access sequence changed unexpectedly".into(),
         ));
     }
     Ok(next)
 }
 
-fn load_receipt(tx: &Transaction<'_>, row_id: i64) -> Result<Option<PersistentReceiptRow>> {
+pub(crate) fn load_receipt(
+    tx: &Transaction<'_>,
+    row_id: i64,
+) -> Result<Option<PersistentReceiptRow>> {
     load_receipt_connection(tx, row_id)
 }
 
-fn load_receipt_connection(
+pub(crate) fn load_receipt_connection(
     connection: &Connection,
     row_id: i64,
 ) -> Result<Option<PersistentReceiptRow>> {
-    connection.query_row(
-        "SELECT id,
+    connection
+        .query_row(
+            "SELECT id,
                 repository_identity,
                 repository_generation,
                 created_unix_millis,
@@ -700,32 +699,32 @@ fn load_receipt_connection(
                 evidence_bytes
          FROM retrieval_receipts
          WHERE id = ?1",
-        [row_id],
-        |row| {
-            Ok(PersistentReceiptRow {
-                id: row.get(0)?,
-                repository_identity: row.get(1)?,
-                repository_generation: i64_to_u64(row.get(2)?)?,
-                created_unix_millis: row.get(3)?,
-                last_access_unix_millis: row.get(4)?,
-                expires_unix_millis: row.get(5)?,
-                evidence_count: i64_to_usize(row.get(6)?)?,
-                evidence_bytes: i64_to_usize(row.get(7)?)?,
-            })
-        },
-    )
-    .optional()
-    .map_err(Into::into)
+            [row_id],
+            |row| {
+                Ok(PersistentReceiptRow {
+                    id: row.get(0)?,
+                    repository_identity: row.get(1)?,
+                    repository_generation: i64_to_u64(row.get(2)?)?,
+                    created_unix_millis: row.get(3)?,
+                    last_access_unix_millis: row.get(4)?,
+                    expires_unix_millis: row.get(5)?,
+                    evidence_count: i64_to_usize(row.get(6)?)?,
+                    evidence_bytes: i64_to_usize(row.get(7)?)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
 }
 
-fn load_receipt_evidence(
+pub(crate) fn load_receipt_evidence(
     tx: &Transaction<'_>,
     receipt_id: i64,
 ) -> Result<Vec<ReceiptEvidence>> {
     load_receipt_evidence_connection(tx, receipt_id)
 }
 
-fn load_receipt_evidence_connection(
+pub(crate) fn load_receipt_evidence_connection(
     connection: &Connection,
     receipt_id: i64,
 ) -> Result<Vec<ReceiptEvidence>> {
@@ -750,7 +749,7 @@ fn load_receipt_evidence_connection(
         .map_err(Into::into)
 }
 
-fn prune_expired_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> Result<()> {
+pub(crate) fn prune_expired_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> Result<()> {
     tx.execute(
         "DELETE FROM retrieval_receipts
          WHERE expires_unix_millis <= ?1",
@@ -759,7 +758,7 @@ fn prune_expired_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> Result<
     Ok(())
 }
 
-fn evict_oldest_receipt_except(
+pub(crate) fn evict_oldest_receipt_except(
     tx: &Transaction<'_>,
     retained_id: Option<i64>,
 ) -> Result<bool> {
@@ -790,15 +789,13 @@ fn evict_oldest_receipt_except(
     let Some(candidate) = candidate else {
         return Ok(false);
     };
-    Ok(tx.execute(
-        "DELETE FROM retrieval_receipts WHERE id = ?1",
-        [candidate],
-    )? == 1)
+    Ok(tx.execute("DELETE FROM retrieval_receipts WHERE id = ?1", [candidate])? == 1)
 }
 
-fn unix_millis(time: SystemTime) -> i64 {
+pub(crate) fn unix_millis(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .ok()
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or(0)
 }
+use super::*;

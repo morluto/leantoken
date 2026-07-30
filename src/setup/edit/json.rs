@@ -1,5 +1,7 @@
+use super::*;
+
 #[cfg(test)]
-fn edit_json_config(
+pub(super) fn edit_json_config(
     operation: SetupOperation,
     path: &Path,
     section_name: &str,
@@ -23,7 +25,7 @@ fn edit_json_config(
     Ok(status)
 }
 
-fn resolve_json_edit(
+pub(super) fn resolve_json_edit(
     operation: SetupOperation,
     path: &Path,
     section_name: &str,
@@ -91,7 +93,7 @@ fn resolve_json_edit(
     Ok((status, original, Some(updated)))
 }
 
-fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
+pub(super) fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
     let command = launcher.command()?;
     Ok(match shape {
         JsonEntryShape::CommandAndArgs => json!({
@@ -107,7 +109,7 @@ fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
     })
 }
 
-fn to_cst_input(value: &Value) -> CstInputValue {
+pub(super) fn to_cst_input(value: &Value) -> CstInputValue {
     match value {
         Value::Null => CstInputValue::Null,
         Value::Bool(value) => CstInputValue::Bool(*value),

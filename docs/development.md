@@ -66,7 +66,7 @@ cargo test --locked --package leantoken --all-features \
 
 # CLI binary unit or one example harness
 cargo test --locked --package leantoken --all-features --bin leantoken FILTER
-cargo test --locked --package leantoken --all-features --example NAME FILTER
+cargo test --locked --package leantoken-benchmarks --bin NAME FILTER
 ```
 
 Run the complete product-behavior suite without compiling or executing the
@@ -82,6 +82,10 @@ For a visible, resource-safe phase plan use the Rust workspace task runner:
 cargo xtask test plan --dry-run
 cargo xtask check-test-architecture
 ```
+
+The source tree uses ordinary Rust modules for organization. The architecture
+check rejects any organizational `include!()` directive so the old namespace
+concatenation pattern cannot return.
 
 The runner sequences units, ordinary domain integration, and process-heavy
 tests without launching competing Cargo processes. It also owns exact fixture
@@ -421,10 +425,10 @@ literals must add the new fields. `IndexScope` is immutable after
 normalization; use `Config::discover_scoped` instead of mutating cache
 membership after service startup.
 
-Use `InvalidRequest` only for audited caller validation. Infrastructure and
-invariant failures use `InternalFailure`, which retains the historical
-`invalid request: ...` display prefix for CLI text compatibility while adapters
-classify it as internal. Do not infer error categories from rendered strings.
+Use `InvalidRequest` only for audited caller validation. Serialization,
+response-accounting, cache-pruning, setup, and operation failures each have a
+dedicated typed variant and machine-readable category. Do not infer error
+categories from rendered strings.
 
 ## Benchmarks
 
@@ -454,14 +458,14 @@ samples per arm in alternating ABBA/BAAB order and requires both p50 and p95
 improvement. Both modes validate complete logical/retrieval parity and write
 the raw report under `target/` by default. They are manual evidence and are not
 part of `cargo test-extras` or normal pull-request CI; the small in-process
-contract test remains in the example test target.
+contract test remains in the benchmark package.
 
 On Linux, reproduce the stdio MCP ownership and resource profile after building
 the product binary in release mode:
 
 ```bash
 cargo build --release
-cargo run --release --example mcp_multiprocess_profile -- \
+cargo run --release -p leantoken-benchmarks --bin mcp_multiprocess_profile -- \
   --binary target/release/leantoken \
   --max-index-workers 1 \
   --process-counts 1,4,8 \
@@ -488,7 +492,7 @@ versioned benchmark report.
 Run the deterministic semantic change receipt gate in release mode:
 
 ```bash
-cargo run --release --example semantic_change_receipt_benchmark -- \
+cargo run --release -p leantoken-benchmarks --bin semantic_change_receipt_benchmark -- \
   --iterations 21 \
   --output benchmarks/reports/semantic-change-receipt-v1.json
 ```

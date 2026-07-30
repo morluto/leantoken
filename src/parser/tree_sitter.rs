@@ -1,4 +1,6 @@
-fn empty_parse() -> ParseOutput {
+use super::*;
+
+pub(super) fn empty_parse() -> ParseOutput {
     ParseOutput {
         language: None,
         structurally_complete: false,
@@ -8,7 +10,7 @@ fn empty_parse() -> ParseOutput {
     }
 }
 
-fn parse_tree(
+pub(super) fn parse_tree(
     parser: &mut Parser,
     source: &str,
     is_cancelled: &mut impl FnMut() -> bool,
@@ -20,7 +22,7 @@ fn parse_tree(
     let bytes = source.as_bytes();
     let mut input = |offset: usize, _| bytes.get(offset..).unwrap_or_default();
     let tree = {
-        let mut progress = |_: &tree_sitter::ParseState| {
+        let mut progress = |_: &::tree_sitter::ParseState| {
             if is_cancelled() {
                 ControlFlow::Break(())
             } else {
@@ -34,11 +36,11 @@ fn parse_tree(
     match tree {
         Some(tree) => Ok(tree),
         None if is_cancelled() => Err(Error::Cancelled),
-        None => Err(Error::InternalFailure("parser returned None".into())),
+        None => Err(Error::OperationFailure("parser returned None".into())),
     }
 }
 
-fn language_object(name: &str) -> Option<Language> {
+pub(super) fn language_object(name: &str) -> Option<Language> {
     Some(match name {
         "c" => tree_sitter_c::LANGUAGE.into(),
         "csharp" => tree_sitter_c_sharp::LANGUAGE.into(),
@@ -58,7 +60,7 @@ fn language_object(name: &str) -> Option<Language> {
     })
 }
 
-fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
+pub(super) fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
     let base = match language {
         "c" => tree_sitter_c::TAGS_QUERY,
         "cpp" => tree_sitter_cpp::TAGS_QUERY,
@@ -91,7 +93,7 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
         .map_err(Error::TreeSitterQuery)
 }
 
-fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> {
+pub(super) fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> {
     let src = match language {
         "rust" => RUST_IMPORT_QUERY,
         "python" => PYTHON_IMPORT_QUERY,
@@ -108,7 +110,7 @@ fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> 
         .map_err(Error::TreeSitterQuery)
 }
 
-fn run_query<F>(
+pub(super) fn run_query<F>(
     source: &str,
     query: &Query,
     root: Node,
@@ -124,7 +126,7 @@ where
 
     let mut cursor = QueryCursor::new();
     {
-        let mut progress = |_: &tree_sitter::QueryCursorState| {
+        let mut progress = |_: &::tree_sitter::QueryCursorState| {
             if is_cancelled() {
                 ControlFlow::Break(())
             } else {
@@ -145,7 +147,7 @@ where
     }
 }
 
-fn process_tags_match(
+pub(super) fn process_tags_match(
     language: &str,
     source: &str,
     query: &Query,

@@ -67,8 +67,8 @@
       "id": "context-focus-candidate-coverage",
       "token_budget": 5000,
       "focus_paths": [
-        "src/services/context.rs",
-        "src/ranking.rs",
+        "src/services/context/mod.rs",
+        "src/ranking/mod.rs",
         "tests/services.rs",
         "docs/architecture.md"
       ],
@@ -90,7 +90,7 @@
           "id": "focus-candidate-owner",
           "role": "owner_implementation",
           "evidence": {
-            "path": "src/services/context.rs",
+            "path": "src/services/context/mod.rs",
             "target": {
               "kind": "symbol",
               "name": "append_constraint_candidates"

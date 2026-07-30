@@ -14,7 +14,7 @@ impl Storage {
         } = observation;
         if expected_hash_not_modified && classification != TokenSavingsRequestClass::HashSuppressed
         {
-            return Err(Error::InternalFailure(
+            return Err(Error::OperationFailure(
                 "expected-hash suppression requires hash-suppressed classification".into(),
             ));
         }
@@ -276,3 +276,4 @@ impl Storage {
         self.begin_read()?.token_savings(tokenizer)
     }
 }
+use super::*;

@@ -1,4 +1,5 @@
-fn select_required_candidates(
+use super::*;
+pub(in crate::ranking) fn select_required_candidates(
     mut candidates: Vec<ScoredCandidate>,
     request: &ContextRequest,
     budget: usize,
@@ -117,11 +118,11 @@ fn select_required_candidates(
     (selected, candidates)
 }
 
-fn required_path_matches(candidate: &Candidate, pattern: &str) -> bool {
+pub(in crate::ranking) fn required_path_matches(candidate: &Candidate, pattern: &str) -> bool {
     path_matches(&candidate.path, pattern).unwrap_or(false)
 }
 
-fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
+pub(in crate::ranking) fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
     candidate
         .symbol_name
         .as_deref()
@@ -130,11 +131,11 @@ fn required_symbol_matches(candidate: &Candidate, symbol: &str) -> bool {
         && candidate.target_end_line.is_some()
 }
 
-fn required_symbol_satisfied(candidate: &Candidate, symbol: &str) -> bool {
+pub(in crate::ranking) fn required_symbol_satisfied(candidate: &Candidate, symbol: &str) -> bool {
     required_symbol_matches(candidate, symbol) && !candidate.target_truncated()
 }
 
-fn apply_request_signals(
+pub(in crate::ranking) fn apply_request_signals(
     candidates: &mut [Candidate],
     request: &ContextRequest,
     focus_paths: &PathMatcher,

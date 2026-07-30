@@ -5,7 +5,7 @@ mod read_delta;
 mod receipts;
 
 #[test]
-fn scoped_regex_row_limit_reports_the_governing_bound() {
+pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
     storage
@@ -34,7 +34,7 @@ fn scoped_regex_row_limit_reports_the_governing_bound() {
 }
 
 #[test]
-fn parser_coverage_rows_remain_pinned_across_publication() {
+pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
     storage
@@ -86,7 +86,7 @@ fn parser_coverage_rows_remain_pinned_across_publication() {
 }
 
 #[test]
-fn cold_publication_reports_ordered_bounded_phases() {
+pub(crate) fn cold_publication_reports_ordered_bounded_phases() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -130,7 +130,7 @@ fn cold_publication_reports_ordered_bounded_phases() {
 }
 
 #[test]
-fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_same_cache() {
+pub(crate) fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_same_cache() {
     for target in [
         ReconciliationPublicationPhase::ChunkWordFts,
         ReconciliationPublicationPhase::ChunkTrigramFts,
@@ -191,7 +191,7 @@ fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_same_cache() 
 }
 
 #[test]
-fn writer_bounds_recycled_wal_size() {
+pub(crate) fn writer_bounds_recycled_wal_size() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
     let connection = storage
@@ -205,7 +205,7 @@ fn writer_bounds_recycled_wal_size() {
 }
 
 #[test]
-fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
+pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -280,7 +280,7 @@ fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
     );
 }
 
-fn sample_file(path: &str, content: &str) -> IndexedFile {
+pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {
     IndexedFile {
         path: path.to_string(),
         language: Some("rust".into()),
@@ -303,7 +303,198 @@ fn sample_file(path: &str, content: &str) -> IndexedFile {
 }
 
 #[test]
-fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
+pub(crate) fn enclosing_symbol_lookup_benchmark_rejects_unproven_nesting_depth() {
+    const BASELINE_SQL: &str = r#"
+        WITH requested AS (
+            SELECT CAST(key AS INTEGER) AS request_index,
+                   CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                   CAST(value ->> 'line' AS INTEGER) AS line
+            FROM json_each(?1)
+        )
+        SELECT requested.request_index, symbols.id
+        FROM requested
+        JOIN symbols ON symbols.id = (
+            SELECT enclosing.id
+            FROM symbols AS enclosing
+            WHERE enclosing.file_id = requested.file_id
+              AND enclosing.start_line <= requested.line
+              AND enclosing.end_line >= requested.line
+            ORDER BY (enclosing.end_line - enclosing.start_line), enclosing.start_byte
+            LIMIT 1
+        )
+        ORDER BY requested.request_index
+    "#;
+    const PREFILTER_SQL: &str = r#"
+        WITH requested AS (
+            SELECT CAST(key AS INTEGER) AS request_index,
+                   CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                   CAST(value ->> 'line' AS INTEGER) AS line
+            FROM json_each(?1)
+        ), ranked AS (
+            SELECT requested.request_index, symbols.id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY requested.request_index
+                       ORDER BY (symbols.end_line - symbols.start_line), symbols.start_byte
+                   ) AS rank
+            FROM requested
+            JOIN symbols
+              ON symbols.file_id = requested.file_id
+             AND symbols.start_line <= requested.line
+             AND symbols.end_line >= requested.line
+        )
+        SELECT request_index, id
+        FROM ranked
+        WHERE rank = 1
+        ORDER BY request_index
+    "#;
+
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    let mut files = Vec::new();
+    for file_index in 0..32 {
+        let path = format!("src/file_{file_index:02}.rs");
+        let content = "x\n".repeat(200);
+        let symbols = [
+            ("module", 1, 200, 0),
+            ("outer", 2, 180, 10),
+            ("middle", 10, 150, 20),
+            ("inner", 40, 90, 30),
+        ]
+        .into_iter()
+        .map(|(name, start_line, end_line, start_byte)| SymbolInput {
+            name: format!("{name}_{file_index}"),
+            kind: "function".into(),
+            parent: None,
+            signature: None,
+            start_line,
+            end_line,
+            start_byte,
+            end_byte: start_byte + 10,
+        })
+        .collect();
+        files.push(IndexedFile {
+            path,
+            language: Some("rust".into()),
+            structurally_complete: true,
+            size_bytes: content.len() as u64,
+            modified_ns: None,
+            content_hash: crate::text::hash_bytes(content.as_bytes()),
+            chunks: vec![ChunkInput {
+                content,
+                start_line: 1,
+                end_line: 200,
+                start_byte: 0,
+                end_byte: 400,
+                token_count: 200,
+            }],
+            symbols,
+            references: Vec::new(),
+            imports: Vec::new(),
+        });
+    }
+    storage
+        .full_reconcile("benchmark", files)
+        .expect("index fixture");
+    let session = storage.begin_read().expect("read session");
+    let file_ids = (0..32)
+        .map(|file_index| {
+            session
+                .find_file(&format!("src/file_{file_index:02}.rs"))
+                .expect("find file")
+                .expect("file id")
+                .id
+        })
+        .collect::<Vec<_>>();
+    let locations = file_ids
+        .iter()
+        .flat_map(|file_id| [1, 2, 10, 40, 90, 151, 201].map(|line| (*file_id, line)))
+        .chain(std::iter::once((file_ids[0], 40)))
+        .collect::<Vec<_>>();
+    let input = serde_json::to_string(
+        &locations
+            .iter()
+            .map(|(file_id, line)| serde_json::json!({ "file_id": file_id, "line": line }))
+            .collect::<Vec<_>>(),
+    )
+    .expect("serialize locations");
+    let baseline_expected = session
+        .find_enclosing_symbols_batch(&locations)
+        .expect("baseline lookup")
+        .into_iter()
+        .map(|symbol| symbol.map(|symbol| symbol.id))
+        .collect::<Vec<_>>();
+
+    let mut candidate_statement = session
+        .conn
+        .prepare(PREFILTER_SQL)
+        .expect("candidate query");
+    let mut candidate_lookup = || {
+        let mut result = vec![None; locations.len()];
+        let rows = candidate_statement
+            .query_map(params![&input], |row| {
+                Ok((i64_to_usize(row.get(0)?)?, row.get::<_, i64>(1)?))
+            })
+            .expect("candidate rows");
+        for row in rows {
+            let (index, id) = row.expect("candidate row");
+            result[index] = Some(id);
+        }
+        result
+    };
+    assert_eq!(baseline_expected, candidate_lookup());
+
+    let baseline_plan = session
+        .conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {BASELINE_SQL}"))
+        .expect("baseline plan")
+        .query_map(params![&input], |row| row.get::<_, String>(3))
+        .expect("baseline plan rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("baseline plan values");
+    let candidate_plan = session
+        .conn
+        .prepare(&format!("EXPLAIN QUERY PLAN {PREFILTER_SQL}"))
+        .expect("candidate plan")
+        .query_map(params![&input], |row| row.get::<_, String>(3))
+        .expect("candidate plan rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("candidate plan values");
+    assert!(!baseline_plan.is_empty());
+    assert!(!candidate_plan.is_empty());
+
+    const ITERATIONS: usize = 100;
+    let baseline_start = Instant::now();
+    for _ in 0..ITERATIONS {
+        let actual = session
+            .find_enclosing_symbols_batch(&locations)
+            .expect("baseline benchmark lookup");
+        assert_eq!(
+            actual
+                .into_iter()
+                .map(|symbol| symbol.map(|symbol| symbol.id))
+                .collect::<Vec<_>>(),
+            baseline_expected
+        );
+    }
+    let baseline_micros = baseline_start.elapsed().as_micros();
+    let candidate_start = Instant::now();
+    for _ in 0..ITERATIONS {
+        assert_eq!(candidate_lookup(), baseline_expected);
+    }
+    let candidate_micros = candidate_start.elapsed().as_micros();
+    eprintln!(
+        "enclosing lookup benchmark: locations={} baseline_us={} prefilter_us={} baseline_plan={baseline_plan:?} prefilter_plan={candidate_plan:?}",
+        locations.len(),
+        baseline_micros,
+        candidate_micros
+    );
+    // The prefilter shape is a correctness/planning comparison only. A schema
+    // column such as nesting_depth is not justified until it wins end-to-end
+    // on representative repositories, not just this synthetic micro-phase.
+}
+
+#[test]
+pub(crate) fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     storage
@@ -325,7 +516,7 @@ fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
 }
 
 #[test]
-fn streamed_cancellation_rolls_back_every_insert_and_generation() {
+pub(crate) fn streamed_cancellation_rolls_back_every_insert_and_generation() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -355,7 +546,7 @@ fn streamed_cancellation_rolls_back_every_insert_and_generation() {
 }
 
 #[test]
-fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
+pub(crate) fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     storage
@@ -398,7 +589,7 @@ fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
 }
 
 #[test]
-fn later_streamed_storage_failure_rolls_back_earlier_files() {
+pub(crate) fn later_streamed_storage_failure_rolls_back_earlier_files() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -435,7 +626,7 @@ fn later_streamed_storage_failure_rolls_back_earlier_files() {
 }
 
 #[test]
-fn streamed_panic_rolls_back_and_leaves_storage_reusable() {
+pub(crate) fn streamed_panic_rolls_back_and_leaves_storage_reusable() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     storage
@@ -476,7 +667,7 @@ fn streamed_panic_rolls_back_and_leaves_storage_reusable() {
 }
 
 #[test]
-fn bulk_rebuild_refreshes_both_chunk_search_indexes() {
+pub(crate) fn bulk_rebuild_refreshes_both_chunk_search_indexes() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     storage
@@ -522,7 +713,7 @@ fn bulk_rebuild_refreshes_both_chunk_search_indexes() {
 }
 
 #[test]
-fn readers_see_old_generation_until_streamed_publication_commits() {
+pub(crate) fn readers_see_old_generation_until_streamed_publication_commits() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     storage
@@ -547,7 +738,7 @@ fn readers_see_old_generation_until_streamed_publication_commits() {
 }
 
 #[test]
-fn stale_streaming_baseline_fails_before_invoking_the_writer() {
+pub(crate) fn stale_streaming_baseline_fails_before_invoking_the_writer() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let stale = storage.meta().expect("stale baseline");
@@ -571,7 +762,7 @@ fn stale_streaming_baseline_fails_before_invoking_the_writer() {
 }
 
 #[test]
-fn repository_binding_updates_last_access_once_per_open() {
+pub(crate) fn repository_binding_updates_last_access_once_per_open() {
     let directory = tempfile::tempdir().expect("directory");
     let repository = directory.path().join("repository");
     fs::create_dir(&repository).expect("repository");
@@ -609,7 +800,7 @@ fn repository_binding_updates_last_access_once_per_open() {
 }
 
 #[test]
-fn token_savings_accounting_skips_a_busy_local_writer() {
+pub(crate) fn token_savings_accounting_skips_a_busy_local_writer() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let meta = ResponseMeta {
@@ -717,7 +908,7 @@ fn token_savings_accounting_skips_a_busy_local_writer() {
 }
 
 #[test]
-fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
+pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let mut file = sample_file("source.rs", "hello\n\n");
@@ -765,7 +956,7 @@ fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
 }
 
 #[test]
-fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
+pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let mut files = (0..80)

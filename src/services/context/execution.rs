@@ -1,6 +1,6 @@
 impl Services {
     #[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
-    fn context_sync(
+    pub(super) fn context_sync(
         &self,
         mut request: ContextRequest,
         workflow: ContextWorkflow,
@@ -190,3 +190,4 @@ impl Services {
         })
     }
 }
+use super::*;

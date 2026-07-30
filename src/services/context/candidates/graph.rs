@@ -1,5 +1,5 @@
 impl Services {
-    fn file_change_boost(
+    pub(in crate::services::context) fn file_change_boost(
         file_generation: Option<u64>,
         path: &str,
         changed_paths: &HashSet<String>,
@@ -20,7 +20,7 @@ impl Services {
         boost
     }
 
-    fn append_import_symbol_candidates(
+    pub(in crate::services::context) fn append_import_symbol_candidates(
         &self,
         expansion: ImportExpansion<'_>,
         candidates: &mut Vec<Candidate>,
@@ -120,7 +120,7 @@ impl Services {
         Ok(())
     }
 
-    fn apply_reverse_dependency_boost(
+    pub(in crate::services::context) fn apply_reverse_dependency_boost(
         &self,
         session: &ReadSession,
         queries: &[ContextQuery],
@@ -150,3 +150,4 @@ impl Services {
         Ok(())
     }
 }
+use super::*;

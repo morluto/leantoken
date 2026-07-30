@@ -1,4 +1,6 @@
-fn resolve_imports(
+use super::*;
+
+pub(super) fn resolve_imports(
     files: &mut [IndexedFile],
     repository_paths: &HashSet<String>,
     cancellation: &CancellationToken,
@@ -16,7 +18,7 @@ fn resolve_imports(
 }
 
 #[cfg(test)]
-fn resolve_import(
+pub(super) fn resolve_import(
     source_path: &str,
     raw_target: &str,
     repository_paths: &HashSet<String>,
@@ -27,7 +29,7 @@ fn resolve_import(
     )
 }
 
-fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
+pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     let source = std::path::Path::new(source_path);
     let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
     let mut bases = Vec::new();
@@ -97,7 +99,10 @@ fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     matches
 }
 
-fn python_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::path::PathBuf> {
+pub(super) fn python_module_paths(
+    source: &std::path::Path,
+    raw_target: &str,
+) -> Vec<std::path::PathBuf> {
     let level = raw_target.bytes().take_while(|byte| *byte == b'.').count();
     let module = raw_target[level..].replace('.', "/");
     if level == 0 {
@@ -126,7 +131,10 @@ fn python_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::p
 /// target, all module prefixes are tried from longest to shortest so that
 /// `module::symbol` resolves to `module` when the full `module/symbol`
 /// path does not exist.
-fn rust_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::path::PathBuf> {
+pub(super) fn rust_module_paths(
+    source: &std::path::Path,
+    raw_target: &str,
+) -> Vec<std::path::PathBuf> {
     let trimmed = raw_target.trim();
     let (stripped, roots) = if let Some(target) = trimmed.strip_prefix("crate::") {
         (target, rust_crate_roots(source))
@@ -197,7 +205,7 @@ fn rust_module_paths(source: &std::path::Path, raw_target: &str) -> Vec<std::pat
     bases
 }
 
-fn rust_source_module_dir(source: &std::path::Path) -> std::path::PathBuf {
+pub(super) fn rust_source_module_dir(source: &std::path::Path) -> std::path::PathBuf {
     let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
     match source.file_stem().and_then(|stem| stem.to_str()) {
         Some("lib" | "main" | "mod") | None => parent.to_path_buf(),
@@ -205,7 +213,7 @@ fn rust_source_module_dir(source: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-fn rust_crate_roots(source: &std::path::Path) -> Vec<std::path::PathBuf> {
+pub(super) fn rust_crate_roots(source: &std::path::Path) -> Vec<std::path::PathBuf> {
     if source.starts_with("src") {
         vec![std::path::PathBuf::from("src"), std::path::PathBuf::new()]
     } else {
@@ -213,7 +221,7 @@ fn rust_crate_roots(source: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
 }
 
-fn resolve_import_candidates(
+pub(super) fn resolve_import_candidates(
     candidates: &[String],
     repository_paths: &HashSet<String>,
 ) -> Option<String> {
@@ -230,7 +238,7 @@ fn resolve_import_candidates(
     None
 }
 
-fn normalize_relative(path: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(super) fn normalize_relative(path: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut normalized = std::path::PathBuf::new();
     for component in path.components() {
         match component {
