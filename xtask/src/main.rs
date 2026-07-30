@@ -13,12 +13,21 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::thread;
+use std::time::Instant;
 
 const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
+const PRODUCT_PARALLEL_LANES: usize = 2;
+const PRODUCT_PHASE_NAMES: [&str; 4] = [
+    "library and binary units",
+    "ordinary integration",
+    "executable and MCP process behavior",
+    "checked-in fixture cases",
+];
 
 fn main() -> ExitCode {
     match run() {
@@ -202,9 +211,12 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
     };
     match command {
         "product" => {
+            if args.len() == 2 && args[1] == "--parallel" {
+                return run_parallel_product_plan(root, TestPlan::for_workspace(root)?);
+            }
             if args.len() != 1 {
                 return Err(XtaskError::Usage(
-                    "`test product` does not accept additional arguments".to_owned(),
+                    "`test product` accepts only --parallel".to_owned(),
                 ));
             }
             run_plan(root, TestPlan::for_workspace(root)?)
@@ -356,6 +368,88 @@ fn run_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
                     code: status.code(),
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+fn run_parallel_product_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
+    if plan.repetitions != 1
+        || plan.commands.len() < PRODUCT_PARALLEL_LANES + 1
+        || plan.commands.len() > PRODUCT_PHASE_NAMES.len()
+    {
+        return Err(XtaskError::Architecture(
+            "parallel product plan shape drifted".to_owned(),
+        ));
+    }
+    let (parallel, sequential) = plan.commands.split_at(PRODUCT_PARALLEL_LANES);
+    let results = thread::scope(|scope| {
+        parallel
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    let status = print_and_run(root, command);
+                    (index, status, started.elapsed())
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join())
+            .collect::<Vec<_>>()
+    });
+
+    let mut first_failure = None;
+    for result in results {
+        match result {
+            Ok((index, status, elapsed)) => {
+                println!(
+                    "==> {} completed in {:.2}s",
+                    PRODUCT_PHASE_NAMES[index],
+                    elapsed.as_secs_f64()
+                );
+                let error = match status {
+                    Ok(status) if status.success() => None,
+                    Ok(status) => Some(XtaskError::CommandFailed {
+                        command: parallel[index].join(" "),
+                        code: status.code(),
+                    }),
+                    Err(error) => Some(error),
+                };
+                if let Some(error) = error {
+                    eprintln!("==> {} failed: {error}", PRODUCT_PHASE_NAMES[index]);
+                    if first_failure.is_none() {
+                        first_failure = Some(error);
+                    }
+                }
+            }
+            Err(_) if first_failure.is_none() => {
+                first_failure = Some(XtaskError::Architecture(
+                    "parallel product lane panicked".to_owned(),
+                ));
+            }
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_failure {
+        return Err(error);
+    }
+
+    for (offset, command) in sequential.iter().enumerate() {
+        let index = PRODUCT_PARALLEL_LANES + offset;
+        let started = Instant::now();
+        let status = print_and_run(root, command)?;
+        println!(
+            "==> {} completed in {:.2}s",
+            PRODUCT_PHASE_NAMES[index],
+            started.elapsed().as_secs_f64()
+        );
+        if !status.success() {
+            return Err(XtaskError::CommandFailed {
+                command: command.join(" "),
+                code: status.code(),
+            });
         }
     }
     Ok(())
@@ -860,10 +954,10 @@ fn workspace_root() -> PathBuf {
         .expect("xtask lives below workspace root")
 }
 fn usage() -> String {
-    "cargo xtask check-test-architecture | test-focused <selector> | test {product|fixtures|list|run|bless|stress|profile|plan}".to_owned()
+    "cargo xtask check-test-architecture | test-focused <selector> | test {product [--parallel]|fixtures|list|run|bless|stress|profile|plan}".to_owned()
 }
 fn test_usage() -> String {
-    "cargo xtask test product | fixtures | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
+    "cargo xtask test product [--parallel] | fixtures | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
 }
 
 #[derive(Debug)]
@@ -915,7 +1009,8 @@ impl From<FixtureError> for XtaskError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BENCHMARKS, TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root,
+        BENCHMARKS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError, listed_test_count,
+        run_parallel_product_plan, valid_fixture_identity, workspace_root,
     };
     use std::fs;
 
@@ -933,6 +1028,21 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
         );
+        assert_eq!(PRODUCT_PARALLEL_LANES, 2);
+        assert!(plan.commands[0].contains(&"--workspace".to_owned()));
+        assert!(
+            plan.commands[1]
+                .windows(2)
+                .any(|args| args == ["--package", PRODUCT])
+        );
+        assert!(
+            plan.commands[1]
+                .windows(2)
+                .any(|args| args == ["--skip", "process::"])
+        );
+        assert!(!plan.commands[0].contains(&"process::".to_owned()));
+        assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"process::".to_owned()));
+        assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"--test-threads=2".to_owned()));
         assert!(
             plan.commands
                 .iter()
@@ -952,24 +1062,17 @@ mod tests {
     }
 
     #[test]
-    fn ci_product_workspace_phases_exclude_benchmark_targets() {
+    fn ci_uses_the_bounded_parallel_product_plan() {
         let workflow = include_str!("../../.github/workflows/ci.yml");
-        for name in [
-            "Test library and binary units",
-            "Test checked-in fixture cases",
-        ] {
-            let after_phase = workflow
-                .split_once(&format!("- name: {name}"))
-                .unwrap_or_else(|| panic!("{name} phase"))
-                .1;
-            let phase = after_phase
-                .split_once("- name:")
-                .map_or(after_phase, |(phase, _)| phase);
-            assert!(
-                phase.contains("--exclude leantoken-benchmarks"),
-                "{name} rebuilt benchmark targets"
-            );
-        }
+        let after_phase = workflow
+            .split_once("- name: Test product behavior")
+            .expect("product phase")
+            .1;
+        let phase = after_phase
+            .split_once("- name:")
+            .map_or(after_phase, |(phase, _)| phase);
+        assert!(phase.contains("cargo xtask test product --parallel"));
+        assert!(!phase.contains("cargo test --locked"));
     }
 
     #[test]
@@ -979,6 +1082,40 @@ mod tests {
             code: Some(101),
         };
         assert_eq!(error.exit_code(), 101);
+    }
+
+    #[test]
+    fn parallel_product_runner_executes_its_bounded_plan() {
+        let command = vec!["cargo".to_owned(), "--version".to_owned()];
+        let plan = TestPlan {
+            commands: vec![command.clone(), command.clone(), command],
+            repetitions: 1,
+        };
+        run_parallel_product_plan(&workspace_root(), plan).expect("parallel plan");
+    }
+
+    #[test]
+    fn parallel_product_runner_preserves_a_lane_failure_and_stops() {
+        let plan = TestPlan {
+            commands: vec![
+                vec![
+                    "cargo".to_owned(),
+                    "--invalid-parallel-test-flag".to_owned(),
+                ],
+                vec!["cargo".to_owned(), "--version".to_owned()],
+                vec!["this-program-must-not-run".to_owned()],
+            ],
+            repetitions: 1,
+        };
+        let error =
+            run_parallel_product_plan(&workspace_root(), plan).expect_err("failed lane passed");
+        match error {
+            XtaskError::CommandFailed { command, code } => {
+                assert!(command.contains("--invalid-parallel-test-flag"));
+                assert!(code.is_some());
+            }
+            error => panic!("unexpected error: {error}"),
+        }
     }
 
     #[test]

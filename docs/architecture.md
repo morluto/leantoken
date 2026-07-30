@@ -1363,6 +1363,12 @@ separate exact phase runs it after the suite-lib harness completes. Both phases
 use the same workspace feature graph so the exact phase reuses the compiled
 harness; the development-profile fixture binary remains available only for
 targeted run and bless operations.
+The product test orchestrator may overlap exactly two Cargo children: the
+library/binary unit lane and ordinary integration lane. It waits for both
+before starting executable/MCP process behavior, whose libtest concurrency
+remains capped at two, and then runs the fixture aggregate serially. Any
+parallel-lane failure prevents later phases and is reported with its original
+child exit code.
 
 The manual TypeScript recovery evaluator is example-only and does not alter
 services, indexing, storage, ranking, or MCP schemas. It accepts at most
