@@ -30,6 +30,7 @@ The contributor-facing aliases are locked and remain short:
 
 ```text
 cargo test-focused services::search
+cargo test-focused protocol
 cargo test-product
 cargo test-contract
 cargo test-extras
@@ -44,11 +45,13 @@ cargo xtask test profile
 ```
 
 `xtask` prints every Cargo command before execution and preserves its exit
-status. `plan --dry-run` performs no test work. The contract benchmark is an
-explicit `test = false` example and is run only by `cargo test-contract`; it is
-not an ignored default test. Domain fixture execution and blessing are owned
-by the domain module selected by the case operation. A generic runner never
-rewrites expected output.
+status. Focused selectors for named suite domains build only the owning suite;
+other filters search both product and suite packages. Zero matches and
+cross-package ambiguity are errors. `plan --dry-run` performs no test work. The
+contract benchmark is an explicit `test = false` example and is run only by
+`cargo test-contract`; it is not an ignored default test. Domain fixture
+execution and blessing are owned by the domain module selected by the case
+operation. A generic runner never rewrites expected output.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their
