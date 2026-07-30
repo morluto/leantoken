@@ -170,7 +170,10 @@ The exact external-corpus command, frozen retrieval gate, and no-ship result
 are documented in
 [`../benchmarks/README.md`](../benchmarks/README.md#kotlin-structural-indexing-evaluation).
 The excluded manifest pins the exact unreleased 0.4.0 grammar commit without
-adding it to the normal dependency graph. Kotlin remains unsupported by
+adding it to the normal dependency graph. Its corpus diagnostic reads blobs
+from the requested commit rather than from the checkout, reports `.kt` and
+`.kts` extension aggregates separately, and labels grammar syntax-node counts
+separately from production extraction. Kotlin remains unsupported by
 production structural parsing; this target is an evaluation contract, not an
 index-readiness check.
 

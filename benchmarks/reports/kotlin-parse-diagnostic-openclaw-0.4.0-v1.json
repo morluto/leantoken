@@ -29,7 +29,7 @@
     "nodes_visited": 1531251,
     "error_nodes": 11,
     "missing_nodes": 0,
-    "extracted": {
+    "syntax_node_counts": {
       "definitions": 23908,
       "nested_definitions": 20953,
       "imports": 6768,
@@ -37,7 +37,7 @@
       "calls_with_owner": 65126,
       "owner_ranges": 8310
     },
-    "retained_in_incomplete_files": {
+    "syntax_nodes_retained_in_incomplete_files": {
       "definitions": 1891,
       "nested_definitions": 1755,
       "imports": 276,
@@ -56,7 +56,7 @@
         "nodes_visited": 962861,
         "error_nodes": 10,
         "missing_nodes": 0,
-        "extracted": {
+        "syntax_node_counts": {
           "definitions": 14969,
           "nested_definitions": 12275,
           "imports": 4563,
@@ -64,7 +64,7 @@
           "calls_with_owner": 35209,
           "owner_ranges": 5312
         },
-        "retained_in_incomplete_files": {
+        "syntax_nodes_retained_in_incomplete_files": {
           "definitions": 1841,
           "nested_definitions": 1706,
           "imports": 256,
@@ -83,7 +83,7 @@
         "nodes_visited": 568390,
         "error_nodes": 1,
         "missing_nodes": 0,
-        "extracted": {
+        "syntax_node_counts": {
           "definitions": 8939,
           "nested_definitions": 8678,
           "imports": 2205,
@@ -91,13 +91,69 @@
           "calls_with_owner": 29917,
           "owner_ranges": 2998
         },
-        "retained_in_incomplete_files": {
+        "syntax_nodes_retained_in_incomplete_files": {
           "definitions": 50,
           "nested_definitions": 49,
           "imports": 20,
           "calls": 202,
           "calls_with_owner": 202,
           "owner_ranges": 20
+        }
+      }
+    }
+  ],
+  "extension_strata": [
+    {
+      "extension": "kt",
+      "counts": {
+        "files": 413,
+        "incomplete_files": 9,
+        "source_bytes": 5598679,
+        "nodes_visited": 1524952,
+        "error_nodes": 11,
+        "missing_nodes": 0,
+        "syntax_node_counts": {
+          "definitions": 23857,
+          "nested_definitions": 20949,
+          "imports": 6762,
+          "calls": 65458,
+          "calls_with_owner": 65112,
+          "owner_ranges": 8307
+        },
+        "syntax_nodes_retained_in_incomplete_files": {
+          "definitions": 1891,
+          "nested_definitions": 1755,
+          "imports": 276,
+          "calls": 4557,
+          "calls_with_owner": 4540,
+          "owner_ranges": 602
+        }
+      }
+    },
+    {
+      "extension": "kts",
+      "counts": {
+        "files": 6,
+        "incomplete_files": 0,
+        "source_bytes": 21701,
+        "nodes_visited": 6299,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "syntax_node_counts": {
+          "definitions": 51,
+          "nested_definitions": 4,
+          "imports": 6,
+          "calls": 372,
+          "calls_with_owner": 14,
+          "owner_ranges": 3
+        },
+        "syntax_nodes_retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "calls": 0,
+          "calls_with_owner": 0,
+          "owner_ranges": 0
         }
       }
     }

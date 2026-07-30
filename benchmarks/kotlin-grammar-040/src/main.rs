@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
@@ -16,6 +15,9 @@ use clap::Parser;
 use serde::Serialize;
 use tempfile::NamedTempFile;
 use tree_sitter::{Node, ParseOptions, Parser as TreeParser, Tree};
+
+#[cfg(test)]
+use std::fs;
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_FILES: usize = 100_000;
@@ -56,6 +58,7 @@ struct DiagnosticReport {
     limits: LimitReport,
     summary: Counts,
     strata: Vec<StratumReport>,
+    extension_strata: Vec<ExtensionStratumReport>,
     recovery_category_count: u64,
     recovery_categories: Vec<RecoveryCategory>,
     other_recovery_nodes: u64,
@@ -97,12 +100,12 @@ struct Counts {
     nodes_visited: u64,
     error_nodes: u64,
     missing_nodes: u64,
-    extracted: ExtractionCounts,
-    retained_in_incomplete_files: ExtractionCounts,
+    syntax_node_counts: SyntaxNodeCounts,
+    syntax_nodes_retained_in_incomplete_files: SyntaxNodeCounts,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
-struct ExtractionCounts {
+struct SyntaxNodeCounts {
     definitions: u64,
     nested_definitions: u64,
     imports: u64,
@@ -114,6 +117,12 @@ struct ExtractionCounts {
 #[derive(Debug, Serialize)]
 struct StratumReport {
     source_shape: &'static str,
+    counts: Counts,
+}
+
+#[derive(Debug, Serialize)]
+struct ExtensionStratumReport {
+    extension: &'static str,
     counts: Counts,
 }
 
@@ -133,6 +142,21 @@ enum SourceShape {
     Fixture,
     Generated,
     IntentionalInvalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum SourceExtension {
+    KotlinSource,
+    KotlinScript,
+}
+
+impl SourceExtension {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::KotlinSource => "kt",
+            Self::KotlinScript => "kts",
+        }
+    }
 }
 
 impl SourceShape {
@@ -194,24 +218,22 @@ fn analyze(root: &Path, revision: &str, mut paths: Vec<PathBuf>) -> AnyResult<Di
     let mut corpus_hasher = blake3::Hasher::new();
     let mut summary = Counts::default();
     let mut strata = BTreeMap::<SourceShape, Counts>::new();
+    let mut extension_strata = BTreeMap::<SourceExtension, Counts>::new();
     let mut recovery = BTreeMap::<RecoveryKey, u64>::new();
 
     for relative in paths {
         let normalized = validate_kotlin_path(&relative)?;
-        let full_path = root.join(&relative);
-        let metadata = fs::symlink_metadata(&full_path)?;
-        if !metadata.file_type().is_file() {
-            return Err(invalid_data("diagnostic inputs must be regular files").into());
-        }
-        let bytes = read_bounded_file(&full_path, MAX_FILE_BYTES)?;
+        let bytes = read_pinned_blob(root, revision, &normalized)?;
         let source = std::str::from_utf8(&bytes)
             .map_err(|_| invalid_data("Kotlin diagnostic input is not UTF-8"))?;
         update_corpus_hash(&mut corpus_hasher, normalized.as_bytes(), &bytes)?;
         let shape = classify_source_shape(&relative);
+        let extension = source_extension(&relative)?;
         let tree = parse_with_deadline(&mut parser, source)?;
         let file = inspect_tree(&tree, shape, bytes.len())?;
         add_counts(&mut summary, &file.counts)?;
         add_counts(strata.entry(shape).or_default(), &file.counts)?;
+        add_counts(extension_strata.entry(extension).or_default(), &file.counts)?;
         for (key, count) in file.recovery {
             if !recovery.contains_key(&key) && recovery.len() >= MAX_RECOVERY_CATEGORIES {
                 return Err(invalid_data("diagnostic exceeded its recovery-category bound").into());
@@ -275,6 +297,13 @@ fn analyze(root: &Path, revision: &str, mut paths: Vec<PathBuf>) -> AnyResult<Di
             .into_iter()
             .map(|(shape, counts)| StratumReport {
                 source_shape: shape.label(),
+                counts,
+            })
+            .collect(),
+        extension_strata: extension_strata
+            .into_iter()
+            .map(|(extension, counts)| ExtensionStratumReport {
+                extension: extension.label(),
                 counts,
             })
             .collect(),
@@ -343,24 +372,25 @@ fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResu
         }
 
         if node_is_definition {
-            diagnostic.counts.extracted.definitions =
-                checked_add(diagnostic.counts.extracted.definitions, 1)?;
+            diagnostic.counts.syntax_node_counts.definitions =
+                checked_add(diagnostic.counts.syntax_node_counts.definitions, 1)?;
             if definition_ancestors > 0 {
-                diagnostic.counts.extracted.nested_definitions =
-                    checked_add(diagnostic.counts.extracted.nested_definitions, 1)?;
+                diagnostic.counts.syntax_node_counts.nested_definitions =
+                    checked_add(diagnostic.counts.syntax_node_counts.nested_definitions, 1)?;
             }
             if node_is_owner {
-                diagnostic.counts.extracted.owner_ranges =
-                    checked_add(diagnostic.counts.extracted.owner_ranges, 1)?;
+                diagnostic.counts.syntax_node_counts.owner_ranges =
+                    checked_add(diagnostic.counts.syntax_node_counts.owner_ranges, 1)?;
             }
         } else if node.kind() == "import_header" {
-            diagnostic.counts.extracted.imports =
-                checked_add(diagnostic.counts.extracted.imports, 1)?;
+            diagnostic.counts.syntax_node_counts.imports =
+                checked_add(diagnostic.counts.syntax_node_counts.imports, 1)?;
         } else if node.kind() == "call_expression" {
-            diagnostic.counts.extracted.calls = checked_add(diagnostic.counts.extracted.calls, 1)?;
+            diagnostic.counts.syntax_node_counts.calls =
+                checked_add(diagnostic.counts.syntax_node_counts.calls, 1)?;
             if owner_ancestors > 0 {
-                diagnostic.counts.extracted.calls_with_owner =
-                    checked_add(diagnostic.counts.extracted.calls_with_owner, 1)?;
+                diagnostic.counts.syntax_node_counts.calls_with_owner =
+                    checked_add(diagnostic.counts.syntax_node_counts.calls_with_owner, 1)?;
             }
         }
 
@@ -393,7 +423,8 @@ fn finish_file_diagnostic(
     incomplete: bool,
 ) -> AnyResult<FileDiagnostic> {
     if incomplete {
-        diagnostic.counts.retained_in_incomplete_files = diagnostic.counts.extracted.clone();
+        diagnostic.counts.syntax_nodes_retained_in_incomplete_files =
+            diagnostic.counts.syntax_node_counts.clone();
     }
     Ok(diagnostic)
 }
@@ -459,14 +490,17 @@ fn add_counts(target: &mut Counts, other: &Counts) -> AnyResult<()> {
     target.nodes_visited = checked_add(target.nodes_visited, other.nodes_visited)?;
     target.error_nodes = checked_add(target.error_nodes, other.error_nodes)?;
     target.missing_nodes = checked_add(target.missing_nodes, other.missing_nodes)?;
-    add_extraction(&mut target.extracted, &other.extracted)?;
-    add_extraction(
-        &mut target.retained_in_incomplete_files,
-        &other.retained_in_incomplete_files,
+    add_syntax_node_counts(&mut target.syntax_node_counts, &other.syntax_node_counts)?;
+    add_syntax_node_counts(
+        &mut target.syntax_nodes_retained_in_incomplete_files,
+        &other.syntax_nodes_retained_in_incomplete_files,
     )
 }
 
-fn add_extraction(target: &mut ExtractionCounts, other: &ExtractionCounts) -> AnyResult<()> {
+fn add_syntax_node_counts(
+    target: &mut SyntaxNodeCounts,
+    other: &SyntaxNodeCounts,
+) -> AnyResult<()> {
     target.definitions = checked_add(target.definitions, other.definitions)?;
     target.nested_definitions = checked_add(target.nested_definitions, other.nested_definitions)?;
     target.imports = checked_add(target.imports, other.imports)?;
@@ -513,29 +547,56 @@ fn classify_source_shape(path: &Path) -> SourceShape {
     }
 }
 
+fn source_extension(path: &Path) -> AnyResult<SourceExtension> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("kt") => Ok(SourceExtension::KotlinSource),
+        Some("kts") => Ok(SourceExtension::KotlinScript),
+        _ => Err(invalid_data("diagnostic path has an unsupported extension").into()),
+    }
+}
+
 fn pinned_kotlin_paths(repository: &Path, expected_revision: &str) -> AnyResult<Vec<PathBuf>> {
     validate_revision(expected_revision)?;
-    let actual = git_text(repository, &["rev-parse", "HEAD^{commit}"])?;
+    let commit_spec = format!("{expected_revision}^{{commit}}");
+    let actual = git_text(repository, &["rev-parse", "--verify", &commit_spec])?;
     if actual.trim() != expected_revision {
-        return Err(invalid_data("checkout HEAD does not match the requested revision").into());
+        return Err(invalid_data("requested revision did not resolve to the exact commit").into());
     }
-    let status = git_bytes(
+    let paths = git_bytes(
         repository,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=no"],
+        &[
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            expected_revision,
+            "--",
+        ],
     )?;
-    if !status.is_empty() {
-        return Err(invalid_data("tracked checkout state is not clean").into());
-    }
-    let paths = git_bytes(repository, &["ls-files", "-z", "--", "*.kt", "*.kts"])?;
     paths
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
-        .map(|path| {
+        .filter_map(|path| {
             let path = std::str::from_utf8(path)
-                .map_err(|_| invalid_data("tracked Kotlin path is not UTF-8"))?;
-            Ok(PathBuf::from(path))
+                .map_err(|_| invalid_data("tracked Kotlin path is not UTF-8"));
+            match path {
+                Ok(path) if path.ends_with(".kt") || path.ends_with(".kts") => {
+                    Some(Ok(PathBuf::from(path)))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(error.into())),
+            }
         })
         .collect()
+}
+
+fn read_pinned_blob(repository: &Path, revision: &str, relative_path: &str) -> AnyResult<Vec<u8>> {
+    let object = format!("{revision}:{relative_path}");
+    let bytes = git_bytes(repository, &["cat-file", "blob", &object])?;
+    if usize_to_u64(bytes.len())? > MAX_FILE_BYTES {
+        return Err(invalid_data("diagnostic input exceeded its per-file byte bound").into());
+    }
+    Ok(bytes)
 }
 
 fn validate_revision(revision: &str) -> AnyResult<()> {
@@ -687,22 +748,6 @@ fn read_stream_bounded(
     }
 }
 
-fn read_bounded_file(path: &Path, limit: u64) -> AnyResult<Vec<u8>> {
-    let mut file = File::open(path)?;
-    let mut bytes = Vec::new();
-    Read::by_ref(&mut file)
-        .take(
-            limit
-                .checked_add(1)
-                .ok_or_else(|| invalid_data("file-byte bound overflowed"))?,
-        )
-        .read_to_end(&mut bytes)?;
-    if usize_to_u64(bytes.len())? > limit {
-        return Err(invalid_data("diagnostic input exceeded its per-file byte bound").into());
-    }
-    Ok(bytes)
-}
-
 fn update_corpus_hash(
     hasher: &mut blake3::Hasher,
     relative_path: &[u8],
@@ -797,11 +842,11 @@ mod tests {
             "import java.time.Instant\n\nclass Store {\n    fun save() {\n        helper()\n    }\n}\n\nfun helper() {}\n",
         );
         assert_eq!(diagnostic.counts.incomplete_files, 0);
-        assert_eq!(diagnostic.counts.extracted.definitions, 3);
-        assert_eq!(diagnostic.counts.extracted.nested_definitions, 1);
-        assert_eq!(diagnostic.counts.extracted.imports, 1);
-        assert_eq!(diagnostic.counts.extracted.calls, 1);
-        assert_eq!(diagnostic.counts.extracted.calls_with_owner, 1);
+        assert_eq!(diagnostic.counts.syntax_node_counts.definitions, 3);
+        assert_eq!(diagnostic.counts.syntax_node_counts.nested_definitions, 1);
+        assert_eq!(diagnostic.counts.syntax_node_counts.imports, 1);
+        assert_eq!(diagnostic.counts.syntax_node_counts.calls, 1);
+        assert_eq!(diagnostic.counts.syntax_node_counts.calls_with_owner, 1);
     }
 
     #[test]
@@ -812,7 +857,13 @@ mod tests {
             diagnostic.counts.error_nodes + diagnostic.counts.missing_nodes > 0,
             "malformed syntax exposed no recovery nodes"
         );
-        assert!(diagnostic.counts.retained_in_incomplete_files.definitions >= 2);
+        assert!(
+            diagnostic
+                .counts
+                .syntax_nodes_retained_in_incomplete_files
+                .definitions
+                >= 2
+        );
     }
 
     #[test]
@@ -841,6 +892,47 @@ mod tests {
         assert_eq!(
             classify_source_shape(Path::new("src/generated/API.kt")),
             SourceShape::Generated
+        );
+    }
+
+    #[test]
+    fn pinned_corpus_reads_commit_blobs_not_the_worktree() {
+        let repository = tempfile::tempdir().expect("temporary repository");
+        git_bytes(repository.path(), &["init"]).expect("initialize repository");
+        fs::write(repository.path().join("App.kt"), b"class Frozen\n")
+            .expect("write committed source");
+        git_bytes(repository.path(), &["add", "App.kt"]).expect("stage source");
+        git_bytes(
+            repository.path(),
+            &[
+                "-c",
+                "user.name=LeanToken",
+                "-c",
+                "user.email=leantoken@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            ],
+        )
+        .expect("commit source");
+        let revision = git_text(repository.path(), &["rev-parse", "HEAD^{commit}"])
+            .expect("fixture revision")
+            .trim()
+            .to_owned();
+
+        fs::write(repository.path().join("App.kt"), b"class Mutated\n")
+            .expect("mutate tracked source");
+        fs::write(
+            repository.path().join("Untracked.kts"),
+            b"println(\"ignored\")\n",
+        )
+        .expect("write untracked script");
+
+        let paths = pinned_kotlin_paths(repository.path(), &revision).expect("pinned Kotlin paths");
+        assert_eq!(paths, vec![PathBuf::from("App.kt")]);
+        assert_eq!(
+            read_pinned_blob(repository.path(), &revision, "App.kt").expect("pinned blob"),
+            b"class Frozen\n"
         );
     }
 
@@ -913,6 +1005,21 @@ mod tests {
         assert_eq!(diagnostic["summary"]["incomplete_files"], 9);
         assert_eq!(diagnostic["summary"]["error_nodes"], 11);
         assert_eq!(diagnostic["summary"]["missing_nodes"], 0);
+        assert_eq!(diagnostic["summary"]["syntax_node_counts"]["imports"], 6768);
+        assert!(
+            diagnostic["summary"].get("extracted").is_none(),
+            "grammar node counts must not be labeled as production extraction"
+        );
+        let extension_strata = diagnostic["extension_strata"]
+            .as_array()
+            .expect("extension strata");
+        assert_eq!(extension_strata.len(), 2);
+        let scripts = extension_strata
+            .iter()
+            .find(|stratum| stratum["extension"] == "kts")
+            .expect("Kotlin script stratum");
+        assert_eq!(scripts["counts"]["files"], 6);
+        assert_eq!(scripts["counts"]["incomplete_files"], 0);
         let reported_recovery = diagnostic["recovery_categories"]
             .as_array()
             .expect("recovery categories")

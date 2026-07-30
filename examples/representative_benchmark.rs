@@ -4298,16 +4298,53 @@ mod tests {
             diagnostic["parser_dependencies"]["tree_sitter_kotlin"],
             "0.4.0"
         );
+        assert_eq!(
+            evaluation["arms"][1]["parse_diagnostic"]["report_sha256"],
+            "2ea2b813b088c91e7ee426137e6ec8566746594f738dd5da251dc3b31dcf0b12"
+        );
         assert_eq!(diagnostic["corpus"]["files"], 419);
         assert_eq!(diagnostic["summary"]["incomplete_files"], 9);
         assert_eq!(diagnostic["summary"]["error_nodes"], 11);
         assert_eq!(diagnostic["summary"]["missing_nodes"], 0);
+        assert_eq!(
+            diagnostic["extension_strata"][1]["extension"], "kts",
+            "extension-only evidence must retain the script subgate"
+        );
+        assert_eq!(diagnostic["extension_strata"][1]["counts"]["files"], 6);
+        assert_eq!(
+            diagnostic["extension_strata"][1]["counts"]["incomplete_files"],
+            0
+        );
+        assert_eq!(
+            evaluation["arms"][1]["growth_against_control_run_means"]["cold_index_gate"],
+            "inconclusive_non_alternating_two_samples_per_arm"
+        );
+        assert_eq!(
+            evaluation["arms"][1]["resource_samples"]["shipped_cli_binary_bytes"],
+            48_250_704
+        );
+        assert_eq!(
+            evaluation["arms"][1]["growth_against_control_run_means"]["shipped_cli_binary_bytes"],
+            4_871_232
+        );
+        assert_eq!(
+            evaluation["arms"][1]["resource_samples"]["peak_process_rss_bytes"],
+            serde_json::json!([121_884_672, 120_356_864])
+        );
         assert_eq!(
             attempts["attempts"]
                 .as_array()
                 .expect("Kotlin attempt list")
                 .len(),
             7
+        );
+        assert_eq!(
+            attempts["attempts"][5]["peak_process_rss_bytes"],
+            121_884_672
+        );
+        assert!(
+            attempts["attempts"][5].get("process_rss_bytes").is_none(),
+            "external peak RSS must not be confused with end-of-run VmRSS"
         );
 
         for (raw, revision, relevant_files_found, line_anchors_found) in raw_reports {

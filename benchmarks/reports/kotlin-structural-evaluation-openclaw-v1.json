@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "decision": "do_not_ship_kotlin_parser",
-  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen RSS and database-growth limits, and left nine OpenClaw Kotlin files structurally incomplete. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
+  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen peak-RSS and database-growth limits, left the cold-indexing subgate inconclusive, and left nine OpenClaw Kotlin files structurally incomplete. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
   "attempt_receipt": "benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json",
   "corpus": {
     "repository": "https://github.com/openclaw/openclaw.git",
@@ -32,7 +32,13 @@
       "No production-test regression.",
       "Both .kt and .kts must be recognized and evaluated by the parse diagnostic.",
       "An unpublished grammar revision cannot enter the production dependency graph."
-    ]
+    ],
+    "resource_methodology": {
+      "cold_index_ms": "The harness reports cold index duration, but the two control runs preceded the two candidate runs. The non-alternating order and two samples per arm are insufficient for a promotion claim.",
+      "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around each complete successful harness process, retained in the attempt receipt. End-of-run VmRSS fields inside raw reports are not used for this gate.",
+      "database_bytes": "SQLite database file size after each successful run; both runs within an arm produced the same size.",
+      "shipped_cli_binary_bytes": "Byte size of target/product-size/release/leantoken after cargo build --quiet --locked --release --bin leantoken in isolated target directories at each exact harness revision."
+    }
   },
   "arms": [
     {
@@ -52,12 +58,12 @@
           14119.447437,
           9795.361496
         ],
-        "process_rss_bytes": [
-          85237760,
-          75628544
+        "peak_process_rss_bytes": [
+          87564288,
+          82657280
         ],
         "database_bytes": 114978816,
-        "release_benchmark_binary_bytes": 36103600
+        "shipped_cli_binary_bytes": 43379472
       },
       "raw_reports": [
         {
@@ -93,33 +99,46 @@
           10574.368603,
           10304.580855999999
         ],
-        "process_rss_bytes": [
-          121606144,
-          118673408
+        "peak_process_rss_bytes": [
+          121884672,
+          120356864
         ],
         "database_bytes": 132739072,
-        "release_benchmark_binary_bytes": 40964400
+        "shipped_cli_binary_bytes": 48250704
       },
       "growth_against_control_run_means": {
-        "cold_index_fraction": -0.1269447513674602,
-        "peak_rss_fraction": 0.49365992768752864,
+        "descriptive_cold_index_fraction": -0.1269447513674602,
+        "cold_index_gate": "inconclusive_non_alternating_two_samples_per_arm",
+        "peak_process_rss_fraction": 0.42309543288897444,
         "database_fraction": 0.15446546257703675,
-        "release_binary_bytes": 4860800
+        "shipped_cli_binary_bytes": 4871232
       },
       "parse_diagnostic": {
         "report": "benchmarks/reports/kotlin-parse-diagnostic-openclaw-0.4.0-v1.json",
-        "report_sha256": "6e06e23933fc84cf43c82e49f7c29d603197754542203866d2222b1b98ffcda0",
+        "report_sha256": "2ea2b813b088c91e7ee426137e6ec8566746594f738dd5da251dc3b31dcf0b12",
         "source_files": 419,
         "incomplete_files": 9,
         "error_nodes": 11,
         "missing_nodes": 0,
-        "definitions": 23908,
-        "imports": 6768,
-        "calls": 65830,
-        "retained_in_incomplete_files": {
+        "syntax_node_counts": {
+          "definitions": 23908,
+          "imports": 6768,
+          "calls": 65830
+        },
+        "syntax_nodes_retained_in_incomplete_files": {
           "definitions": 1891,
           "imports": 276,
           "calls": 4557
+        },
+        "extension_strata": {
+          "kt": {
+            "files": 413,
+            "incomplete_files": 9
+          },
+          "kts": {
+            "files": 6,
+            "incomplete_files": 0
+          }
         }
       },
       "publication_status": {
@@ -144,7 +163,8 @@
   ],
   "gate_failures": [
     "The directive_parsing task family regressed from two relevant files to one, violating the frozen no-family-regression accuracy requirement.",
-    "Mean candidate RSS increased by 49.37%, exceeding the 10% limit by 39.37 percentage points.",
+    "The cold-indexing subgate is inconclusive because two control samples ran before two candidate samples instead of using paired alternating A/B and B/A order.",
+    "Mean candidate peak process RSS increased by 42.31%, exceeding the 10% limit by 32.31 percentage points.",
     "The candidate database increased by 15.45%, exceeding the 5% limit by 10.45 percentage points.",
     "Nine of 419 Kotlin source files remained structurally incomplete, with 11 explicit ERROR nodes.",
     "tree-sitter-kotlin 0.4.0 is not published on crates.io; upstream release issue 242 remains open."
@@ -152,7 +172,7 @@
   "passed_subgates": [
     "Aggregate relevant-file recall improved from 80% to 90%.",
     "Line-anchor recall improved from 9.76% to 31.71%.",
-    "Mean cold indexing did not regress and the release benchmark binary grew by 4,860,800 bytes, below the five-MiB cap.",
+    "The shipped LeanToken CLI grew by 4,871,232 bytes, below the five-MiB cap.",
     "Both candidate reports completed deterministic initial-plus-three-warm context validation.",
     "All six Kotlin script files parsed structurally completely."
   ],
@@ -165,14 +185,15 @@
   "reconsideration_requirements": [
     "Use a published upstream grammar release and bind its exact crates.io version.",
     "Eliminate the nine incomplete OpenClaw files or explicitly freeze a correctness policy that justifies each remaining recovery shape.",
-    "Meet the unchanged RSS and database gates on paired same-host runs.",
+    "Resolve the cold-indexing result with paired alternating A/B and B/A same-host runs.",
+    "Meet the unchanged peak-RSS and database gates on same-host runs.",
     "Recover directive_parsing relevant-file recall without regressing another task family.",
     "Create a new report schema if the corpus, labels, queries, extraction policy, grammar revision, or thresholds change."
   ],
   "limitations": [
     "The ten tasks are manually curated parser-development evidence, not a blind or statistically powered sample.",
     "Cold-index and RSS values are host-local diagnostics; correctness, deterministic behavior, and database size are not waived by host variance.",
-    "The first clean control run followed a clean release build and had a colder filesystem cache; the decision therefore uses both paired samples and does not claim a universal speedup.",
+    "Cold-index timing is inconclusive: the first control run was unusually cold, the arms were not alternated, and two samples per arm cannot support a promotion claim.",
     "No model executed an edit, so the experiment measures retrieval evidence rather than end-to-end task success."
   ]
 }

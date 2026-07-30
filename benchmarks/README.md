@@ -1744,24 +1744,30 @@ from 80% to 90% and line-anchor recall from 9.76% to 31.71%, but it was not
 eligible:
 
 - `directive_parsing` regressed from two relevant files to one;
-- mean process RSS increased by 49.37% and the database by 15.45%;
+- mean externally measured peak process RSS increased by 42.31% and the
+  database by 15.45%;
+- cold indexing remained inconclusive because the two control samples preceded
+  the two candidate samples instead of using paired alternating order;
 - nine of 419 Kotlin files remained structurally incomplete, with 11 explicit
   `ERROR` nodes;
 - crates.io still publishes 0.3.8 while upstream 0.4.0 release issue 242
   remains open.
 
-Both candidate runs were deterministic. Mean cold indexing did not regress,
-all six `.kts` files parsed completely, and binary growth was 4,860,800 bytes,
-below the frozen five-MiB cap. Those passing subgates do not offset the
-task-family, correctness, resource, and publication failures. Kotlin therefore
-remains lexical-only in production: there is no `.kt`/`.kts` language
-detection, production extraction, parser-cache entry, index-content-version
-bump, or normal dependency.
+Both candidate runs were deterministic. The extension-only diagnostic stratum
+shows that all six `.kts` files parsed completely, and isolated release builds
+of the shipped CLI at the exact control and candidate revisions grew by
+4,871,232 bytes, below the frozen five-MiB cap. The diagnostic's definition,
+import, and call totals are explicitly syntax-node counts; they are not claims
+about the prototype's production extraction queries. Those passing subgates do
+not offset the task-family, correctness, resource, inconclusive cold-index, and
+publication failures. Kotlin therefore remains lexical-only in production:
+there is no `.kt`/`.kts` language detection, production extraction,
+parser-cache entry, index-content-version bump, or normal dependency.
 
 The excluded [`kotlin-grammar-040`](kotlin-grammar-040) package independently
 locks the exact Git revision and keeps the parse result executable without
 placing an unpublished dependency in the workspace graph. Run it against a
-clean pinned OpenClaw checkout:
+local OpenClaw object database containing the pinned revision:
 
 ```bash
 CARGO_TARGET_DIR=target cargo test --locked \
@@ -1774,7 +1780,9 @@ CARGO_TARGET_DIR=target cargo run --locked --release \
   --output /new/path/kotlin-parse-diagnostic-0.4.0.json
 ```
 
-The output path must not exist. The evaluator verifies the exact clean tracked
-revision and writes only locked parser versions, corpus identity and hash,
-bounds, path-only strata, aggregate extraction counts, and bounded recovery
-categories. It stores neither source nor individual paths.
+The output path must not exist. The evaluator enumerates and reads blobs
+directly from the requested commit, so concurrent worktree edits cannot mix
+with the pinned corpus identity. It writes only locked parser versions, corpus
+identity and hash, bounds, path-only and extension-only strata, aggregate
+syntax-node counts, and bounded recovery categories. It stores neither source
+nor individual paths.
