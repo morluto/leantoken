@@ -34,7 +34,7 @@ fn parse_tree(
     match tree {
         Some(tree) => Ok(tree),
         None if is_cancelled() => Err(Error::Cancelled),
-        None => Err(Error::InternalFailure("parser returned None".into())),
+        None => Err(Error::OperationFailure("parser returned None".into())),
     }
 }
 

@@ -235,10 +235,10 @@
                 }),
             ),
             (
-                leantoken::Error::InternalFailure("parser returned None".into()),
+                leantoken::Error::OperationFailure("parser returned None".into()),
                 serde_json::json!({
-                    "error": "invalid request: parser returned None",
-                    "category": "internal_error"
+                    "error": "operation failed: parser returned None",
+                    "category": "operation_failure"
                 }),
             ),
             (

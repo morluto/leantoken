@@ -13,7 +13,7 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::{
     sync::{mpsc, mpsc::error::TrySendError, oneshot},
     task::JoinHandle,
-    time::{Instant, interval_at, sleep},
+    time::{Instant, interval_at, sleep, timeout},
 };
 use tokio_util::sync::CancellationToken;
 

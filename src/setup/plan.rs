@@ -105,7 +105,7 @@ fn resolve_discovery_edits(
                         content.clone(),
                     )
                 } else {
-                    return Err(Error::InternalFailure(format!(
+                    return Err(Error::SetupFailure(format!(
                         "refusing to overwrite unowned discovery skill {}",
                         path.display()
                     )));

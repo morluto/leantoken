@@ -77,5 +77,5 @@ impl SetupPrompt for InteractivePrompt {
 }
 
 fn prompt_error(error: InquireError) -> Error {
-    Error::InternalFailure(format!("interactive setup failed: {error}"))
+    Error::SetupFailure(format!("interactive setup failed: {error}"))
 }

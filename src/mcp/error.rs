@@ -233,6 +233,17 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             "repository operation should be retried",
             mcp_error_data(cause.public_category()),
         ),
+        crate::Error::SerializationFailure(_)
+        | crate::Error::ResponseAccountingInvariant(_)
+        | crate::Error::CachePruneFailure(_)
+        | crate::Error::SetupFailure(_)
+        | crate::Error::OperationFailure(_) => {
+            tracing::error!(%cause, category = cause.public_category(), "typed product failure");
+            ErrorData::internal_error(
+                "repository retrieval failed",
+                mcp_error_data(cause.public_category()),
+            )
+        }
         _ => {
             tracing::error!(%cause, "MCP tool failed");
             ErrorData::internal_error(

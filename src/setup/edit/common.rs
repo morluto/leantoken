@@ -33,7 +33,7 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
         return Ok(());
     }
     let parent = path.parent().ok_or_else(|| {
-        Error::InternalFailure(format!("config path has no parent: {}", path.display()))
+        Error::SetupFailure(format!("config path has no parent: {}", path.display()))
     })?;
     fs::create_dir_all(parent)?;
     let mut temporary = NamedTempFile::new_in(parent)?;
@@ -55,7 +55,7 @@ fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
 fn sync_parent_directory(path: &Path) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| Error::InternalFailure(format!("path has no parent: {}", path.display())))?;
+        .ok_or_else(|| Error::SetupFailure(format!("path has no parent: {}", path.display())))?;
     fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
@@ -68,7 +68,7 @@ fn sync_parent_directory(_path: &Path) -> Result<()> {
 }
 
 fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
-    Error::InternalFailure(format!(
+    Error::SetupFailure(format!(
         "refusing to overwrite malformed config {}: {error}",
         path.display()
     ))

@@ -13,6 +13,19 @@
         assert!(rx.recv().await.is_none());
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn lifecycle_shutdown_has_a_bounded_deadline() {
+        let handle = tokio::spawn(std::future::pending::<()>());
+        let join = tokio::spawn(join_watcher(handle));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert!(matches!(
+            join.await.unwrap(),
+            Err(Error::ShutdownTimeout {
+                component: "repository watcher"
+            })
+        ));
+    }
+
     #[tokio::test]
     async fn coalesces_and_normalizes_paths() {
         let root = tempfile::tempdir().unwrap();

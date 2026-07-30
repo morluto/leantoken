@@ -311,9 +311,21 @@ pub enum Error {
     },
     #[error("invalid request: {0}")]
     InvalidRequest(String),
-    /// Internal operation failure retaining its historical CLI rendering.
-    #[error("invalid request: {0}")]
-    InternalFailure(String),
+    /// A serialization boundary failed after request validation.
+    #[error("serialization failed: {0}")]
+    SerializationFailure(String),
+    /// Final response accounting could not reach a valid fixed point.
+    #[error("response accounting invariant failed: {0}")]
+    ResponseAccountingInvariant(String),
+    /// A best-effort cache maintenance operation failed.
+    #[error("cache pruning failed: {0}")]
+    CachePruneFailure(String),
+    /// Setup or installation state failed an ownership or recovery invariant.
+    #[error("setup failed: {0}")]
+    SetupFailure(String),
+    /// A product operation reached an impossible internal state.
+    #[error("operation failed: {0}")]
+    OperationFailure(String),
     /// A doctor probe failed at a named integration boundary.
     #[error("doctor {stage} check failed: {message}")]
     DoctorFailure {
@@ -401,6 +413,9 @@ pub enum Error {
     RetryableConflict(RetryableOperation),
     #[error("MCP indexing runtime stopped unexpectedly")]
     McpRuntimeStopped,
+    /// A production-owned background component did not stop before its deadline.
+    #[error("shutdown timed out while stopping {component}")]
+    ShutdownTimeout { component: &'static str },
     #[error("required runtime capability is unavailable: {capability}")]
     RuntimeCapabilityUnavailable {
         capability: &'static str,
@@ -475,12 +490,17 @@ impl Error {
             Self::RepositoryTraversal(_) => "repository_traversal",
             Self::RuntimeCapabilityUnavailable { .. } => "runtime_unavailable",
             Self::StaleReconciliation { .. } | Self::RetryableConflict(_) => "retryable_conflict",
+            Self::SerializationFailure(_) => "serialization_failure",
+            Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
+            Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::SetupFailure(_) => "setup_failure",
+            Self::OperationFailure(_) => "operation_failure",
             Self::RepositoryIdentityMismatch { .. }
-            | Self::InternalFailure(_)
             | Self::RetrievalOverloaded
             | Self::RetrievalQueueTimeout
             | Self::ReconciliationFailed(_)
             | Self::McpRuntimeStopped
+            | Self::ShutdownTimeout { .. }
             | Self::Io(_)
             | Self::Sqlite(_)
             | Self::Migration(_)
@@ -516,7 +536,11 @@ impl Error {
             Self::InvalidJsonSelector { .. } => "invalid_json_selector",
             Self::InputTooLong { .. } => "input_too_long",
             Self::InvalidRequest(_) => "invalid_request",
-            Self::InternalFailure(_) => "internal_failure",
+            Self::SerializationFailure(_) => "serialization_failure",
+            Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
+            Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::SetupFailure(_) => "setup_failure",
+            Self::OperationFailure(_) => "operation_failure",
             Self::DoctorFailure { .. } => "doctor_failure",
             Self::InvalidConfiguration(_) => "invalid_configuration",
             Self::RepositoryMismatch { .. } => "repository_mismatch",
@@ -536,6 +560,7 @@ impl Error {
             Self::ReconciliationFailed(_) => "reconciliation_failed",
             Self::RetryableConflict(_) => "retryable_conflict",
             Self::McpRuntimeStopped => "mcp_runtime_stopped",
+            Self::ShutdownTimeout { .. } => "shutdown_timeout",
             Self::RuntimeCapabilityUnavailable { .. } => "runtime_capability_unavailable",
             Self::Io(_) => "io",
             Self::Sqlite(_) => "sqlite",

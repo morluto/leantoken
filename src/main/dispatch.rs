@@ -64,7 +64,7 @@ fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
 
 fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> {
     if report.has_failures() {
-        return Err(leantoken::Error::InternalFailure(
+        return Err(leantoken::Error::CachePruneFailure(
             "one or more managed caches could not be pruned".into(),
         ));
     }
@@ -80,7 +80,7 @@ fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     let report = setup::run(operation, request, json)?;
     setup::print_report(&report, json)?;
     if report.has_failures() {
-        return Err(leantoken::Error::InternalFailure(
+        return Err(leantoken::Error::SetupFailure(
             "one or more MCP client configurations failed".into(),
         ));
     }

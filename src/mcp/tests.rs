@@ -948,7 +948,7 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
 
     let internal = [
         crate::Error::InvalidConfiguration("chunk size must be positive".into()),
-        crate::Error::InternalFailure("parser returned None".into()),
+        crate::Error::OperationFailure("parser returned None".into()),
         crate::Error::RuntimeCapabilityUnavailable {
             capability: "SQLite FTS5",
             source: None,
@@ -988,7 +988,7 @@ fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
         },
         crate::Error::UnsupportedLanguage(unix_marker.into()),
         crate::Error::InvalidRequest(format!("invalid path: {unix_marker}")),
-        crate::Error::InternalFailure(format!("failed at {unix_marker}")),
+        crate::Error::OperationFailure(format!("failed at {unix_marker}")),
         crate::Error::RepositoryMismatch {
             database: windows_marker.into(),
             expected_repository: unix_marker.into(),

@@ -5,7 +5,7 @@ pub fn run(
     json_output: bool,
 ) -> Result<SetupReport> {
     let home = home_directory()
-        .ok_or_else(|| Error::InternalFailure("could not determine the home directory".into()))?;
+        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
     let native_executable = std::env::current_exe()?.canonicalize()?;
     if operation == SetupOperation::Setup
@@ -40,7 +40,7 @@ fn run_with(
 ) -> Result<SetupReport> {
     let recovery_path = transaction_path(&environment.runtime_root);
     if request.dry_run && recovery_path.exists() {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "interrupted setup requires recovery before dry-run: {}",
             recovery_path.display()
         )));

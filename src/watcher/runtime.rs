@@ -7,6 +7,17 @@ pub struct RepositoryWatcher {
     counters: Arc<WatcherCounters>,
 }
 
+const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
+    timeout(PRODUCTION_SHUTDOWN_TIMEOUT, handle)
+        .await
+        .map_err(|_| Error::ShutdownTimeout {
+            component: "repository watcher",
+        })??;
+    Ok(())
+}
+
 impl RepositoryWatcher {
     /// Start watching a canonical repository root.
     ///
@@ -280,7 +291,7 @@ impl RepositoryWatcher {
             )),
             Err(_) => {
                 let _ = handle.await;
-                Err(Error::InternalFailure(
+                Err(Error::OperationFailure(
                     "watcher task terminated unexpectedly".into(),
                 ))
             }
@@ -313,7 +324,7 @@ impl RepositoryWatcher {
             ..
         } = self;
         token.cancel();
-        handle.await?;
+        join_watcher(handle).await?;
         Ok(diagnostics_snapshot(&ready, &counters))
     }
 }

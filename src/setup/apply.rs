@@ -99,7 +99,7 @@ fn rollback_message(error: Error, rollback: Result<()>) -> String {
 fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
     for edit in edits {
         if read_optional(&edit.public.path)? != edit.original {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "configuration changed after preflight: {}",
                 edit.public.path.display()
             )));
@@ -111,7 +111,7 @@ fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
 fn preflight_discovery(edits: &[PlannedDiscoveryEdit]) -> Result<()> {
     for edit in edits {
         if read_optional(&edit.public.path)? != edit.original {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "discovery skill changed after preflight: {}",
                 edit.public.path.display()
             )));
@@ -161,7 +161,7 @@ fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
 fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
     let current = read_optional(&edit.public.path)?;
     if current != edit.original {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "configuration changed after preflight: {}",
             edit.public.path.display()
         )));

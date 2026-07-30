@@ -48,7 +48,7 @@ impl Indexer {
             before_batch();
             let end = prepare_batch_end(candidates, start, limits);
             if end <= start {
-                return Err(Error::InternalFailure(
+                return Err(Error::OperationFailure(
                     "candidate batch preparation made no progress".into(),
                 ));
             }

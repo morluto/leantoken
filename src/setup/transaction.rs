@@ -65,13 +65,13 @@ fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
         return Ok(());
     };
     let journal: SetupTransactionJournal = serde_json::from_str(&serialized).map_err(|error| {
-        Error::InternalFailure(format!(
+        Error::SetupFailure(format!(
             "invalid setup recovery journal {}: {error}",
             path.display()
         ))
     })?;
     if journal.schema_version != 1 {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "unsupported setup recovery journal version at {}",
             path.display()
         )));
@@ -87,7 +87,7 @@ fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
                     .is_some_and(|hash| content_hash(value) == hash)
         }) || (!entry.updated_exists && current.is_none());
         if !still_original && !matches_applied {
-            return Err(Error::InternalFailure(format!(
+            return Err(Error::SetupFailure(format!(
                 "cannot recover interrupted setup because {} changed afterward",
                 entry.path.display()
             )));
@@ -132,7 +132,7 @@ fn begin_setup_transaction(plan: &ResolvedSetupPlan) -> Result<Option<SetupTrans
     fs::create_dir_all(&plan.transaction_root)?;
     let path = transaction_path(&plan.transaction_root);
     if path.exists() {
-        return Err(Error::InternalFailure(format!(
+        return Err(Error::SetupFailure(format!(
             "setup recovery journal already exists at {}",
             path.display()
         )));
@@ -146,7 +146,7 @@ fn begin_setup_transaction(plan: &ResolvedSetupPlan) -> Result<Option<SetupTrans
     temporary.write_all(serialized.as_bytes())?;
     temporary.as_file_mut().sync_all()?;
     temporary.persist_noclobber(&path).map_err(|error| {
-        Error::InternalFailure(format!(
+        Error::SetupFailure(format!(
             "another setup transaction became active at {}: {}",
             path.display(),
             error.error
