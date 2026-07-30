@@ -404,8 +404,10 @@ fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> R
             if let Some(command) = report.command {
                 writeln!(
                     output,
-                    "Refresh existing pinned MCP entries with: {command}"
+                    "To upgrade existing MCP entries to v{}, run:",
+                    report.latest_version.as_deref().unwrap_or("latest")
                 )?;
+                writeln!(output, "  {command}")?;
             }
         }
         UpgradeStatus::UpdateAvailable => {
@@ -516,7 +518,7 @@ mod tests {
         let text = String::from_utf8(text).unwrap();
         assert!(text.contains("there is no persistent CLI to replace"));
         assert!(text.contains(
-            "Refresh existing pinned MCP entries with: \
+            "To upgrade existing MCP entries to v1.2.3, run:\n  \
              npx --yes leantoken@1.2.3 setup --refresh --yes"
         ));
         assert!(!text.contains("npm install --global"));
