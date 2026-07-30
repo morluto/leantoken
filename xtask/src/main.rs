@@ -308,9 +308,9 @@ fn fixture_test_command() -> Vec<String> {
         "--package",
         SUITE,
         "--all-features",
-        "--test",
-        "fixtures",
-        "checked_in_fixture_cases_match",
+        "--bin",
+        "fixture-runner",
+        "tests::checked_in_fixture_cases_match",
         "--",
         "--exact",
     ])
@@ -379,6 +379,9 @@ impl TestPlan {
                 "--all-features",
                 "--lib",
                 "--bins",
+                "--",
+                "--skip",
+                "tests::checked_in_fixture_cases_match",
             ]),
             cargo_command([
                 "test",
@@ -1016,16 +1019,16 @@ mod tests {
                 .iter()
                 .all(|command| command.contains(&"--locked".to_owned()))
         );
+        assert!(
+            plan.commands[0]
+                .windows(2)
+                .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
+        );
         assert!(plan.commands.iter().any(|command| {
             command
                 .windows(2)
-                .any(|args| args == ["--test", "fixtures"])
-                && command.contains(&"checked_in_fixture_cases_match".to_owned())
-        }));
-        assert!(!plan.commands.iter().any(|command| {
-            command
-                .windows(2)
                 .any(|args| args == ["--bin", "fixture-runner"])
+                && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
         }));
     }
 
