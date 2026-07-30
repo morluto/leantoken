@@ -215,10 +215,15 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             "LeanToken is configured for {configured} client{}.",
             if configured == 1 { "" } else { "s" }
         )?;
-        if report.has_failures() {
+        if report.has_client_failures() {
             writeln!(
                 output,
                 "Some selected clients failed; successful changes were not rolled back."
+            )?;
+        } else if report.has_verification_failure() {
+            writeln!(
+                output,
+                "Client configuration succeeded, but launcher verification failed."
             )?;
         } else if changed > 0 {
             writeln!(

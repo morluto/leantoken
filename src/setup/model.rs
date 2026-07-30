@@ -203,13 +203,23 @@ pub struct SetupReport {
 }
 
 impl SetupReport {
-    /// Return true when at least one selected client failed.
+    /// Return true when at least one selected client edit failed.
+    #[must_use]
+    pub fn has_client_failures(&self) -> bool {
+        self.results.iter().any(|result| result.error.is_some())
+    }
+
+    /// Return true when post-setup launcher verification failed.
+    #[must_use]
+    pub fn has_verification_failure(&self) -> bool {
+        self.verification
+            .as_ref()
+            .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
+    }
+
+    /// Return true when a client edit or launcher verification failed.
     #[must_use]
     pub fn has_failures(&self) -> bool {
-        self.results.iter().any(|result| result.error.is_some())
-            || self
-                .verification
-                .as_ref()
-                .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
+        self.has_client_failures() || self.has_verification_failure()
     }
 }

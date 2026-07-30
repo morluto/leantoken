@@ -2222,9 +2222,13 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     )));
     assert!(stdout.contains("npm install --global leantoken@latest"));
     assert!(stdout.contains("Launcher verification failed"));
+    assert!(stdout.contains(
+        "Client configuration succeeded, but launcher verification failed."
+    ));
+    assert!(!stdout.contains("Some selected clients failed"));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("configuration or launcher verification failed")
+            .contains("MCP launcher verification failed")
     );
 }
 

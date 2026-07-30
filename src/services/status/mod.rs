@@ -14,8 +14,11 @@ impl Services {
     /// is creating, migrating, or indexing the cache. A missing cache still
     /// follows the normal open path so cold status reports an uninitialized
     /// repository and creates the cache as it did previously.
-    pub fn status_without_initializing(config: Config) -> Result<StatusResponse> {
+    pub fn status_without_initializing(mut config: Config) -> Result<StatusResponse> {
         config.validate()?;
+        if let Some(fallback) = active_repository_cache_fallback(&config)? {
+            config = fallback;
+        }
         if !config.database_path.exists() {
             return Self::open(config)?.status_sync();
         }
@@ -90,6 +93,20 @@ impl Services {
             freshness,
         ))
     }
+}
+
+fn active_repository_cache_fallback(config: &Config) -> Result<Option<Config>> {
+    let Some(fallback) = config.repository_cache_fallback() else {
+        return Ok(None);
+    };
+    if !fallback.database_path.exists() {
+        return Ok(None);
+    }
+    let coordination = IndexCoordination::for_database(&fallback.database_path);
+    Ok(coordination
+        .try_acquire_prune_lease()?
+        .is_none()
+        .then_some(fallback))
 }
 
 fn status_response(
@@ -198,4 +215,33 @@ fn process_rss_bytes() -> Option<u64> {
 #[cfg(not(target_os = "linux"))]
 fn process_rss_bytes() -> Option<u64> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_only_status_reports_an_active_repository_fallback() {
+        let root = tempfile::tempdir().expect("repository");
+        fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("source");
+        let managed = Config::discover(root.path(), None).expect("managed config");
+        let fallback = managed
+            .repository_cache_fallback()
+            .expect("repository fallback");
+        let fallback_path = fallback.database_path.clone();
+        let _active_services = Services::open(fallback).expect("active fallback services");
+
+        let status =
+            Services::status_without_initializing(managed).expect("read active fallback status");
+
+        assert!(status.repository_cache_fallback);
+        assert_eq!(status.database_path, fallback_path.display().to_string());
+        assert!(
+            status
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("repository-local"))
+        );
+    }
 }
