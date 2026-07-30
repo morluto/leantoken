@@ -164,7 +164,7 @@
 <a href=#164 id=164 data-nosnippet>164</a>            .and_then(|bytes| bytes.checked_add(<span class="self">self</span>.predicate_blake3.len()))
 <a href=#165 id=165 data-nosnippet>165</a>            .and_then(|bytes| bytes.checked_add(<span class="self">self</span>.partition.digest.len()))
 <a href=#166 id=166 data-nosnippet>166</a>            .and_then(|bytes| bytes.checked_add(<span class="self">self</span>.result_blake3.len()))
-<a href=#167 id=167 data-nosnippet>167</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"query receipt byte accounting overflow"</span>.into()))
+<a href=#167 id=167 data-nosnippet>167</a>            .ok_or_else(|| Error::OperationFailure(<span class="string">"query receipt byte accounting overflow"</span>.into()))
 <a href=#168 id=168 data-nosnippet>168</a>    }
 <a href=#169 id=169 data-nosnippet>169</a>}
 <a href=#170 id=170 data-nosnippet>170</a>

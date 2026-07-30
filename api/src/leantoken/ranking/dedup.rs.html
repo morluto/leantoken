@@ -1,142 +1,143 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/ranking/dedup.rs`."><title>dedup.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="leantoken" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">leantoken/ranking/</div>dedup.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">/// Remove content-identical candidates and candidates whose line ranges
-<a href=#2 id=2 data-nosnippet>2</a>/// overlap the same file by at least the module's overlap threshold. The higher-scored
-<a href=#3 id=3 data-nosnippet>3</a>/// copy is kept.
-<a href=#4 id=4 data-nosnippet>4</a></span><span class="attr">#[must_use]
-<a href=#5 id=5 data-nosnippet>5</a>#[allow(clippy::cast_precision_loss)]
-<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">pub fn </span>deduplicate(candidates: Vec&lt;ScoredCandidate&gt;) -&gt; Vec&lt;ScoredCandidate&gt; {
-<a href=#7 id=7 data-nosnippet>7</a>    deduplicate_with_options(candidates, <span class="kw-2">&amp;</span>Weights::default())
-<a href=#8 id=8 data-nosnippet>8</a>}
-<a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="attr">#[allow(clippy::cast_precision_loss)]
-<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">fn </span>deduplicate_with_options(
-<a href=#12 id=12 data-nosnippet>12</a>    candidates: Vec&lt;ScoredCandidate&gt;,
-<a href=#13 id=13 data-nosnippet>13</a>    weights: <span class="kw-2">&amp;</span>Weights,
-<a href=#14 id=14 data-nosnippet>14</a>) -&gt; Vec&lt;ScoredCandidate&gt; {
-<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">let </span><span class="kw-2">mut </span>sorted = candidates;
-<a href=#16 id=16 data-nosnippet>16</a>    sorted.sort_by(|a, b| {
-<a href=#17 id=17 data-nosnippet>17</a>        <span class="kw">let </span>ord = b.candidate.exact.total_cmp(<span class="kw-2">&amp;</span>a.candidate.exact);
-<a href=#18 id=18 data-nosnippet>18</a>        <span class="kw">if </span>ord != Ordering::Equal {
-<a href=#19 id=19 data-nosnippet>19</a>            <span class="kw">return </span>ord;
-<a href=#20 id=20 data-nosnippet>20</a>        }
-<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw">let </span>ord = b.score.total_cmp(<span class="kw-2">&amp;</span>a.score);
-<a href=#22 id=22 data-nosnippet>22</a>        <span class="kw">if </span>ord != Ordering::Equal {
-<a href=#23 id=23 data-nosnippet>23</a>            <span class="kw">return </span>ord;
-<a href=#24 id=24 data-nosnippet>24</a>        }
-<a href=#25 id=25 data-nosnippet>25</a>        <span class="kw">let </span>ord = a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path);
-<a href=#26 id=26 data-nosnippet>26</a>        <span class="kw">if </span>ord != Ordering::Equal {
-<a href=#27 id=27 data-nosnippet>27</a>            <span class="kw">return </span>ord;
-<a href=#28 id=28 data-nosnippet>28</a>        }
-<a href=#29 id=29 data-nosnippet>29</a>        a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line)
-<a href=#30 id=30 data-nosnippet>30</a>    });
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept: Vec&lt;ScoredCandidate&gt; = Vec::with_capacity(sorted.len());
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen_hashes: HashMap&lt;(String, String), usize&gt; = HashMap::new();
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept_by_path: HashMap&lt;String, Vec&lt;usize&gt;&gt; = HashMap::new();
-<a href=#35 id=35 data-nosnippet>35</a>
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">for </span>candidate <span class="kw">in </span>sorted {
-<a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">let </span>hash_key = (
-<a href=#38 id=38 data-nosnippet>38</a>            candidate.candidate.path.clone(),
-<a href=#39 id=39 data-nosnippet>39</a>            candidate.content_hash.clone(),
-<a href=#40 id=40 data-nosnippet>40</a>        );
-<a href=#41 id=41 data-nosnippet>41</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = seen_hashes.get(<span class="kw-2">&amp;</span>hash_key).copied() {
-<a href=#42 id=42 data-nosnippet>42</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
-<a href=#43 id=43 data-nosnippet>43</a>            <span class="kw">continue</span>;
-<a href=#44 id=44 data-nosnippet>44</a>        }
-<a href=#45 id=45 data-nosnippet>45</a>
-<a href=#46 id=46 data-nosnippet>46</a>        <span class="kw">let </span>candidate_lines = candidate.candidate.line_count();
-<a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">let </span>duplicate = kept_by_path
-<a href=#48 id=48 data-nosnippet>48</a>            .get(<span class="kw-2">&amp;</span>candidate.candidate.path)
-<a href=#49 id=49 data-nosnippet>49</a>            .and_then(|indices| {
-<a href=#50 id=50 data-nosnippet>50</a>                indices.iter().copied().find(|<span class="kw-2">&amp;</span>index| {
-<a href=#51 id=51 data-nosnippet>51</a>                    <span class="kw">let </span>existing = <span class="kw-2">&amp;</span>kept[index];
-<a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a>                    <span class="comment">// Non-overlapping ranges cannot be duplicates.
-<a href=#54 id=54 data-nosnippet>54</a>                    </span><span class="kw">if </span>candidate.candidate.end_line &lt; existing.candidate.start_line
-<a href=#55 id=55 data-nosnippet>55</a>                        || candidate.candidate.start_line &gt; existing.candidate.end_line
-<a href=#56 id=56 data-nosnippet>56</a>                    {
-<a href=#57 id=57 data-nosnippet>57</a>                        <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#58 id=58 data-nosnippet>58</a>                    }
-<a href=#59 id=59 data-nosnippet>59</a>
-<a href=#60 id=60 data-nosnippet>60</a>                    <span class="kw">let </span>overlap_start = candidate
-<a href=#61 id=61 data-nosnippet>61</a>                        .candidate
-<a href=#62 id=62 data-nosnippet>62</a>                        .start_line
-<a href=#63 id=63 data-nosnippet>63</a>                        .max(existing.candidate.start_line);
-<a href=#64 id=64 data-nosnippet>64</a>                    <span class="kw">let </span>overlap_end = candidate
-<a href=#65 id=65 data-nosnippet>65</a>                        .candidate
-<a href=#66 id=66 data-nosnippet>66</a>                        .end_line
-<a href=#67 id=67 data-nosnippet>67</a>                        .min(existing.candidate.end_line);
-<a href=#68 id=68 data-nosnippet>68</a>                    <span class="kw">let </span>overlap_lines = overlap_end - overlap_start + <span class="number">1</span>;
-<a href=#69 id=69 data-nosnippet>69</a>                    <span class="kw">let </span>min_lines = candidate_lines.min(existing.candidate.line_count());
-<a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a>                    overlap_lines <span class="kw">as </span>f64 &gt;= OVERLAP_THRESHOLD * min_lines <span class="kw">as </span>f64
-<a href=#72 id=72 data-nosnippet>72</a>                })
-<a href=#73 id=73 data-nosnippet>73</a>            });
-<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = duplicate {
-<a href=#75 id=75 data-nosnippet>75</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
-<a href=#76 id=76 data-nosnippet>76</a>            <span class="kw">continue</span>;
-<a href=#77 id=77 data-nosnippet>77</a>        }
-<a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>kept_index = kept.len();
-<a href=#80 id=80 data-nosnippet>80</a>        seen_hashes.insert(hash_key, kept_index);
-<a href=#81 id=81 data-nosnippet>81</a>        kept_by_path
-<a href=#82 id=82 data-nosnippet>82</a>            .entry(candidate.candidate.path.clone())
-<a href=#83 id=83 data-nosnippet>83</a>            .or_default()
-<a href=#84 id=84 data-nosnippet>84</a>            .push(kept_index);
-<a href=#85 id=85 data-nosnippet>85</a>        kept.push(candidate);
-<a href=#86 id=86 data-nosnippet>86</a>    }
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a>    kept.sort_by(|a, b| {
-<a href=#89 id=89 data-nosnippet>89</a>        b.score
-<a href=#90 id=90 data-nosnippet>90</a>            .total_cmp(<span class="kw-2">&amp;</span>a.score)
-<a href=#91 id=91 data-nosnippet>91</a>            .then_with(|| a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path))
-<a href=#92 id=92 data-nosnippet>92</a>            .then_with(|| a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line))
-<a href=#93 id=93 data-nosnippet>93</a>    });
-<a href=#94 id=94 data-nosnippet>94</a>    kept
-<a href=#95 id=95 data-nosnippet>95</a>}
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a><span class="kw">fn </span>merge_scored_candidate(
-<a href=#98 id=98 data-nosnippet>98</a>    existing: <span class="kw-2">&amp;mut </span>ScoredCandidate,
-<a href=#99 id=99 data-nosnippet>99</a>    duplicate: <span class="kw-2">&amp;</span>ScoredCandidate,
-<a href=#100 id=100 data-nosnippet>100</a>    weights: <span class="kw-2">&amp;</span>Weights,
-<a href=#101 id=101 data-nosnippet>101</a>) {
-<a href=#102 id=102 data-nosnippet>102</a>    merge_candidate_signals(<span class="kw-2">&amp;mut </span>existing.candidate, <span class="kw-2">&amp;</span>duplicate.candidate);
-<a href=#103 id=103 data-nosnippet>103</a>    existing.score = existing.candidate.score(weights, existing.token_count);
-<a href=#104 id=104 data-nosnippet>104</a>    existing.marginal_score = existing.score / existing.token_count <span class="kw">as </span>f64;
-<a href=#105 id=105 data-nosnippet>105</a>}
-<a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a><span class="kw">fn </span>merge_candidate_signals(existing: <span class="kw-2">&amp;mut </span>Candidate, duplicate: <span class="kw-2">&amp;</span>Candidate) {
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">for </span>kind <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.match_kinds {
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">if </span>!existing.match_kinds.contains(kind) {
-<a href=#110 id=110 data-nosnippet>110</a>            existing.match_kinds.push(kind.clone());
-<a href=#111 id=111 data-nosnippet>111</a>        }
-<a href=#112 id=112 data-nosnippet>112</a>    }
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">for </span>concept <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.concepts {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="kw">if </span>!existing.concepts.contains(concept) {
-<a href=#115 id=115 data-nosnippet>115</a>            existing.concepts.push(concept.clone());
-<a href=#116 id=116 data-nosnippet>116</a>        }
-<a href=#117 id=117 data-nosnippet>117</a>    }
-<a href=#118 id=118 data-nosnippet>118</a>    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">if </span>existing.target_start_line.is_none() &amp;&amp; duplicate.target_start_line.is_some() {
-<a href=#120 id=120 data-nosnippet>120</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#121 id=121 data-nosnippet>121</a>        existing.target_start_line = duplicate.target_start_line;
-<a href=#122 id=122 data-nosnippet>122</a>        existing.target_end_line = duplicate.target_end_line;
-<a href=#123 id=123 data-nosnippet>123</a>        existing
-<a href=#124 id=124 data-nosnippet>124</a>            .representation
-<a href=#125 id=125 data-nosnippet>125</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
-<a href=#126 id=126 data-nosnippet>126</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
-<a href=#127 id=127 data-nosnippet>127</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#128 id=128 data-nosnippet>128</a>    }
-<a href=#129 id=129 data-nosnippet>129</a>    existing.exact = existing.exact.max(duplicate.exact);
-<a href=#130 id=130 data-nosnippet>130</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
-<a href=#131 id=131 data-nosnippet>131</a>    existing.reference = existing.reference.max(duplicate.reference);
-<a href=#132 id=132 data-nosnippet>132</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
-<a href=#133 id=133 data-nosnippet>133</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
-<a href=#134 id=134 data-nosnippet>134</a>    existing.lexical_frequency_penalty = existing
-<a href=#135 id=135 data-nosnippet>135</a>        .lexical_frequency_penalty
-<a href=#136 id=136 data-nosnippet>136</a>        .min(duplicate.lexical_frequency_penalty);
-<a href=#137 id=137 data-nosnippet>137</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
-<a href=#138 id=138 data-nosnippet>138</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
-<a href=#139 id=139 data-nosnippet>139</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
-<a href=#140 id=140 data-nosnippet>140</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
-<a href=#141 id=141 data-nosnippet>141</a>}
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/ranking/dedup.rs`."><title>dedup.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="leantoken" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">leantoken/ranking/</div>dedup.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#2 id=2 data-nosnippet>2</a><span class="doccomment">/// Remove content-identical candidates and candidates whose line ranges
+<a href=#3 id=3 data-nosnippet>3</a>/// overlap the same file by at least the module's overlap threshold. The higher-scored
+<a href=#4 id=4 data-nosnippet>4</a>/// copy is kept.
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="attr">#[must_use]
+<a href=#6 id=6 data-nosnippet>6</a>#[allow(clippy::cast_precision_loss)]
+<a href=#7 id=7 data-nosnippet>7</a></span><span class="kw">pub fn </span>deduplicate(candidates: Vec&lt;ScoredCandidate&gt;) -&gt; Vec&lt;ScoredCandidate&gt; {
+<a href=#8 id=8 data-nosnippet>8</a>    deduplicate_with_options(candidates, <span class="kw-2">&amp;</span>Weights::default())
+<a href=#9 id=9 data-nosnippet>9</a>}
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[allow(clippy::cast_precision_loss)]
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>deduplicate_with_options(
+<a href=#13 id=13 data-nosnippet>13</a>    candidates: Vec&lt;ScoredCandidate&gt;,
+<a href=#14 id=14 data-nosnippet>14</a>    weights: <span class="kw-2">&amp;</span>Weights,
+<a href=#15 id=15 data-nosnippet>15</a>) -&gt; Vec&lt;ScoredCandidate&gt; {
+<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">let </span><span class="kw-2">mut </span>sorted = candidates;
+<a href=#17 id=17 data-nosnippet>17</a>    sorted.sort_by(|a, b| {
+<a href=#18 id=18 data-nosnippet>18</a>        <span class="kw">let </span>ord = b.candidate.exact.total_cmp(<span class="kw-2">&amp;</span>a.candidate.exact);
+<a href=#19 id=19 data-nosnippet>19</a>        <span class="kw">if </span>ord != Ordering::Equal {
+<a href=#20 id=20 data-nosnippet>20</a>            <span class="kw">return </span>ord;
+<a href=#21 id=21 data-nosnippet>21</a>        }
+<a href=#22 id=22 data-nosnippet>22</a>        <span class="kw">let </span>ord = b.score.total_cmp(<span class="kw-2">&amp;</span>a.score);
+<a href=#23 id=23 data-nosnippet>23</a>        <span class="kw">if </span>ord != Ordering::Equal {
+<a href=#24 id=24 data-nosnippet>24</a>            <span class="kw">return </span>ord;
+<a href=#25 id=25 data-nosnippet>25</a>        }
+<a href=#26 id=26 data-nosnippet>26</a>        <span class="kw">let </span>ord = a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path);
+<a href=#27 id=27 data-nosnippet>27</a>        <span class="kw">if </span>ord != Ordering::Equal {
+<a href=#28 id=28 data-nosnippet>28</a>            <span class="kw">return </span>ord;
+<a href=#29 id=29 data-nosnippet>29</a>        }
+<a href=#30 id=30 data-nosnippet>30</a>        a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line)
+<a href=#31 id=31 data-nosnippet>31</a>    });
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept: Vec&lt;ScoredCandidate&gt; = Vec::with_capacity(sorted.len());
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen_hashes: HashMap&lt;(String, String), usize&gt; = HashMap::new();
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept_by_path: HashMap&lt;String, Vec&lt;usize&gt;&gt; = HashMap::new();
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">for </span>candidate <span class="kw">in </span>sorted {
+<a href=#38 id=38 data-nosnippet>38</a>        <span class="kw">let </span>hash_key = (
+<a href=#39 id=39 data-nosnippet>39</a>            candidate.candidate.path.clone(),
+<a href=#40 id=40 data-nosnippet>40</a>            candidate.content_hash.clone(),
+<a href=#41 id=41 data-nosnippet>41</a>        );
+<a href=#42 id=42 data-nosnippet>42</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = seen_hashes.get(<span class="kw-2">&amp;</span>hash_key).copied() {
+<a href=#43 id=43 data-nosnippet>43</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
+<a href=#44 id=44 data-nosnippet>44</a>            <span class="kw">continue</span>;
+<a href=#45 id=45 data-nosnippet>45</a>        }
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">let </span>candidate_lines = candidate.candidate.line_count();
+<a href=#48 id=48 data-nosnippet>48</a>        <span class="kw">let </span>duplicate = kept_by_path
+<a href=#49 id=49 data-nosnippet>49</a>            .get(<span class="kw-2">&amp;</span>candidate.candidate.path)
+<a href=#50 id=50 data-nosnippet>50</a>            .and_then(|indices| {
+<a href=#51 id=51 data-nosnippet>51</a>                indices.iter().copied().find(|<span class="kw-2">&amp;</span>index| {
+<a href=#52 id=52 data-nosnippet>52</a>                    <span class="kw">let </span>existing = <span class="kw-2">&amp;</span>kept[index];
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a>                    <span class="comment">// Non-overlapping ranges cannot be duplicates.
+<a href=#55 id=55 data-nosnippet>55</a>                    </span><span class="kw">if </span>candidate.candidate.end_line &lt; existing.candidate.start_line
+<a href=#56 id=56 data-nosnippet>56</a>                        || candidate.candidate.start_line &gt; existing.candidate.end_line
+<a href=#57 id=57 data-nosnippet>57</a>                    {
+<a href=#58 id=58 data-nosnippet>58</a>                        <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#59 id=59 data-nosnippet>59</a>                    }
+<a href=#60 id=60 data-nosnippet>60</a>
+<a href=#61 id=61 data-nosnippet>61</a>                    <span class="kw">let </span>overlap_start = candidate
+<a href=#62 id=62 data-nosnippet>62</a>                        .candidate
+<a href=#63 id=63 data-nosnippet>63</a>                        .start_line
+<a href=#64 id=64 data-nosnippet>64</a>                        .max(existing.candidate.start_line);
+<a href=#65 id=65 data-nosnippet>65</a>                    <span class="kw">let </span>overlap_end = candidate
+<a href=#66 id=66 data-nosnippet>66</a>                        .candidate
+<a href=#67 id=67 data-nosnippet>67</a>                        .end_line
+<a href=#68 id=68 data-nosnippet>68</a>                        .min(existing.candidate.end_line);
+<a href=#69 id=69 data-nosnippet>69</a>                    <span class="kw">let </span>overlap_lines = overlap_end - overlap_start + <span class="number">1</span>;
+<a href=#70 id=70 data-nosnippet>70</a>                    <span class="kw">let </span>min_lines = candidate_lines.min(existing.candidate.line_count());
+<a href=#71 id=71 data-nosnippet>71</a>
+<a href=#72 id=72 data-nosnippet>72</a>                    overlap_lines <span class="kw">as </span>f64 &gt;= OVERLAP_THRESHOLD * min_lines <span class="kw">as </span>f64
+<a href=#73 id=73 data-nosnippet>73</a>                })
+<a href=#74 id=74 data-nosnippet>74</a>            });
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = duplicate {
+<a href=#76 id=76 data-nosnippet>76</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
+<a href=#77 id=77 data-nosnippet>77</a>            <span class="kw">continue</span>;
+<a href=#78 id=78 data-nosnippet>78</a>        }
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>kept_index = kept.len();
+<a href=#81 id=81 data-nosnippet>81</a>        seen_hashes.insert(hash_key, kept_index);
+<a href=#82 id=82 data-nosnippet>82</a>        kept_by_path
+<a href=#83 id=83 data-nosnippet>83</a>            .entry(candidate.candidate.path.clone())
+<a href=#84 id=84 data-nosnippet>84</a>            .or_default()
+<a href=#85 id=85 data-nosnippet>85</a>            .push(kept_index);
+<a href=#86 id=86 data-nosnippet>86</a>        kept.push(candidate);
+<a href=#87 id=87 data-nosnippet>87</a>    }
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a>    kept.sort_by(|a, b| {
+<a href=#90 id=90 data-nosnippet>90</a>        b.score
+<a href=#91 id=91 data-nosnippet>91</a>            .total_cmp(<span class="kw-2">&amp;</span>a.score)
+<a href=#92 id=92 data-nosnippet>92</a>            .then_with(|| a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path))
+<a href=#93 id=93 data-nosnippet>93</a>            .then_with(|| a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line))
+<a href=#94 id=94 data-nosnippet>94</a>    });
+<a href=#95 id=95 data-nosnippet>95</a>    kept
+<a href=#96 id=96 data-nosnippet>96</a>}
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_scored_candidate(
+<a href=#99 id=99 data-nosnippet>99</a>    existing: <span class="kw-2">&amp;mut </span>ScoredCandidate,
+<a href=#100 id=100 data-nosnippet>100</a>    duplicate: <span class="kw-2">&amp;</span>ScoredCandidate,
+<a href=#101 id=101 data-nosnippet>101</a>    weights: <span class="kw-2">&amp;</span>Weights,
+<a href=#102 id=102 data-nosnippet>102</a>) {
+<a href=#103 id=103 data-nosnippet>103</a>    merge_candidate_signals(<span class="kw-2">&amp;mut </span>existing.candidate, <span class="kw-2">&amp;</span>duplicate.candidate);
+<a href=#104 id=104 data-nosnippet>104</a>    existing.score = existing.candidate.score(weights, existing.token_count);
+<a href=#105 id=105 data-nosnippet>105</a>    existing.marginal_score = existing.score / existing.token_count <span class="kw">as </span>f64;
+<a href=#106 id=106 data-nosnippet>106</a>}
+<a href=#107 id=107 data-nosnippet>107</a>
+<a href=#108 id=108 data-nosnippet>108</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_candidate_signals(existing: <span class="kw-2">&amp;mut </span>Candidate, duplicate: <span class="kw-2">&amp;</span>Candidate) {
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">for </span>kind <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.match_kinds {
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">if </span>!existing.match_kinds.contains(kind) {
+<a href=#111 id=111 data-nosnippet>111</a>            existing.match_kinds.push(kind.clone());
+<a href=#112 id=112 data-nosnippet>112</a>        }
+<a href=#113 id=113 data-nosnippet>113</a>    }
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">for </span>concept <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.concepts {
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">if </span>!existing.concepts.contains(concept) {
+<a href=#116 id=116 data-nosnippet>116</a>            existing.concepts.push(concept.clone());
+<a href=#117 id=117 data-nosnippet>117</a>        }
+<a href=#118 id=118 data-nosnippet>118</a>    }
+<a href=#119 id=119 data-nosnippet>119</a>    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">if </span>existing.target_start_line.is_none() &amp;&amp; duplicate.target_start_line.is_some() {
+<a href=#121 id=121 data-nosnippet>121</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
+<a href=#122 id=122 data-nosnippet>122</a>        existing.target_start_line = duplicate.target_start_line;
+<a href=#123 id=123 data-nosnippet>123</a>        existing.target_end_line = duplicate.target_end_line;
+<a href=#124 id=124 data-nosnippet>124</a>        existing
+<a href=#125 id=125 data-nosnippet>125</a>            .representation
+<a href=#126 id=126 data-nosnippet>126</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
+<a href=#127 id=127 data-nosnippet>127</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
+<a href=#128 id=128 data-nosnippet>128</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
+<a href=#129 id=129 data-nosnippet>129</a>    }
+<a href=#130 id=130 data-nosnippet>130</a>    existing.exact = existing.exact.max(duplicate.exact);
+<a href=#131 id=131 data-nosnippet>131</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
+<a href=#132 id=132 data-nosnippet>132</a>    existing.reference = existing.reference.max(duplicate.reference);
+<a href=#133 id=133 data-nosnippet>133</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
+<a href=#134 id=134 data-nosnippet>134</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
+<a href=#135 id=135 data-nosnippet>135</a>    existing.lexical_frequency_penalty = existing
+<a href=#136 id=136 data-nosnippet>136</a>        .lexical_frequency_penalty
+<a href=#137 id=137 data-nosnippet>137</a>        .min(duplicate.lexical_frequency_penalty);
+<a href=#138 id=138 data-nosnippet>138</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
+<a href=#139 id=139 data-nosnippet>139</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
+<a href=#140 id=140 data-nosnippet>140</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
+<a href=#141 id=141 data-nosnippet>141</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
+<a href=#142 id=142 data-nosnippet>142</a>}
 </code></pre></div></section></main></body></html>

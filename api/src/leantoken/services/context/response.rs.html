@@ -276,7 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(max_response_tokens) = options.max_response_tokens()
 <a href=#277 id=277 data-nosnippet>277</a>            &amp;&amp; response.meta.total_response_tokens &gt; max_response_tokens
 <a href=#278 id=278 data-nosnippet>278</a>        {
-<a href=#279 id=279 data-nosnippet>279</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InternalFailure(
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::ResponseAccountingInvariant(
 <a href=#280 id=280 data-nosnippet>280</a>                <span class="string">"context response exceeded its fitted serialized-response budget"</span>.into(),
 <a href=#281 id=281 data-nosnippet>281</a>            ));
 <a href=#282 id=282 data-nosnippet>282</a>        }

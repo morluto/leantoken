@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::indexer::Indexer;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>crate::{Error, <span class="prelude-ty">Result</span>};
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::ActiveReconciliation;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::indexing::ActiveReconciliation;
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>DEFAULT_RECONCILIATION_ACTIVE_CAPACITY: usize =
 <a href=#14 id=14 data-nosnippet>14</a>    <span class="kw">super</span>::executor::DEFAULT_BLOCKING_ACTIVE_CAPACITY;
@@ -218,7 +218,7 @@
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">match </span>outcome {
 <a href=#219 id=219 data-nosnippet>219</a>            <span class="prelude-val">Ok</span>(WaveOutcome::Complete) =&gt; <span class="prelude-val">Ok</span>(()),
 <a href=#220 id=220 data-nosnippet>220</a>            <span class="prelude-val">Ok</span>(WaveOutcome::Failed(error)) =&gt; <span class="prelude-val">Err</span>(Error::ReconciliationFailed(error)),
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(Error::InternalFailure(
+<a href=#221 id=221 data-nosnippet>221</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(Error::OperationFailure(
 <a href=#222 id=222 data-nosnippet>222</a>                <span class="string">"reconciliation coordinator stopped unexpectedly"</span>.into(),
 <a href=#223 id=223 data-nosnippet>223</a>            )),
 <a href=#224 id=224 data-nosnippet>224</a>        }
@@ -526,7 +526,7 @@
 <a href=#526 id=526 data-nosnippet>526</a>}
 <a href=#527 id=527 data-nosnippet>527</a>
 <a href=#528 id=528 data-nosnippet>528</a><span class="kw">fn </span>reconciliation_state_poisoned() -&gt; Error {
-<a href=#529 id=529 data-nosnippet>529</a>    Error::InternalFailure(<span class="string">"reconciliation coordinator state poisoned"</span>.into())
+<a href=#529 id=529 data-nosnippet>529</a>    Error::OperationFailure(<span class="string">"reconciliation coordinator state poisoned"</span>.into())
 <a href=#530 id=530 data-nosnippet>530</a>}
 <a href=#531 id=531 data-nosnippet>531</a>
 <a href=#532 id=532 data-nosnippet>532</a><span class="kw">fn </span>remove_waiter(waiters: <span class="kw-2">&amp;mut </span>Vec&lt;Waiter&gt;, waiter_id: u64) -&gt; bool {

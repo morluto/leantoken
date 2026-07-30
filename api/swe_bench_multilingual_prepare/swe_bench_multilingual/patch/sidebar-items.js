@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["dominant_script_language","extract_patch_evidence","infer_task_language","is_optional_evidence_path","language_for_path","line_map_len","merge_line_maps","normalize_diff_path","regions_from_lines","source_anchor_lines","subtract_line_map","validated_region"]};

@@ -412,7 +412,7 @@
 <a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">let </span>content = file
 <a href=#413 id=413 data-nosnippet>413</a>        .content
 <a href=#414 id=414 data-nosnippet>414</a>        .get(symbol.start_byte..symbol.end_byte)
-<a href=#415 id=415 data-nosnippet>415</a>        .ok_or_else(|| Error::InternalFailure(<span class="string">"invalid historical symbol range"</span>.into()))<span class="question-mark">?
+<a href=#415 id=415 data-nosnippet>415</a>        .ok_or_else(|| Error::OperationFailure(<span class="string">"invalid historical symbol range"</span>.into()))<span class="question-mark">?
 <a href=#416 id=416 data-nosnippet>416</a>        </span>.to_owned();
 <a href=#417 id=417 data-nosnippet>417</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ResolvedHistoricalSymbol {
 <a href=#418 id=418 data-nosnippet>418</a>        symbol: HistoricalSymbol {
@@ -630,13 +630,13 @@
 <a href=#630 id=630 data-nosnippet>630</a>        )<span class="question-mark">?</span>;
 <a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>base_metadata = commit_metadata
 <a href=#632 id=632 data-nosnippet>632</a>            .remove(<span class="kw-2">&amp;</span>revisions.base_revision)
-<a href=#633 id=633 data-nosnippet>633</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"missing base commit metadata"</span>.into()))<span class="question-mark">?</span>;
+<a href=#633 id=633 data-nosnippet>633</a>            .ok_or_else(|| Error::OperationFailure(<span class="string">"missing base commit metadata"</span>.into()))<span class="question-mark">?</span>;
 <a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">let </span>head_metadata = commit_metadata
 <a href=#635 id=635 data-nosnippet>635</a>            .remove(<span class="kw-2">&amp;</span>revisions.head_revision)
 <a href=#636 id=636 data-nosnippet>636</a>            .or_else(|| {
 <a href=#637 id=637 data-nosnippet>637</a>                (revisions.base_revision == revisions.head_revision).then(|| base_metadata.clone())
 <a href=#638 id=638 data-nosnippet>638</a>            })
-<a href=#639 id=639 data-nosnippet>639</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"missing head commit metadata"</span>.into()))<span class="question-mark">?</span>;
+<a href=#639 id=639 data-nosnippet>639</a>            .ok_or_else(|| Error::OperationFailure(<span class="string">"missing head commit metadata"</span>.into()))<span class="question-mark">?</span>;
 <a href=#640 id=640 data-nosnippet>640</a>        check_cancelled(cancellation)<span class="question-mark">?</span>;
 <a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span>base_blobs = git_blobs_at_resolved_revision(
 <a href=#642 id=642 data-nosnippet>642</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.config.root,
@@ -1389,7 +1389,7 @@
 <a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">let </span>content = blob
 <a href=#1390 id=1390 data-nosnippet>1390</a>            .content
 <a href=#1391 id=1391 data-nosnippet>1391</a>            .get(symbol.start_byte..symbol.end_byte)
-<a href=#1392 id=1392 data-nosnippet>1392</a>            .ok_or_else(|| Error::InternalFailure(<span class="string">"invalid historical symbol range"</span>.into()))<span class="question-mark">?
+<a href=#1392 id=1392 data-nosnippet>1392</a>            .ok_or_else(|| Error::OperationFailure(<span class="string">"invalid historical symbol range"</span>.into()))<span class="question-mark">?
 <a href=#1393 id=1393 data-nosnippet>1393</a>            </span>.to_owned();
 <a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="kw">let </span>content_hash = <span class="kw">crate</span>::text::hash(<span class="kw-2">&amp;</span>content);
 <a href=#1395 id=1395 data-nosnippet>1395</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(ResolvedHistoricalSymbol {

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["canonical_fixture_files","collect_files","copy_tree","fixture_manifest_hash","main","option_string","option_value","projection_result"],"struct":["Acceptance","FilesTask","Fixture","Manifest","OutlineTask","ProjectionResult","Report","SearchTask","Tasks"],"type":["AnyResult"]};

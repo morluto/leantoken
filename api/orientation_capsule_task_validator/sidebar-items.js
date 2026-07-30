@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["RECEIPT_FILE"],"fn":["git_bytes","git_stdout","main","required_env","required_env_path","validate_clap","validate_click","validate_hash","verify_file_hash"],"struct":["Args","ValidationReceipt"]};

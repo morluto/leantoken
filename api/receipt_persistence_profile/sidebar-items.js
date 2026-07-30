@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["artifact_delta","file_bytes","linux_process_write_bytes","linux_status_kib","main","percentile","phase_report","profile_create","profile_reuse","search_request","wal_path","write_delta"],"struct":["Args","PhaseReport","Report"],"type":["AnyResult"]};

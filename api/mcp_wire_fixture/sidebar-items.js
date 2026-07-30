@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["main","synthetic_trace"],"mod":["wire_trace"],"struct":["Args"]};

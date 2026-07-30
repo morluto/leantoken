@@ -292,19 +292,19 @@
 <a href=#292 id=292 data-nosnippet>292</a>/// process-local; repository ownership and cross-process write serialization are
 <a href=#293 id=293 data-nosnippet>293</a>/// enforced separately by the services and coordination layers.
 <a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub struct </span>Storage {
-<a href=#295 id=295 data-nosnippet>295</a>    writer: Arc&lt;Mutex&lt;Connection&gt;&gt;,
-<a href=#296 id=296 data-nosnippet>296</a>    readers: r2d2::Pool&lt;SqliteConnectionManager&gt;,
-<a href=#297 id=297 data-nosnippet>297</a>    path: PathBuf,
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) writer: Arc&lt;Mutex&lt;Connection&gt;&gt;,
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) readers: r2d2::Pool&lt;SqliteConnectionManager&gt;,
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) path: PathBuf,
 <a href=#298 id=298 data-nosnippet>298</a>    <span class="attr">#[cfg(test)]
-<a href=#299 id=299 data-nosnippet>299</a>    </span>diagnostics: Arc&lt;StorageDiagnostics&gt;,
+<a href=#299 id=299 data-nosnippet>299</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) diagnostics: Arc&lt;StorageDiagnostics&gt;,
 <a href=#300 id=300 data-nosnippet>300</a>}
 <a href=#301 id=301 data-nosnippet>301</a>
 <a href=#302 id=302 data-nosnippet>302</a><span class="attr">#[cfg(test)]
 <a href=#303 id=303 data-nosnippet>303</a>#[derive(Debug, Default)]
-<a href=#304 id=304 data-nosnippet>304</a></span><span class="kw">struct </span>StorageDiagnostics {
-<a href=#305 id=305 data-nosnippet>305</a>    active_snapshots: AtomicUsize,
-<a href=#306 id=306 data-nosnippet>306</a>    peak_active_snapshots: AtomicUsize,
-<a href=#307 id=307 data-nosnippet>307</a>    reader_checkout_wait_micros: Mutex&lt;Vec&lt;u64&gt;&gt;,
+<a href=#304 id=304 data-nosnippet>304</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>StorageDiagnostics {
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) active_snapshots: AtomicUsize,
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) peak_active_snapshots: AtomicUsize,
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) reader_checkout_wait_micros: Mutex&lt;Vec&lt;u64&gt;&gt;,
 <a href=#308 id=308 data-nosnippet>308</a>}
 <a href=#309 id=309 data-nosnippet>309</a>
 <a href=#310 id=310 data-nosnippet>310</a><span class="attr">#[cfg(test)]
@@ -317,10 +317,11 @@
 <a href=#317 id=317 data-nosnippet>317</a>
 <a href=#318 id=318 data-nosnippet>318</a><span class="doccomment">/// Restricted writer for one uncommitted repository generation.
 <a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ReconciliationWriter&lt;<span class="lifetime">'transaction</span>, <span class="lifetime">'connection</span>&gt; {
-<a href=#320 id=320 data-nosnippet>320</a>    transaction: <span class="kw-2">&amp;</span><span class="lifetime">'transaction </span>Transaction&lt;<span class="lifetime">'connection</span>&gt;,
-<a href=#321 id=321 data-nosnippet>321</a>    generation: i64,
-<a href=#322 id=322 data-nosnippet>322</a>    rebuild: bool,
-<a href=#323 id=323 data-nosnippet>323</a>    replacements: usize,
-<a href=#324 id=324 data-nosnippet>324</a>    deletions: HashSet&lt;String&gt;,
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) transaction: <span class="kw-2">&amp;</span><span class="lifetime">'transaction </span>Transaction&lt;<span class="lifetime">'connection</span>&gt;,
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) generation: i64,
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) rebuild: bool,
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) replacements: usize,
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) deletions: HashSet&lt;String&gt;,
 <a href=#325 id=325 data-nosnippet>325</a>}
+<a href=#326 id=326 data-nosnippet>326</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

@@ -286,7 +286,7 @@
 <a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self
 <a href=#287 id=287 data-nosnippet>287</a>            </span>.state
 <a href=#288 id=288 data-nosnippet>288</a>            .lock()
-<a href=#289 id=289 data-nosnippet>289</a>            .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
+<a href=#289 id=289 data-nosnippet>289</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
 <a href=#290 id=290 data-nosnippet>290</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, Instant::now());
 <a href=#291 id=291 data-nosnippet>291</a>        <span class="prelude-val">Ok</span>(state
 <a href=#292 id=292 data-nosnippet>292</a>            .entries
@@ -301,7 +301,7 @@
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self
 <a href=#302 id=302 data-nosnippet>302</a>            </span>.state
 <a href=#303 id=303 data-nosnippet>303</a>            .lock()
-<a href=#304 id=304 data-nosnippet>304</a>            .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
 <a href=#305 id=305 data-nosnippet>305</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, Instant::now());
 <a href=#306 id=306 data-nosnippet>306</a>        <span class="prelude-val">Ok</span>(state.insertion_order.iter().rev().find_map(|key| {
 <a href=#307 id=307 data-nosnippet>307</a>            <span class="kw">if </span>key.target_key != target_key {
@@ -324,7 +324,7 @@
 <a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self
 <a href=#325 id=325 data-nosnippet>325</a>            </span>.state
 <a href=#326 id=326 data-nosnippet>326</a>            .lock()
-<a href=#327 id=327 data-nosnippet>327</a>            .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
+<a href=#327 id=327 data-nosnippet>327</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
 <a href=#328 id=328 data-nosnippet>328</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, Instant::now());
 <a href=#329 id=329 data-nosnippet>329</a>        <span class="prelude-val">Ok</span>(state
 <a href=#330 id=330 data-nosnippet>330</a>            .deltas
@@ -343,7 +343,7 @@
 <a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self
 <a href=#344 id=344 data-nosnippet>344</a>            </span>.state
 <a href=#345 id=345 data-nosnippet>345</a>            .lock()
-<a href=#346 id=346 data-nosnippet>346</a>            .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
+<a href=#346 id=346 data-nosnippet>346</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
 <a href=#347 id=347 data-nosnippet>347</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, Instant::now());
 <a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(previous) = state.entries.remove(<span class="kw-2">&amp;</span>key) {
 <a href=#349 id=349 data-nosnippet>349</a>            state.total_bytes = state.total_bytes.saturating_sub(previous.content.len());
@@ -373,7 +373,7 @@
 <a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self
 <a href=#374 id=374 data-nosnippet>374</a>            </span>.state
 <a href=#375 id=375 data-nosnippet>375</a>            .lock()
-<a href=#376 id=376 data-nosnippet>376</a>            .map_err(|<span class="kw">_</span>| Error::InternalFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
+<a href=#376 id=376 data-nosnippet>376</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"read delta registry poisoned"</span>.into()))<span class="question-mark">?</span>;
 <a href=#377 id=377 data-nosnippet>377</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, Instant::now());
 <a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(previous) = state.deltas.remove(<span class="kw-2">&amp;</span>key) {
 <a href=#379 id=379 data-nosnippet>379</a>            state.delta_bytes = state.delta_bytes.saturating_sub(previous.delta.len());

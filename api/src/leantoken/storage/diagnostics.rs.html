@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="comment">// SQLite normally recycles a completed WAL without shrinking it. Retain four
 <a href=#13 id=13 data-nosnippet>13</a>// default auto-checkpoint windows for reuse while bounding the steady-state
 <a href=#14 id=14 data-nosnippet>14</a>// disk footprint after a large initial publication.
-<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">const </span>WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = <span class="number">16 </span>* <span class="number">1024 </span>* <span class="number">1024</span>;
+<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = <span class="number">16 </span>* <span class="number">1024 </span>* <span class="number">1024</span>;
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>CURRENT_SCHEMA_VERSION: i64 = <span class="number">10</span>;
 <a href=#18 id=18 data-nosnippet>18</a>
@@ -21,8 +21,8 @@
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// Absolute row limit applied by storage queries, including internal batch reads.
 <a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub const </span>HARD_MAX_RESULTS: usize = <span class="number">10_000</span>;
 <a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">const </span>DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(<span class="number">5_000</span>);
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">const </span>READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(<span class="number">100</span>);
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(<span class="number">5_000</span>);
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(<span class="number">100</span>);
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>process_write_bytes() -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="attr">#[cfg(target_os = <span class="string">"linux"</span>)]
@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>    </span>}
 <a href=#40 id=40 data-nosnippet>40</a>}
 <a href=#41 id=41 data-nosnippet>41</a>
-<a href=#42 id=42 data-nosnippet>42</a><span class="kw">fn </span>measured_storage_phase&lt;T&gt;(
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>measured_storage_phase&lt;T&gt;(
 <a href=#43 id=43 data-nosnippet>43</a>    enabled: bool,
 <a href=#44 id=44 data-nosnippet>44</a>    operation: <span class="kw">impl </span>FnOnce() -&gt; <span class="prelude-ty">Result</span>&lt;T&gt;,
 <a href=#45 id=45 data-nosnippet>45</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(T, f64, <span class="prelude-ty">Option</span>&lt;u64&gt;)&gt; {
@@ -56,13 +56,13 @@
 <a href=#56 id=56 data-nosnippet>56</a>    <span class="prelude-val">Ok</span>((output, elapsed_ms, write_bytes))
 <a href=#57 id=57 data-nosnippet>57</a>}
 <a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a><span class="kw">fn </span>wal_path(database: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>wal_path(database: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
 <a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span><span class="kw-2">mut </span>path = database.as_os_str().to_os_string();
 <a href=#61 id=61 data-nosnippet>61</a>    path.push(<span class="string">"-wal"</span>);
 <a href=#62 id=62 data-nosnippet>62</a>    PathBuf::from(path)
 <a href=#63 id=63 data-nosnippet>63</a>}
 <a href=#64 id=64 data-nosnippet>64</a>
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">fn </span>fts_storage_footprint(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;FtsStorageFootprint&gt; {
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>fts_storage_footprint(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;FtsStorageFootprint&gt; {
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span>(chunk_word, chunk_trigram, symbol, reference) = conn.query_row(
 <a href=#67 id=67 data-nosnippet>67</a>        <span class="string">"SELECT
 <a href=#68 id=68 data-nosnippet>68</a>             COALESCE(SUM(CASE WHEN name GLOB 'chunks_fts_word_*' THEN pgsize ELSE 0 END), 0),
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a>    })
 <a href=#89 id=89 data-nosnippet>89</a>}
 <a href=#90 id=90 data-nosnippet>90</a>
-<a href=#91 id=91 data-nosnippet>91</a><span class="kw">fn </span>populate_post_commit_diagnostics(
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>populate_post_commit_diagnostics(
 <a href=#92 id=92 data-nosnippet>92</a>    conn: <span class="kw-2">&amp;</span>Connection,
 <a href=#93 id=93 data-nosnippet>93</a>    database: <span class="kw-2">&amp;</span>Path,
 <a href=#94 id=94 data-nosnippet>94</a>    diagnostics: <span class="kw-2">&amp;mut </span>PublicationDiagnostics,
@@ -187,13 +187,13 @@
 <a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">pub </span>post_commit_diagnostics_complete: bool,
 <a href=#188 id=188 data-nosnippet>188</a>}
 <a href=#189 id=189 data-nosnippet>189</a>
-<a href=#190 id=190 data-nosnippet>190</a><span class="kw">struct </span>DatabaseTriggerGuard&lt;<span class="lifetime">'connection</span>&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>    connection: <span class="kw-2">&amp;</span><span class="lifetime">'connection </span>Connection,
-<a href=#192 id=192 data-nosnippet>192</a>    previous: <span class="prelude-ty">Option</span>&lt;bool&gt;,
+<a href=#190 id=190 data-nosnippet>190</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>DatabaseTriggerGuard&lt;<span class="lifetime">'connection</span>&gt; {
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) connection: <span class="kw-2">&amp;</span><span class="lifetime">'connection </span>Connection,
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) previous: <span class="prelude-ty">Option</span>&lt;bool&gt;,
 <a href=#193 id=193 data-nosnippet>193</a>}
 <a href=#194 id=194 data-nosnippet>194</a>
 <a href=#195 id=195 data-nosnippet>195</a><span class="kw">impl</span>&lt;<span class="lifetime">'connection</span>&gt; DatabaseTriggerGuard&lt;<span class="lifetime">'connection</span>&gt; {
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">fn </span>disable(connection: <span class="kw-2">&amp;</span><span class="lifetime">'connection </span>Connection) -&gt; rusqlite::Result&lt;<span class="self">Self</span>&gt; {
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>disable(connection: <span class="kw-2">&amp;</span><span class="lifetime">'connection </span>Connection) -&gt; rusqlite::Result&lt;<span class="self">Self</span>&gt; {
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>previous = connection.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)<span class="question-mark">?</span>;
 <a href=#198 id=198 data-nosnippet>198</a>        connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -202,11 +202,11 @@
 <a href=#202 id=202 data-nosnippet>202</a>        })
 <a href=#203 id=203 data-nosnippet>203</a>    }
 <a href=#204 id=204 data-nosnippet>204</a>
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">fn </span>restore(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; rusqlite::Result&lt;()&gt; {
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>restore(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; rusqlite::Result&lt;()&gt; {
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.restore_inner()
 <a href=#207 id=207 data-nosnippet>207</a>    }
 <a href=#208 id=208 data-nosnippet>208</a>
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">fn </span>restore_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; rusqlite::Result&lt;()&gt; {
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>restore_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; rusqlite::Result&lt;()&gt; {
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(previous) = <span class="self">self</span>.previous <span class="kw">else </span>{
 <a href=#211 id=211 data-nosnippet>211</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#212 id=212 data-nosnippet>212</a>        };
@@ -222,4 +222,5 @@
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let _ </span>= <span class="self">self</span>.restore_inner();
 <a href=#223 id=223 data-nosnippet>223</a>    }
 <a href=#224 id=224 data-nosnippet>224</a>}
+<a href=#225 id=225 data-nosnippet>225</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

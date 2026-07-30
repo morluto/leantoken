@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["copy_lines","main"],"mod":["wire_trace"],"struct":["Args","Recorder"]};

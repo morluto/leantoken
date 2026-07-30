@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["backtick_spans","choose_stratified_subset","is_code_like_token","query_contains_exact_identifier","select_candidates","selection_key"]};
