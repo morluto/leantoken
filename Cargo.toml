@@ -2,6 +2,7 @@
 resolver = "3"
 members = [".", "crates/test-support", "crates/test-suite", "xtask"]
 default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
+exclude = ["benchmarks/swift-grammar-073"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -96,6 +97,7 @@ insta = { version = "1.43.2", features = ["json"] }
 rmcp = { version = "=3.0.0-beta.2", default-features = false, features = ["client", "transport-async-rw"] }
 statrs = "0.18.0"
 tokio = { version = "1.49.0", features = ["test-util"] }
+swift-diagnostic-grammar = { package = "tree-sitter-swift", version = "=0.7.2" }
 
 [profile.release]
 lto = "thin"

@@ -1652,3 +1652,69 @@ It reproduces issue #367's 810 incomplete files, 1,380 `ERROR` nodes, and 40
 `MISSING` nodes. This diagnostic does not provide a semantic extraction oracle
 and therefore cannot by itself justify a grammar fork or production parser
 change.
+
+## Swift structural-indexing evaluation
+
+[`swift_structural_validation.json`](swift_structural_validation.json) freezes
+ten Swift maintenance tasks, 20 relevant files, 68 line anchors, one exact
+OpenClaw revision, and a 1,024-source-token budget before either grammar arm
+runs. It compares lexical retrieval with otherwise identical
+`tree-sitter-swift` 0.7.2 and 0.7.3 prototypes. Accuracy eligibility requires
+one additional relevant file or five percentage points of line-anchor recall,
+with no task-family relevant-file regression. Correctness remains mandatory:
+identical warm requests must be deterministic, and an accuracy gain cannot
+waive parser or product-test regressions.
+
+The source-free
+[decision report](reports/swift-structural-evaluation-openclaw-v1.json), its
+[attempt receipt](reports/swift-retrieval-attempts-openclaw-v1.json), and all
+five successful [raw retrieval reports](reports/swift-retrieval-control-run1.json)
+record the no-ship result. The decision report points to every raw report and
+binds it by SHA-256; failed attempts have no raw report because the harness
+exits before writing one when the deterministic-context contract fails. Both
+candidates improved relevant-file recall from 80% to 95% and line-anchor
+recall from 14.7% to 52.9%. Neither was eligible:
+
+- 0.7.2 failed deterministic warm-context validation in four of five complete
+  benchmark attempts, increased cold indexing by 30.3%, RSS by 126.2%, and the
+  database by 5.52%;
+- 0.7.3 failed determinism in two of four attempts, increased cold indexing by
+  39.9%, RSS by 131.2%, and the database by 5.57%;
+- 0.7.3 also fails the valid `as?` followed by `??` expression reproduced by
+  upstream issue 597, even though its aggregate OpenClaw incomplete-file count
+  is ten lower.
+
+The lexical control completed both recorded runs deterministically. The binary
+growth of either candidate stayed below the frozen five-MiB cap, but passing
+one resource threshold does not offset the other correctness and resource
+failures. Swift therefore remains lexical-only in production. The 0.7.2
+grammar is a root development dependency. An excluded, independently locked
+diagnostic manifest retains 0.7.3. This keeps both corpus reports and the
+known-valid syntax regression executable without placing either grammar in the
+normal dependency graph.
+
+Run both pinned source-free parse diagnostics from a clean OpenClaw checkout:
+
+```bash
+cargo test --locked --example swift_parse_diagnostic
+cargo run --locked --release --example swift_parse_diagnostic -- \
+  --repository /path/to/openclaw \
+  --revision 9feb6ad161877da86200693b039638dbf3411e66 \
+  --output /new/path/swift-parse-diagnostic-0.7.2.json
+
+CARGO_TARGET_DIR=target cargo test --locked \
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml
+CARGO_TARGET_DIR=target cargo run --locked --release \
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml -- \
+  --repository /path/to/openclaw \
+  --revision 9feb6ad161877da86200693b039638dbf3411e66 \
+  --output /new/path/swift-parse-diagnostic-0.7.3.json
+```
+
+The output path must not exist. The command verifies the exact clean tracked
+revision and writes only locked parser versions, corpus identity and hash,
+bounds, fixed path-only strata, aggregate syntax/extraction counts, the 32
+largest recovery categories, and an exact remainder. It never writes source or
+individual paths. Each manifest embeds its own lockfile version in the report.
+The checked 0.7.2 and 0.7.3 reports remain separate because an aggregate
+improvement cannot erase a known valid-syntax regression.

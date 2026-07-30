@@ -137,6 +137,23 @@ interpretation limits are documented in
 [`../benchmarks/README.md`](../benchmarks/README.md#typescript-parse-recovery-diagnostic).
 The external run is evidence for parser work, not a normal local or CI gate.
 
+When changing the Swift evaluation manifest, diagnostic, reports, or its
+development-only grammar pin, run:
+
+```bash
+cargo test --locked --example swift_parse_diagnostic
+CARGO_TARGET_DIR=target cargo test --locked \
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml
+```
+
+The exact external-corpus command, frozen retrieval gate, and no-ship result
+are documented in
+[`../benchmarks/README.md`](../benchmarks/README.md#swift-structural-indexing-evaluation).
+The root target exercises the exact 0.7.2 development dependency; the excluded
+manifest exercises its independent exact 0.7.3 lock. Swift remains unsupported
+by production structural parsing; these targets are an evaluation contract and
+must not be treated as an index-readiness check.
+
 These repository-local Cargo aliases keep the fast and extended target groups
 consistent with CI. The development profile retains line tables for useful
 backtraces in LeanToken while omitting dependency debug information, which

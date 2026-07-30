@@ -1309,7 +1309,7 @@ fn benchmark_limitations(
             "Validation prompts and labels were frozen from open issue reports and pinned source inspection, then used during retrieval tuning; this is not blind holdout evidence.",
         );
         limitations.push(
-            "Four validation tasks are retrieval development evidence, not a statistically powered product claim.",
+            "The validation tasks are retrieval development evidence, not a statistically powered product claim.",
         );
     } else if dataset_kind == "external_retrieval_corpus" {
         limitations.push(
@@ -4145,6 +4145,54 @@ mod tests {
         manifest.schema_version = 2;
         manifest.corpora[0].fix_commit = Some("future".into());
         assert!(validate_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn swift_structural_manifest_binds_the_frozen_gate() {
+        let source = include_str!("../benchmarks/swift_structural_validation.json");
+        let manifest: Manifest = serde_json::from_str(source).expect("Swift manifest");
+        validate_manifest(&manifest).expect("valid Swift manifest");
+
+        assert_eq!(manifest.schema_version, 4);
+        assert_eq!(manifest.dataset_kind, "prospective_validation");
+        assert_eq!(
+            blake3::hash(source.as_bytes()).to_hex().to_string(),
+            "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7"
+        );
+        assert_eq!(
+            manifest
+                .corpora
+                .iter()
+                .flat_map(|corpus| &corpus.tasks)
+                .count(),
+            10
+        );
+        assert_eq!(
+            manifest
+                .corpora
+                .iter()
+                .flat_map(|corpus| &corpus.tasks)
+                .map(|task| task.relevant_files.len())
+                .sum::<usize>(),
+            20
+        );
+        assert_eq!(
+            manifest
+                .corpora
+                .iter()
+                .flat_map(|corpus| &corpus.tasks)
+                .flat_map(|task| &task.relevant_files)
+                .map(|file| file.line_anchors.len())
+                .sum::<usize>(),
+            68
+        );
+        assert!(
+            manifest
+                .corpora
+                .iter()
+                .flat_map(|corpus| &corpus.tasks)
+                .all(|task| task.token_budget == 1024)
+        );
     }
 
     #[test]

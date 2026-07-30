@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "parser_dependencies": {
+    "tree_sitter": "0.26.11",
+    "tree_sitter_swift": "0.7.2"
+  },
+  "corpus": {
+    "revision": "9feb6ad161877da86200693b039638dbf3411e66",
+    "content_blake3": "20a7422e4e204416ad7a477ba4ede1c51b014d2a7b90ea8e9981a658a492c851",
+    "files": 1043,
+    "source_bytes": 13803796
+  },
+  "limits": {
+    "max_files": 100000,
+    "max_path_bytes": 4096,
+    "max_file_bytes": 8388608,
+    "max_total_source_bytes": 8589934592,
+    "max_nodes_per_file": 1000000,
+    "max_total_nodes": 100000000,
+    "max_recovery_nodes": 1000000,
+    "max_recovery_categories": 512,
+    "max_reported_recovery_categories": 32,
+    "file_parse_timeout_seconds": 30
+  },
+  "summary": {
+    "files": 1043,
+    "incomplete_files": 359,
+    "source_bytes": 13803796,
+    "nodes_visited": 3783830,
+    "error_nodes": 16647,
+    "missing_nodes": 128,
+    "extracted": {
+      "definitions": 16567,
+      "nested_definitions": 11184,
+      "imports": 2866,
+      "calls": 111828,
+      "calls_with_owner": 73530,
+      "owner_ranges": 16551
+    },
+    "retained_in_incomplete_files": {
+      "definitions": 5381,
+      "nested_definitions": 2818,
+      "imports": 1335,
+      "calls": 59059,
+      "calls_with_owner": 21060,
+      "owner_ranges": 5381
+    }
+  },
+  "strata": [
+    {
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 700,
+        "incomplete_files": 72,
+        "source_bytes": 9185017,
+        "nodes_visited": 2474821,
+        "error_nodes": 303,
+        "missing_nodes": 56,
+        "extracted": {
+          "definitions": 14375,
+          "nested_definitions": 9864,
+          "imports": 1674,
+          "calls": 68518,
+          "calls_with_owner": 67032,
+          "owner_ranges": 14359
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 3680,
+          "nested_definitions": 1890,
+          "imports": 288,
+          "calls": 18752,
+          "calls_with_owner": 17564,
+          "owner_ranges": 3680
+        }
+      }
+    },
+    {
+      "source_shape": "test",
+      "counts": {
+        "files": 342,
+        "incomplete_files": 287,
+        "source_bytes": 4606199,
+        "nodes_visited": 1306450,
+        "error_nodes": 16344,
+        "missing_nodes": 72,
+        "extracted": {
+          "definitions": 2191,
+          "nested_definitions": 1320,
+          "imports": 1191,
+          "calls": 43310,
+          "calls_with_owner": 6498,
+          "owner_ranges": 2191
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 1701,
+          "nested_definitions": 928,
+          "imports": 1047,
+          "calls": 40307,
+          "calls_with_owner": 3496,
+          "owner_ranges": 1701
+        }
+      }
+    },
+    {
+      "source_shape": "generated",
+      "counts": {
+        "files": 1,
+        "incomplete_files": 0,
+        "source_bytes": 12580,
+        "nodes_visited": 2559,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 1,
+          "nested_definitions": 0,
+          "imports": 1,
+          "calls": 0,
+          "calls_with_owner": 0,
+          "owner_ranges": 1
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "calls": 0,
+          "calls_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    }
+  ],
+  "recovery_category_count": 124,
+  "recovery_categories": [
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "<none>",
+      "count": 10584
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "modifiers",
+      "count": 3188
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "<none>",
+      "count": 753
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "call_expression",
+      "syntax_kind": "ERROR",
+      "count": 448
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "modifiers",
+      "count": 283
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "property_declaration",
+      "syntax_kind": "ERROR",
+      "count": 204
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "ERROR",
+      "count": 183
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "ERROR",
+      "count": 176
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "simple_identifier",
+      "count": 146
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "statements",
+      "syntax_kind": "simple_identifier",
+      "count": 88
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "while_statement",
+      "syntax_kind": "ERROR",
+      "count": 64
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "check_expression",
+      "syntax_kind": "ERROR",
+      "count": 62
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "<none>",
+      "count": 60
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "for_statement",
+      "syntax_kind": "ERROR",
+      "count": 42
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "simple_identifier",
+      "count": 40
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "missing",
+      "parent_kind": "class_body",
+      "syntax_kind": "}",
+      "count": 37
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "class_declaration",
+      "syntax_kind": "modifiers",
+      "count": 35
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "<none>",
+      "count": 31
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "bang",
+      "syntax_kind": "!",
+      "count": 30
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "modifiers",
+      "count": 28
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "missing",
+      "parent_kind": "value_binding_pattern",
+      "syntax_kind": "let",
+      "count": 21
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "import_declaration",
+      "syntax_kind": "ERROR",
+      "count": 15
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "class_declaration",
+      "syntax_kind": "ERROR",
+      "count": 14
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "value_binding_pattern",
+      "syntax_kind": "let",
+      "count": 13
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "enum_class_body",
+      "syntax_kind": "}",
+      "count": 12
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "import_declaration",
+      "syntax_kind": "simple_identifier",
+      "count": 11
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "simple_identifier",
+      "count": 9
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "user_type",
+      "count": 8
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "property_declaration",
+      "count": 7
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "as_expression",
+      "syntax_kind": "ERROR",
+      "count": 7
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "try_expression",
+      "syntax_kind": "ERROR",
+      "count": 7
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "missing",
+      "parent_kind": "as_operator",
+      "syntax_kind": "as",
+      "count": 7
+    }
+  ],
+  "other_recovery_nodes": 162
+}
