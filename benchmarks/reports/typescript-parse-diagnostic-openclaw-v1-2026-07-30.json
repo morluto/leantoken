@@ -1,0 +1,593 @@
+{
+  "schema_version": 1,
+  "parser_dependencies": {
+    "tree_sitter": "0.26.11",
+    "tree_sitter_typescript": "0.23.2"
+  },
+  "corpus": {
+    "kind": "git",
+    "identity": "9feb6ad161877da86200693b039638dbf3411e66",
+    "content_blake3": "ba170cefc4bf348ea1b752d7c2fff2ea179f512854b46c5abf46b8035c80d006",
+    "files": 23738,
+    "source_bytes": 232319999
+  },
+  "limits": {
+    "max_manifest_bytes": 1048576,
+    "max_files": 100000,
+    "max_path_bytes": 4096,
+    "max_file_bytes": 8388608,
+    "max_total_source_bytes": 8589934592,
+    "max_nodes_per_file": 1000000,
+    "max_total_nodes": 100000000,
+    "max_recovery_nodes": 1000000,
+    "max_recovery_categories": 512,
+    "max_reported_recovery_categories": 32,
+    "diagnostic_tree_parse_timeout_seconds": 30
+  },
+  "summary": {
+    "files": 23738,
+    "incomplete_files": 810,
+    "source_bytes": 232319999,
+    "nodes_visited": 61174856,
+    "error_nodes": 1380,
+    "missing_nodes": 40,
+    "extracted": {
+      "definitions": 224374,
+      "nested_definitions": 47261,
+      "imports": 128062,
+      "references": 2355415,
+      "references_with_owner": 848946,
+      "owner_ranges": 161157
+    },
+    "retained_in_incomplete_files": {
+      "definitions": 16494,
+      "nested_definitions": 2213,
+      "imports": 5798,
+      "references": 296786,
+      "references_with_owner": 35629,
+      "owner_ranges": 10155
+    }
+  },
+  "strata": [
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 14456,
+        "incomplete_files": 84,
+        "source_bytes": 107527998,
+        "nodes_visited": 25997009,
+        "error_nodes": 176,
+        "missing_nodes": 27,
+        "extracted": {
+          "definitions": 148032,
+          "nested_definitions": 38008,
+          "imports": 82061,
+          "references": 736659,
+          "references_with_owner": 692725,
+          "owner_ranges": 115938
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 2272,
+          "nested_definitions": 510,
+          "imports": 827,
+          "references": 10006,
+          "references_with_owner": 7645,
+          "owner_ranges": 1589
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "counts": {
+        "files": 9183,
+        "incomplete_files": 722,
+        "source_bytes": 123524304,
+        "nodes_visited": 34946773,
+        "error_nodes": 1196,
+        "missing_nodes": 12,
+        "extracted": {
+          "definitions": 75341,
+          "nested_definitions": 9177,
+          "imports": 45556,
+          "references": 1611232,
+          "references_with_owner": 153183,
+          "owner_ranges": 44607
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 14151,
+          "nested_definitions": 1697,
+          "imports": 4948,
+          "references": 285701,
+          "references_with_owner": 27928,
+          "owner_ranges": 8531
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "mock_fixture_or_harness",
+      "counts": {
+        "files": 93,
+        "incomplete_files": 4,
+        "source_bytes": 828387,
+        "nodes_visited": 212554,
+        "error_nodes": 8,
+        "missing_nodes": 1,
+        "extracted": {
+          "definitions": 837,
+          "nested_definitions": 76,
+          "imports": 440,
+          "references": 7267,
+          "references_with_owner": 2845,
+          "owner_ranges": 592
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 71,
+          "nested_definitions": 6,
+          "imports": 23,
+          "references": 1079,
+          "references_with_owner": 56,
+          "owner_ranges": 35
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "generated",
+      "counts": {
+        "files": 6,
+        "incomplete_files": 0,
+        "source_bytes": 439310,
+        "nodes_visited": 18520,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 164,
+          "nested_definitions": 0,
+          "imports": 5,
+          "references": 257,
+          "references_with_owner": 193,
+          "owner_ranges": 20
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "typescript",
+      "source_shape": "intentional_invalid_syntax",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "test",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "mock_fixture_or_harness",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "generated",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    },
+    {
+      "language": "tsx",
+      "source_shape": "intentional_invalid_syntax",
+      "counts": {
+        "files": 0,
+        "incomplete_files": 0,
+        "source_bytes": 0,
+        "nodes_visited": 0,
+        "error_nodes": 0,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 0,
+          "nested_definitions": 0,
+          "imports": 0,
+          "references": 0,
+          "references_with_owner": 0,
+          "owner_ranges": 0
+        }
+      }
+    }
+  ],
+  "recovery_category_count": 70,
+  "recovery_categories": [
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "lexical_declaration",
+      "syntax_kind": "formal_parameters",
+      "count": 447
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "parenthesized_expression",
+      "syntax_kind": "<none>",
+      "count": 443
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "parenthesized_expression",
+      "syntax_kind": "formal_parameters",
+      "count": 214
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "parenthesized_expression",
+      "syntax_kind": "<none>",
+      "count": 71
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "lexical_declaration",
+      "syntax_kind": "formal_parameters",
+      "count": 29
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "object",
+      "syntax_kind": "formal_parameters",
+      "count": 27
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "export_statement",
+      "syntax_kind": "<none>",
+      "count": 24
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "binary_expression",
+      "syntax_kind": "formal_parameters",
+      "count": 22
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "type_annotation",
+      "syntax_kind": "member_expression",
+      "count": 17
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "type_alias_declaration",
+      "syntax_kind": ";",
+      "count": 8
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "type_arguments",
+      "syntax_kind": "member_expression",
+      "count": 7
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "lexical_declaration",
+      "syntax_kind": ";",
+      "count": 7
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "missing",
+      "parent_kind": "type_arguments",
+      "syntax_kind": ">",
+      "count": 7
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "expression_statement",
+      "syntax_kind": "<none>",
+      "count": 6
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "type_arguments",
+      "syntax_kind": "member_expression",
+      "count": 6
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "type_assertion",
+      "syntax_kind": "identifier",
+      "count": 5
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "arguments",
+      "syntax_kind": "identifier",
+      "count": 5
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "call_expression",
+      "syntax_kind": "identifier",
+      "count": 4
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "program",
+      "syntax_kind": "type_parameters",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "return_statement",
+      "syntax_kind": "formal_parameters",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "non_null_expression",
+      "syntax_kind": "!",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "missing",
+      "parent_kind": "subscript_expression",
+      "syntax_kind": "identifier",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "arguments",
+      "syntax_kind": "formal_parameters",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "subscript_expression",
+      "syntax_kind": "<none>",
+      "count": 3
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "binary_expression",
+      "syntax_kind": "<none>",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "formal_parameters",
+      "syntax_kind": "identifier",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "object_type",
+      "syntax_kind": "<none>",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "<none>",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "object_pattern",
+      "syntax_kind": "identifier",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "unary_expression",
+      "syntax_kind": "member_expression",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "mock_fixture_or_harness",
+      "recovery_kind": "error",
+      "parent_kind": "parenthesized_expression",
+      "syntax_kind": "formal_parameters",
+      "count": 2
+    },
+    {
+      "language": "typescript",
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "ERROR",
+      "syntax_kind": "member_expression",
+      "count": 1
+    }
+  ],
+  "other_recovery_nodes": 38
+}

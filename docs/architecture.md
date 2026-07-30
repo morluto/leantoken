@@ -1305,6 +1305,43 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
+Checked-in fixture inventory is a test-only scan bounded to 10,000 directory
+entries and 64 directory levels. It accepts only the
+`fixtures/<domain>/<case>` contract layout, rejects case directories without a
+manifest, and does not follow directory symlinks. The `fixtures/sample_repo`
+benchmark corpus is excluded before traversal, so its size cannot consume the
+contract-inventory bounds. The shared scanner fails instead of accepting a
+partial inventory when either bound is exceeded and is used by both xtask
+preflight and the fixture test harness.
+Merge tests execute the validated cases through one test-profile aggregate in
+the fixture-runner harness. The parallel unit phase skips that aggregate and a
+separate exact phase runs it after the suite-lib harness completes. Both phases
+use the same workspace feature graph so the exact phase reuses the compiled
+harness; the development-profile fixture binary remains available only for
+targeted run and bless operations.
+
+The manual TypeScript recovery evaluator is example-only and does not alter
+services, indexing, storage, ranking, or MCP schemas. It accepts at most
+100,000 clean, tracked TS/TSX/MTS/CTS files at one exact lowercase Git commit:
+paths are at most 4,096 bytes, each file is at most 8 MiB, and total source is
+at most 8 GiB. It processes one file at a time, visits at most 1,000,000 syntax
+nodes per file and 100,000,000 total, and retains at most 1,000,000 recovery
+nodes across 512 low-cardinality categories. Reports include the largest 32
+categories and an exact remainder, never source or individual paths. Git
+commands disable repository fsmonitor configuration; stdout/stderr are bounded
+to 64 MiB/64 KiB with a 60-second process timeout. Reader failure, overflow,
+timeout, unsafe paths, symlinks, non-UTF-8 input, or counter overflow fails the
+run instead of accepting partial evidence.
+
+The evaluator applies a 30-second progress callback to its independent
+diagnostic tree parse. Its second parse deliberately invokes the existing
+production extraction API and inherits that API's lack of a wall-clock
+callback, while remaining subject to the file and corpus byte bounds. Manual
+runs on untrusted corpora therefore need an outer process deadline. Output is
+written through a temporary file and atomically persisted only when the target
+does not exist. Path-only source-shape strata are diagnostic labels and never
+change production completeness or extraction.
+
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries
 and at most 64 directory levels, deduplicates regular-file hard links, and

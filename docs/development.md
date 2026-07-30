@@ -91,6 +91,15 @@ The runner sequences units, ordinary domain integration, and process-heavy
 tests without launching competing Cargo processes. It also owns exact fixture
 selection and the opt-in profile/stress commands.
 
+Checked-in fixtures run as one aggregate in the existing test profile. The unit
+and exact phases use the same workspace feature graph, so the exact phase
+reuses the fixture-runner harness and dependencies already built by unit tests
+instead of linking another test target or rebuilding in the development
+profile. The unit phase skips the aggregate before the exact phase runs it,
+which keeps fixture sandbox work serially isolated from the parallel suite
+library harness. Exact `run` and `bless` commands retain the
+development-profile fixture binary for targeted work.
+
 The stress lane accepts `LEANTOKEN_STRESS_REPETITIONS` for scheduled
 repetition. Required checks never retry failures.
 
@@ -117,6 +126,20 @@ or their shared behavior:
 cargo test-extras
 cargo test --locked --package leantoken --all-features --doc
 ```
+
+When changing TypeScript grammar integration, extraction on incomplete trees,
+or the manual recovery evaluator, run its focused synthetic contract:
+
+```bash
+cargo test --locked --example typescript_parse_diagnostic
+cargo run --locked --release --example typescript_parse_diagnostic -- \
+  verify-fixture
+```
+
+The pinned external-corpus command, immutable output contract, and
+interpretation limits are documented in
+[`../benchmarks/README.md`](../benchmarks/README.md#typescript-parse-recovery-diagnostic).
+The external run is evidence for parser work, not a normal local or CI gate.
 
 These repository-local Cargo aliases keep the fast and extended target groups
 consistent with CI. The development profile retains line tables for useful
