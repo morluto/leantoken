@@ -1401,17 +1401,28 @@ replacement.
 The frozen Kotlin retrieval experiment also leaves production lexical-only.
 The evaluated 0.4.0 prototype improved aggregate relevant-file recall from
 80% to 90% and line-anchor recall from 9.76% to 31.71%, but it regressed the
-`directive_parsing` task family, grew mean externally measured peak process RSS
-by 42.31%, grew the database by 15.45%, and left nine of 419 Kotlin files
-structurally incomplete. Its two-control-then-two-candidate cold-index samples
-are explicitly inconclusive, while isolated exact-revision builds show that
-the shipped CLI grew by 4,871,232 bytes and stayed below the five-MiB cap. The
-grammar is still unpublished on crates.io. Its exact prototype commits remain
-in history solely to bind the source-free raw reports; the final tree removes
-Kotlin production detection, extraction, and dependencies. Reconsideration
-requires a published grammar, a new immutable report, paired alternating
-cold-index runs, and the unchanged correctness, task-family, and resource
-gates unless a new schema explicitly freezes different inputs or thresholds.
+`directive_parsing` task family and grew the database by 15.45%. Its
+historical receipt-normalized response comparison erased two derived
+accounting fields without first validating them; because the source-free
+reports do not retain complete responses, the stricter fixed-point comparison
+cannot be replayed and the determinism gate is inconclusive. The hardened
+harness validates original accounting and recomputes receipt-free accounting.
+Its two-control-then-two-candidate cold-index samples are explicitly
+inconclusive.
+The retained peak-process-RSS samples show a descriptive 42.31% candidate
+increase, but the attempt receipt lacks a stable anonymized host fingerprint,
+so they cannot establish same-host pairing and that gate is also inconclusive.
+Nine of 419 Kotlin files were structurally incomplete; this remains a
+diagnostic observation rather than a threshold in the frozen gate. Isolated
+exact-revision builds show that the shipped CLI grew by 4,871,232 bytes and
+stayed below the five-MiB cap. The grammar is still unpublished on crates.io.
+Its exact prototype commits remain in history solely to bind the source-free
+raw reports; the final tree removes Kotlin production detection, extraction,
+and dependencies. Reconsideration requires a published grammar, a new
+immutable report, paired alternating cold-index runs, retained anonymized
+host-pairing identity for RSS runs, a fresh exact-accounting determinism run,
+and the unchanged correctness, task-family, and resource gates unless a new
+schema explicitly freezes different inputs or thresholds.
 
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries

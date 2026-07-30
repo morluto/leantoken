@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use leantoken::{
     Config, ContextCandidateEvaluation, ContextFragment, ContextRequest, ContextResponse,
     SearchHit, SearchMode, SearchRequest, WorkflowEvidence, parser, services::Services, tokens,
@@ -3363,6 +3363,7 @@ fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Err
         )
         .into());
     }
+    verify_complete_response_accounting(response)?;
     if !response.meta.token_count_exact {
         // Estimate tokenizers do not promise byte-for-byte equality with a
         // re-count, but the stored fragment counts must still be consistent.
@@ -3382,15 +3383,95 @@ fn verify_token_accounting(response: &ContextResponse) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-fn deterministic_context_json(response: &ContextResponse) -> Result<String, serde_json::Error> {
+#[derive(Debug, PartialEq, Eq)]
+struct CompleteResponseAccounting {
+    protocol_tokens: usize,
+    path_and_metadata_tokens: usize,
+    total_response_tokens: usize,
+}
+
+fn calculate_complete_response_accounting(
+    response: &ContextResponse,
+) -> Result<CompleteResponseAccounting, Box<dyn Error>> {
+    let tokenizer = tokens::Tokenizer::from_str(&response.meta.tokenizer, true)
+        .map_err(|error| format!("invalid response tokenizer: {error}"))?;
+    let payload = serde_json::to_string(response)?;
+    let total_response_tokens = tokens::count_with(&payload, tokenizer);
+    let mut protocol_skeleton = serde_json::to_value(response)?;
+    strip_complete_response_values(&mut protocol_skeleton);
+    let available_overhead = total_response_tokens.saturating_sub(response.meta.source_tokens);
+    let protocol_tokens =
+        tokens::count_with(&protocol_skeleton.to_string(), tokenizer).min(available_overhead);
+    Ok(CompleteResponseAccounting {
+        protocol_tokens,
+        path_and_metadata_tokens: available_overhead.saturating_sub(protocol_tokens),
+        total_response_tokens,
+    })
+}
+
+fn strip_complete_response_values(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Null => {}
+        serde_json::Value::Bool(value) => *value = false,
+        serde_json::Value::Number(value) => *value = 0.into(),
+        serde_json::Value::String(value) => value.clear(),
+        serde_json::Value::Array(values) => values.clear(),
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                strip_complete_response_values(value);
+            }
+        }
+    }
+}
+
+fn finalize_complete_response_accounting(
+    response: &mut ContextResponse,
+) -> Result<(), Box<dyn Error>> {
+    response.meta.protocol_tokens = 0;
+    response.meta.path_and_metadata_tokens = 0;
+    response.meta.total_response_tokens = 0;
+    for _ in 0..32 {
+        let expected = calculate_complete_response_accounting(response)?;
+        let actual = CompleteResponseAccounting {
+            protocol_tokens: response.meta.protocol_tokens,
+            path_and_metadata_tokens: response.meta.path_and_metadata_tokens,
+            total_response_tokens: response.meta.total_response_tokens,
+        };
+        if actual == expected {
+            return Ok(());
+        }
+        response.meta.protocol_tokens = expected.protocol_tokens;
+        response.meta.path_and_metadata_tokens = expected.path_and_metadata_tokens;
+        response.meta.total_response_tokens = expected.total_response_tokens;
+    }
+    Err("complete response token accounting did not reach a fixed point".into())
+}
+
+fn verify_complete_response_accounting(response: &ContextResponse) -> Result<(), Box<dyn Error>> {
+    let expected = calculate_complete_response_accounting(response)?;
+    let actual = CompleteResponseAccounting {
+        protocol_tokens: response.meta.protocol_tokens,
+        path_and_metadata_tokens: response.meta.path_and_metadata_tokens,
+        total_response_tokens: response.meta.total_response_tokens,
+    };
+    if actual != expected {
+        return Err(format!(
+            "complete response token accounting mismatch: declared={actual:?}, counted={expected:?}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn deterministic_context_json(response: &ContextResponse) -> Result<String, Box<dyn Error>> {
+    verify_complete_response_accounting(response)?;
     let mut deterministic = response.clone();
     deterministic.meta.receipt_id = None;
-    // Receipt identifiers are generated per request. Their tokenizer cost is
-    // reflected in both of these complete-response accounting fields, so they
-    // must be normalized with the identifier itself.
-    deterministic.meta.path_and_metadata_tokens = 0;
-    deterministic.meta.total_response_tokens = 0;
-    serde_json::to_string(&deterministic)
+    // Receipt identifiers are generated per request. Recompute all derived
+    // accounting to retain exact receipt-free equality rather than erasing
+    // arbitrary accounting differences.
+    finalize_complete_response_accounting(&mut deterministic)?;
+    Ok(serde_json::to_string(&deterministic)?)
 }
 
 fn database_footprint(database: &Path) -> Result<u64, Box<dyn Error>> {
@@ -4291,6 +4372,10 @@ mod tests {
 
         assert_eq!(evaluation["decision"], "do_not_ship_kotlin_parser");
         assert_eq!(
+            evaluation["determinism_gate"]["result"],
+            "inconclusive_legacy_accounting_normalization"
+        );
+        assert_eq!(
             evaluation["arms"][1]["retrieval"]["regressed_task_families"][0],
             "directive_parsing"
         );
@@ -4318,6 +4403,24 @@ mod tests {
         assert_eq!(
             evaluation["arms"][1]["growth_against_control_run_means"]["cold_index_gate"],
             "inconclusive_non_alternating_two_samples_per_arm"
+        );
+        assert_eq!(
+            evaluation["arms"][1]["growth_against_control_run_means"]["peak_rss_gate"],
+            "inconclusive_same_host_identity_not_retained"
+        );
+        assert!(
+            attempts["resource_measurement"]["host_pairing_evidence"].is_null(),
+            "missing host identity must remain explicit rather than inferred"
+        );
+        let gate_failures = evaluation["gate_failures"]
+            .as_array()
+            .expect("Kotlin gate failures");
+        assert!(
+            gate_failures.iter().all(|failure| !failure
+                .as_str()
+                .expect("gate failure text")
+                .contains("structurally incomplete")),
+            "parse incompleteness was diagnostic, not a frozen gate"
         );
         assert_eq!(
             evaluation["arms"][1]["resource_samples"]["shipped_cli_binary_bytes"],
@@ -4455,17 +4558,28 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_context_comparison_ignores_receipt_identity_and_derived_accounting() {
-        let first = context_response("first");
+    fn deterministic_context_comparison_recomputes_receipt_accounting_exactly() {
+        let mut first = context_response("first");
         let mut second = context_response("second");
-        second.meta.path_and_metadata_tokens = 1;
-        second.meta.total_response_tokens = 1;
+        finalize_complete_response_accounting(&mut first).expect("account first response");
+        finalize_complete_response_accounting(&mut second).expect("account second response");
         assert_eq!(
             deterministic_context_json(&first).expect("serialize first response"),
             deterministic_context_json(&second).expect("serialize second response")
         );
 
+        second.meta.path_and_metadata_tokens = 1;
+        second.meta.total_response_tokens = 1;
+        assert!(
+            deterministic_context_json(&second)
+                .expect_err("reject inconsistent response accounting")
+                .to_string()
+                .contains("complete response token accounting mismatch")
+        );
+
+        finalize_complete_response_accounting(&mut second).expect("restore response accounting");
         second.meta.repository_generation += 1;
+        finalize_complete_response_accounting(&mut second).expect("account changed response");
         assert_ne!(
             deterministic_context_json(&first).expect("serialize first response"),
             deterministic_context_json(&second).expect("serialize changed response")

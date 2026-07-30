@@ -1,8 +1,12 @@
 {
   "schema_version": 1,
   "decision": "do_not_ship_kotlin_parser",
-  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen peak-RSS and database-growth limits, left the cold-indexing subgate inconclusive, and left nine OpenClaw Kotlin files structurally incomplete. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
+  "decision_summary": "The Kotlin 0.4.0 prototype improved aggregate labeled retrieval, but regressed relevant-file recall in the directive_parsing task family, exceeded the frozen database-growth limit, and left determinism, cold-indexing, and peak-RSS subgates inconclusive. The exact 0.4.0 grammar also remains unpublished on crates.io, so the evaluated Git revision is research-only.",
   "attempt_receipt": "benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json",
+  "determinism_gate": {
+    "result": "inconclusive_legacy_accounting_normalization",
+    "reason": "The recorded harness normalized receipt_id by zeroing derived accounting fields without first validating the original fields. The source-free raw reports do not retain complete responses, so the stricter fixed-point check cannot be replayed retroactively."
+  },
   "corpus": {
     "repository": "https://github.com/openclaw/openclaw.git",
     "revision": "9feb6ad161877da86200693b039638dbf3411e66",
@@ -35,7 +39,7 @@
     ],
     "resource_methodology": {
       "cold_index_ms": "The harness reports cold index duration, but the two control runs preceded the two candidate runs. The non-alternating order and two samples per arm are insufficient for a promotion claim.",
-      "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around each complete successful harness process, retained in the attempt receipt. End-of-run VmRSS fields inside raw reports are not used for this gate.",
+      "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around each complete successful harness process, retained in the attempt receipt. The receipt did not retain a stable anonymized host fingerprint, so the observed arm difference is descriptive and the frozen same-host gate is inconclusive. End-of-run VmRSS fields inside raw reports are not used.",
       "database_bytes": "SQLite database file size after each successful run; both runs within an arm produced the same size.",
       "shipped_cli_binary_bytes": "Byte size of target/product-size/release/leantoken after cargo build --quiet --locked --release --bin leantoken in isolated target directories at each exact harness revision."
     }
@@ -109,7 +113,8 @@
       "growth_against_control_run_means": {
         "descriptive_cold_index_fraction": -0.1269447513674602,
         "cold_index_gate": "inconclusive_non_alternating_two_samples_per_arm",
-        "peak_process_rss_fraction": 0.42309543288897444,
+        "descriptive_peak_process_rss_fraction": 0.42309543288897444,
+        "peak_rss_gate": "inconclusive_same_host_identity_not_retained",
         "database_fraction": 0.15446546257703675,
         "shipped_cli_binary_bytes": 4871232
       },
@@ -163,18 +168,17 @@
   ],
   "gate_failures": [
     "The directive_parsing task family regressed from two relevant files to one, violating the frozen no-family-regression accuracy requirement.",
+    "The determinism subgate is inconclusive because the historical harness zeroed receipt-derived accounting fields without first validating them, and the retained reports cannot replay complete responses.",
     "The cold-indexing subgate is inconclusive because two control samples ran before two candidate samples instead of using paired alternating A/B and B/A order.",
-    "Mean candidate peak process RSS increased by 42.31%, exceeding the 10% limit by 32.31 percentage points.",
+    "The peak-RSS subgate is inconclusive because the attempt receipt did not retain a stable anonymized host fingerprint needed to establish same-host pairing.",
     "The candidate database increased by 15.45%, exceeding the 5% limit by 10.45 percentage points.",
-    "Nine of 419 Kotlin source files remained structurally incomplete, with 11 explicit ERROR nodes.",
     "tree-sitter-kotlin 0.4.0 is not published on crates.io; upstream release issue 242 remains open."
   ],
   "passed_subgates": [
     "Aggregate relevant-file recall improved from 80% to 90%.",
     "Line-anchor recall improved from 9.76% to 31.71%.",
     "The shipped LeanToken CLI grew by 4,871,232 bytes, below the five-MiB cap.",
-    "Both candidate reports completed deterministic initial-plus-three-warm context validation.",
-    "All six Kotlin script files parsed structurally completely."
+    "Both .kt and .kts were recognized and evaluated by the parse diagnostic; all six Kotlin script files parsed structurally completely."
   ],
   "retained_work": [
     "Keep the frozen retrieval manifest, source-free parse diagnostic, attempt receipt, and all four successful raw retrieval reports.",
@@ -184,16 +188,20 @@
   ],
   "reconsideration_requirements": [
     "Use a published upstream grammar release and bind its exact crates.io version.",
-    "Eliminate the nine incomplete OpenClaw files or explicitly freeze a correctness policy that justifies each remaining recovery shape.",
     "Resolve the cold-indexing result with paired alternating A/B and B/A same-host runs.",
-    "Meet the unchanged peak-RSS and database gates on same-host runs.",
+    "Retain a stable anonymized host fingerprint for each attempt, establish paired same-host runs, and meet the unchanged peak-RSS gate.",
+    "Meet the unchanged database-growth gate.",
+    "Re-run initial-plus-three-warm response comparisons with exact fixed-point accounting validation before and after receipt normalization.",
     "Recover directive_parsing relevant-file recall without regressing another task family.",
     "Create a new report schema if the corpus, labels, queries, extraction policy, grammar revision, or thresholds change."
   ],
   "limitations": [
     "The ten tasks are manually curated parser-development evidence, not a blind or statistically powered sample.",
-    "Cold-index and RSS values are host-local diagnostics; correctness, deterministic behavior, and database size are not waived by host variance.",
+    "Cold-index and RSS values are host-local diagnostics. This receipt retained no stable anonymized host fingerprint, so neither resource series establishes same-host pairing; correctness, deterministic behavior, and database size are not waived by host variance.",
     "Cold-index timing is inconclusive: the first control run was unusually cold, the arms were not alternated, and two samples per arm cannot support a promotion claim.",
+    "Nine of 419 Kotlin source files were structurally incomplete, with 11 explicit ERROR nodes. This is diagnostic evidence, not a threshold in the frozen gate.",
+    "The retained peak-RSS samples show a descriptive 42.31% candidate increase, but the missing host-pairing identity prevents a frozen-gate pass or failure.",
+    "The four successful reports passed the historical receipt-normalized comparison, but that harness erased two accounting fields before comparison and the reports do not retain complete responses for stricter replay.",
     "No model executed an edit, so the experiment measures retrieval evidence rather than end-to-end task success."
   ]
 }

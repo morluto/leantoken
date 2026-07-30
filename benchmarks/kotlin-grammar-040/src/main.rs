@@ -566,6 +566,7 @@ fn pinned_kotlin_paths(repository: &Path, expected_revision: &str) -> AnyResult<
         repository,
         &[
             "ls-tree",
+            "--full-tree",
             "-r",
             "-z",
             "--name-only",
@@ -573,21 +574,26 @@ fn pinned_kotlin_paths(repository: &Path, expected_revision: &str) -> AnyResult<
             "--",
         ],
     )?;
-    paths
+    decode_kotlin_paths(&paths, MAX_FILES)
+}
+
+fn decode_kotlin_paths(output: &[u8], max_files: usize) -> AnyResult<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for path in output
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
-        .filter_map(|path| {
-            let path = std::str::from_utf8(path)
-                .map_err(|_| invalid_data("tracked Kotlin path is not UTF-8"));
-            match path {
-                Ok(path) if path.ends_with(".kt") || path.ends_with(".kts") => {
-                    Some(Ok(PathBuf::from(path)))
-                }
-                Ok(_) => None,
-                Err(error) => Some(Err(error.into())),
-            }
-        })
-        .collect()
+    {
+        let path = std::str::from_utf8(path)
+            .map_err(|_| invalid_data("tracked Kotlin path is not UTF-8"))?;
+        if !path.ends_with(".kt") && !path.ends_with(".kts") {
+            continue;
+        }
+        if paths.len() >= max_files {
+            return Err(invalid_data("diagnostic exceeded its file-count bound").into());
+        }
+        paths.push(PathBuf::from(path));
+    }
+    Ok(paths)
 }
 
 fn read_pinned_blob(repository: &Path, revision: &str, relative_path: &str) -> AnyResult<Vec<u8>> {
@@ -640,6 +646,7 @@ fn git_bytes(repository: &Path, args: &[&str]) -> AnyResult<Vec<u8>> {
     let mut command = Command::new("git");
     command
         .arg("--no-pager")
+        .arg("--no-replace-objects")
         .args(["-c", "core.fsmonitor=false"])
         .arg("-C")
         .arg(repository)
@@ -896,12 +903,13 @@ mod tests {
     }
 
     #[test]
-    fn pinned_corpus_reads_commit_blobs_not_the_worktree() {
+    fn pinned_corpus_uses_root_paths_and_ignores_worktree_and_replacements() {
         let repository = tempfile::tempdir().expect("temporary repository");
         git_bytes(repository.path(), &["init"]).expect("initialize repository");
-        fs::write(repository.path().join("App.kt"), b"class Frozen\n")
+        fs::create_dir(repository.path().join("nested")).expect("create nested directory");
+        fs::write(repository.path().join("nested/App.kt"), b"class Frozen\n")
             .expect("write committed source");
-        git_bytes(repository.path(), &["add", "App.kt"]).expect("stage source");
+        git_bytes(repository.path(), &["add", "nested/App.kt"]).expect("stage source");
         git_bytes(
             repository.path(),
             &[
@@ -920,19 +928,56 @@ mod tests {
             .trim()
             .to_owned();
 
-        fs::write(repository.path().join("App.kt"), b"class Mutated\n")
-            .expect("mutate tracked source");
         fs::write(
-            repository.path().join("Untracked.kts"),
+            repository.path().join("nested/App.kt"),
+            b"class Replacement\n",
+        )
+        .expect("write replacement source");
+        git_bytes(repository.path(), &["add", "nested/App.kt"]).expect("stage replacement source");
+        git_bytes(
+            repository.path(),
+            &[
+                "-c",
+                "user.name=LeanToken",
+                "-c",
+                "user.email=leantoken@example.invalid",
+                "commit",
+                "-m",
+                "replacement fixture",
+            ],
+        )
+        .expect("commit replacement source");
+        let replacement = git_text(repository.path(), &["rev-parse", "HEAD^{commit}"])
+            .expect("replacement revision")
+            .trim()
+            .to_owned();
+        git_bytes(repository.path(), &["replace", &revision, &replacement])
+            .expect("install replacement object");
+
+        fs::write(repository.path().join("nested/App.kt"), b"class Mutated\n")
+            .expect("mutate tracked source again");
+        fs::write(
+            repository.path().join("nested/Untracked.kts"),
             b"println(\"ignored\")\n",
         )
         .expect("write untracked script");
 
-        let paths = pinned_kotlin_paths(repository.path(), &revision).expect("pinned Kotlin paths");
-        assert_eq!(paths, vec![PathBuf::from("App.kt")]);
+        let nested = repository.path().join("nested");
+        let paths = pinned_kotlin_paths(&nested, &revision).expect("pinned Kotlin paths");
+        assert_eq!(paths, vec![PathBuf::from("nested/App.kt")]);
         assert_eq!(
-            read_pinned_blob(repository.path(), &revision, "App.kt").expect("pinned blob"),
+            read_pinned_blob(&nested, &revision, "nested/App.kt").expect("pinned blob"),
             b"class Frozen\n"
+        );
+    }
+
+    #[test]
+    fn kotlin_paths_fail_at_the_collection_bound() {
+        let error = decode_kotlin_paths(b"one.kt\0two.kts\0", 1)
+            .expect_err("reject a second Kotlin path before retaining it");
+        assert_eq!(
+            error.to_string(),
+            "diagnostic exceeded its file-count bound"
         );
     }
 
@@ -1031,6 +1076,21 @@ mod tests {
                 .expect("other recovery count");
         assert_eq!(reported_recovery, 11);
         assert_eq!(evaluation["decision"], "do_not_ship_kotlin_parser");
+        assert_eq!(
+            evaluation["determinism_gate"]["result"],
+            "inconclusive_legacy_accounting_normalization"
+        );
+        assert!(
+            evaluation["gate_failures"]
+                .as_array()
+                .expect("gate failures")
+                .iter()
+                .all(|failure| !failure
+                    .as_str()
+                    .expect("gate failure text")
+                    .contains("structurally incomplete")),
+            "parse incompleteness was diagnostic, not a frozen gate"
+        );
         assert_eq!(
             evaluation["attempt_receipt"],
             "benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json"

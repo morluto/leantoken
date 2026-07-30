@@ -1744,23 +1744,32 @@ from 80% to 90% and line-anchor recall from 9.76% to 31.71%, but it was not
 eligible:
 
 - `directive_parsing` regressed from two relevant files to one;
-- mean externally measured peak process RSS increased by 42.31% and the
-  database by 15.45%;
+- determinism remained inconclusive because the historical harness erased
+  receipt-derived accounting fields without validating them first, and the
+  source-free reports cannot replay complete responses;
 - cold indexing remained inconclusive because the two control samples preceded
   the two candidate samples instead of using paired alternating order;
-- nine of 419 Kotlin files remained structurally incomplete, with 11 explicit
-  `ERROR` nodes;
+- peak RSS remained inconclusive because the attempt receipt retained no
+  stable anonymized host fingerprint needed to establish same-host pairing;
+- the database grew by 15.45%;
 - crates.io still publishes 0.3.8 while upstream 0.4.0 release issue 242
   remains open.
 
-Both candidate runs were deterministic. The extension-only diagnostic stratum
-shows that all six `.kts` files parsed completely, and isolated release builds
+All four reports passed the historical receipt-normalized comparison, but that
+is not promoted to a deterministic-gate pass. The hardened harness now
+validates original accounting and recomputes receipt-free accounting to a
+fixed point. The extension-only diagnostic stratum shows that both extensions
+were evaluated and all six `.kts` files parsed completely. Nine of 419 files
+were structurally incomplete, with 11 explicit `ERROR` nodes; this is retained
+diagnostic evidence, not a threshold in the frozen gate. The RSS samples show
+a descriptive 42.31% candidate increase, but without retained host-pairing
+identity they cannot pass or fail the same-host gate. Isolated release builds
 of the shipped CLI at the exact control and candidate revisions grew by
 4,871,232 bytes, below the frozen five-MiB cap. The diagnostic's definition,
 import, and call totals are explicitly syntax-node counts; they are not claims
-about the prototype's production extraction queries. Those passing subgates do
-not offset the task-family, correctness, resource, inconclusive cold-index, and
-publication failures. Kotlin therefore remains lexical-only in production:
+about the prototype's production extraction queries. Those passing subgates
+do not offset the task-family, database, inconclusive correctness/resource,
+and publication failures. Kotlin therefore remains lexical-only in production:
 there is no `.kt`/`.kts` language detection, production extraction,
 parser-cache entry, index-content-version bump, or normal dependency.
 

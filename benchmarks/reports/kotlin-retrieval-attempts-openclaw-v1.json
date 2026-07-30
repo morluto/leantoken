@@ -3,10 +3,14 @@
   "corpus_revision": "9feb6ad161877da86200693b039638dbf3411e66",
   "manifest": "benchmarks/kotlin_structural_validation.json",
   "manifest_blake3": "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59",
-  "failure_contract": "The harness exits before writing a report when any initial response and its three identical warm requests differ after normalizing the generated receipt_id and its derived path-and-metadata and total-response token counts.",
+  "failure_contract": "The recorded harness exits before writing a report when an initial response and its three identical warm requests differ after setting generated receipt_id, path_and_metadata_tokens, and total_response_tokens to common neutral values. It did not independently validate the original complete-response accounting.",
+  "current_harness_contract": "The hardened harness exits when any response has inconsistent complete-response token accounting or when responses differ after removing receipt_id and recomputing exact receipt-free accounting to a fixed point.",
+  "determinism_gate": "inconclusive_legacy_accounting_normalization",
   "resource_measurement": {
     "peak_process_rss_bytes": "Maximum resident set size from /usr/bin/time -v around the complete harness process; this is independent of the end-of-run VmRSS recorded inside each raw report.",
-    "elapsed_wall_seconds": "Elapsed wall-clock time from /usr/bin/time -v around the complete harness process."
+    "elapsed_wall_seconds": "Elapsed wall-clock time from /usr/bin/time -v around the complete harness process.",
+    "host_pairing_evidence": null,
+    "host_pairing_limitation": "No stable anonymized host fingerprint was retained for these attempts, so the recorded resource samples cannot establish same-host pairing."
   },
   "attempts": [
     {
