@@ -1254,6 +1254,24 @@ fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     process.initialize();
     process.send_initialized();
     process.wait_until_unavailable(Duration::from_secs(5));
+
+    // Cross the former runtime-first shutdown timeout. A failed repository
+    // service remains an operational MCP connection until the client closes
+    // the stdio transport.
+    std::thread::sleep(Duration::from_secs(6));
+    assert!(process.child.try_wait().expect("poll process").is_none());
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 50,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let catalog = process.response(Duration::from_secs(2));
+    assert_eq!(
+        catalog["result"]["tools"].as_array().map(Vec::len),
+        Some(9),
+        "{catalog}"
+    );
 }
 
 #[test]

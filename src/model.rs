@@ -176,6 +176,7 @@ mod tests {
             let response = StatusResponse {
                 repository_root: "/repository".into(),
                 database_path: "/cache/index.sqlite".into(),
+                repository_cache_fallback: false,
                 index_content_version: 12,
                 index_scope: IndexScopeMode::Full,
                 index_scope_digest: None,

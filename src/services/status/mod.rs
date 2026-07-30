@@ -102,9 +102,11 @@ fn status_response(
     let index_storage_bytes = sqlite_storage_bytes(&config.database_path);
     let index_amplification_ratio =
         (counts.source_bytes > 0).then(|| index_storage_bytes as f64 / counts.source_bytes as f64);
+    let repository_cache_fallback = config.uses_repository_cache_fallback();
     StatusResponse {
         repository_root: config.root.display().to_string(),
         database_path: config.database_path.display().to_string(),
+        repository_cache_fallback,
         index_content_version: INDEX_CONTENT_VERSION,
         index_scope: if config.index_scope().is_full() {
             IndexScopeMode::Full
@@ -135,7 +137,13 @@ fn status_response(
             .into_iter()
             .map(|(language, files)| LanguageCount { language, files })
             .collect(),
-        warnings: Vec::new(),
+        warnings: repository_cache_fallback
+            .then(|| {
+                "platform cache was not writable; using repository-local `.leantoken` storage"
+                    .into()
+            })
+            .into_iter()
+            .collect(),
     }
 }
 
