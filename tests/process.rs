@@ -2002,12 +2002,12 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
         .output()
         .expect("run npx setup");
     assert!(
-        setup.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&setup.stderr)
+        !setup.status.success(),
+        "the nonexistent npx launcher must fail verification"
     );
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert_eq!(report["verification"]["status"], "failed");
     let package = format!("leantoken@{}", env!("CARGO_PKG_VERSION"));
     assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["launcher"]["package"], package);
@@ -2055,7 +2055,13 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
         .args(["--json", "setup", "--claude", "--yes"])
         .output()
         .expect("run initial setup");
-    assert!(setup.status.success());
+    assert!(
+        !setup.status.success(),
+        "the nonexistent npx launcher must fail verification"
+    );
+    let setup_report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert_eq!(setup_report["verification"]["status"], "failed");
     std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor directory");
     std::fs::write(
         temp.path().join(".cursor/mcp.json"),
@@ -2068,12 +2074,12 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
         .output()
         .expect("run setup refresh");
     assert!(
-        refresh.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&refresh.stderr)
+        !refresh.status.success(),
+        "the nonexistent npx launcher must fail verification"
     );
     let report: serde_json::Value =
         serde_json::from_slice(&refresh.stdout).expect("refresh JSON output");
+    assert_eq!(report["verification"]["status"], "failed");
     assert_eq!(report["plan"].as_array().unwrap().len(), 1);
     assert_eq!(report["plan"][0]["client"], "claude");
     assert_eq!(report["plan"][0]["action"], "already_current");
@@ -2198,14 +2204,12 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
         .expect("run npx setup");
 
     assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !output.status.success(),
+        "the nonexistent npx launcher must fail verification"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
-    assert!(stdout.contains("Restart or reload"));
     assert!(stdout.contains(&format!(
         "npx leantoken@{} doctor",
         env!("CARGO_PKG_VERSION")
@@ -2217,6 +2221,11 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
         env!("CARGO_PKG_VERSION")
     )));
     assert!(stdout.contains("npm install --global leantoken@latest"));
+    assert!(stdout.contains("Launcher verification failed"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("configuration or launcher verification failed")
+    );
 }
 
 fn run(

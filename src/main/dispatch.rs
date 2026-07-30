@@ -83,7 +83,7 @@ pub(super) fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     setup::print_report(&report, json)?;
     if report.has_failures() {
         return Err(leantoken::Error::SetupFailure(
-            "one or more MCP client configurations failed".into(),
+            "MCP client configuration or launcher verification failed".into(),
         ));
     }
     Ok(())
