@@ -1,9 +1,9 @@
 (function() {
-    const implementors = Object.fromEntries([["leantoken",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"leantoken/storage/struct.ReadSession.html\" title=\"struct leantoken::storage::ReadSession\">ReadSession</a>",0]]]]);
+    const implementors = Object.fromEntries([["leantoken",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"leantoken/storage/struct.ReadSession.html\" title=\"struct leantoken::storage::ReadSession\">ReadSession</a>",0]]],["leantoken_test_support",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"leantoken_test_support/struct.Sandbox.html\" title=\"struct leantoken_test_support::Sandbox\">Sandbox</a>",0]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
         window.pending_implementors = implementors;
     }
 })()
-//{"start":59,"fragment_lengths":[304]}
+//{"start":59,"fragment_lengths":[304,315]}
