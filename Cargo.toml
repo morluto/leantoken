@@ -86,7 +86,6 @@ tree-sitter-php = "0.24.2"
 tree-sitter-python = "0.25.0"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-rust = "0.24.2"
-tree-sitter-swift = "=0.7.2"
 tree-sitter-typescript = "0.23.2"
 unidiff = { version = "0.4.0", default-features = false }
 wait-timeout = "0.2.1"
@@ -97,6 +96,7 @@ insta = { version = "1.43.2", features = ["json"] }
 rmcp = { version = "=3.0.0-beta.2", default-features = false, features = ["client", "transport-async-rw"] }
 statrs = "0.18.0"
 tokio = { version = "1.49.0", features = ["test-util"] }
+tree-sitter-swift = "=0.7.2"
 
 [profile.release]
 lto = "thin"

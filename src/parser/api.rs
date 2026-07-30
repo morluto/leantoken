@@ -25,7 +25,6 @@ pub fn language_by_path(path: impl AsRef<Path>) -> Option<String> {
         "ts" | "mts" | "cts" => "typescript".to_string(),
         "tsx" => "tsx".to_string(),
         "go" => "go".to_string(),
-        "swift" => "swift".to_string(),
         "html" | "htm" => "html".to_string(),
         "css" => "css".to_string(),
         "md" | "markdown" => "markdown".to_string(),
@@ -191,21 +190,6 @@ fn parse_language_with_cancellation(
                         .then_with(|| a.raw_target.cmp(&b.raw_target))
                 });
             }
-            "swift" => {
-                append_swift_structure(
-                    source,
-                    root,
-                    &mut symbols,
-                    &mut references,
-                    &mut imports,
-                    &mut is_cancelled,
-                )?;
-                imports.sort_by(|a, b| {
-                    a.line
-                        .cmp(&b.line)
-                        .then_with(|| a.raw_target.cmp(&b.raw_target))
-                });
-            }
             _ => {}
         }
 
@@ -216,9 +200,6 @@ fn parse_language_with_cancellation(
         deduplicate_symbols(&mut symbols);
         compute_symbol_parents(&mut symbols);
         compute_reference_enclosing(&symbols, &mut references);
-        if language == "swift" {
-            retain_bounded_swift_calls(&symbols, &mut references);
-        }
 
         Ok(ParseOutput {
             language: Some(language.to_string()),

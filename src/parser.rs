@@ -25,7 +25,6 @@ include!("parser/languages/javascript.rs");
 include!("parser/languages/csharp.rs");
 include!("parser/languages/css.rs");
 include!("parser/languages/html.rs");
-include!("parser/languages/swift.rs");
 include!("parser/imports.rs");
 include!("parser/hierarchy.rs");
 
