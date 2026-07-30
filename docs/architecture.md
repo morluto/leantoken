@@ -1287,8 +1287,13 @@ database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
 Checked-in fixture inventory is a test-only scan bounded to 10,000 directory
-entries and 64 directory levels. It does not follow directory symlinks and
-fails instead of accepting a partial inventory when either bound is exceeded.
+entries and 64 directory levels. It accepts only the
+`fixtures/<domain>/<case>` contract layout, rejects case directories without a
+manifest, and does not follow directory symlinks. The `fixtures/sample_repo`
+benchmark corpus is excluded before traversal, so its size cannot consume the
+contract-inventory bounds. The shared scanner fails instead of accepting a
+partial inventory when either bound is exceeded and is used by both xtask
+preflight and the fixture test harness.
 Merge tests execute the validated cases through one test-profile aggregate in
 the fixture-runner harness. The parallel unit phase skips that aggregate and a
 separate exact phase runs it after the suite-lib harness completes. Both phases

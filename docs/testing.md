@@ -114,7 +114,12 @@ fixtures/<domain>/<case>/
 Requests and expectations are typed by that domain; there is no universal
 field bag. `list` rejects malformed manifests, missing files, unknown contract
 files, duplicate identities, more than 10,000 scanned directory entries, and
-trees deeper than 64 levels. Listing does not follow directory symlinks.
+trees deeper than 64 levels. Listing accepts only `<domain>/<case>` directories,
+rejects case directories without a manifest, excludes the `sample_repo`
+benchmark corpus before bounded traversal, and does not follow directory
+symlinks. The xtask preflight and fixture test harness use this same inventory
+source module; xtask includes its std-only source without adding a dependency
+on a workspace product or test package.
 Blessing is exact-case only, never runs in CI, and must leave a reviewable
 semantic diff.
 

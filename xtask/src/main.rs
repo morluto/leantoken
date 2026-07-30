@@ -1,3 +1,11 @@
+#[allow(
+    dead_code,
+    reason = "the shared fixture type exposes paths used by the test harness"
+)]
+#[path = "../../crates/test-support/src/fixtures.rs"]
+mod fixture_inventory;
+
+use fixture_inventory::{FixtureCase, FixtureError};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -9,7 +17,6 @@ const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
-const BENCHMARK_REPOSITORY_FIXTURE: &str = "sample_repo";
 
 fn main() -> ExitCode {
     match run() {
@@ -236,7 +243,7 @@ fn list_fixtures(root: &Path, domain: Option<&str>) -> Result<(), XtaskError> {
         validate_domain(domain)?;
     }
     let fixtures = root.join("fixtures");
-    let cases = FixtureManifest::list(&fixtures, domain)?;
+    let cases = FixtureCase::list(&fixtures, domain)?;
     if cases.is_empty() {
         println!(
             "No fixture cases found{}.",
@@ -261,7 +268,7 @@ fn exact_fixture_command(root: &Path, args: &[String], action: &str) -> Result<(
         )));
     }
     let case_root = root.join("fixtures").join(identity);
-    let mut case = FixtureManifest::load(&case_root)?;
+    let mut case = FixtureCase::load(&case_root)?;
     case.identity = identity.clone();
     println!(
         "Exact fixture selected: {} ({})",
@@ -297,7 +304,7 @@ fn fixture_command(identity: &str, bless: bool) -> Vec<String> {
 }
 
 fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
-    let cases = FixtureManifest::list(&root.join("fixtures"), None)?;
+    let cases = FixtureCase::list(root.join("fixtures"), None)?;
     Ok(!cases.is_empty())
 }
 
@@ -779,190 +786,6 @@ fn test_usage() -> String {
     "cargo xtask test product | fixtures | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
 }
 
-#[derive(Debug, Clone)]
-struct FixtureManifest {
-    identity: String,
-    operation: String,
-}
-
-impl FixtureManifest {
-    fn load(root: &Path) -> Result<Self, XtaskError> {
-        if !root.is_dir() {
-            return Err(XtaskError::Fixture(format!(
-                "{}: case directory is missing",
-                root.display()
-            )));
-        }
-        let manifest = root.join("case.toml");
-        let contents = std::fs::read_to_string(&manifest).map_err(XtaskError::Io)?;
-        let mut schema = None;
-        let mut schema_seen = false;
-        let mut operation = None;
-        let mut operation_seen = false;
-        for line in contents
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        {
-            let Some((key, value)) = line.split_once('=') else {
-                return Err(XtaskError::Fixture(format!(
-                    "{}: expected key = value",
-                    manifest.display()
-                )));
-            };
-            let value = value.trim().trim_matches('"');
-            match key.trim() {
-                "schema" if !schema_seen => {
-                    schema_seen = true;
-                    schema = value.parse::<u32>().ok();
-                }
-                "operation" if !operation_seen => {
-                    operation_seen = true;
-                    operation = Some(value.to_owned());
-                }
-                "schema" | "operation" => {
-                    return Err(XtaskError::Fixture(format!(
-                        "{}: duplicate manifest key `{key}`",
-                        manifest.display()
-                    )));
-                }
-                key => {
-                    return Err(XtaskError::Fixture(format!(
-                        "{}: unknown key `{key}`",
-                        manifest.display()
-                    )));
-                }
-            }
-        }
-        if schema != Some(1) {
-            return Err(XtaskError::Fixture(format!(
-                "{}: schema must be 1",
-                manifest.display()
-            )));
-        }
-        let operation = operation.filter(|value| !value.is_empty()).ok_or_else(|| {
-            XtaskError::Fixture(format!("{}: operation is required", manifest.display()))
-        })?;
-        for filename in ["request.json", "expected.json"] {
-            if !root.join(filename).is_file() {
-                return Err(XtaskError::Fixture(format!(
-                    "{}: missing {filename}",
-                    root.display()
-                )));
-            }
-        }
-        for entry in std::fs::read_dir(root).map_err(XtaskError::Io)? {
-            let path = entry.map_err(XtaskError::Io)?.path();
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if !matches!(
-                name,
-                "case.toml" | "request.json" | "expected.json" | "repo"
-            ) {
-                return Err(XtaskError::Fixture(format!(
-                    "{}: unknown fixture file `{name}`",
-                    path.display()
-                )));
-            }
-            if name == "repo" && !path.is_dir() {
-                return Err(XtaskError::Fixture(format!(
-                    "{}: repo fixture must be a directory",
-                    path.display()
-                )));
-            }
-        }
-        let identity = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                XtaskError::Fixture(format!("{}: invalid case directory", root.display()))
-            })?
-            .to_owned();
-        Ok(Self {
-            identity,
-            operation,
-        })
-    }
-
-    fn list(fixtures: &Path, domain: Option<&str>) -> Result<Vec<Self>, XtaskError> {
-        let root = domain.map_or_else(|| fixtures.to_path_buf(), |domain| fixtures.join(domain));
-        if !root.exists() {
-            return Ok(Vec::new());
-        }
-        let identity_root = fixtures.to_path_buf();
-        if !root.is_dir() {
-            return Err(XtaskError::Fixture(format!(
-                "{}: fixture domain directory is missing",
-                root.display()
-            )));
-        }
-        let mut cases = Vec::new();
-        collect_fixture_manifests(
-            &root,
-            &identity_root,
-            &mut cases,
-            u8::from(domain.is_some()),
-        )?;
-        cases.sort_by(|left, right| left.identity.cmp(&right.identity));
-        for pair in cases.windows(2) {
-            if pair[0].identity == pair[1].identity {
-                return Err(XtaskError::Fixture(format!(
-                    "duplicate fixture identity `{}`",
-                    pair[0].identity
-                )));
-            }
-        }
-        Ok(cases)
-    }
-}
-
-fn collect_fixture_manifests(
-    root: &Path,
-    identity_root: &Path,
-    cases: &mut Vec<FixtureManifest>,
-    depth: u8,
-) -> Result<(), XtaskError> {
-    for entry in std::fs::read_dir(root).map_err(XtaskError::Io)? {
-        let entry = entry.map_err(XtaskError::Io)?;
-        let path = entry.path();
-        if !entry.file_type().map_err(XtaskError::Io)?.is_dir() {
-            return Err(XtaskError::Fixture(format!(
-                "{}: expected a fixture {} directory",
-                path.display(),
-                if depth == 0 { "domain" } else { "case" }
-            )));
-        }
-        if depth == 0 {
-            // This is the canonical repository corpus used by benchmark tests,
-            // not a checked-in contract case under fixtures/<domain>/<case>.
-            if path.file_name().and_then(|name| name.to_str()) == Some(BENCHMARK_REPOSITORY_FIXTURE)
-            {
-                continue;
-            }
-            collect_fixture_manifests(&path, identity_root, cases, 1)?;
-        } else {
-            if !path.join("case.toml").is_file() {
-                return Err(XtaskError::Fixture(format!(
-                    "{}: fixture case directory is missing case.toml",
-                    path.display()
-                )));
-            }
-            let mut case = FixtureManifest::load(&path)?;
-            case.identity = path
-                .strip_prefix(identity_root)
-                .unwrap_or(&path)
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            cases.push(case);
-        }
-    }
-    Ok(())
-}
-
 #[derive(Debug)]
 enum XtaskError {
     Usage(String),
@@ -1003,6 +826,11 @@ impl fmt::Display for XtaskError {
     }
 }
 impl std::error::Error for XtaskError {}
+impl From<FixtureError> for XtaskError {
+    fn from(error: FixtureError) -> Self {
+        Self::Fixture(error.to_string())
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1077,39 +905,19 @@ mod tests {
     }
 
     #[test]
-    fn fixture_manifest_rejects_invalid_duplicate_schema() {
-        let root = std::env::temp_dir().join(format!(
-            "leantoken-xtask-invalid-duplicate-schema-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("case.toml"),
-            "schema = invalid\nschema = 1\noperation = \"test\"\n",
-        )
-        .unwrap();
-        fs::write(root.join("request.json"), "{}\n").unwrap();
-        fs::write(root.join("expected.json"), "{}\n").unwrap();
-        let error = super::FixtureManifest::load(&root).expect_err("duplicate schema accepted");
-        assert!(error.to_string().contains("duplicate"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn fixture_list_rejects_case_directory_without_manifest() {
-        let root = std::env::temp_dir().join(format!(
+    fn fixture_preflight_rejects_case_directory_without_manifest() {
+        let workspace = std::env::temp_dir().join(format!(
             "leantoken-xtask-missing-fixture-manifest-test-{}",
             std::process::id()
         ));
-        let case = root.join("storage/missing-manifest");
-        let _ = fs::remove_dir_all(&root);
+        let case = workspace.join("fixtures/storage/missing-manifest");
+        let _ = fs::remove_dir_all(&workspace);
         fs::create_dir_all(&case).unwrap();
         fs::write(case.join("request.json"), "{}\n").unwrap();
         fs::write(case.join("expected.json"), "{}\n").unwrap();
-        let error = super::FixtureManifest::list(&root, None)
+        let error = super::has_checked_in_fixtures(&workspace)
             .expect_err("case without a manifest was silently ignored");
         assert!(error.to_string().contains("case.toml"));
-        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(workspace);
     }
 }
