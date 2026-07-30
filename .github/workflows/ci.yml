@@ -288,31 +288,10 @@ jobs:
         timeout-minutes: 5
         run: node --test npm/npm-install-e2e.mjs
 
-      - name: Test library and binary units
+      - name: Test product behavior
         if: needs.changes.outputs.rust == 'true'
-        timeout-minutes: 10
-        run: >
-          cargo test --locked --workspace --exclude leantoken-benchmarks
-          --all-features --lib --bins --
-          --skip tests::checked_in_fixture_cases_match
-
-      - name: Test integration behavior
-        if: needs.changes.outputs.rust == 'true'
-        timeout-minutes: 10
-        run: "cargo test --locked --package leantoken --all-features --test integration -- --skip process::"
-
-      - name: Test executable and MCP process behavior
-        if: needs.changes.outputs.rust == 'true'
-        timeout-minutes: 10
-        run: "cargo test --locked --package leantoken --all-features --test integration process:: -- --test-threads=2"
-
-      - name: Test checked-in fixture cases
-        if: needs.changes.outputs.rust == 'true'
-        timeout-minutes: 10
-        run: >
-          cargo test --locked --workspace --exclude leantoken-benchmarks
-          --all-features --lib --bins
-          tests::checked_in_fixture_cases_match -- --exact
+        timeout-minutes: 15
+        run: cargo xtask test product --parallel
 
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'
