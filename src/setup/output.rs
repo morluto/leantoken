@@ -6,44 +6,46 @@ pub(super) fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
     writeln!(output)?;
     writeln!(output, "◆ LeanToken {} plan", plan.operation.plan_label())?;
     for edit in &plan.edits {
+        writeln!(output, "  Client configuration")?;
         writeln!(
             output,
-            "  {} {}",
+            "    {} {}",
             plan_symbol(edit.public.action),
             edit.public.client.display_name()
         )?;
         writeln!(
             output,
-            "    {} · {}",
+            "      {} · {}",
             edit.public.action,
             edit.public.path.display()
         )?;
     }
     for edit in &plan.discovery_edits {
+        let label = if edit
+            .public
+            .path
+            .components()
+            .any(|part| part.as_os_str() == ".agents")
+        {
+            "Universal agent discovery"
+        } else {
+            "Claude-compatible discovery"
+        };
+        writeln!(output, "  {label}")?;
+        writeln!(output, "    {} skill", plan_symbol(edit.public.action))?;
         writeln!(
             output,
-            "  {} Agent discovery",
-            plan_symbol(edit.public.action)
-        )?;
-        writeln!(
-            output,
-            "    {} · {}",
+            "      {} · {}",
             edit.public.action,
             edit.public.path.display()
         )?;
     }
     if let Some(launcher) = &plan.launcher {
         writeln!(output)?;
-        writeln!(output, "  MCP launcher")?;
-        writeln!(output, "    command: {}", launcher.command)?;
-        writeln!(
-            output,
-            "    args: {}",
-            serde_json::to_string(&launcher.args)?
-        )?;
-        writeln!(output, "    version: {}", launcher.version)?;
+        writeln!(output, "  Launcher")?;
+        writeln!(output, "    pinned version: {}", launcher.version)?;
         if let Some(package) = &launcher.package {
-            writeln!(output, "    package: {package}")?;
+            writeln!(output, "    exact package: {package}")?;
         }
         if let (Some(path), Some(digest)) = (&launcher.runtime_path, &launcher.runtime_digest) {
             writeln!(output, "    private runtime: {}", path.display())?;
@@ -52,7 +54,7 @@ pub(super) fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
         if launcher.may_contact_network {
             writeln!(
                 output,
-                "    Client startup may contact npm, but it can resolve only this exact version."
+                "    Uses npm's cache first; a missing exact version may be fetched."
             )?;
         } else {
             writeln!(output, "    Uses the current LeanToken executable.")?;
@@ -61,8 +63,14 @@ pub(super) fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
     writeln!(output)?;
     writeln!(
         output,
-        "  Only the `leantoken` MCP entry will change; unrelated settings are preserved."
+        "  Only LeanToken-owned client entries and discovery files will change."
     )?;
+    if plan.operation == SetupOperation::Setup {
+        writeln!(
+            output,
+            "  After setup, the exact launcher will be checked through MCP initialize, catalog, and first retrieval."
+        )?;
+    }
     Ok(())
 }
 
@@ -144,8 +152,8 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
     }
     writeln!(output, "◆ LeanToken // Context Distillery")?;
     let operation_label = match report.operation {
-        SetupOperation::Setup => "Global MCP setup",
-        SetupOperation::Remove => "Global MCP removal",
+        SetupOperation::Setup => "MCP client setup",
+        SetupOperation::Remove => "MCP client removal",
     };
     writeln!(output, "  {operation_label}")?;
     for result in &report.results {
@@ -167,6 +175,29 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
         }
     }
+    if let Some(verification) = &report.verification {
+        match verification.status {
+            SetupVerificationStatus::Passed => {
+                writeln!(output, "  ✓ Launcher verification: MCP ready")?
+            }
+            SetupVerificationStatus::Skipped => writeln!(
+                output,
+                "  ─ Launcher verification skipped: {}",
+                verification.message.as_deref().unwrap_or("not applicable")
+            )?,
+            SetupVerificationStatus::Failed => {
+                writeln!(
+                    output,
+                    "  ✗ Launcher verification failed at {}: {}",
+                    verification.stage.as_deref().unwrap_or("unknown"),
+                    verification.message.as_deref().unwrap_or("unknown failure")
+                )?;
+                if let Some(command) = &verification.repair_command {
+                    writeln!(output, "    Retry: {command}")?;
+                }
+            }
+        }
+    }
     if report.operation == SetupOperation::Setup {
         let configured = report
             .results
@@ -184,10 +215,15 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             "LeanToken is configured for {configured} client{}.",
             if configured == 1 { "" } else { "s" }
         )?;
-        if report.has_failures() {
+        if report.has_client_failures() {
             writeln!(
                 output,
                 "Some selected clients failed; successful changes were not rolled back."
+            )?;
+        } else if report.has_verification_failure() {
+            writeln!(
+                output,
+                "Client configuration succeeded, but launcher verification failed."
             )?;
         } else if changed > 0 {
             writeln!(

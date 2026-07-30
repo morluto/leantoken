@@ -505,9 +505,35 @@ follower request.
 Cache initialization, schema migration, and managed-cache corruption recovery
 run under a separate repository-scoped initialization lock. SQLite busy and
 locked results are retried with bounded backoff and caller-owned cancellation;
-terminal startup failures move MCP tools to an unavailable state. The stdio
+when an implicit platform-managed cache fails with `PermissionDenied` or a
+read-only-filesystem error, startup retries exactly once with
+`<repository>/.leantoken/v<INDEX_CONTENT_VERSION>/index.sqlite` for a full
+index, or
+`<repository>/.leantoken/v<INDEX_CONTENT_VERSION>-s<scope-digest>/index.sqlite`
+for a scoped index. Multiple bounded version or scope identities can coexist.
+The local directory must be a real canonical directory below the repository
+root, never a symlink, and receives an idempotent `*` `.gitignore`. Explicit
+database paths never fall back, and other I/O errors remain terminal. This
+preserves one bounded startup path in sandboxed hosts without hiding a broken
+user-selected storage location.
+
+Terminal startup failures move MCP tools to an unavailable state. The stdio
 adapter supervises the indexing runtime for the lifetime of the connection, so
 an unexpected runtime exit cannot leave tools permanently reporting startup.
+An operational startup failure does not close the MCP transport: initialize and
+the static catalog remain available, while tool calls return the actionable
+unavailable state until the client closes the connection. The five-second
+shutdown deadline applies only after the protocol server exits.
+
+Interactive setup performs at most one post-mutation launcher verification.
+It creates one temporary repository containing one bounded source file, one
+temporary explicit SQLite database, and one child MCP process. The probe reuses
+the doctor transport and performs exactly one initialize exchange, one catalog
+read, and the bounded first-retrieval workflow. Repository readiness is capped
+at 30 seconds; fixed per-response doctor deadlines remain 10 seconds. Dropping
+the transport closes stdin and reaps or kills the child, and dropping the
+temporary directory removes its database and source. Setup never fans this
+verification out per configured client.
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable
 without periodic retries. A restart with a narrower root or adjusted limits is

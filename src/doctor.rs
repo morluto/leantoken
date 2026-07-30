@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeSet, VecDeque},
+    ffi::{OsStr, OsString},
     io::{BufRead, BufReader, Write},
     process::{Child, ChildStdin, Stdio},
     sync::{Arc, Condvar, Mutex, mpsc},
@@ -133,6 +134,27 @@ pub fn print_progress() -> Result<()> {
 /// first-run contract against the configured repository.
 pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
+    run_with_transport(config, ready_timeout, &mut transport)
+}
+
+/// Verify an exact setup launcher through the same MCP contract used by
+/// [`run`]. Setup uses this after configuration so launcher verification cannot
+/// drift from the public doctor behavior.
+pub(crate) fn run_launcher(
+    config: &Config,
+    command: &str,
+    args: &[String],
+    ready_timeout: Duration,
+) -> Result<DoctorReport> {
+    let mut transport = DoctorTransport::spawn_launcher(config, command, args)?;
+    run_with_transport(config, ready_timeout, &mut transport)
+}
+
+fn run_with_transport(
+    config: &Config,
+    ready_timeout: Duration,
+    transport: &mut DoctorTransport,
+) -> Result<DoctorReport> {
     transport.send(
         json!({
             "jsonrpc": "2.0",
@@ -562,20 +584,45 @@ fn diagnostic_context(lines: &VecDeque<String>) -> String {
     }
 }
 
+fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>> {
+    let Some(mcp_index) = args.iter().rposition(|argument| argument == "mcp") else {
+        return Err(doctor_error(
+            "launch",
+            "configured launcher does not contain the `mcp` subcommand",
+        ));
+    };
+    let mut launch_args = args.iter().map(OsString::from).collect::<Vec<_>>();
+    launch_args.splice(
+        mcp_index..mcp_index,
+        [
+            "--root".into(),
+            config.root.as_os_str().to_owned(),
+            "--database".into(),
+            config.database_path.as_os_str().to_owned(),
+            "--tokenizer".into(),
+            config.tokenizer.name().into(),
+        ],
+    );
+    launch_args.extend(["--result-mode".into(), "structured".into()]);
+    Ok(launch_args)
+}
+
 impl DoctorTransport {
     fn spawn(config: &Config) -> Result<Self> {
         let executable = std::env::current_exe()
             .and_then(|path| path.canonicalize())
             .map_err(|error| doctor_error("launch", error.to_string()))?;
-        let mut child = std::process::Command::new(executable)
-            .arg("--root")
-            .arg(&config.root)
-            .arg("--database")
-            .arg(&config.database_path)
-            .arg("--tokenizer")
-            .arg(config.tokenizer.name())
-            .arg("mcp")
-            .args(["--result-mode", "structured"])
+        Self::spawn_command(config, executable.as_os_str(), &["mcp".into()])
+    }
+
+    fn spawn_launcher(config: &Config, command: &str, args: &[String]) -> Result<Self> {
+        Self::spawn_command(config, OsStr::new(command), args)
+    }
+
+    fn spawn_command(config: &Config, command: &OsStr, args: &[String]) -> Result<Self> {
+        let launch_args = launcher_arguments(config, args)?;
+        let mut child = std::process::Command::new(command)
+            .args(&launch_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -758,6 +805,36 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn launcher_arguments_preserve_non_utf8_repository_paths() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let root = tempfile::tempdir().expect("repository");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.root = root
+            .path()
+            .join(OsString::from_vec(b"source-\xff".to_vec()));
+        config.database_path = root
+            .path()
+            .join(OsString::from_vec(b"index-\xfe.sqlite".to_vec()));
+
+        let arguments = launcher_arguments(&config, &["mcp".into()]).expect("launcher arguments");
+
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| { argument.as_os_str().as_bytes().ends_with(b"source-\xff") })
+        );
+        assert!(arguments.iter().any(|argument| {
+            argument
+                .as_os_str()
+                .as_bytes()
+                .ends_with(b"index-\xfe.sqlite")
+        }));
+    }
 
     #[test]
     fn child_diagnostics_are_bounded_and_redact_configured_paths() {

@@ -126,6 +126,9 @@ pub struct Config {
     /// Whether LeanToken owns this cache file and may rebuild it after
     /// confirmed SQLite corruption.
     pub(crate) database_is_managed_cache: bool,
+    /// Whether a managed platform cache was replaced by the repository-local
+    /// fallback because the preferred location was not writable.
+    pub(crate) database_uses_repository_fallback: bool,
     /// Maximum filesystem entries yielded by one repository walk.
     pub max_walk_entries: u64,
     /// Maximum files admitted to one repository index.
@@ -241,6 +244,7 @@ impl Config {
             root,
             database_path,
             database_is_managed_cache,
+            database_uses_repository_fallback: false,
             max_walk_entries: DiscoveryLimits::DEFAULT_MAX_WALK_ENTRIES,
             max_files: DiscoveryLimits::DEFAULT_MAX_FILES,
             max_total_source_bytes: DiscoveryLimits::DEFAULT_MAX_TOTAL_SOURCE_BYTES,
@@ -378,6 +382,22 @@ impl Config {
             candidate.as_os_str() == sidecar
         }) || is_coordination_sidecar_for_database(candidate, &self.database_path)
             || is_recognized_stale_coordination_sidecar(candidate)
+    }
+
+    pub(crate) fn repository_cache_fallback(&self) -> Option<Self> {
+        if !self.database_is_managed_cache || self.database_uses_repository_fallback {
+            return None;
+        }
+        let mut fallback = self.clone();
+        fallback.database_path = repository_fallback_database_path(&self.root, &self.index_scope);
+        fallback.database_uses_repository_fallback = true;
+        Some(fallback)
+    }
+
+    /// Return whether the active managed index uses repository-local storage.
+    #[must_use]
+    pub const fn uses_repository_cache_fallback(&self) -> bool {
+        self.database_uses_repository_fallback
     }
 }
 
@@ -594,6 +614,10 @@ fn default_database_path_for_scope(root: &Path, scope: &IndexScope) -> PathBuf {
             .join(managed_cache_id_for_scope(root, scope))
             .join("index.sqlite");
     }
+    repository_fallback_database_path(root, scope)
+}
+
+fn repository_fallback_database_path(root: &Path, scope: &IndexScope) -> PathBuf {
     let cache_directory = scope.digest().map_or_else(
         || format!("v{INDEX_CONTENT_VERSION}"),
         |digest| format!("v{INDEX_CONTENT_VERSION}-s{digest}"),

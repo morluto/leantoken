@@ -221,6 +221,10 @@ pub struct IndexProgressSnapshot {
 pub struct StatusResponse {
     pub repository_root: String,
     pub database_path: String,
+    /// Whether the managed platform cache was unavailable and the active index
+    /// was placed in the repository-local fallback.
+    #[serde(default)]
+    pub repository_cache_fallback: bool,
     /// Index-content compatibility version used by this binary.
     #[serde(default)]
     pub index_content_version: u32,

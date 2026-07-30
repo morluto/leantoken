@@ -44,15 +44,16 @@ pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result
             failure_state.set_failed(&error);
             tracing::error!(%error, "MCP indexing runtime failed");
 
-            match tokio::time::timeout(PRODUCTION_SHUTDOWN_TIMEOUT, server_task).await {
-                Err(_) => {
-                    tracing::error!("MCP transport did not stop before the shutdown deadline");
-                }
-                Ok(Ok(Ok(()))) => {}
-                Ok(Ok(Err(server_error))) => {
+            // A repository runtime failure is an operational tool failure, not
+            // an MCP transport failure. Keep the initialized protocol alive so
+            // clients can discover the catalog and receive the bounded failed
+            // service state until they close stdin.
+            match server_task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(server_error)) => {
                     tracing::warn!(%server_error, "MCP transport failed after indexing runtime stopped");
                 }
-                Ok(Err(join_error)) => {
+                Err(join_error) => {
                     tracing::warn!(%join_error, "MCP transport task failed after indexing runtime stopped");
                 }
             }
