@@ -306,7 +306,9 @@ jobs:
       - name: Test checked-in fixture cases
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 10
-        run: cargo xtask test fixtures
+        run: >
+          cargo test --locked --workspace --all-features --lib --bins
+          tests::checked_in_fixture_cases_match -- --exact
 
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'

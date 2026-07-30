@@ -1286,6 +1286,13 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
+Checked-in fixture inventory is a test-only scan bounded to 10,000 directory
+entries and 64 directory levels. It does not follow directory symlinks and
+fails instead of accepting a partial inventory when either bound is exceeded.
+Merge tests execute the validated cases through one test-profile aggregate;
+the exact fixture binary remains available only for targeted run and bless
+operations.
+
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries
 and at most 64 directory levels, deduplicates regular-file hard links, and

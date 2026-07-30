@@ -87,6 +87,13 @@ The runner sequences units, ordinary domain integration, and process-heavy
 tests without launching competing Cargo processes. It also owns exact fixture
 selection and the opt-in profile/stress commands.
 
+Checked-in fixtures run as one aggregate in the existing test profile. This
+reuses the suite already built by unit tests instead of rebuilding the product
+and fixture runner in the development profile. The complete product plan
+reuses the workspace harness; standalone `test fixtures` builds only the
+owning suite. Exact `run` and `bless` commands retain the standalone fixture
+binary for targeted work.
+
 The stress lane accepts `LEANTOKEN_STRESS_REPETITIONS` for scheduled
 repetition. Required checks never retry failures.
 

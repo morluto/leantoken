@@ -2,6 +2,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const MAX_FIXTURE_LIST_ENTRIES: usize = 10_000;
+const MAX_FIXTURE_LIST_DEPTH: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct FixtureCase {
     pub identity: String,
@@ -118,7 +121,21 @@ impl FixtureCase {
     }
 
     pub fn list(root: impl AsRef<Path>, domain: Option<&str>) -> Result<Vec<Self>, FixtureError> {
-        let fixtures_root = root.as_ref().to_path_buf();
+        Self::list_with_bounds(
+            root.as_ref(),
+            domain,
+            MAX_FIXTURE_LIST_ENTRIES,
+            MAX_FIXTURE_LIST_DEPTH,
+        )
+    }
+
+    fn list_with_bounds(
+        fixtures_root: &Path,
+        domain: Option<&str>,
+        max_entries: usize,
+        max_depth: usize,
+    ) -> Result<Vec<Self>, FixtureError> {
+        let fixtures_root = fixtures_root.to_path_buf();
         let root = domain.map_or_else(
             || fixtures_root.clone(),
             |domain| fixtures_root.join(domain),
@@ -128,7 +145,16 @@ impl FixtureCase {
         }
         let identity_root = fixtures_root;
         let mut cases = Vec::new();
-        collect(&root, &identity_root, &mut cases)?;
+        let mut entries = 0;
+        collect(
+            &root,
+            &identity_root,
+            &mut cases,
+            &mut entries,
+            max_entries,
+            0,
+            max_depth,
+        )?;
         cases.sort_by(|a, b| a.identity.cmp(&b.identity).then(a.root.cmp(&b.root)));
         for pair in cases.windows(2) {
             if pair[0].identity == pair[1].identity {
@@ -143,7 +169,14 @@ fn collect(
     root: &Path,
     identity_root: &Path,
     cases: &mut Vec<FixtureCase>,
+    entries: &mut usize,
+    max_entries: usize,
+    depth: usize,
+    max_depth: usize,
 ) -> Result<(), FixtureError> {
+    if depth > max_depth {
+        return Err(invalid(root, "fixture listing exceeded its depth bound"));
+    }
     if root.join("case.toml").is_file() {
         let mut case = FixtureCase::load(root)?;
         case.identity = root
@@ -157,9 +190,22 @@ fn collect(
         return Ok(());
     }
     for entry in fs::read_dir(root)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            collect(&path, identity_root, cases)?;
+        let entry = entry?;
+        let path = entry.path();
+        *entries += 1;
+        if *entries > max_entries {
+            return Err(invalid(root, "fixture listing exceeded its entry bound"));
+        }
+        if entry.file_type()?.is_dir() {
+            collect(
+                &path,
+                identity_root,
+                cases,
+                entries,
+                max_entries,
+                depth + 1,
+                max_depth,
+            )?;
         }
     }
     Ok(())
@@ -175,6 +221,41 @@ fn invalid(path: &Path, message: &str) -> FixtureError {
 mod tests {
     use super::FixtureCase;
     use std::fs;
+    use std::io;
+    use std::path::Path;
+
+    #[cfg(unix)]
+    fn create_directory_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn create_directory_symlink(target: &Path, link: &Path) -> io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn create_directory_symlink(_target: &Path, _link: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "directory symlinks are unsupported on this platform",
+        ))
+    }
+
+    #[cfg(unix)]
+    fn remove_directory_symlink(link: &Path) -> io::Result<()> {
+        fs::remove_file(link)
+    }
+
+    #[cfg(windows)]
+    fn remove_directory_symlink(link: &Path) -> io::Result<()> {
+        fs::remove_dir(link)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn remove_directory_symlink(link: &Path) -> io::Result<()> {
+        fs::remove_file(link)
+    }
 
     #[test]
     fn rejects_unknown_contract_files() {
@@ -209,6 +290,70 @@ mod tests {
         let cases = FixtureCase::list(&root, None).unwrap();
         assert_eq!(cases[0].identity, "storage/reopen");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fixture_listing_fails_closed_at_entry_and_depth_bounds() {
+        let root = std::env::temp_dir().join(format!(
+            "leantoken-fixture-list-bounds-test-{}",
+            std::process::id()
+        ));
+        let case = root.join("storage/reopen");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&case).unwrap();
+        fs::write(
+            case.join("case.toml"),
+            "schema = 1\noperation = \"storage\"\n",
+        )
+        .unwrap();
+        fs::write(case.join("request.json"), "{}\n").unwrap();
+        fs::write(case.join("expected.json"), "{}\n").unwrap();
+
+        let entry_error = FixtureCase::list_with_bounds(&root, None, 1, 64)
+            .expect_err("entry bound was not enforced");
+        assert!(entry_error.to_string().contains("entry bound"));
+        let depth_error = FixtureCase::list_with_bounds(&root, None, 10, 0)
+            .expect_err("depth bound was not enforced");
+        assert!(depth_error.to_string().contains("depth bound"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fixture_listing_does_not_follow_directory_symlinks() {
+        let root = std::env::temp_dir().join(format!(
+            "leantoken-fixture-list-symlink-test-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "leantoken-fixture-list-symlink-outside-{}",
+            std::process::id()
+        ));
+        let case = outside.join("protocol/catalog");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&case).unwrap();
+        fs::write(
+            case.join("case.toml"),
+            "schema = 1\noperation = \"protocol_catalog\"\n",
+        )
+        .unwrap();
+        fs::write(case.join("request.json"), "{}\n").unwrap();
+        fs::write(case.join("expected.json"), "{}\n").unwrap();
+        let link = root.join("linked-domain");
+        if let Err(error) = create_directory_symlink(&outside, &link) {
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+            eprintln!("skipping directory-symlink assertion: {error}");
+            return;
+        }
+
+        assert!(FixtureCase::list(&root, None).unwrap().is_empty());
+
+        remove_directory_symlink(&link).unwrap();
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]

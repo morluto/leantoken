@@ -296,28 +296,54 @@ fn fixture_command(identity: &str, bless: bool) -> Vec<String> {
     command
 }
 
-fn fixture_commands(root: &Path) -> Result<Vec<Vec<String>>, XtaskError> {
-    Ok(FixtureManifest::list(&root.join("fixtures"), None)?
-        .into_iter()
-        .map(|case| fixture_command(&case.identity, false))
-        .collect())
+fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
+    let cases = FixtureManifest::list(&root.join("fixtures"), None)?;
+    Ok(!cases.is_empty())
+}
+
+fn focused_fixture_command() -> Vec<String> {
+    cargo_command([
+        "test",
+        "--locked",
+        "--package",
+        SUITE,
+        "--all-features",
+        "--lib",
+        "tests::checked_in_fixture_cases_match",
+        "--",
+        "--exact",
+    ])
+}
+
+fn workspace_fixture_command() -> Vec<String> {
+    cargo_command([
+        "test",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--lib",
+        "--bins",
+        "tests::checked_in_fixture_cases_match",
+        "--",
+        "--exact",
+    ])
 }
 
 fn run_fixtures(root: &Path) -> Result<(), XtaskError> {
-    let commands = fixture_commands(root)?;
-    if commands.is_empty() {
+    if !has_checked_in_fixtures(root)? {
         println!("No checked-in fixture cases found.");
+        return Ok(());
     }
-    for command in commands {
-        let status = print_and_run(root, &command)?;
-        if !status.success() {
-            return Err(XtaskError::CommandFailed {
-                command: command.join(" "),
-                code: status.code(),
-            });
-        }
+    let command = focused_fixture_command();
+    let status = print_and_run(root, &command)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(XtaskError::CommandFailed {
+            command: command.join(" "),
+            code: status.code(),
+        })
     }
-    Ok(())
 }
 
 fn run_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
@@ -392,7 +418,9 @@ impl TestPlan {
                 "--test-threads=2",
             ]),
         ];
-        commands.extend(fixture_commands(root)?);
+        if has_checked_in_fixtures(root)? {
+            commands.push(workspace_fixture_command());
+        }
         Ok(Self {
             commands,
             repetitions: 1,
@@ -908,8 +936,9 @@ fn collect_fixture_manifests(
     depth: u8,
 ) -> Result<(), XtaskError> {
     for entry in std::fs::read_dir(root).map_err(XtaskError::Io)? {
-        let path = entry.map_err(XtaskError::Io)?.path();
-        if !path.is_dir() {
+        let entry = entry.map_err(XtaskError::Io)?;
+        let path = entry.path();
+        if !entry.file_type().map_err(XtaskError::Io)?.is_dir() {
             return Err(XtaskError::Fixture(format!(
                 "{}: expected a fixture {} directory",
                 path.display(),
@@ -1001,6 +1030,10 @@ mod tests {
                 .all(|command| command.contains(&"--locked".to_owned()))
         );
         assert!(plan.commands.iter().any(|command| {
+            command.contains(&"--workspace".to_owned())
+                && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
+        }));
+        assert!(!plan.commands.iter().any(|command| {
             command
                 .windows(2)
                 .any(|args| args == ["--bin", "fixture-runner"])
