@@ -109,6 +109,10 @@ jobs:
       - name: Check duplicate files
         run: bash scripts/check-duplicates.sh
 
+      - name: Test development support scripts
+        run: |
+          python3 -m unittest scripts/test_validate_agents_md.py
+
       - name: Validate AGENTS.md
         run: bash scripts/validate-agents-md.sh
 
