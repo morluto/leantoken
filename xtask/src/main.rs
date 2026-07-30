@@ -54,6 +54,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
     .into_iter()
     .find(|domain| {
         *domain == selector
+            || selector.strip_prefix("domains::") == Some(*domain)
             || selector.starts_with(&format!("{domain}::"))
             || selector.starts_with(&format!("domains::{domain}::"))
     });
@@ -65,6 +66,9 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         } else {
             format!("domains::{selector}")
         };
+        if !suite_has_test(root, &filter)? {
+            return Err(XtaskError::NoTestsMatched(selector.clone()));
+        }
         cargo_command([
             "test",
             "--locked",
@@ -92,7 +96,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
                 "--lib",
                 selector,
             ]),
-            (false, true) | (false, false) => cargo_command([
+            (false, true) => cargo_command([
                 "test",
                 "--locked",
                 "--package",
@@ -106,6 +110,9 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
                 "--",
                 "--test-threads=2",
             ]),
+            (false, false) => {
+                return Err(XtaskError::NoTestsMatched(selector.clone()));
+            }
         }
     };
     let status = print_and_run(root, &command)?;
@@ -131,7 +138,7 @@ fn suite_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
         "--",
         "--list",
     ]);
-    command_has_test(root, &command, selector)
+    command_has_test(root, &command)
 }
 
 fn product_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
@@ -149,10 +156,10 @@ fn product_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
         "--",
         "--list",
     ]);
-    command_has_test(root, &command, selector)
+    command_has_test(root, &command)
 }
 
-fn command_has_test(root: &Path, command: &[String], selector: &str) -> Result<bool, XtaskError> {
+fn command_has_test(root: &Path, command: &[String]) -> Result<bool, XtaskError> {
     println!("==> {}", command.join(" "));
     let (program, args) = command
         .split_first()
@@ -168,11 +175,14 @@ fn command_has_test(root: &Path, command: &[String], selector: &str) -> Result<b
             code: output.status.code(),
         });
     }
-    let selector_suffix = format!("::{selector}");
-    Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-        line.strip_suffix(": test")
-            .is_some_and(|name| name == selector || name.ends_with(&selector_suffix))
-    }))
+    Ok(listed_test_count(&output.stdout) > 0)
+}
+
+fn listed_test_count(output: &[u8]) -> usize {
+    String::from_utf8_lossy(output)
+        .lines()
+        .filter(|line| line.strip_suffix(": test").is_some())
+        .count()
 }
 
 fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
@@ -907,6 +917,7 @@ fn collect_fixture_manifests(
 #[derive(Debug)]
 enum XtaskError {
     Usage(String),
+    NoTestsMatched(String),
     Io(std::io::Error),
     Json(serde_json::Error),
     Fixture(String),
@@ -929,6 +940,9 @@ impl fmt::Display for XtaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Usage(message) => write!(f, "{message}"),
+            Self::NoTestsMatched(selector) => {
+                write!(f, "no tests matched focused selector `{selector}`")
+            }
             Self::Io(error) => write!(f, "I/O error: {error}"),
             Self::Json(error) => write!(f, "metadata JSON error: {error}"),
             Self::Fixture(message) => write!(f, "fixture error: {message}"),
@@ -943,7 +957,7 @@ impl std::error::Error for XtaskError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{TestPlan, XtaskError, valid_fixture_identity, workspace_root};
+    use super::{TestPlan, XtaskError, listed_test_count, valid_fixture_identity, workspace_root};
     use std::fs;
 
     #[test]
@@ -969,6 +983,15 @@ mod tests {
             code: Some(101),
         };
         assert_eq!(error.exit_code(), 101);
+    }
+
+    #[test]
+    fn listed_test_count_ignores_harness_summaries() {
+        let output = b"domains::retrieval::same_name: test\n\
+                       1 test, 0 benchmarks\n\
+                       services::search::other_name: test\n";
+        assert_eq!(listed_test_count(output), 2);
+        assert_eq!(listed_test_count(b"0 tests, 0 benchmarks\n"), 0);
     }
 
     #[test]

@@ -34,17 +34,20 @@ suite. The installed commit hook runs:
 cargo fmt --all -- --check
 ```
 
-Run a focused product-test module while developing:
+Run a focused test module while developing:
 
 ```bash
 cargo test-focused services::
+cargo test-focused platform
 ```
 
-The argument is an ordinary Rust test-name filter applied to the library,
-binary, and integration test targets, so it can also select one exact test. Use
-the owning module listed under [Test responsibilities](#test-responsibilities).
-When a change crosses ownership boundaries, run each affected filter; when
-ownership is unclear, let the full CI suite supply the conservative fallback.
+Named suite domains (`indexing_repository`, `storage`, `retrieval`, `protocol`,
+`platform`, and `contracts`) route directly to their owning package. Other
+module or exact-test filters search both the product and domain-suite packages.
+Zero matches fail instead of returning false-green; a name present in both
+packages fails as ambiguous and asks for a domain-qualified selector. Use the
+ownership map under [Test responsibilities](#test-responsibilities), and run
+each affected filter when a change crosses boundaries.
 
 Run the complete product-behavior suite without compiling or executing the
 benchmark contract or examples:
