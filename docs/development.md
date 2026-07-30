@@ -145,10 +145,11 @@ cargo build --release
 cargo package
 ```
 
-`rmcp` is pinned to the exact version recorded in `Cargo.toml` and
-`Cargo.lock`; update it only with the protocol tests and package validation
-above. `cargo package` is a validation step, not a substitute for the native
-release workflow.
+`rmcp` is an upstream registry dependency pinned to the exact version in
+`Cargo.toml`; `Cargo.lock` records the resolved checksum. Update it only with the
+protocol tests and package validation above. `cargo package` validates the
+distributable crate, while publication follows [Release process](releases.md)
+and never replaces an already-published version.
 
 ## Release artifacts
 

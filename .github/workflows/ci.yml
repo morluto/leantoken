@@ -110,6 +110,10 @@ jobs:
           shared-key: quality
           cache-workspace-crates: true
 
+      - name: Verify locked dependency graph
+        if: needs.changes.outputs.rust == 'true'
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
       - name: Check duplicate files
         run: bash scripts/check-duplicates.sh
 
