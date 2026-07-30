@@ -296,9 +296,13 @@ fn parse_with_deadline(parser: &mut TreeParser, source: &str) -> AnyResult<Tree>
         }
     };
     let options = ParseOptions::new().progress_callback(&mut progress);
-    parser
-        .parse_with_options(&mut input, None, Some(options))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "Swift file parse timed out").into())
+    match parser.parse_with_options(&mut input, None, Some(options)) {
+        Some(tree) => Ok(tree),
+        None if Instant::now() >= deadline => {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "Swift file parse timed out").into())
+        }
+        None => Err(io::Error::other("Swift parser returned no tree").into()),
+    }
 }
 
 fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResult<FileDiagnostic> {
@@ -362,6 +366,12 @@ fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResu
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
                 if incomplete {
+                    if diagnostic.counts.error_nodes == 0 && diagnostic.counts.missing_nodes == 0 {
+                        return Err(invalid_data(
+                            "incomplete syntax tree exposed no ERROR or MISSING node",
+                        )
+                        .into());
+                    }
                     diagnostic.counts.retained_in_incomplete_files =
                         diagnostic.counts.extracted.clone();
                 }
@@ -829,5 +839,36 @@ mod tests {
             locked_package_version("tree-sitter-swift").expect("locked version"),
             "0.7.2"
         );
+    }
+
+    #[test]
+    fn checked_openclaw_reports_capture_the_version_tradeoff() {
+        let version_072: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.2-v1.json"
+        ))
+        .expect("0.7.2 report");
+        let version_073: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.3-v1.json"
+        ))
+        .expect("0.7.3 report");
+        let evaluation: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/swift-structural-evaluation-openclaw-v1.json"
+        ))
+        .expect("evaluation report");
+
+        for report in [&version_072, &version_073] {
+            assert_eq!(
+                report["corpus"]["revision"],
+                "9feb6ad161877da86200693b039638dbf3411e66"
+            );
+            assert_eq!(report["corpus"]["files"], 1043);
+            assert_eq!(
+                report["corpus"]["content_blake3"],
+                "20a7422e4e204416ad7a477ba4ede1c51b014d2a7b90ea8e9981a658a492c851"
+            );
+        }
+        assert_eq!(version_072["summary"]["incomplete_files"], 359);
+        assert_eq!(version_073["summary"]["incomplete_files"], 349);
+        assert_eq!(evaluation["decision"], "do_not_ship_swift_parser");
     }
 }

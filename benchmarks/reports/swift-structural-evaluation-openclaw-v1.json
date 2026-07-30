@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "decision": "do_not_ship_swift_parser",
+  "decision_summary": "Both Swift candidates improved labeled retrieval, but neither preserved deterministic context or stayed within the frozen cold-index, RSS, and database-growth limits. Version 0.7.3 also regressed a valid optional-cast plus nil-coalescing expression.",
+  "corpus": {
+    "repository": "https://github.com/openclaw/openclaw.git",
+    "revision": "9feb6ad161877da86200693b039638dbf3411e66",
+    "license": "MIT",
+    "swift_files": 1043,
+    "source_bytes": 13803796,
+    "content_blake3": "20a7422e4e204416ad7a477ba4ede1c51b014d2a7b90ea8e9981a658a492c851"
+  },
+  "retrieval_gate": {
+    "manifest": "benchmarks/swift_structural_validation.json",
+    "manifest_blake3": "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7",
+    "task_count": 10,
+    "relevant_files": 20,
+    "line_anchors": 68,
+    "source_token_budget_per_task": 1024,
+    "minimum_accuracy_gain": "At least one additional relevant file or five percentage points of line-anchor recall, with no task-family relevant-file regression.",
+    "resource_limits": {
+      "cold_index_growth_fraction": 0.1,
+      "peak_rss_growth_fraction": 0.1,
+      "database_growth_fraction": 0.05,
+      "release_binary_growth_bytes": 5242880
+    },
+    "correctness_requirements": [
+      "Deterministic context across the initial response and three identical warm requests.",
+      "No production-test regression.",
+      "No increase in incomplete files relative to the other Swift candidate."
+    ]
+  },
+  "arms": [
+    {
+      "name": "lexical_control",
+      "harness_revision": "e9175297b6939615cba7839a66b75caa13a6b99c",
+      "grammar_version": null,
+      "successful_runs": 2,
+      "nondeterministic_failures": 0,
+      "retrieval": {
+        "relevant_files_found": 16,
+        "relevant_file_recall": 0.8,
+        "line_anchors_found": 10,
+        "line_anchor_recall": 0.14705882352941177,
+        "task_family_relevant_file_regressions": 0
+      },
+      "resource_samples": {
+        "cold_index_ms": [
+          4246.301762,
+          4225.670455
+        ],
+        "process_rss_bytes": [
+          54591488,
+          52441088
+        ],
+        "database_bytes": 69455872,
+        "release_benchmark_binary_bytes": 36103536
+      },
+      "raw_report_sha256": [
+        "2f5d7971073f081794951946cce517ae4cd77b363ddf3a9bbd13a5040508c9d0",
+        "2bd9a6193d4e7cf16a63fa22bff92831cb0c13f865c287612a9890c5460eb090"
+      ]
+    },
+    {
+      "name": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "grammar_version": "0.7.2",
+      "attempted_runs": 5,
+      "successful_runs": 1,
+      "nondeterministic_failures": 4,
+      "retrieval": {
+        "relevant_files_found": 19,
+        "relevant_file_recall": 0.95,
+        "line_anchors_found": 36,
+        "line_anchor_recall": 0.5294117647058824,
+        "task_family_relevant_file_regressions": 0
+      },
+      "resource_samples": {
+        "cold_index_ms": [
+          5519.90616
+        ],
+        "process_rss_bytes": [
+          121036800
+        ],
+        "database_bytes": 73289728,
+        "release_benchmark_binary_bytes": 39472848
+      },
+      "growth_against_control": {
+        "cold_index_fraction": 0.303098268,
+        "peak_rss_fraction": 1.261681528,
+        "database_fraction": 0.055198443,
+        "release_binary_bytes": 3369312
+      },
+      "parse_diagnostic": {
+        "report": "benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.2-v1.json",
+        "report_sha256": "ee7c7cf48747b7831d8c15fef4bdffc5ce41af097161602fdef61f3ac9b65b5d",
+        "incomplete_files": 359,
+        "error_nodes": 16647,
+        "missing_nodes": 128,
+        "definitions": 16567,
+        "imports": 2866,
+        "calls": 111828,
+        "calls_with_owner": 73530
+      },
+      "raw_retrieval_report_sha256": "abce6d99dffbd9b97406c248743f26eb618bec916aa39513df7c40f03846ebbe",
+      "gate_result": "fail"
+    },
+    {
+      "name": "tree_sitter_swift_0_7_3",
+      "harness_revision": "1ad2c5a9cc253612d1de0c5af78b589ee10f9516",
+      "grammar_version": "0.7.3",
+      "attempted_runs": 4,
+      "successful_runs": 2,
+      "nondeterministic_failures": 2,
+      "retrieval": {
+        "relevant_files_found": 19,
+        "relevant_file_recall": 0.95,
+        "line_anchors_found": 36,
+        "line_anchor_recall": 0.5294117647058824,
+        "task_family_relevant_file_regressions": 0
+      },
+      "resource_samples": {
+        "cold_index_ms": [
+          5746.13052,
+          6110.348101
+        ],
+        "process_rss_bytes": [
+          125353984,
+          122093568
+        ],
+        "database_bytes": 73326592,
+        "release_benchmark_binary_bytes": 39838480
+      },
+      "growth_against_control": {
+        "cold_index_fraction": 0.399494512,
+        "peak_rss_fraction": 1.311890092,
+        "database_fraction": 0.055729197,
+        "release_binary_bytes": 3734944
+      },
+      "parse_diagnostic": {
+        "report": "benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.3-v1.json",
+        "report_sha256": "6f7bf9e7c486b85f4daeb81128e606988ea187aed8898cd677d1be764ecc2dd0",
+        "incomplete_files": 349,
+        "error_nodes": 16606,
+        "missing_nodes": 100,
+        "definitions": 16613,
+        "imports": 2866,
+        "calls": 111894,
+        "calls_with_owner": 74656
+      },
+      "known_valid_syntax_regression": {
+        "source_shape": "optional cast followed by nil coalescing without parentheses",
+        "version_0_7_2_structurally_complete": true,
+        "version_0_7_3_structurally_complete": false,
+        "upstream_issue": "https://github.com/alex-pinkus/tree-sitter-swift/issues/597"
+      },
+      "raw_retrieval_report_sha256": [
+        "8eddb6e997cd3ac9ba798c58015b7f153d2316af1b74ee1792572b09195587d3",
+        "702ab51d1d83752a69a63cfc5774ae0dd17c7706999efdde1ef2d8f457043931"
+      ],
+      "gate_result": "fail"
+    }
+  ],
+  "gate_failures": [
+    "Both candidates returned nondeterministic context under identical warm requests; the lexical control completed both runs deterministically.",
+    "Version 0.7.2 exceeded the cold-index limit by 20.3 percentage points, the RSS limit by 116.2 percentage points, and the database limit by 0.52 percentage points.",
+    "Version 0.7.3 exceeded the cold-index limit by 30.0 percentage points, the RSS limit by 121.2 percentage points, and the database limit by 0.57 percentage points.",
+    "Version 0.7.3 fails a valid Swift expression that version 0.7.2 parses completely."
+  ],
+  "retained_work": [
+    "Keep the frozen retrieval manifest and source-free parser reports as reproducible evidence.",
+    "Keep tree-sitter-swift 0.7.2 as a development-only diagnostic dependency.",
+    "Do not add .swift language detection, production extraction, an index-content-version bump, or a release dependency."
+  ],
+  "reconsideration_requirements": [
+    "Use an upstream grammar release that parses the optional-cast regression correctly.",
+    "Eliminate candidate-triggered nondeterminism before re-running accuracy.",
+    "Meet the unchanged resource gate on paired same-host runs.",
+    "Create a new report schema if the corpus, labels, queries, extraction policy, or thresholds change."
+  ],
+  "limitations": [
+    "The ten tasks are manually curated parser-development evidence, not a blind or statistically powered sample.",
+    "The 0.7.2 arm could complete only one full resource report because four of five attempts correctly failed the deterministic-context contract.",
+    "Cold-index and RSS values are host-local diagnostics; correctness and deterministic behavior are not host-local exceptions.",
+    "No model executed an edit, so the experiment measures retrieval evidence rather than end-to-end task success."
+  ]
+}
