@@ -169,6 +169,56 @@ class Formatter
 end
 "#;
 
+const SWIFT_SRC: &str = r#"
+import Foundation
+import struct SwiftUI.Color
+
+protocol Rendering {
+    var title: String { get }
+    func render(value: Int) -> String
+}
+
+struct Formatter: Rendering {
+    let title = "value"
+
+    init(title: String) {}
+
+    func render(value: Int) -> String {
+        func normalize(_ input: Int) -> Int { input }
+        helper(normalize(value))
+        return String(value)
+    }
+
+    private func helper(_ value: Int) {}
+
+    subscript(index: Int) -> String {
+        title
+    }
+}
+
+enum State {
+    case ready, failed(Error)
+}
+
+actor Store {
+    func save() {
+        Formatter(title: "value").render(value: 1)
+    }
+}
+
+final class Engine {
+    deinit {}
+}
+
+extension Formatter {
+    func extra() {}
+}
+
+func makeFormatter() -> Formatter {
+    Formatter(title: "value")
+}
+"#;
+
 fn symbol_names(output: &ParseOutput) -> Vec<&str> {
     output.symbols.iter().map(|s| s.name.as_str()).collect()
 }
@@ -227,6 +277,7 @@ fn development_languages_are_detected_by_path() {
         ("src/Value.java", "java"),
         ("src/value.php", "php"),
         ("lib/value.rb", "ruby"),
+        ("Sources/Client.swift", "swift"),
         ("src/index.html", "html"),
         ("src/partial.htm", "html"),
         ("src/styles.css", "css"),
@@ -235,6 +286,74 @@ fn development_languages_are_detected_by_path() {
     ] {
         assert_eq!(language_by_path(path).as_deref(), Some(expected), "{path}");
     }
+}
+
+#[test]
+fn swift_indexes_structure_imports_calls_and_parents() -> Result<()> {
+    let output = parse_language("swift", SWIFT_SRC)?;
+    assert!(output.structurally_complete);
+    assert_eq!(import_targets(&output), vec!["Foundation", "SwiftUI.Color"]);
+
+    for (name, kind, parent) in [
+        ("Rendering", "interface", None),
+        ("title", "property", Some("Rendering")),
+        ("render", "method", Some("Rendering")),
+        ("Formatter", "struct", None),
+        ("title", "property", Some("Formatter")),
+        ("init", "constructor", Some("Formatter")),
+        ("render", "method", Some("Formatter")),
+        ("normalize", "function", Some("render")),
+        ("helper", "method", Some("Formatter")),
+        ("subscript", "method", Some("Formatter")),
+        ("State", "enum", None),
+        ("ready", "enum_member", Some("State")),
+        ("failed", "enum_member", Some("State")),
+        ("Store", "actor", None),
+        ("save", "method", Some("Store")),
+        ("Engine", "class", None),
+        ("deinit", "destructor", Some("Engine")),
+        ("Formatter", "extension", None),
+        ("extra", "method", Some("Formatter")),
+        ("makeFormatter", "function", None),
+    ] {
+        assert!(
+            output.symbols.iter().any(|symbol| {
+                symbol.name == name && symbol.kind == kind && symbol.parent.as_deref() == parent
+            }),
+            "missing {kind} {name} with parent {parent:?}: {:?}",
+            output.symbols
+        );
+    }
+
+    for (name, owner) in [
+        ("normalize", "render"),
+        ("helper", "render"),
+        ("String", "render"),
+        ("Formatter", "save"),
+        ("render", "save"),
+        ("Formatter", "makeFormatter"),
+    ] {
+        assert!(
+            output.references.iter().any(|reference| {
+                reference.name == name && reference.enclosing_symbol.as_deref() == Some(owner)
+            }),
+            "missing call {name} owned by {owner}: {:?}",
+            output.references
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_swift_retains_recoverable_symbols() -> Result<()> {
+    let output = parse_language(
+        "swift",
+        "struct Worker { func ready() -> Int { 1 } func broken( { return 2 } }",
+    )?;
+    assert!(!output.structurally_complete);
+    assert!(output.symbols.iter().any(|symbol| symbol.name == "Worker"));
+    assert!(output.symbols.iter().any(|symbol| symbol.name == "ready"));
+    Ok(())
 }
 
 #[test]

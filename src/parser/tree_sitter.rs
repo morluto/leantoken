@@ -52,6 +52,7 @@ fn language_object(name: &str) -> Option<Language> {
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
         "go" => tree_sitter_go::LANGUAGE.into(),
+        "swift" => tree_sitter_swift::LANGUAGE.into(),
         "html" => tree_sitter_html::LANGUAGE.into(),
         "css" => tree_sitter_css::LANGUAGE.into(),
         _ => return None,
@@ -73,7 +74,7 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
         // query sets are required.
         "typescript" | "tsx" => tree_sitter_javascript::TAGS_QUERY,
         "go" => tree_sitter_go::TAGS_QUERY,
-        "csharp" | "html" | "css" => return Ok(None),
+        "csharp" | "swift" | "html" | "css" => return Ok(None),
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),
     };
 
@@ -97,7 +98,7 @@ fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> 
         "python" => PYTHON_IMPORT_QUERY,
         "javascript" | "typescript" | "tsx" => JS_IMPORT_QUERY,
         "go" => GO_IMPORT_QUERY,
-        "c" | "csharp" | "cpp" | "java" | "php" | "ruby" | "html" | "css" => {
+        "c" | "csharp" | "cpp" | "java" | "php" | "ruby" | "swift" | "html" | "css" => {
             return Ok(None);
         }
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),
