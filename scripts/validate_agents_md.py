@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -42,6 +43,8 @@ CARGO_LIST_ENTRY = re.compile(r"^\s{4}(\S+)\s")
 
 
 def available_cargo_commands(root: Path) -> tuple[set[str], str | None]:
+    environment = os.environ.copy()
+    environment["CARGO_TERM_COLOR"] = "never"
     result = subprocess.run(
         ["cargo", "--list"],
         cwd=root,
@@ -49,6 +52,7 @@ def available_cargo_commands(root: Path) -> tuple[set[str], str | None]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=environment,
     )
     if result.returncode:
         detail = result.stderr.strip() or f"exit code {result.returncode}"
@@ -110,7 +114,7 @@ def validate(root: Path, cargo_commands: Collection[str]) -> list[str]:
 
 
 def main() -> int:
-    print("==> Validating AGENTS.md commands...")
+    print("==> Validating AGENTS.md commands...", flush=True)
     cargo_commands, cargo_error = available_cargo_commands(ROOT)
     errors = [cargo_error] if cargo_error else validate(ROOT, cargo_commands)
     for error in errors:

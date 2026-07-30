@@ -120,6 +120,7 @@ class ValidateAgentsMdTests(unittest.TestCase):
             target = Path(directory) / "target"
             environment = os.environ.copy()
             environment["CARGO_TARGET_DIR"] = str(target)
+            environment["CARGO_TERM_COLOR"] = "always"
 
             result = subprocess.run(
                 [sys.executable, str(SCRIPT)],
