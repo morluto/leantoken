@@ -32,7 +32,7 @@ const MAX_GIT_STDOUT_BYTES: usize = 64 << 20;
 const MAX_GIT_STDERR_BYTES: usize = 64 << 10;
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 const FILE_PARSE_TIMEOUT: Duration = Duration::from_secs(30);
-const LOCKFILE: &str = include_str!("../Cargo.lock");
+const LOCKFILE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
 
 type AnyError = Box<dyn Error + Send + Sync>;
 type AnyResult<T> = Result<T, AnyError>;
@@ -190,7 +190,7 @@ fn analyze(root: &Path, revision: &str, mut paths: Vec<PathBuf>) -> AnyResult<Di
     }
 
     let mut parser = TreeParser::new();
-    parser.set_language(&tree_sitter_swift::LANGUAGE.into())?;
+    parser.set_language(&swift_diagnostic_grammar::LANGUAGE.into())?;
     let mut corpus_hasher = blake3::Hasher::new();
     let mut summary = Counts::default();
     let mut strata = BTreeMap::<SourceShape, Counts>::new();
@@ -313,8 +313,13 @@ fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResu
     diagnostic.counts.incomplete_files = u64::from(incomplete);
 
     let mut cursor = tree.walk();
+    let mut ancestor_kinds = Vec::<(bool, bool)>::new();
+    let mut definition_ancestors = 0_u64;
+    let mut owner_ancestors = 0_u64;
     loop {
         let node = cursor.node();
+        let node_is_definition = is_definition(node);
+        let node_is_owner = is_owner_definition(node);
         diagnostic.counts.nodes_visited = checked_add(diagnostic.counts.nodes_visited, 1)?;
         if diagnostic.counts.nodes_visited > MAX_NODES_PER_FILE {
             return Err(invalid_data("diagnostic exceeded its per-file syntax-node bound").into());
@@ -334,18 +339,17 @@ fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResu
                 parent_kind: safe_kind(node.parent().map_or("<root>", |parent| parent.kind())),
                 syntax_kind: recovery_syntax_kind(node),
             };
-            let count = diagnostic.recovery.entry(key).or_default();
-            *count = checked_add(*count, 1)?;
+            add_recovery(&mut diagnostic.recovery, key, 1)?;
         }
 
-        if is_definition(node) {
+        if node_is_definition {
             diagnostic.counts.extracted.definitions =
                 checked_add(diagnostic.counts.extracted.definitions, 1)?;
-            if has_definition_ancestor(node) {
+            if definition_ancestors > 0 {
                 diagnostic.counts.extracted.nested_definitions =
                     checked_add(diagnostic.counts.extracted.nested_definitions, 1)?;
             }
-            if is_owner_definition(node) {
+            if node_is_owner {
                 diagnostic.counts.extracted.owner_ranges =
                     checked_add(diagnostic.counts.extracted.owner_ranges, 1)?;
             }
@@ -354,31 +358,57 @@ fn inspect_tree(tree: &Tree, shape: SourceShape, source_bytes: usize) -> AnyResu
                 checked_add(diagnostic.counts.extracted.imports, 1)?;
         } else if node.kind() == "call_expression" {
             diagnostic.counts.extracted.calls = checked_add(diagnostic.counts.extracted.calls, 1)?;
-            if has_owner_ancestor(node) {
+            if owner_ancestors > 0 {
                 diagnostic.counts.extracted.calls_with_owner =
                     checked_add(diagnostic.counts.extracted.calls_with_owner, 1)?;
             }
         }
 
         if cursor.goto_first_child() {
+            ancestor_kinds.push((node_is_definition, node_is_owner));
+            definition_ancestors =
+                checked_add(definition_ancestors, u64::from(node_is_definition))?;
+            owner_ancestors = checked_add(owner_ancestors, u64::from(node_is_owner))?;
             continue;
         }
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
-                if incomplete {
-                    if diagnostic.counts.error_nodes == 0 && diagnostic.counts.missing_nodes == 0 {
-                        return Err(invalid_data(
-                            "incomplete syntax tree exposed no ERROR or MISSING node",
-                        )
-                        .into());
-                    }
-                    diagnostic.counts.retained_in_incomplete_files =
-                        diagnostic.counts.extracted.clone();
-                }
-                return Ok(diagnostic);
+                return finish_file_diagnostic(diagnostic, incomplete);
             }
+            let (parent_is_definition, parent_is_owner) = ancestor_kinds
+                .pop()
+                .ok_or_else(|| invalid_data("syntax traversal ancestor stack underflowed"))?;
+            definition_ancestors = definition_ancestors
+                .checked_sub(u64::from(parent_is_definition))
+                .ok_or_else(|| invalid_data("definition ancestor count underflowed"))?;
+            owner_ancestors = owner_ancestors
+                .checked_sub(u64::from(parent_is_owner))
+                .ok_or_else(|| invalid_data("owner ancestor count underflowed"))?;
         }
     }
+}
+
+fn finish_file_diagnostic(
+    mut diagnostic: FileDiagnostic,
+    incomplete: bool,
+) -> AnyResult<FileDiagnostic> {
+    if incomplete {
+        diagnostic.counts.retained_in_incomplete_files = diagnostic.counts.extracted.clone();
+    }
+    Ok(diagnostic)
+}
+
+fn add_recovery(
+    recovery: &mut BTreeMap<RecoveryKey, u64>,
+    key: RecoveryKey,
+    count: u64,
+) -> AnyResult<()> {
+    if !recovery.contains_key(&key) && recovery.len() >= MAX_RECOVERY_CATEGORIES {
+        return Err(invalid_data("diagnostic exceeded its recovery-category bound").into());
+    }
+    let total = recovery.entry(key).or_default();
+    *total = checked_add(*total, count)?;
+    Ok(())
 }
 
 fn is_definition(node: Node<'_>) -> bool {
@@ -406,28 +436,6 @@ fn is_owner_definition(node: Node<'_>) -> bool {
             | "deinit_declaration"
             | "subscript_declaration"
     )
-}
-
-fn has_definition_ancestor(node: Node<'_>) -> bool {
-    let mut parent = node.parent();
-    while let Some(candidate) = parent {
-        if is_definition(candidate) {
-            return true;
-        }
-        parent = candidate.parent();
-    }
-    false
-}
-
-fn has_owner_ancestor(node: Node<'_>) -> bool {
-    let mut parent = node.parent();
-    while let Some(candidate) = parent {
-        if is_owner_definition(candidate) {
-            return true;
-        }
-        parent = candidate.parent();
-    }
-    false
 }
 
 fn recovery_syntax_kind(node: Node<'_>) -> String {
@@ -779,7 +787,7 @@ mod tests {
     fn inspect(source: &str) -> FileDiagnostic {
         let mut parser = TreeParser::new();
         parser
-            .set_language(&tree_sitter_swift::LANGUAGE.into())
+            .set_language(&swift_diagnostic_grammar::LANGUAGE.into())
             .expect("Swift language");
         let tree = parser.parse(source, None).expect("tree");
         inspect_tree(&tree, SourceShape::Ordinary, source.len()).expect("diagnostic")
@@ -810,11 +818,25 @@ mod tests {
     }
 
     #[test]
-    fn optional_cast_before_nil_coalescing_remains_complete() {
-        let diagnostic = inspect("let x = y as? String ?? \"z\"\n");
-        assert_eq!(diagnostic.counts.incomplete_files, 0);
-        assert_eq!(diagnostic.counts.error_nodes, 0);
-        assert_eq!(diagnostic.counts.missing_nodes, 0);
+    fn optional_cast_regression_matches_the_locked_grammar() {
+        let source = "let x = y as? String ?? \"z\"\n";
+        let diagnostic = inspect(source);
+        match locked_package_version("tree-sitter-swift")
+            .expect("locked Swift grammar")
+            .as_str()
+        {
+            "0.7.2" => {
+                assert_eq!(diagnostic.counts.incomplete_files, 0);
+                assert_eq!(diagnostic.counts.error_nodes, 0);
+                assert_eq!(diagnostic.counts.missing_nodes, 0);
+            }
+            "0.7.3" => {
+                assert_eq!(diagnostic.counts.incomplete_files, 1);
+                assert_eq!(diagnostic.counts.error_nodes, 0);
+                assert_eq!(diagnostic.counts.missing_nodes, 0);
+            }
+            version => panic!("unexpected locked Swift grammar {version}"),
+        }
     }
 
     #[test]
@@ -834,11 +856,43 @@ mod tests {
     }
 
     #[test]
-    fn lockfile_reports_exact_swift_grammar() {
+    fn lockfile_reports_an_evaluated_swift_grammar() {
+        let version = locked_package_version("tree-sitter-swift").expect("locked version");
+        assert!(matches!(version.as_str(), "0.7.2" | "0.7.3"));
+    }
+
+    #[test]
+    fn recovery_categories_are_bounded_before_insertion() {
+        let mut recovery = BTreeMap::new();
+        for index in 0..MAX_RECOVERY_CATEGORIES {
+            add_recovery(
+                &mut recovery,
+                RecoveryKey {
+                    shape: SourceShape::Ordinary,
+                    recovery_kind: "error".to_owned(),
+                    parent_kind: "parent".to_owned(),
+                    syntax_kind: format!("kind-{index}"),
+                },
+                1,
+            )
+            .expect("category below the bound");
+        }
+        let error = add_recovery(
+            &mut recovery,
+            RecoveryKey {
+                shape: SourceShape::Ordinary,
+                recovery_kind: "error".to_owned(),
+                parent_kind: "parent".to_owned(),
+                syntax_kind: "one-too-many".to_owned(),
+            },
+            1,
+        )
+        .expect_err("new category above the bound must fail");
         assert_eq!(
-            locked_package_version("tree-sitter-swift").expect("locked version"),
-            "0.7.2"
+            error.to_string(),
+            "diagnostic exceeded its recovery-category bound"
         );
+        assert_eq!(recovery.len(), MAX_RECOVERY_CATEGORIES);
     }
 
     #[test]
@@ -855,6 +909,17 @@ mod tests {
             "../benchmarks/reports/swift-structural-evaluation-openclaw-v1.json"
         ))
         .expect("evaluation report");
+        let attempts: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/swift-retrieval-attempts-openclaw-v1.json"
+        ))
+        .expect("attempt receipt");
+        let raw_reports = [
+            include_str!("../benchmarks/reports/swift-retrieval-control-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-control-run2.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.2-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run2.json"),
+        ];
 
         for report in [&version_072, &version_073] {
             assert_eq!(
@@ -888,5 +953,43 @@ mod tests {
         assert_eq!(version_072["summary"]["incomplete_files"], 359);
         assert_eq!(version_073["summary"]["incomplete_files"], 349);
         assert_eq!(evaluation["decision"], "do_not_ship_swift_parser");
+        assert_eq!(
+            evaluation["attempt_receipt"],
+            "benchmarks/reports/swift-retrieval-attempts-openclaw-v1.json"
+        );
+
+        for raw in raw_reports {
+            assert!(
+                !raw.contains("\"content\":"),
+                "raw retrieval report retained source content"
+            );
+            let report: serde_json::Value =
+                serde_json::from_str(raw).expect("raw retrieval report");
+            assert_eq!(report["schema_version"], 4);
+            assert_eq!(
+                report["manifest_blake3"],
+                "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7"
+            );
+            assert_eq!(report["aggregate"]["task_count"], 10);
+            assert_eq!(report["aggregate"]["relevant_files"], 20);
+            assert_eq!(report["aggregate"]["line_anchors"], 68);
+        }
+
+        let attempts = attempts["attempts"].as_array().expect("attempt list");
+        assert_eq!(attempts.len(), 11);
+        assert_eq!(
+            attempts
+                .iter()
+                .filter(|attempt| attempt["outcome"] == "success")
+                .count(),
+            5
+        );
+        assert_eq!(
+            attempts
+                .iter()
+                .filter(|attempt| attempt["outcome"] == "nondeterministic_context")
+                .count(),
+            6
+        );
     }
 }

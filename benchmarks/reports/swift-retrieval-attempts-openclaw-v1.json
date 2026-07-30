@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "corpus_revision": "9feb6ad161877da86200693b039638dbf3411e66",
+  "manifest": "benchmarks/swift_structural_validation.json",
+  "manifest_blake3": "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7",
+  "failure_contract": "The harness exits before writing a report when any initial response and its three identical warm requests return different context.",
+  "attempts": [
+    {
+      "arm": "lexical_control",
+      "harness_revision": "e9175297b6939615cba7839a66b75caa13a6b99c",
+      "attempt": 1,
+      "outcome": "success",
+      "report": "benchmarks/reports/swift-retrieval-control-run1.json",
+      "sha256": "428f2225b70eb55ce42a38266a30be158f8c3860df0df6d17fc0d6048ce0db49"
+    },
+    {
+      "arm": "lexical_control",
+      "harness_revision": "e9175297b6939615cba7839a66b75caa13a6b99c",
+      "attempt": 2,
+      "outcome": "success",
+      "report": "benchmarks/reports/swift-retrieval-control-run2.json",
+      "sha256": "f68e2a6a6bd18223212b96eb9381bff08d2387882e001ad69a39a98a6a912a41"
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "attempt": 1,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 13.86,
+      "process_rss_bytes": 104390656
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "attempt": 2,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 15.41,
+      "process_rss_bytes": 109101056
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "attempt": 3,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 14.76,
+      "process_rss_bytes": 108814336
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "attempt": 4,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 14.50,
+      "process_rss_bytes": 117608448
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_2",
+      "harness_revision": "ce56bba21210464b59139a73d75fce99be7046ba",
+      "attempt": 5,
+      "outcome": "success",
+      "report": "benchmarks/reports/swift-retrieval-0.7.2-run1.json",
+      "sha256": "acd275a58f00a00a6103f0e539c21aed3fac1fb6a4a30f05c608a6e03a2a06c8"
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_3",
+      "harness_revision": "1ad2c5a9cc253612d1de0c5af78b589ee10f9516",
+      "attempt": 1,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 15.13,
+      "process_rss_bytes": 120307712
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_3",
+      "harness_revision": "1ad2c5a9cc253612d1de0c5af78b589ee10f9516",
+      "attempt": 2,
+      "outcome": "nondeterministic_context",
+      "elapsed_wall_seconds": 15.85,
+      "process_rss_bytes": 117227520
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_3",
+      "harness_revision": "1ad2c5a9cc253612d1de0c5af78b589ee10f9516",
+      "attempt": 3,
+      "outcome": "success",
+      "report": "benchmarks/reports/swift-retrieval-0.7.3-run1.json",
+      "sha256": "8104790358d2f0b8e5a2a00d96411537082d54f16a9c2874f416328edc60aca4"
+    },
+    {
+      "arm": "tree_sitter_swift_0_7_3",
+      "harness_revision": "1ad2c5a9cc253612d1de0c5af78b589ee10f9516",
+      "attempt": 4,
+      "outcome": "success",
+      "report": "benchmarks/reports/swift-retrieval-0.7.3-run2.json",
+      "sha256": "3459d01560cddb29d6cec05586317f35521e6361950c0c74af4a6c7c5be1ea74"
+    }
+  ]
+}

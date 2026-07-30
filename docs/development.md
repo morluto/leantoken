@@ -142,13 +142,17 @@ development-only grammar pin, run:
 
 ```bash
 cargo test --locked --example swift_parse_diagnostic
+CARGO_TARGET_DIR=target cargo test --locked \
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml
 ```
 
 The exact external-corpus command, frozen retrieval gate, and no-ship result
 are documented in
 [`../benchmarks/README.md`](../benchmarks/README.md#swift-structural-indexing-evaluation).
-Swift remains unsupported by production structural parsing; this target is an
-evaluation contract and must not be treated as an index-readiness check.
+The root target exercises the exact 0.7.2 development dependency; the excluded
+manifest exercises its independent exact 0.7.3 lock. Swift remains unsupported
+by production structural parsing; these targets are an evaluation contract and
+must not be treated as an index-readiness check.
 
 These repository-local Cargo aliases keep the fast and extended target groups
 consistent with CI. The development profile retains line tables for useful

@@ -2,6 +2,7 @@
   "schema_version": 1,
   "decision": "do_not_ship_swift_parser",
   "decision_summary": "Both Swift candidates improved labeled retrieval, but neither preserved deterministic context or stayed within the frozen cold-index, RSS, and database-growth limits. Version 0.7.3 also regressed a valid optional-cast plus nil-coalescing expression.",
+  "attempt_receipt": "benchmarks/reports/swift-retrieval-attempts-openclaw-v1.json",
   "corpus": {
     "repository": "https://github.com/openclaw/openclaw.git",
     "revision": "9feb6ad161877da86200693b039638dbf3411e66",
@@ -56,9 +57,15 @@
         "database_bytes": 69455872,
         "release_benchmark_binary_bytes": 36103536
       },
-      "raw_report_sha256": [
-        "2f5d7971073f081794951946cce517ae4cd77b363ddf3a9bbd13a5040508c9d0",
-        "2bd9a6193d4e7cf16a63fa22bff92831cb0c13f865c287612a9890c5460eb090"
+      "raw_reports": [
+        {
+          "path": "benchmarks/reports/swift-retrieval-control-run1.json",
+          "sha256": "428f2225b70eb55ce42a38266a30be158f8c3860df0df6d17fc0d6048ce0db49"
+        },
+        {
+          "path": "benchmarks/reports/swift-retrieval-control-run2.json",
+          "sha256": "f68e2a6a6bd18223212b96eb9381bff08d2387882e001ad69a39a98a6a912a41"
+        }
       ]
     },
     {
@@ -102,7 +109,12 @@
         "calls": 111828,
         "calls_with_owner": 73530
       },
-      "raw_retrieval_report_sha256": "abce6d99dffbd9b97406c248743f26eb618bec916aa39513df7c40f03846ebbe",
+      "raw_reports": [
+        {
+          "path": "benchmarks/reports/swift-retrieval-0.7.2-run1.json",
+          "sha256": "acd275a58f00a00a6103f0e539c21aed3fac1fb6a4a30f05c608a6e03a2a06c8"
+        }
+      ],
       "gate_result": "fail"
     },
     {
@@ -154,9 +166,15 @@
         "version_0_7_3_structurally_complete": false,
         "upstream_issue": "https://github.com/alex-pinkus/tree-sitter-swift/issues/597"
       },
-      "raw_retrieval_report_sha256": [
-        "8eddb6e997cd3ac9ba798c58015b7f153d2316af1b74ee1792572b09195587d3",
-        "702ab51d1d83752a69a63cfc5774ae0dd17c7706999efdde1ef2d8f457043931"
+      "raw_reports": [
+        {
+          "path": "benchmarks/reports/swift-retrieval-0.7.3-run1.json",
+          "sha256": "8104790358d2f0b8e5a2a00d96411537082d54f16a9c2874f416328edc60aca4"
+        },
+        {
+          "path": "benchmarks/reports/swift-retrieval-0.7.3-run2.json",
+          "sha256": "3459d01560cddb29d6cec05586317f35521e6361950c0c74af4a6c7c5be1ea74"
+        }
       ],
       "gate_result": "fail"
     }
