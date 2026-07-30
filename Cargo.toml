@@ -2,7 +2,7 @@
 resolver = "3"
 members = [".", "crates/test-support", "crates/test-suite", "xtask"]
 default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
-exclude = ["benchmarks/swift-grammar-073"]
+exclude = ["benchmarks/kotlin-grammar-040", "benchmarks/swift-grammar-073"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -83,7 +83,6 @@ tree-sitter-go = "0.25.0"
 tree-sitter-html = "0.23.2"
 tree-sitter-java = "0.23.5"
 tree-sitter-javascript = "0.25.0"
-tree-sitter-kotlin = { git = "https://github.com/fwcd/tree-sitter-kotlin.git", rev = "c10ad83a66c76855e006496db3bdb002afc49203" }
 tree-sitter-php = "0.24.2"
 tree-sitter-python = "0.25.0"
 tree-sitter-ruby = "0.23.1"

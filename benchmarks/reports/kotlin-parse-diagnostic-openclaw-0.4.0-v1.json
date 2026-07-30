@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "parser_dependencies": {
+    "tree_sitter": "0.26.11",
+    "tree_sitter_kotlin": "0.4.0"
+  },
+  "corpus": {
+    "revision": "9feb6ad161877da86200693b039638dbf3411e66",
+    "content_blake3": "4c2c2df96d451c582aae2fc25ec43b36a3f2debe9eceb316d2275ca8d0f12d7b",
+    "files": 419,
+    "source_bytes": 5620380
+  },
+  "limits": {
+    "max_files": 100000,
+    "max_path_bytes": 4096,
+    "max_file_bytes": 8388608,
+    "max_total_source_bytes": 8589934592,
+    "max_nodes_per_file": 1000000,
+    "max_total_nodes": 100000000,
+    "max_recovery_nodes": 1000000,
+    "max_recovery_categories": 512,
+    "max_reported_recovery_categories": 32,
+    "file_parse_timeout_seconds": 30
+  },
+  "summary": {
+    "files": 419,
+    "incomplete_files": 9,
+    "source_bytes": 5620380,
+    "nodes_visited": 1531251,
+    "error_nodes": 11,
+    "missing_nodes": 0,
+    "extracted": {
+      "definitions": 23908,
+      "nested_definitions": 20953,
+      "imports": 6768,
+      "calls": 65830,
+      "calls_with_owner": 65126,
+      "owner_ranges": 8310
+    },
+    "retained_in_incomplete_files": {
+      "definitions": 1891,
+      "nested_definitions": 1755,
+      "imports": 276,
+      "calls": 4557,
+      "calls_with_owner": 4540,
+      "owner_ranges": 602
+    }
+  },
+  "strata": [
+    {
+      "source_shape": "ordinary_or_declaration",
+      "counts": {
+        "files": 222,
+        "incomplete_files": 8,
+        "source_bytes": 3565257,
+        "nodes_visited": 962861,
+        "error_nodes": 10,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 14969,
+          "nested_definitions": 12275,
+          "imports": 4563,
+          "calls": 35913,
+          "calls_with_owner": 35209,
+          "owner_ranges": 5312
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 1841,
+          "nested_definitions": 1706,
+          "imports": 256,
+          "calls": 4355,
+          "calls_with_owner": 4338,
+          "owner_ranges": 582
+        }
+      }
+    },
+    {
+      "source_shape": "test",
+      "counts": {
+        "files": 197,
+        "incomplete_files": 1,
+        "source_bytes": 2055123,
+        "nodes_visited": 568390,
+        "error_nodes": 1,
+        "missing_nodes": 0,
+        "extracted": {
+          "definitions": 8939,
+          "nested_definitions": 8678,
+          "imports": 2205,
+          "calls": 29917,
+          "calls_with_owner": 29917,
+          "owner_ranges": 2998
+        },
+        "retained_in_incomplete_files": {
+          "definitions": 50,
+          "nested_definitions": 49,
+          "imports": 20,
+          "calls": 202,
+          "calls_with_owner": 202,
+          "owner_ranges": 20
+        }
+      }
+    }
+  ],
+  "recovery_category_count": 6,
+  "recovery_categories": [
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "function_type_parameters",
+      "syntax_kind": "<none>",
+      "count": 4
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "source_file",
+      "syntax_kind": "<none>",
+      "count": 2
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "statements",
+      "syntax_kind": "<none>",
+      "count": 2
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "class_body",
+      "syntax_kind": "<none>",
+      "count": 1
+    },
+    {
+      "source_shape": "ordinary_or_declaration",
+      "recovery_kind": "error",
+      "parent_kind": "class_body",
+      "syntax_kind": "integer_literal",
+      "count": 1
+    },
+    {
+      "source_shape": "test",
+      "recovery_kind": "error",
+      "parent_kind": "assignment",
+      "syntax_kind": "navigation_expression",
+      "count": 1
+    }
+  ],
+  "other_recovery_nodes": 0
+}

@@ -1360,6 +1360,33 @@ Reconsidering Swift requires a new grammar release and a new immutable report,
 but changing the existing corpus labels, token budget, extraction policy, or
 thresholds also creates a new report schema rather than rewriting this result.
 
+The manual Kotlin structural evaluator is an excluded, independently locked
+Cargo package. It pins the unreleased `tree-sitter-kotlin` 0.4.0 merge commit
+for research only; the normal workspace dependency graph, extension detection,
+parser cache, index schema, and release binary remain Kotlin-free. It applies
+the same 100,000-file, 4,096-byte-path, 8-MiB-file, 8-GiB-corpus,
+one-million-node-per-file, 100-million-total-node, one-million-recovery-node,
+512-category, 32-reported-category, 64-MiB/64-KiB Git-output, 60-second Git,
+and 30-second per-file parse bounds as the Swift evaluator. One tree-cursor
+pass counts definitions, owner ranges, imports, calls, and recovery shapes in
+O(visited nodes) time with O(tree depth) auxiliary memory. It processes one
+clean tracked `.kt` or `.kts` file at a time and retains only aggregate counts,
+fixed path-only strata, corpus hashes, and bounded `ERROR`/`MISSING`
+categories; reports contain neither source nor individual paths and are
+created atomically without replacement.
+
+The frozen Kotlin retrieval experiment also leaves production lexical-only.
+The evaluated 0.4.0 prototype improved aggregate relevant-file recall from
+80% to 90% and line-anchor recall from 9.76% to 31.71%, but it regressed the
+`directive_parsing` task family, grew mean RSS by 49.37%, grew the database by
+15.45%, and left nine of 419 Kotlin files structurally incomplete. The grammar
+is still unpublished on crates.io. Its exact prototype commits remain in
+history solely to bind the source-free raw reports; the final tree removes
+Kotlin production detection, extraction, and dependencies. Reconsideration
+requires a published grammar, a new immutable report, and the unchanged
+correctness, task-family, and resource gates unless a new schema explicitly
+freezes different inputs or thresholds.
+
 The developer-only target-footprint reporter is read-only and does not follow
 symlinks. It scans at most 1,000,000 explicitly requested Cargo target entries
 and at most 64 directory levels, deduplicates regular-file hard links, and

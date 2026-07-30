@@ -44,7 +44,6 @@ fn language_object(name: &str) -> Option<Language> {
         "csharp" => tree_sitter_c_sharp::LANGUAGE.into(),
         "cpp" => tree_sitter_cpp::LANGUAGE.into(),
         "java" => tree_sitter_java::LANGUAGE.into(),
-        "kotlin" => tree_sitter_kotlin::LANGUAGE.into(),
         "rust" => tree_sitter_rust::LANGUAGE.into(),
         "python" => tree_sitter_python::LANGUAGE.into(),
         "php" => tree_sitter_php::LANGUAGE_PHP.into(),
@@ -64,7 +63,6 @@ fn build_tags_query(language: &str, lang: &Language) -> Result<Option<Query>> {
         "c" => tree_sitter_c::TAGS_QUERY,
         "cpp" => tree_sitter_cpp::TAGS_QUERY,
         "java" => tree_sitter_java::TAGS_QUERY,
-        "kotlin" => KOTLIN_TAGS_QUERY,
         "rust" => tree_sitter_rust::TAGS_QUERY,
         "python" => tree_sitter_python::TAGS_QUERY,
         "php" => tree_sitter_php::TAGS_QUERY,
@@ -99,7 +97,7 @@ fn build_import_query(language: &str, lang: &Language) -> Result<Option<Query>> 
         "python" => PYTHON_IMPORT_QUERY,
         "javascript" | "typescript" | "tsx" => JS_IMPORT_QUERY,
         "go" => GO_IMPORT_QUERY,
-        "c" | "csharp" | "cpp" | "java" | "kotlin" | "php" | "ruby" | "html" | "css" => {
+        "c" | "csharp" | "cpp" | "java" | "php" | "ruby" | "html" | "css" => {
             return Ok(None);
         }
         _ => return Err(Error::UnsupportedLanguage(language.to_string())),

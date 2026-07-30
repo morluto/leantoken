@@ -4249,6 +4249,96 @@ mod tests {
     }
 
     #[test]
+    fn kotlin_structural_reports_bind_the_no_ship_decision() {
+        let evaluation: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/kotlin-structural-evaluation-openclaw-v1.json"
+        ))
+        .expect("Kotlin evaluation report");
+        let diagnostic: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/kotlin-parse-diagnostic-openclaw-0.4.0-v1.json"
+        ))
+        .expect("Kotlin parse diagnostic");
+        let attempts: serde_json::Value = serde_json::from_str(include_str!(
+            "../benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json"
+        ))
+        .expect("Kotlin attempt receipt");
+        let raw_reports = [
+            (
+                include_str!("../benchmarks/reports/kotlin-retrieval-control-run1.json"),
+                "a2625a699ec66318e225fa8a9836692e847f3e20",
+                16,
+                8,
+            ),
+            (
+                include_str!("../benchmarks/reports/kotlin-retrieval-control-run2.json"),
+                "a2625a699ec66318e225fa8a9836692e847f3e20",
+                16,
+                8,
+            ),
+            (
+                include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run1.json"),
+                "a4640f64ce266130819141a9279d7676884faea7",
+                18,
+                26,
+            ),
+            (
+                include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run2.json"),
+                "a4640f64ce266130819141a9279d7676884faea7",
+                18,
+                26,
+            ),
+        ];
+
+        assert_eq!(evaluation["decision"], "do_not_ship_kotlin_parser");
+        assert_eq!(
+            evaluation["arms"][1]["retrieval"]["regressed_task_families"][0],
+            "directive_parsing"
+        );
+        assert_eq!(
+            diagnostic["parser_dependencies"]["tree_sitter_kotlin"],
+            "0.4.0"
+        );
+        assert_eq!(diagnostic["corpus"]["files"], 419);
+        assert_eq!(diagnostic["summary"]["incomplete_files"], 9);
+        assert_eq!(diagnostic["summary"]["error_nodes"], 11);
+        assert_eq!(diagnostic["summary"]["missing_nodes"], 0);
+        assert_eq!(
+            attempts["attempts"]
+                .as_array()
+                .expect("Kotlin attempt list")
+                .len(),
+            7
+        );
+
+        for (raw, revision, relevant_files_found, line_anchors_found) in raw_reports {
+            assert!(
+                !raw.contains("\"content\":"),
+                "raw Kotlin report retained source content"
+            );
+            let report: serde_json::Value =
+                serde_json::from_str(raw).expect("raw Kotlin retrieval report");
+            assert_eq!(report["schema_version"], 4);
+            assert_eq!(
+                report["manifest_blake3"],
+                "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59"
+            );
+            assert_eq!(report["harness_revision"], revision);
+            assert_eq!(report["harness_worktree_dirty"], false);
+            assert_eq!(report["aggregate"]["task_count"], 10);
+            assert_eq!(report["aggregate"]["relevant_files"], 20);
+            assert_eq!(report["aggregate"]["line_anchors"], 82);
+            assert_eq!(
+                report["aggregate"]["relevant_files_found"],
+                relevant_files_found
+            );
+            assert_eq!(
+                report["aggregate"]["line_anchors_found"],
+                line_anchors_found
+            );
+        }
+    }
+
+    #[test]
     fn sealed_holdout_manifest_meets_schema_and_coverage_contract() {
         let manifest: Manifest = serde_json::from_str(include_str!("../benchmarks/holdout.json"))
             .expect("holdout manifest");

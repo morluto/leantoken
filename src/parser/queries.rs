@@ -19,55 +19,6 @@ const PHP_REFS_QUERY: &str = r#"
   function: (name) @name) @reference.call
 "#;
 
-// Pinned verbatim to fwcd/tree-sitter-kotlin
-// c10ad83a66c76855e006496db3bdb002afc49203/queries/tags.scm for the
-// research-only Kotlin 0.4.0 evaluation.
-const KOTLIN_TAGS_QUERY: &str = r#"
-; Classes
-(class_declaration
-  (type_identifier) @name) @definition.class
-
-; Objects
-(object_declaration
-  (type_identifier) @name) @definition.class
-
-; Functions (top-level and member)
-(function_declaration
-  (simple_identifier) @name) @definition.function
-
-; Properties
-(property_declaration
-  (variable_declaration
-    (simple_identifier) @name)) @definition.constant
-
-; Enum entries
-(enum_entry
-  (simple_identifier) @name) @definition.constant
-
-; Type aliases
-(type_alias
-  (type_identifier) @name) @definition.type
-
-; Companion objects (only named ones)
-(companion_object
-  (type_identifier) @name) @definition.class
-
-; Function calls
-(call_expression
-  (simple_identifier) @name) @reference.call
-
-; Method calls via navigation
-(call_expression
-  (navigation_expression
-    (navigation_suffix
-      (simple_identifier) @name))) @reference.call
-
-; Constructor invocations (class references)
-(constructor_invocation
-  (user_type
-    (type_identifier) @name)) @reference.class
-"#;
-
 const RUST_IMPORT_QUERY: &str = r#"
 (use_declaration
   argument: (_) @raw) @import
