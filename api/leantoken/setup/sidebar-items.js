@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ClientPlanAction","SetupClient","SetupOperation"],"fn":["print_report","run"],"struct":["ClientSetupPlan","ClientSetupResult","DiscoverySetupPlan","LauncherPlan","SetupReport","SetupRequest"]};
+window.SIDEBAR_ITEMS = {"enum":["ClientPlanAction","SetupClient","SetupOperation","SetupVerificationStatus"],"fn":["print_report","run"],"struct":["ClientSetupPlan","ClientSetupResult","DiscoverySetupPlan","LauncherPlan","SetupReport","SetupRequest","SetupVerification"]};
