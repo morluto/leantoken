@@ -16,8 +16,8 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::executor::{
-    default_blocking_active_capacity, default_blocking_execution_capacity,
-    DEFAULT_BLOCKING_QUEUE_TIMEOUT,
+    DEFAULT_BLOCKING_QUEUE_TIMEOUT, default_blocking_active_capacity,
+    default_blocking_execution_capacity,
 };
 use super::*;
 

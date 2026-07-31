@@ -89,20 +89,36 @@ pub(in crate::ranking) fn materialize_context_fragments(
     (fragments, fragment_hashes, estimated_source_tokens)
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(in crate::ranking) struct FinalizeContextParams<'a> {
+    pub request: &'a ContextRequest,
+    pub repository_generation: u64,
+    pub tokenizer: tokens::Tokenizer,
+    pub plan: Option<ContextQueryPlan>,
+    pub fragments: Vec<ContextFragment>,
+    pub fragment_hashes: Vec<String>,
+    pub emitted_tokens: usize,
+    pub omitted: Vec<OmittedCandidate>,
+    pub omission_summary: ContextOmissionSummary,
+    pub coverage: ContextCoverageReceipt,
+    pub warnings: Vec<String>,
+}
+
 pub(in crate::ranking) fn finalize_context_response(
-    request: &ContextRequest,
-    repository_generation: u64,
-    tokenizer: tokens::Tokenizer,
-    plan: Option<ContextQueryPlan>,
-    fragments: Vec<ContextFragment>,
-    fragment_hashes: Vec<String>,
-    emitted_tokens: usize,
-    omitted: Vec<OmittedCandidate>,
-    omission_summary: ContextOmissionSummary,
-    coverage: ContextCoverageReceipt,
-    warnings: Vec<String>,
+    params: FinalizeContextParams<'_>,
 ) -> ContextResponse {
+    let FinalizeContextParams {
+        request,
+        repository_generation,
+        tokenizer,
+        plan,
+        fragments,
+        fragment_hashes,
+        emitted_tokens,
+        omitted,
+        omission_summary,
+        coverage,
+        warnings,
+    } = params;
     let task_hash = blake3::hash(request.task.as_bytes()).to_hex().to_string();
     let receipt = EvidenceReceipt {
         task_fingerprint: task_hash[..32].to_string(),

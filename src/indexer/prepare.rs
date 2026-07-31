@@ -44,31 +44,34 @@ pub(super) fn prepare_file(
     cancellation: &CancellationToken,
 ) -> Result<PreparedFile> {
     prepare_file_inner(
-        root,
-        file,
-        chunk_lines,
-        chunk_bytes,
-        tokenizer,
-        max_file_bytes,
-        cancellation,
+        PrepareFileParams {
+            root,
+            file,
+            chunk_lines,
+            chunk_bytes,
+            tokenizer,
+            max_file_bytes,
+            cancellation,
+        },
         None,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(super) struct PrepareFileParams<'a> {
+    pub root: &'a Dir,
+    pub file: &'a DiscoveredFile,
+    pub chunk_lines: usize,
+    pub chunk_bytes: usize,
+    pub tokenizer: crate::tokens::Tokenizer,
+    pub max_file_bytes: u64,
+    pub cancellation: &'a CancellationToken,
+}
+
 pub(super) fn prepare_file_profiled(
-    root: &Dir,
-    file: &DiscoveredFile,
-    chunk_lines: usize,
-    chunk_bytes: usize,
-    tokenizer: crate::tokens::Tokenizer,
-    max_file_bytes: u64,
-    cancellation: &CancellationToken,
+    params: PrepareFileParams<'_>,
     diagnostics: &mut FilePreparationDiagnostics,
 ) -> Result<PreparedFile> {
-    diagnostics.files_profiled = 1;
-    let started = Instant::now();
-    let result = prepare_file_inner(
+    let PrepareFileParams {
         root,
         file,
         chunk_lines,
@@ -76,23 +79,38 @@ pub(super) fn prepare_file_profiled(
         tokenizer,
         max_file_bytes,
         cancellation,
+    } = params;
+    diagnostics.files_profiled = 1;
+    let started = Instant::now();
+    let result = prepare_file_inner(
+        PrepareFileParams {
+            root,
+            file,
+            chunk_lines,
+            chunk_bytes,
+            tokenizer,
+            max_file_bytes,
+            cancellation,
+        },
         Some(diagnostics),
     );
     diagnostics.total = started.elapsed();
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_file_inner(
-    root: &Dir,
-    file: &DiscoveredFile,
-    chunk_lines: usize,
-    chunk_bytes: usize,
-    tokenizer: crate::tokens::Tokenizer,
-    max_file_bytes: u64,
-    cancellation: &CancellationToken,
+    params: PrepareFileParams<'_>,
     mut diagnostics: Option<&mut FilePreparationDiagnostics>,
 ) -> Result<PreparedFile> {
+    let PrepareFileParams {
+        root,
+        file,
+        chunk_lines,
+        chunk_bytes,
+        tokenizer,
+        max_file_bytes,
+        cancellation,
+    } = params;
     let read_started = diagnostics.is_some().then(Instant::now);
     let bytes = match read_bounded(root, &file.relative_path, max_file_bytes) {
         Ok(Some(bytes)) => bytes,

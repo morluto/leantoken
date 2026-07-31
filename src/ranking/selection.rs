@@ -248,17 +248,18 @@ pub(in crate::ranking) fn select_with_options(
     );
     let (fragments, fragment_hashes, emitted_tokens) =
         materialize_context_fragments(request, &selection.selected, estimated_source_tokens);
-    let (omission_summary, omitted, warnings) = build_context_omissions(
-        request,
-        partition.path_omitted,
-        partition.known_omitted,
-        selection.omitted,
-        prefiltered_path_omissions,
-        &scope.focus_paths,
-        &scope.changed_paths,
-        partition.generated_artifact_warning,
-    );
-    finalize_context_response(
+    let (omission_summary, omitted, warnings) =
+        build_context_omissions(super::omissions::BuildOmissionsParams {
+            request,
+            path_omitted: partition.path_omitted,
+            known_omitted: partition.known_omitted,
+            limit_omitted: selection.omitted,
+            prefiltered_path_omissions,
+            focus_paths: &scope.focus_paths,
+            changed_paths: &scope.changed_paths,
+            generated_artifact_warning: partition.generated_artifact_warning,
+        });
+    finalize_context_response(super::response::FinalizeContextParams {
         request,
         repository_generation,
         tokenizer,
@@ -270,5 +271,5 @@ pub(in crate::ranking) fn select_with_options(
         omission_summary,
         coverage,
         warnings,
-    )
+    })
 }
