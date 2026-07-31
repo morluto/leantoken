@@ -724,9 +724,14 @@ target/release/model_ab_trajectory \
 `examples/graph_signal_ablation.rs` runs the preregistered controls in
 [`../benchmarks/graph_signal_ablation_v1.json`](../benchmarks/graph_signal_ablation_v1.json)
 against the eight clean revisions in `benchmarks/representative.json`. The
-[published report](../benchmarks/reports/graph-signal-ablation-v1.json) binds
+[published summary](../benchmarks/reports/graph-signal-ablation-v1.json) binds
 the clean harness revision and source, both manifests, exact tokenizer, task
-labels, three repetitions, graph index statistics, and all 96 task-arm runs.
+labels, three repetitions, graph index statistics, and arm aggregates. The
+committed boundary excludes host metadata, timings, and individual runs. A
+generated raw archive retains those volatile measurements and all 96 task-arm
+runs, and records `summary_blake3` for the exact summary bytes. Issue [#400](https://github.com/morluto/leantoken/issues/400)
+records this artifact migration without changing benchmark inputs or
+conclusions.
 
 The baseline contains symbol and full-text evidence. Each other arm enables
 only forward import expansion, a reverse-import boost on existing candidates,
@@ -758,10 +763,11 @@ a relevant signal candidate for 4/5 applicable tasks. Parsed callers had
 The shared indexes contained 9,808 parsed imports and 145,021 parsed
 references. All 1,796 resolved import paths joined an indexed file, but 8,012
 imports remained unresolved, an 81.7% unresolved rate. Logical SQLite size was
-113,127,424 bytes, excluding WAL and SHM sidecars; aggregate cold indexing was
-20.2 seconds and the sum of per-corpus median no-op reconciliations was 86.3 ms
-on this Linux x86-64 host. Because every arm uses the same current index, these
-timings and sizes are a cost envelope rather than a graph-disabled causal delta.
+113,127,424 bytes, excluding WAL and SHM sidecars. The generated raw archive
+also records the per-corpus timing observations and host, but those volatile
+values are deliberately outside the committed summary. Because every arm uses
+the same current index, the measurements are a cost envelope rather than a
+graph-disabled causal delta.
 
 The decision is `no_go`. No new ranking signal is retained, production keeps
 its existing behavior, and no call-path or dependency metadata is exposed.
@@ -771,12 +777,22 @@ task set and must pass the same additive, repeatability, recall, dead-end,
 response-cost, and precision gates before any production or protocol change.
 
 ```bash
-cargo build --release --package leantoken-benchmarks --bin graph_signal_ablation
+cargo build --release --package leantoken-benchmarks \
+  --bin graph_signal_ablation --bin artifact_blake3
 
 target/release/graph_signal_ablation \
   --manifest benchmarks/graph_signal_ablation_v1.json \
   --repos-root target/representative-repos \
-  --output target/graph-signal-ablation-v1.json
+  --output target/graph-signal-ablation-v1.json \
+  --raw-output target/graph-signal-ablation-v1.raw.json
+```
+
+The summary/raw boundary is checked with the same commands used in CI:
+
+```bash
+SUMMARY_HASH=$(target/release/artifact_blake3 target/graph-signal-ablation-v1.json | cut -d' ' -f1)
+test "$(jq -r '.summary_blake3' target/graph-signal-ablation-v1.raw.json)" = "$SUMMARY_HASH"
+test "$(jq '.runs | length' target/graph-signal-ablation-v1.raw.json)" -eq 96
 ```
 
 ## Agent wall-time microbenchmark

@@ -13,7 +13,9 @@ use leantoken::{
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-const REPORT_SCHEMA_VERSION: u32 = 1;
+const REPORT_SCHEMA_VERSION: u32 = 2;
+const RAW_ARCHIVE_SCHEMA_VERSION: u32 = 1;
+const EXPECTED_RUNS: usize = 96;
 const EXPECTED_ARMS: [&str; 4] = [
     "lexical_syntax",
     "import_neighbor",
@@ -35,6 +37,9 @@ struct Args {
     /// Redacted JSON report path.
     #[arg(long, default_value = "target/graph-signal-ablation-v1.json")]
     output: PathBuf,
+    /// Generated raw archive containing per-run and timing evidence.
+    #[arg(long, default_value = "target/graph-signal-ablation-v1.raw.json")]
+    raw_output: PathBuf,
     /// Validate identities, labels, revisions, and clean worktrees without indexing.
     #[arg(long)]
     preflight_only: bool,
@@ -112,6 +117,26 @@ struct Report {
     source_manifest_schema_version: u32,
     harness_revision: String,
     harness_source_blake3: String,
+    leantoken_version: &'static str,
+    tokenizer: &'static str,
+    token_count_exact: bool,
+    methodology: Methodology,
+    thresholds: Thresholds,
+    graph_index: GraphIndexAggregate,
+    arms: Vec<ArmAggregate>,
+    decision: Decision,
+    limitations: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct RawArchive {
+    schema_version: u32,
+    experiment_id: String,
+    summary_blake3: String,
+    manifest_blake3: String,
+    source_manifest_blake3: String,
+    harness_revision: String,
+    harness_source_blake3: String,
     harness_worktree_dirty: bool,
     leantoken_version: &'static str,
     host_os: &'static str,
@@ -119,13 +144,8 @@ struct Report {
     rustc_version: String,
     tokenizer: &'static str,
     token_count_exact: bool,
-    methodology: Methodology,
-    thresholds: Thresholds,
-    graph_index: GraphIndexAggregate,
-    arms: Vec<ArmAggregate>,
+    timings: Vec<CorpusTiming>,
     runs: Vec<RunReport>,
-    decision: Decision,
-    limitations: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,7 +161,7 @@ struct Methodology {
     timing: &'static str,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Clone)]
 struct GraphIndexAggregate {
     corpus_count: usize,
     total_database_bytes: u64,
@@ -156,17 +176,23 @@ struct GraphIndexAggregate {
     corpora: Vec<CorpusIndexReport>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct CorpusIndexReport {
     name: String,
     revision: String,
     indexed_files: usize,
     database_bytes: u64,
+    imports: ImportStats,
+    parsed_reference_edges: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct CorpusTiming {
+    name: String,
+    revision: String,
     cold_index_ms: f64,
     noop_reconcile_ms: Vec<f64>,
     noop_reconcile_median_ms: f64,
-    imports: ImportStats,
-    parsed_reference_edges: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -201,10 +227,59 @@ struct RetrievalTotals {
     additive_violations: usize,
 }
 
+impl RetrievalTotals {
+    fn from_run(run: &RunReport) -> Self {
+        Self {
+            relevant_files: run.relevant_files,
+            relevant_files_found: run.relevant_files_found,
+            line_anchors: run.line_anchors,
+            line_anchors_found: run.line_anchors_found,
+            returned_files: run.returned_files.len(),
+            source_tokens: run.source_tokens,
+            dead_end_fragments: run.dead_end_fragments,
+            dead_end_source_tokens: run.dead_end_source_tokens,
+            complete_response_tokens: run.complete_response_tokens,
+            signal_candidate_files: run.signal_candidate_files.len(),
+            relevant_signal_candidate_files: run.relevant_signal_candidate_files,
+            false_positive_signal_candidate_files: run.false_positive_signal_candidate_files,
+            signal_selected_files: run.signal_selected_files.len(),
+            relevant_signal_selected_files: run.relevant_signal_selected_files,
+            applicable_signal_tasks: usize::from(run.signal_applicable),
+            applicable_signal_tasks_without_relevant_candidate: usize::from(
+                run.applicable_signal_unresolved,
+            ),
+            additive_violations: run.missing_baseline_candidates,
+        }
+    }
+
+    fn accumulate(&mut self, other: &Self) {
+        self.relevant_files += other.relevant_files;
+        self.relevant_files_found += other.relevant_files_found;
+        self.line_anchors += other.line_anchors;
+        self.line_anchors_found += other.line_anchors_found;
+        self.returned_files += other.returned_files;
+        self.source_tokens += other.source_tokens;
+        self.dead_end_fragments += other.dead_end_fragments;
+        self.dead_end_source_tokens += other.dead_end_source_tokens;
+        self.complete_response_tokens += other.complete_response_tokens;
+        self.signal_candidate_files += other.signal_candidate_files;
+        self.relevant_signal_candidate_files += other.relevant_signal_candidate_files;
+        self.false_positive_signal_candidate_files += other.false_positive_signal_candidate_files;
+        self.signal_selected_files += other.signal_selected_files;
+        self.relevant_signal_selected_files += other.relevant_signal_selected_files;
+        self.applicable_signal_tasks += other.applicable_signal_tasks;
+        self.applicable_signal_tasks_without_relevant_candidate +=
+            other.applicable_signal_tasks_without_relevant_candidate;
+        self.additive_violations += other.additive_violations;
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ArmAggregate {
     arm: String,
     repetitions: usize,
+    totals: RetrievalTotals,
+    #[serde(skip)]
     per_repetition: Vec<RetrievalTotals>,
     deterministic_metrics_repeat: bool,
     deterministic_task_results_repeat: bool,
@@ -358,6 +433,7 @@ async fn main() -> Result<(), DynError> {
         .map(|label| (label.task_id.as_str(), label))
         .collect::<BTreeMap<_, _>>();
     let mut graph_index = GraphIndexAggregate::default();
+    let mut timings = Vec::new();
     let mut runs = Vec::new();
     for corpus in source.corpora {
         let root = args.repos_root.join(&corpus.directory);
@@ -399,11 +475,16 @@ async fn main() -> Result<(), DynError> {
             revision: corpus.base_revision.clone(),
             indexed_files: status.file_count,
             database_bytes,
-            cold_index_ms,
-            noop_reconcile_median_ms: median(&noop_reconcile_ms),
-            noop_reconcile_ms,
             imports,
             parsed_reference_edges,
+        });
+        let noop_reconcile_median_ms = median(&noop_reconcile_ms);
+        timings.push(CorpusTiming {
+            name: corpus.name.clone(),
+            revision: corpus.base_revision.clone(),
+            cold_index_ms,
+            noop_reconcile_ms,
+            noop_reconcile_median_ms,
         });
 
         for repetition in 1..=manifest.repetitions {
@@ -435,8 +516,17 @@ async fn main() -> Result<(), DynError> {
         }
     }
     finish_graph_index(&mut graph_index);
+    if runs.len() != EXPECTED_RUNS {
+        return Err(format!(
+            "frozen graph ablation produced {} runs, expected {EXPECTED_RUNS}",
+            runs.len()
+        )
+        .into());
+    }
     let arms = aggregate_arms(&runs, manifest.repetitions);
     let decision = decide(&arms, manifest.thresholds);
+    let tokenizer = tokens::Tokenizer::default();
+    let rustc_version = command_version("rustc")?;
     let report = Report {
         schema_version: REPORT_SCHEMA_VERSION,
         experiment_id: manifest.experiment_id,
@@ -447,13 +537,9 @@ async fn main() -> Result<(), DynError> {
         source_manifest_schema_version: source.schema_version,
         harness_revision,
         harness_source_blake3,
-        harness_worktree_dirty: harness_dirty,
         leantoken_version: env!("CARGO_PKG_VERSION"),
-        host_os: std::env::consts::OS,
-        host_arch: std::env::consts::ARCH,
-        rustc_version: command_version("rustc")?,
-        tokenizer: tokens::Tokenizer::default().name(),
-        token_count_exact: tokens::Tokenizer::default().is_exact(),
+        tokenizer: tokenizer.name(),
+        token_count_exact: tokenizer.is_exact(),
         methodology: Methodology {
             baseline: "Symbol and full-text candidates with dependency expansion and parsed-reference candidates disabled.",
             arms: "Each candidate arm starts from the identical baseline and enables exactly one of forward import expansion, reverse-import ranking boost, or parsed reference candidates.",
@@ -463,12 +549,11 @@ async fn main() -> Result<(), DynError> {
             dead_end_source: "Selected source tokens in files outside the frozen relevant-file labels.",
             complete_response_tokens: "Exact tokenizer count of the complete serialized ContextResponse; no evaluation diagnostics are included in that payload.",
             index_size: "Logical SQLite page_count times page_size after indexing and no-op reconciliation; WAL and SHM sidecars are excluded.",
-            timing: "Cold index and three no-op reconciliations run in release mode on one host. Arms share the same graph-enabled index, so timing is a cost envelope, not a causal graph-disabled comparison.",
+            timing: "Timing and host measurements are retained in the generated raw archive, not this stable summary. Arms share the same graph-enabled index, so timing is a cost envelope, not a causal graph-disabled comparison.",
         },
         thresholds: manifest.thresholds,
         graph_index,
         arms,
-        runs,
         decision,
         limitations: vec![
             "The retrospective prompts and labels use public future fixes and are development evidence, not blind generalization evidence.",
@@ -480,6 +565,25 @@ async fn main() -> Result<(), DynError> {
         ],
     };
     let json = serde_json::to_string_pretty(&report)?;
+    let raw = RawArchive {
+        schema_version: RAW_ARCHIVE_SCHEMA_VERSION,
+        experiment_id: report.experiment_id.clone(),
+        summary_blake3: blake3::hash(json.as_bytes()).to_hex().to_string(),
+        manifest_blake3: report.manifest_blake3.clone(),
+        source_manifest_blake3: report.source_manifest_blake3.clone(),
+        harness_revision: report.harness_revision.clone(),
+        harness_source_blake3: report.harness_source_blake3.clone(),
+        harness_worktree_dirty: harness_dirty,
+        leantoken_version: report.leantoken_version,
+        host_os: std::env::consts::OS,
+        host_arch: std::env::consts::ARCH,
+        rustc_version,
+        tokenizer: report.tokenizer,
+        token_count_exact: report.token_count_exact,
+        timings,
+        runs,
+    };
+    let raw_json = serde_json::to_string_pretty(&raw)?;
     if let Some(parent) = args
         .output
         .parent()
@@ -487,7 +591,15 @@ async fn main() -> Result<(), DynError> {
     {
         fs::create_dir_all(parent)?;
     }
+    if let Some(parent) = args
+        .raw_output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(&args.output, &json)?;
+    fs::write(&args.raw_output, &raw_json)?;
     println!("{json}");
     Ok(())
 }
@@ -747,36 +859,30 @@ fn aggregate_arms(runs: &[RunReport], repetitions: usize) -> Vec<ArmAggregate> {
     Arm::ALL
         .into_iter()
         .map(|arm| {
-            let mut per_repetition = Vec::new();
-            for repetition in 1..=repetitions {
-                let mut totals = RetrievalTotals::default();
-                for run in runs
-                    .iter()
-                    .filter(|run| run.arm == arm.name() && run.repetition == repetition)
-                {
-                    totals.relevant_files += run.relevant_files;
-                    totals.relevant_files_found += run.relevant_files_found;
-                    totals.line_anchors += run.line_anchors;
-                    totals.line_anchors_found += run.line_anchors_found;
-                    totals.returned_files += run.returned_files.len();
-                    totals.source_tokens += run.source_tokens;
-                    totals.dead_end_fragments += run.dead_end_fragments;
-                    totals.dead_end_source_tokens += run.dead_end_source_tokens;
-                    totals.complete_response_tokens += run.complete_response_tokens;
-                    totals.signal_candidate_files += run.signal_candidate_files.len();
-                    totals.relevant_signal_candidate_files += run.relevant_signal_candidate_files;
-                    totals.false_positive_signal_candidate_files +=
-                        run.false_positive_signal_candidate_files;
-                    totals.signal_selected_files += run.signal_selected_files.len();
-                    totals.relevant_signal_selected_files += run.relevant_signal_selected_files;
-                    totals.applicable_signal_tasks += usize::from(run.signal_applicable);
-                    totals.applicable_signal_tasks_without_relevant_candidate +=
-                        usize::from(run.applicable_signal_unresolved);
-                    totals.additive_violations += run.missing_baseline_candidates;
-                }
-                per_repetition.push(totals);
-            }
+            let arm_runs = runs
+                .iter()
+                .filter(|run| run.arm == arm.name())
+                .map(|run| (run.repetition, RetrievalTotals::from_run(run)))
+                .collect::<Vec<_>>();
+            let per_repetition = (1..=repetitions)
+                .map(|repetition| {
+                    arm_runs
+                        .iter()
+                        .filter(|(run_repetition, _)| *run_repetition == repetition)
+                        .fold(RetrievalTotals::default(), |mut totals, (_, run_totals)| {
+                            totals.accumulate(run_totals);
+                            totals
+                        })
+                })
+                .collect::<Vec<_>>();
             let first = per_repetition.first().cloned().unwrap_or_default();
+            let totals = per_repetition.iter().fold(
+                RetrievalTotals::default(),
+                |mut aggregate, repetition| {
+                    aggregate.accumulate(repetition);
+                    aggregate
+                },
+            );
             let deterministic_metrics_repeat = per_repetition.iter().all(|totals| totals == &first);
             let reference_runs = normalized_task_runs(runs, arm, 1);
             let deterministic_task_results_repeat = (2..=repetitions)
@@ -784,6 +890,7 @@ fn aggregate_arms(runs: &[RunReport], repetitions: usize) -> Vec<ArmAggregate> {
             ArmAggregate {
                 arm: arm.name().to_owned(),
                 repetitions,
+                totals,
                 relevant_file_recall: ratio(first.relevant_files_found, first.relevant_files),
                 line_anchor_recall: ratio(first.line_anchors_found, first.line_anchors),
                 signal_candidate_precision: optional_ratio(

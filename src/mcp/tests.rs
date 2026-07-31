@@ -1805,7 +1805,7 @@ fn json_operation_maps_to_the_service_request() {
             "path": "artifacts/results.json",
             "selector": {
                 "kind": "jmespath",
-                "expression": "runs[].score"
+                "expression": "graph_index.corpora[].cold_index_ms"
             }
         },
         "max_items": 500
@@ -1823,7 +1823,7 @@ fn json_operation_maps_to_the_service_request() {
         JsonOperation::NumericSummary {
             path,
             selector: Some(JsonSelector::Jmespath { expression }),
-        } if path == "artifacts/results.json" && expression == "runs[].score"
+        } if path == "artifacts/results.json" && expression == "graph_index.corpora[].cold_index_ms"
     ));
 
     let request = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
@@ -1846,6 +1846,13 @@ fn json_operation_maps_to_the_service_request() {
             ..
         }
     ));
+
+    let invalid = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+        "operation": {"kind": "keys", "path": "artifacts/results.json"}
+    }))
+    .expect_err("keys must be a query projection, not an operation");
+    let message = invalid.to_string();
+    assert!(message.contains("unknown variant") && message.contains("query"));
 }
 
 #[test]

@@ -522,8 +522,8 @@ cargo run --release -p leantoken-benchmarks --bin retrieval_reuse_report
 
 ### Dependency and caller signal ablation
 
-The frozen [graph-signal controls](graph_signal_ablation_v1.json) and
-[release report](reports/graph-signal-ablation-v1.json) compare the same
+The frozen [graph-signal controls](graph_signal_ablation_v1.json) and compact
+[release summary](reports/graph-signal-ablation-v1.json) compare the same
 lexical/syntax candidate set with exactly one additive signal at a time:
 concept-corroborated import neighbors, reverse-dependency boosts, or parsed
 references. The run uses the eight pinned retrospective tasks above, three
@@ -549,6 +549,15 @@ graph-disabled comparison. No signal passed the preregistered recall and
 precision gates, so the result is `no_go`: retain no new ranking boost and
 expose no graph metadata.
 
+The committed report is the stable summary boundary: it keeps methodology,
+manifest/source/harness provenance, corpus and arm aggregates, counts,
+thresholds, and the decision, but omits host metadata, volatile timings, and
+per-run records. Each execution also writes a raw archive containing all 96
+runs, host metadata, timings, and `summary_blake3`, which is the BLAKE3 digest
+of the exact stable summary bytes. Issue [#400](https://github.com/morluto/leantoken/issues/400)
+is the migration record for this boundary; it does not change the task data,
+scoring, conclusions, CLI syntax, MCP schemas, or product JSON contracts.
+
 Reproduce it from a clean checkout and the pinned repositories with a release
 binary:
 
@@ -556,8 +565,24 @@ binary:
 cargo run --release -p leantoken-benchmarks --bin graph_signal_ablation -- \
   --manifest benchmarks/graph_signal_ablation_v1.json \
   --repos-root target/representative-repos \
-  --output target/graph-signal-ablation-v1.json
+  --output target/graph-signal-ablation-v1.json \
+  --raw-output target/graph-signal-ablation-v1.raw.json
 ```
+
+Verify the artifact boundary and linkage without inspecting volatile values:
+
+```bash
+SUMMARY_HASH=$(cargo run --release -p leantoken-benchmarks --bin artifact_blake3 -- \
+  target/graph-signal-ablation-v1.json | cut -d' ' -f1)
+test "$(jq -r '.summary_blake3' target/graph-signal-ablation-v1.raw.json)" = "$SUMMARY_HASH"
+test "$(jq '.runs | length' target/graph-signal-ablation-v1.raw.json)" -eq 96
+test "$(jq 'has("runs") or has("host_os") or has("cold_index_ms")' \
+  target/graph-signal-ablation-v1.json)" = false
+```
+
+CI uploads the raw archive alongside the summary under a key containing the
+commit, both manifest digests, the harness digest, and the runner environment.
+The raw archive is generated evidence and is not committed.
 
 ### Frozen multilingual Gate A runner
 

@@ -7,12 +7,12 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
     std::fs::write(root.path().join(".gitignore"), "artifacts/\n").expect("ignore file");
     std::fs::write(
         root.path().join("artifacts/before.json"),
-        r#"{"runs":[{"score":1,"name":"a"},{"score":2,"name":"b"},{"score":3,"name":"c"},{"score":100,"name":"d"}],"version":1}"#,
+        r#"{"graph_index":{"corpora":[{"cold_index_ms":1},{"cold_index_ms":2},{"cold_index_ms":3},{"cold_index_ms":100}]},"runs":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"version":1}"#,
     )
     .expect("base JSON");
     std::fs::write(
         root.path().join("artifacts/after.json"),
-        r#"{"runs":[{"score":2,"name":"a"},{"score":4,"name":"b"}],"status":"done"}"#,
+        r#"{"graph_index":{"corpora":[{"cold_index_ms":2},{"cold_index_ms":4}]},"runs":[{"name":"a"},{"name":"b"}],"status":"done"}"#,
     )
     .expect("head JSON");
     let config =
@@ -88,7 +88,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
             operation: JsonOperation::NumericSummary {
                 path: "artifacts/before.json".into(),
                 selector: Some(JsonSelector::Jmespath {
-                    expression: "runs[].score".into(),
+                    expression: "graph_index.corpora[].cold_index_ms".into(),
                 }),
             },
             max_tokens: None,
@@ -118,7 +118,7 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
                         pointer: "/status".into(),
                     },
                     JsonSelector::Jmespath {
-                        expression: "runs[].score".into(),
+                        expression: "graph_index.corpora[].cold_index_ms".into(),
                     },
                 ],
                 projection: JsonProjection::Collapsed,
