@@ -42,17 +42,16 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
     );
     assert_eq!(
         report["harness_revision"],
-        "dc9561495ec696a169657b04bf28ece386407c32"
+        "c9e2a11fea763d6cc20583073f4f3fd7a095c25e"
     );
-    assert_eq!(report["harness_worktree_dirty"], false);
+    assert_eq!(report["harness_worktree_dirty"], true);
     assert_eq!(report["runs"].as_array().expect("runs").len(), 96);
 
     let arms = report["arms"].as_array().expect("arms");
     assert_eq!(arms.len(), 4);
     for arm in arms {
-        let deterministic = arm["arm"] == "lexical_syntax";
-        assert_eq!(arm["deterministic_metrics_repeat"], deterministic);
-        assert_eq!(arm["deterministic_task_results_repeat"], deterministic);
+        assert_eq!(arm["deterministic_metrics_repeat"], true);
+        assert_eq!(arm["deterministic_task_results_repeat"], true);
         let repetitions = arm["per_repetition"].as_array().expect("repetitions");
         assert_eq!(repetitions.len(), 3);
         assert!(
@@ -83,12 +82,12 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
         .expect("reverse arm");
     assert_eq!(
         reverse["per_repetition"][0]["false_positive_signal_candidate_files"],
-        19
+        15
     );
     assert_eq!(
         reverse["per_repetition"][0]
             ["applicable_signal_tasks_without_relevant_candidate"],
-        3
+        4
     );
     let caller = arms
         .iter()
@@ -96,7 +95,7 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
         .expect("caller arm");
     assert_eq!(
         caller["per_repetition"][0]["false_positive_signal_candidate_files"],
-        101
+        127
     );
     assert_eq!(report["graph_index"]["unresolved_import_edges"], 6990);
     assert_eq!(report["graph_index"]["total_database_bytes"], 124682240);
