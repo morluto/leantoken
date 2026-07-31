@@ -10,8 +10,9 @@ use crate::{Error, Result};
 
 use super::indexing::ActiveReconciliation;
 
-pub(super) const DEFAULT_RECONCILIATION_ACTIVE_CAPACITY: usize =
-    super::executor::DEFAULT_BLOCKING_ACTIVE_CAPACITY;
+pub(super) fn default_reconciliation_active_capacity() -> usize {
+    super::executor::default_blocking_active_capacity()
+}
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct ReconciliationDiagnostics {
@@ -156,7 +157,7 @@ impl ReconciliationCoordinator {
                 coordination,
                 active_reconciliations,
                 reconciliation_changed,
-                active_requests: Arc::new(Semaphore::new(DEFAULT_RECONCILIATION_ACTIVE_CAPACITY)),
+                active_requests: Arc::new(Semaphore::new(default_reconciliation_active_capacity())),
                 state: Mutex::new(CoordinatorState {
                     next_wave_id: 1,
                     next_waiter_id: 1,

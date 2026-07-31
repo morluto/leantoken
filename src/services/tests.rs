@@ -272,7 +272,7 @@ async fn reconciliation_waiter_admission_has_an_exact_boundary() {
         .acquire_operation(&CancellationToken::new())
         .expect("hold operation lock");
 
-    let calls = (0..reconciliation::DEFAULT_RECONCILIATION_ACTIVE_CAPACITY)
+    let calls = (0..reconciliation::default_reconciliation_active_capacity())
         .map(|_| {
             let services = services.clone();
             tokio::spawn(async move {
@@ -287,7 +287,7 @@ async fn reconciliation_waiter_admission_has_an_exact_boundary() {
         .collect::<Vec<_>>();
     wait_until(|| {
         services.reconciliation.diagnostics().requests
-            == reconciliation::DEFAULT_RECONCILIATION_ACTIVE_CAPACITY as u64
+            == reconciliation::default_reconciliation_active_capacity() as u64
     })
     .await;
 

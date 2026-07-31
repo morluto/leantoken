@@ -152,7 +152,7 @@ impl Storage {
                 connection.pragma_update(None, "foreign_keys", "ON")
             });
         let readers = r2d2::Pool::builder()
-            .max_size(MAX_READ_CONNECTIONS)
+            .max_size(default_read_connection_capacity())
             .connection_timeout(DEFAULT_BUSY_TIMEOUT)
             .test_on_check_out(false)
             .build(manager)?;

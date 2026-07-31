@@ -18,7 +18,7 @@ impl LeanTokenMcp {
             result_mode: McpResultMode::Structured,
             request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
             request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
-            resource_read_admission: RequestAdmission::new(DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY),
+            resource_read_admission: RequestAdmission::new(default_receipt_resource_read_capacity()),
         }
     }
 
@@ -33,7 +33,7 @@ impl LeanTokenMcp {
                 request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
                 request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
                 resource_read_admission: RequestAdmission::new(
-                    DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY,
+                    default_receipt_resource_read_capacity(),
                 ),
             },
             services,

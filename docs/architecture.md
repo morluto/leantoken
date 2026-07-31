@@ -324,10 +324,11 @@ one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
-The pool holds at most eight read connections per `Storage` instance. Cloned
-services share that pool; separate processes and separate repository caches do
-not. This is a concurrency bound, not a promise that eight readers improve
-every workload. Change it only with release-mode contention measurements that
+The pool holds the quota-aware process parallelism value clamped to 4 through 16
+read connections per `Storage` instance. Cloned services share that pool;
+separate processes and separate repository caches do not. This is a concurrency
+bound, not a promise that any one reader count improves every workload. Change
+the shared capacity policy only with release-mode contention measurements that
 include SQLite wait time, end-to-end latency, and memory across the expected
 number of simultaneous agents.
 
@@ -395,9 +396,10 @@ have started before its edits. Cancelling or aborting one waiter detaches only
 that waiter. A started wave remains service-owned; an unused pending wave is
 cancelled before it starts. A failed wave shares its original typed error with
 every remaining waiter; it does not submit one retry scan per coalesced caller.
-Waiter admission is fail-fast and bounded to the
-same 16 active requests as the Services blocking executor, so direct library
-callers cannot create an unbounded pending-waiter collection.
+Waiter admission is fail-fast and bounded to the same dynamic active capacity
+as the Services blocking executor: quota-aware process parallelism is clamped
+to 4 through 16 execution permits, with eight additional queue permits. Direct
+library callers therefore cannot create an unbounded pending-waiter collection.
 
 ## Indexing and freshness
 
@@ -1044,13 +1046,13 @@ nine tools, including `savings`, but does not cover initialization or
 keeps repository identity checking ahead of execution-facing capacity.
 
 `Services` owns a generic blocking executor for retrieval, status, savings, and
-evaluation calls. Its current safety defaults allow 16 active operations: at
-most eight blocking closures may run and at most eight more may wait for an
-execution permit. Further work fails immediately with
+evaluation calls. Its default execution capacity is the process's quota-aware
+`available_parallelism()` value clamped to 4 through 16. Its active capacity is
+that execution capacity plus eight queue permits. Further work fails immediately with
 `RetrievalOverloaded`; admitted work that waits 500 ms without obtaining an
 execution permit returns `RetrievalQueueTimeout`. These capacities are
 configured independently from MCP admission even though both active defaults
-are currently 16.
+are bounded by the same process-local policy.
 
 Execution permits move into the blocking closure. Aborting the async caller
 therefore does not release capacity while its closure is still running.
@@ -1059,17 +1061,17 @@ a closure, and normal completion, error, cancellation, or panic returns both
 permits. Indexing remains on its existing reconciliation path so retrieval
 backpressure cannot acquire or release indexing ownership.
 
-The execution default matches the eight-connection SQLite reader pool. This is
-a bounded safety choice, not a claim that eight is universally optimal.
-Release-mode measurements must justify changing either default. A read request
+The execution default matches the SQLite reader pool: both use the same
+quota-aware parallelism value clamped to 4 through 16. This is a bounded safety
+choice, not a claim that any one value is universally optimal. A read request
 checks out one pooled connection and holds one DEFERRED WAL transaction for its
 consistent generation. That snapshot is transaction state, not a copied
 database or per-request artifact. Its main storage effect is that SQLite may
 retain old WAL pages until the reader finishes; dropping the request session
 rolls back the read transaction and returns the connection.
 
-Receipt `resources/read` requests have a separate fail-fast eight-request
-admission bound matching that reader pool. Admitted reads run on the blocking
+Receipt `resources/read` requests have a separate fail-fast admission bound
+matching that dynamic reader pool. Admitted reads run on the blocking
 executor, hold one deferred transaction for a complete receipt snapshot, and
 return their permit after serialization state is materialized. Excess reads
 fail before waiting for a pooled connection or allocating a bounded receipt

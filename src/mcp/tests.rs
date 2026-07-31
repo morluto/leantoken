@@ -436,7 +436,7 @@ fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
 #[tokio::test]
 async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
     let (server, _state) = LeanTokenMcp::pending();
-    let permits = (0..DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY)
+    let permits = (0..default_receipt_resource_read_capacity())
         .map(|_| {
             server
                 .resource_read_admission
@@ -458,7 +458,7 @@ async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
     drop(permits);
     assert_eq!(
         server.resource_read_admission.available_permits(),
-        DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY
+        default_receipt_resource_read_capacity()
     );
 }
 

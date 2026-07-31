@@ -6,12 +6,17 @@ use std::{collections::HashSet, sync::Mutex, time::Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
+use crate::concurrency::{
+    default_blocking_active_capacity as shared_active_capacity, default_cpu_capacity,
+};
 use crate::{Error, Result};
 
-pub(super) const DEFAULT_BLOCKING_EXECUTION_CAPACITY: usize = 8;
-const DEFAULT_BLOCKING_QUEUE_CAPACITY: usize = 8;
-pub(super) const DEFAULT_BLOCKING_ACTIVE_CAPACITY: usize =
-    DEFAULT_BLOCKING_EXECUTION_CAPACITY + DEFAULT_BLOCKING_QUEUE_CAPACITY;
+pub(super) fn default_blocking_execution_capacity() -> usize {
+    default_cpu_capacity()
+}
+pub(super) fn default_blocking_active_capacity() -> usize {
+    shared_active_capacity()
+}
 pub(super) const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
@@ -108,8 +113,8 @@ impl Drop for StartedWork {
 impl Default for BlockingExecutor {
     fn default() -> Self {
         Self::new(
-            DEFAULT_BLOCKING_ACTIVE_CAPACITY,
-            DEFAULT_BLOCKING_EXECUTION_CAPACITY,
+            default_blocking_active_capacity(),
+            default_blocking_execution_capacity(),
             DEFAULT_BLOCKING_QUEUE_TIMEOUT,
         )
     }
