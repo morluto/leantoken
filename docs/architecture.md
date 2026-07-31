@@ -324,10 +324,11 @@ one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
-The pool holds at most eight read connections per `Storage` instance. Cloned
-services share that pool; separate processes and separate repository caches do
-not. This is a concurrency bound, not a promise that eight readers improve
-every workload. Change it only with release-mode contention measurements that
+The pool holds the quota-aware process parallelism value clamped to 4 through 16
+read connections per `Storage` instance. Cloned services share that pool;
+separate processes and separate repository caches do not. This is a concurrency
+bound, not a promise that any one reader count improves every workload. Change
+the shared capacity policy only with release-mode contention measurements that
 include SQLite wait time, end-to-end latency, and memory across the expected
 number of simultaneous agents.
 
