@@ -3,12 +3,10 @@ use super::*;
 /// overlap the same file by at least the module's overlap threshold. The higher-scored
 /// copy is kept.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn deduplicate(candidates: Vec<ScoredCandidate>) -> Vec<ScoredCandidate> {
     deduplicate_with_options(candidates, &Weights::default())
 }
 
-#[allow(clippy::cast_precision_loss)]
 pub(crate) fn deduplicate_with_options(
     candidates: Vec<ScoredCandidate>,
     weights: &Weights,
@@ -69,7 +67,7 @@ pub(crate) fn deduplicate_with_options(
                     let overlap_lines = overlap_end - overlap_start + 1;
                     let min_lines = candidate_lines.min(existing.candidate.line_count());
 
-                    overlap_lines as f64 >= OVERLAP_THRESHOLD * min_lines as f64
+                    overlap_lines >= min_lines.div_ceil(2)
                 })
             });
         if let Some(existing) = duplicate {
@@ -102,7 +100,7 @@ pub(in crate::ranking) fn merge_scored_candidate(
 ) {
     merge_candidate_signals(&mut existing.candidate, &duplicate.candidate);
     existing.score = existing.candidate.score(weights, existing.token_count);
-    existing.marginal_score = existing.score / existing.token_count as f64;
+    existing.marginal_score = existing.score / bounded_count_f64(existing.token_count);
 }
 
 pub(in crate::ranking) fn merge_candidate_signals(existing: &mut Candidate, duplicate: &Candidate) {

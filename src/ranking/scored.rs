@@ -12,12 +12,10 @@ pub struct ScoredCandidate {
 }
 
 impl ScoredCandidate {
-    #[allow(clippy::cast_precision_loss)]
     pub fn new(candidate: Candidate, weights: &Weights) -> Self {
         Self::new_with_tokenizer(candidate, weights, tokens::Tokenizer::default())
     }
 
-    #[allow(clippy::cast_precision_loss)]
     pub(in crate::ranking) fn new_with_tokenizer(
         candidate: Candidate,
         weights: &Weights,
@@ -26,7 +24,7 @@ impl ScoredCandidate {
         let token_count = candidate.token_count_with(tokenizer).max(1);
         let content_hash = candidate.content_hash();
         let score = candidate.score(weights, token_count);
-        let marginal_score = score / token_count as f64;
+        let marginal_score = score / bounded_count_f64(token_count);
         Self {
             candidate,
             score,

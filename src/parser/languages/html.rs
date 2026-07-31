@@ -7,6 +7,12 @@ pub(super) struct HtmlAttribute<'tree> {
     value_node: Node<'tree>,
 }
 
+struct HtmlOutput<'a> {
+    symbols: &'a mut Vec<Symbol>,
+    references: &'a mut Vec<Reference>,
+    imports: &'a mut Vec<Import>,
+}
+
 pub(super) fn append_html_structure(
     source: &str,
     root: Node<'_>,
@@ -31,9 +37,11 @@ pub(super) fn append_html_structure(
                 tag_node,
                 &tag_name,
                 &attributes,
-                symbols,
-                references,
-                imports,
+                &mut HtmlOutput {
+                    symbols,
+                    references,
+                    imports,
+                },
             );
         }
 
@@ -43,16 +51,13 @@ pub(super) fn append_html_structure(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn append_html_element(
+fn append_html_element(
     source: &str,
     owner: Node<'_>,
     tag_node: Node<'_>,
     tag_name: &str,
     attributes: &[HtmlAttribute<'_>],
-    symbols: &mut Vec<Symbol>,
-    references: &mut Vec<Reference>,
-    imports: &mut Vec<Import>,
+    output: &mut HtmlOutput<'_>,
 ) {
     let id = html_attribute(attributes, "id");
     let data_attribute = attributes
@@ -68,14 +73,14 @@ pub(super) fn append_html_element(
             format!("#{}", id.value),
             "html_id",
             signature_from_node(source, tag_node),
-            symbols,
+            output.symbols,
         );
         push_structural_reference(
             format!("#{}", id.value),
             "html_id",
             ReferenceRole::Definition,
             id.value_node,
-            references,
+            output.references,
         );
     } else if html_outline_tag(tag_name) {
         let element_name = if let Some(attribute) = data_attribute {
@@ -100,7 +105,7 @@ pub(super) fn append_html_element(
             element_name,
             kind,
             signature_from_node(source, tag_node),
-            symbols,
+            output.symbols,
         );
     }
 
@@ -111,7 +116,7 @@ pub(super) fn append_html_element(
                 "html_data_attribute",
                 ReferenceRole::Reference,
                 attribute.value_node,
-                references,
+                output.references,
             );
         }
         if attribute.name == "href" && attribute.value.starts_with('#') && attribute.value.len() > 1
@@ -121,7 +126,7 @@ pub(super) fn append_html_element(
                 "html_anchor",
                 ReferenceRole::Reference,
                 attribute.value_node,
-                references,
+                output.references,
             );
         }
         if attribute.name == "for" && !attribute.value.is_empty() {
@@ -130,7 +135,7 @@ pub(super) fn append_html_element(
                 "html_id",
                 ReferenceRole::Reference,
                 attribute.value_node,
-                references,
+                output.references,
             );
         }
     }
@@ -138,7 +143,11 @@ pub(super) fn append_html_element(
     match tag_name {
         "script" => {
             if let Some(src) = html_attribute(attributes, "src") {
-                push_import(imports, &src.value, src.value_node.start_position().row + 1);
+                push_import(
+                    output.imports,
+                    &src.value,
+                    src.value_node.start_position().row + 1,
+                );
             }
         }
         "link" => {
@@ -150,7 +159,7 @@ pub(super) fn append_html_element(
             }) && let Some(href) = href
             {
                 push_import(
-                    imports,
+                    output.imports,
                     &href.value,
                     href.value_node.start_position().row + 1,
                 );

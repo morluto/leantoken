@@ -256,14 +256,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &baseline_metrics,
                 &candidate_metrics,
                 &task_families,
-                args.baseline_task_success_rate,
-                args.candidate_task_success_rate,
-                args.baseline_two_turn_provider_input_tokens,
-                args.candidate_two_turn_provider_input_tokens,
-                args.baseline_follow_up_native_reads,
-                args.candidate_follow_up_native_reads,
-                args.baseline_tool_calls,
-                args.candidate_tool_calls,
+                PromotionAgentInputs {
+                    baseline: OptionalAgentMetrics {
+                        task_success_rate: args.baseline_task_success_rate,
+                        two_turn_provider_input_tokens: args
+                            .baseline_two_turn_provider_input_tokens,
+                        follow_up_native_reads: args.baseline_follow_up_native_reads,
+                        tool_calls: args.baseline_tool_calls,
+                    },
+                    candidate: OptionalAgentMetrics {
+                        task_success_rate: args.candidate_task_success_rate,
+                        two_turn_provider_input_tokens: args
+                            .candidate_two_turn_provider_input_tokens,
+                        follow_up_native_reads: args.candidate_follow_up_native_reads,
+                        tool_calls: args.candidate_tool_calls,
+                    },
+                },
                 PROMOTION_POLICY,
             )
         })
@@ -549,20 +557,24 @@ fn compare_task_families(
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
+struct OptionalAgentMetrics {
+    task_success_rate: Option<f64>,
+    two_turn_provider_input_tokens: Option<u64>,
+    follow_up_native_reads: Option<u64>,
+    tool_calls: Option<u64>,
+}
+
+struct PromotionAgentInputs {
+    baseline: OptionalAgentMetrics,
+    candidate: OptionalAgentMetrics,
+}
+
 fn promotion_receipt(
     track: PromotionTrack,
     baseline: &Metrics,
     candidate: &Metrics,
     task_families: &BTreeMap<String, FamilyComparison>,
-    baseline_task_success_rate: Option<f64>,
-    candidate_task_success_rate: Option<f64>,
-    baseline_two_turn_provider_input_tokens: Option<u64>,
-    candidate_two_turn_provider_input_tokens: Option<u64>,
-    baseline_follow_up_native_reads: Option<u64>,
-    candidate_follow_up_native_reads: Option<u64>,
-    baseline_tool_calls: Option<u64>,
-    candidate_tool_calls: Option<u64>,
+    agent_inputs: PromotionAgentInputs,
     policy: PromotionPolicy,
 ) -> Result<PromotionReceipt, Box<dyn Error>> {
     let PromotionPolicy {
@@ -572,22 +584,40 @@ fn promotion_receipt(
         maximum_resource_increase_fraction,
     } = policy;
     let baseline_agent = PairedAgentMetrics {
-        task_success_rate: baseline_task_success_rate
+        task_success_rate: agent_inputs
+            .baseline
+            .task_success_rate
             .ok_or("promotion requires --baseline-task-success-rate")?,
-        two_turn_provider_input_tokens: baseline_two_turn_provider_input_tokens
+        two_turn_provider_input_tokens: agent_inputs
+            .baseline
+            .two_turn_provider_input_tokens
             .ok_or("promotion requires --baseline-two-turn-provider-input-tokens")?,
-        follow_up_native_reads: baseline_follow_up_native_reads
+        follow_up_native_reads: agent_inputs
+            .baseline
+            .follow_up_native_reads
             .ok_or("promotion requires --baseline-follow-up-native-reads")?,
-        tool_calls: baseline_tool_calls.ok_or("promotion requires --baseline-tool-calls")?,
+        tool_calls: agent_inputs
+            .baseline
+            .tool_calls
+            .ok_or("promotion requires --baseline-tool-calls")?,
     };
     let candidate_agent = PairedAgentMetrics {
-        task_success_rate: candidate_task_success_rate
+        task_success_rate: agent_inputs
+            .candidate
+            .task_success_rate
             .ok_or("promotion requires --candidate-task-success-rate")?,
-        two_turn_provider_input_tokens: candidate_two_turn_provider_input_tokens
+        two_turn_provider_input_tokens: agent_inputs
+            .candidate
+            .two_turn_provider_input_tokens
             .ok_or("promotion requires --candidate-two-turn-provider-input-tokens")?,
-        follow_up_native_reads: candidate_follow_up_native_reads
+        follow_up_native_reads: agent_inputs
+            .candidate
+            .follow_up_native_reads
             .ok_or("promotion requires --candidate-follow-up-native-reads")?,
-        tool_calls: candidate_tool_calls.ok_or("promotion requires --candidate-tool-calls")?,
+        tool_calls: agent_inputs
+            .candidate
+            .tool_calls
+            .ok_or("promotion requires --candidate-tool-calls")?,
     };
     for (name, value) in [
         (
@@ -939,6 +969,23 @@ fn optional_signed_delta_u64(baseline: Option<u64>, candidate: Option<u64>) -> O
 mod tests {
     use super::*;
 
+    fn promotion_agent_inputs() -> PromotionAgentInputs {
+        PromotionAgentInputs {
+            baseline: OptionalAgentMetrics {
+                task_success_rate: Some(0.8),
+                two_turn_provider_input_tokens: Some(100),
+                follow_up_native_reads: Some(1),
+                tool_calls: Some(10),
+            },
+            candidate: OptionalAgentMetrics {
+                task_success_rate: Some(0.8),
+                two_turn_provider_input_tokens: Some(90),
+                follow_up_native_reads: Some(1),
+                tool_calls: Some(10),
+            },
+        }
+    }
+
     fn report(labels_blake3: Option<&str>) -> BenchmarkReport {
         let aggregate = Aggregate {
             task_count: 1,
@@ -1029,14 +1076,7 @@ mod tests {
             &Metrics::from(&baseline.aggregate),
             &Metrics::from(&candidate.aggregate),
             &families,
-            Some(0.8),
-            Some(0.8),
-            Some(100),
-            Some(90),
-            Some(1),
-            Some(1),
-            Some(10),
-            Some(10),
+            promotion_agent_inputs(),
             PROMOTION_POLICY,
         )
         .expect("promotion receipt");
@@ -1053,14 +1093,7 @@ mod tests {
             &Metrics::from(&baseline.aggregate),
             &Metrics::from(&candidate.aggregate),
             &families,
-            Some(0.8),
-            Some(0.8),
-            Some(100),
-            Some(90),
-            Some(1),
-            Some(1),
-            Some(10),
-            Some(10),
+            promotion_agent_inputs(),
             PROMOTION_POLICY,
         )
         .expect("promotion receipt");
@@ -1120,14 +1153,7 @@ mod tests {
             &Metrics::from(&baseline.aggregate),
             &Metrics::from(&candidate.aggregate),
             &families,
-            Some(0.8),
-            Some(0.8),
-            Some(100),
-            Some(90),
-            Some(1),
-            Some(1),
-            Some(10),
-            Some(10),
+            promotion_agent_inputs(),
             PROMOTION_POLICY,
         )
         .expect("promotion receipt");

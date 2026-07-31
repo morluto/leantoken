@@ -942,14 +942,16 @@ pub(super) fn run_worker(args: &ColdWorkerArgs) -> AnyResult<()> {
         )?)?;
         ColdWorkerOutput::Cancellation(Box::new(measure_cancellation_probe_in_process(
             phase,
-            args.workers,
-            &args.repository,
-            &args.database,
-            &args.parity_queries,
-            args.sample_interval_ms,
-            args.timeout_seconds,
-            !args.allow_missed_phase,
-            &baseline,
+            CancellationProbeInput {
+                workers: args.workers,
+                repository: &args.repository,
+                database: &args.database,
+                parity_queries: &args.parity_queries,
+                sample_interval_ms: args.sample_interval_ms,
+                timeout_seconds: args.timeout_seconds,
+                require_observation: !args.allow_missed_phase,
+                parity: &baseline,
+            },
         )?))
     } else {
         if args.baseline.is_some() {
@@ -1468,18 +1470,31 @@ fn measure_cancellation_probes(
     Ok(reports)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn measure_cancellation_probe_in_process(
-    phase: IndexProgressPhase,
+struct CancellationProbeInput<'a> {
     workers: usize,
-    repository: &Path,
-    database: &Path,
-    parity_queries: &[String],
+    repository: &'a Path,
+    database: &'a Path,
+    parity_queries: &'a [String],
     sample_interval_ms: u64,
     timeout_seconds: u64,
     require_observation: bool,
-    parity: &ParityReport,
+    parity: &'a ParityReport,
+}
+
+fn measure_cancellation_probe_in_process(
+    phase: IndexProgressPhase,
+    input: CancellationProbeInput<'_>,
 ) -> AnyResult<CancellationProbeReport> {
+    let CancellationProbeInput {
+        workers,
+        repository,
+        database,
+        parity_queries,
+        sample_interval_ms,
+        timeout_seconds,
+        require_observation,
+        parity,
+    } = input;
     let started = Instant::now();
     let baseline = ProcessResourceBaseline::capture();
     let mut config = Config::discover(repository, Some(database.to_path_buf()))?;
@@ -2153,14 +2168,16 @@ mod tests {
         let parity = parity.expect("parity report");
         let cancellation = measure_cancellation_probe_in_process(
             IndexProgressPhase::Preparation,
-            2,
-            &corpus.root,
-            &output.path().join("cancel.sqlite"),
-            &policy.parity_queries,
-            policy.sample_interval_ms,
-            policy.timeout_seconds,
-            false,
-            &parity,
+            CancellationProbeInput {
+                workers: 2,
+                repository: &corpus.root,
+                database: &output.path().join("cancel.sqlite"),
+                parity_queries: &policy.parity_queries,
+                sample_interval_ms: policy.sample_interval_ms,
+                timeout_seconds: policy.timeout_seconds,
+                require_observation: false,
+                parity: &parity,
+            },
         )
         .expect("cancellation probe");
 

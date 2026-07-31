@@ -32,9 +32,168 @@ pub(super) struct OpenLatexEnvironment {
     start_byte: usize,
 }
 
+struct LatexCollected {
+    sections: Vec<LatexSection>,
+    environments: Vec<LatexEnvironment>,
+    labels: Vec<LatexCommand>,
+    captions: Vec<LatexCommand>,
+    bibitems: Vec<LatexCommand>,
+    references: Vec<Reference>,
+    imports: Vec<Import>,
+}
+
+fn build_latex_output(
+    source: &str,
+    starts: &[usize],
+    collected: LatexCollected,
+) -> (Vec<Symbol>, Vec<Reference>, Vec<Import>) {
+    let LatexCollected {
+        sections,
+        environments,
+        labels,
+        captions,
+        bibitems,
+        mut references,
+        mut imports,
+    } = collected;
+    let mut section_ranges = vec![(0usize, source.len()); sections.len()];
+    let mut open_sections = Vec::<usize>::new();
+    for (index, section) in sections.iter().enumerate() {
+        while open_sections
+            .last()
+            .is_some_and(|open| sections[*open].level >= section.level)
+        {
+            let closed = open_sections.pop().expect("checked non-empty");
+            section_ranges[closed].1 = section.start_byte;
+        }
+        section_ranges[index].0 = section.start_byte;
+        open_sections.push(index);
+    }
+    let environment_ranges = environments
+        .iter()
+        .map(|environment| {
+            (
+                environment.start_byte,
+                (environment.name.as_str(), environment.end_byte),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let mut symbols = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        let (start_byte, end_byte) = section_ranges[index];
+        symbols.push(latex_symbol(
+            source,
+            starts,
+            section.title.clone(),
+            format!("latex_{}", section.command),
+            Some(format!("\\{}{{{}}}", section.command, section.title)),
+            start_byte,
+            end_byte,
+        ));
+    }
+    for environment in &environments {
+        symbols.push(latex_symbol(
+            source,
+            starts,
+            environment.name.clone(),
+            "latex_environment".into(),
+            Some(format!("\\begin{{{}}}", environment.name)),
+            environment.start_byte,
+            environment.end_byte,
+        ));
+    }
+    for label in &labels {
+        let (start_byte, end_byte) = latex_owner_range(
+            label.command_start,
+            label.command_end,
+            label.owner_section,
+            label.owner_environment_start,
+            &section_ranges,
+            &environment_ranges,
+        );
+        symbols.push(latex_symbol(
+            source,
+            starts,
+            label.name.clone(),
+            "latex_label".into(),
+            Some(format!("\\label{{{}}}", label.name)),
+            start_byte,
+            end_byte,
+        ));
+        append_latex_references(
+            source,
+            starts,
+            label.argument_start,
+            label.argument_end,
+            "latex_label",
+            ReferenceRole::Definition,
+            &mut references,
+        );
+    }
+    for caption in &captions {
+        let (start_byte, end_byte) = latex_owner_range(
+            caption.command_start,
+            caption.command_end,
+            caption.owner_section,
+            caption.owner_environment_start,
+            &section_ranges,
+            &environment_ranges,
+        );
+        symbols.push(latex_symbol(
+            source,
+            starts,
+            caption.name.clone(),
+            "latex_caption".into(),
+            Some(format!("\\caption{{{}}}", caption.name)),
+            start_byte,
+            end_byte,
+        ));
+    }
+    for (index, bibitem) in bibitems.iter().enumerate() {
+        let enclosing_end = bibitem
+            .owner_environment_start
+            .and_then(|start| environment_ranges.get(&start))
+            .filter(|(name, _)| *name == "thebibliography")
+            .map_or(source.len(), |(_, end)| *end);
+        let end_byte = bibitems
+            .get(index + 1)
+            .map_or(enclosing_end, |next| next.command_start.min(enclosing_end));
+        symbols.push(latex_symbol(
+            source,
+            starts,
+            bibitem.name.clone(),
+            "latex_bibitem".into(),
+            Some(format!("\\bibitem{{{}}}", bibitem.name)),
+            bibitem.command_start,
+            end_byte,
+        ));
+        append_latex_references(
+            source,
+            starts,
+            bibitem.argument_start,
+            bibitem.argument_end,
+            "latex_bibitem",
+            ReferenceRole::Definition,
+            &mut references,
+        );
+    }
+
+    deduplicate_symbols(&mut symbols);
+    compute_symbol_parents(&mut symbols);
+    compute_reference_enclosing(&symbols, &mut references);
+    imports.sort_by(|left, right| {
+        left.line
+            .cmp(&right.line)
+            .then_with(|| left.raw_target.cmp(&right.raw_target))
+    });
+    imports.dedup_by(|left, right| left.line == right.line && left.raw_target == right.raw_target);
+
+    (symbols, references, imports)
+}
+
 // The command dispatcher stays flat so every recognized LaTeX construct shares
 // one source pass and one structural-completeness state.
-#[allow(clippy::cognitive_complexity)]
 pub(super) fn parse_latex(
     source: &str,
     is_cancelled: &mut impl FnMut() -> bool,
@@ -238,138 +397,19 @@ pub(super) fn parse_latex(
         );
     }
 
-    let mut section_ranges = vec![(0usize, source.len()); sections.len()];
-    let mut open_sections = Vec::<usize>::new();
-    for (index, section) in sections.iter().enumerate() {
-        while open_sections
-            .last()
-            .is_some_and(|open| sections[*open].level >= section.level)
-        {
-            let closed = open_sections.pop().expect("checked non-empty");
-            section_ranges[closed].1 = section.start_byte;
-        }
-        section_ranges[index].0 = section.start_byte;
-        open_sections.push(index);
-    }
-    let environment_ranges = environments
-        .iter()
-        .map(|environment| {
-            (
-                environment.start_byte,
-                (environment.name.as_str(), environment.end_byte),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-
-    let mut symbols = Vec::new();
-    for (index, section) in sections.iter().enumerate() {
-        let (start_byte, end_byte) = section_ranges[index];
-        symbols.push(latex_symbol(
-            source,
-            &starts,
-            section.title.clone(),
-            format!("latex_{}", section.command),
-            Some(format!("\\{}{{{}}}", section.command, section.title)),
-            start_byte,
-            end_byte,
-        ));
-    }
-    for environment in &environments {
-        symbols.push(latex_symbol(
-            source,
-            &starts,
-            environment.name.clone(),
-            "latex_environment".into(),
-            Some(format!("\\begin{{{}}}", environment.name)),
-            environment.start_byte,
-            environment.end_byte,
-        ));
-    }
-    for label in &labels {
-        let (start_byte, end_byte) = latex_owner_range(
-            label.command_start,
-            label.command_end,
-            label.owner_section,
-            label.owner_environment_start,
-            &section_ranges,
-            &environment_ranges,
-        );
-        symbols.push(latex_symbol(
-            source,
-            &starts,
-            label.name.clone(),
-            "latex_label".into(),
-            Some(format!("\\label{{{}}}", label.name)),
-            start_byte,
-            end_byte,
-        ));
-        append_latex_references(
-            source,
-            &starts,
-            label.argument_start,
-            label.argument_end,
-            "latex_label",
-            ReferenceRole::Definition,
-            &mut references,
-        );
-    }
-    for caption in &captions {
-        let (start_byte, end_byte) = latex_owner_range(
-            caption.command_start,
-            caption.command_end,
-            caption.owner_section,
-            caption.owner_environment_start,
-            &section_ranges,
-            &environment_ranges,
-        );
-        symbols.push(latex_symbol(
-            source,
-            &starts,
-            caption.name.clone(),
-            "latex_caption".into(),
-            Some(format!("\\caption{{{}}}", caption.name)),
-            start_byte,
-            end_byte,
-        ));
-    }
-    for (index, bibitem) in bibitems.iter().enumerate() {
-        let enclosing_end = bibitem
-            .owner_environment_start
-            .and_then(|start| environment_ranges.get(&start))
-            .filter(|(name, _)| *name == "thebibliography")
-            .map_or(source.len(), |(_, end)| *end);
-        let end_byte = bibitems
-            .get(index + 1)
-            .map_or(enclosing_end, |next| next.command_start.min(enclosing_end));
-        symbols.push(latex_symbol(
-            source,
-            &starts,
-            bibitem.name.clone(),
-            "latex_bibitem".into(),
-            Some(format!("\\bibitem{{{}}}", bibitem.name)),
-            bibitem.command_start,
-            end_byte,
-        ));
-        append_latex_references(
-            source,
-            &starts,
-            bibitem.argument_start,
-            bibitem.argument_end,
-            "latex_bibitem",
-            ReferenceRole::Definition,
-            &mut references,
-        );
-    }
-
-    deduplicate_symbols(&mut symbols);
-    compute_symbol_parents(&mut symbols);
-    compute_reference_enclosing(&symbols, &mut references);
-    imports.sort_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then_with(|| left.raw_target.cmp(&right.raw_target))
-    });
-    imports.dedup_by(|left, right| left.line == right.line && left.raw_target == right.raw_target);
+    let (symbols, references, imports) = build_latex_output(
+        source,
+        &starts,
+        LatexCollected {
+            sections,
+            environments,
+            labels,
+            captions,
+            bibitems,
+            references,
+            imports,
+        },
+    );
 
     Ok(ParseOutput {
         language: Some("latex".into()),

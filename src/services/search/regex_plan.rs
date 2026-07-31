@@ -343,18 +343,18 @@ impl Services {
         };
         let fallback = match decision {
             RegexPlanDecision::Planned(plan) => {
-                return self.regex_candidate_hits(
+                return self.regex_candidate_hits(RegexCandidateParams {
                     session,
                     regex,
                     max_candidates,
                     cancellation,
                     path_filter,
                     has_path_filters,
-                    &request.include_paths,
-                    &request.exclude_paths,
-                    file_count,
+                    include_paths: &request.include_paths,
+                    exclude_paths: &request.exclude_paths,
+                    files_considered: file_count,
                     plan,
-                );
+                });
             }
             RegexPlanDecision::Fallback(diagnostics) => diagnostics,
         };
@@ -425,20 +425,22 @@ impl Services {
         Ok(RegexScan { hits, phases })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn regex_candidate_hits(
         &self,
-        session: &ReadSession,
-        regex: &regex::Regex,
-        max_candidates: Option<usize>,
-        cancellation: &CancellationToken,
-        path_filter: PathFilter,
-        has_path_filters: bool,
-        include_paths: &[String],
-        exclude_paths: &[String],
-        files_considered: usize,
-        plan: RegexCandidatePlan,
+        params: RegexCandidateParams<'_, '_>,
     ) -> Result<RegexScan> {
+        let RegexCandidateParams {
+            session,
+            regex,
+            max_candidates,
+            cancellation,
+            path_filter,
+            has_path_filters,
+            include_paths,
+            exclude_paths,
+            files_considered,
+            plan,
+        } = params;
         let mut phases = SearchPhaseCounters {
             regex_candidate_strategy: RegexCandidateStrategy::Trigram,
             regex_plan_source: Some(plan.source),
@@ -528,3 +530,15 @@ impl Services {
     }
 }
 use super::*;
+pub(super) struct RegexCandidateParams<'a, 'b> {
+    pub session: &'a ReadSession,
+    pub regex: &'a regex::Regex,
+    pub max_candidates: Option<usize>,
+    pub cancellation: &'a CancellationToken,
+    pub path_filter: PathFilter,
+    pub has_path_filters: bool,
+    pub include_paths: &'b [String],
+    pub exclude_paths: &'b [String],
+    pub files_considered: usize,
+    pub plan: RegexCandidatePlan,
+}

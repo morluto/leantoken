@@ -1,6 +1,4 @@
 use super::*;
-pub(in crate::ranking) const OVERLAP_THRESHOLD: f64 = 0.5;
-
 /// Divisor for the per-file diversity cap. A 1,200-token context may include
 /// two non-overlapping regions from one file, while tiny budgets still prefer
 /// breadth.
@@ -142,17 +140,30 @@ pub(in crate::ranking) fn summarize_omissions(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(in crate::ranking) struct BuildOmissionsParams<'a> {
+    pub request: &'a ContextRequest,
+    pub path_omitted: Vec<ScoredCandidate>,
+    pub known_omitted: Vec<ScoredCandidate>,
+    pub limit_omitted: Vec<ScoredCandidate>,
+    pub prefiltered_path_omissions: &'a [String],
+    pub focus_paths: &'a PathMatcher,
+    pub changed_paths: &'a HashSet<&'a str>,
+    pub generated_artifact_warning: bool,
+}
+
 pub(in crate::ranking) fn build_context_omissions(
-    request: &ContextRequest,
-    path_omitted: Vec<ScoredCandidate>,
-    known_omitted: Vec<ScoredCandidate>,
-    mut limit_omitted: Vec<ScoredCandidate>,
-    prefiltered_path_omissions: &[String],
-    focus_paths: &PathMatcher,
-    changed_paths: &HashSet<&str>,
-    generated_artifact_warning: bool,
+    params: BuildOmissionsParams<'_>,
 ) -> (ContextOmissionSummary, Vec<OmittedCandidate>, Vec<String>) {
+    let BuildOmissionsParams {
+        request,
+        path_omitted,
+        known_omitted,
+        mut limit_omitted,
+        prefiltered_path_omissions,
+        focus_paths,
+        changed_paths,
+        generated_artifact_warning,
+    } = params;
     let omission_summary = summarize_omissions(
         &path_omitted,
         &known_omitted,

@@ -226,7 +226,6 @@ impl Candidate {
     /// Combined ranking score using the supplied weights and pre-computed
     /// token count.  Deterministic and side-effect free.
     #[must_use]
-    #[allow(clippy::cast_precision_loss)]
     pub fn score(&self, weights: &Weights, token_count: usize) -> f64 {
         // BM25 is normalized so a raw score of 0 maps to 0 and very large raw
         // scores saturate near 1.
@@ -235,7 +234,7 @@ impl Candidate {
         // If an explicit size score was supplied, use it; otherwise larger
         // fragments receive a small penalty.
         let size = if self.size_score == 0.0 {
-            1.0 / (1.0 + token_count as f64 / 150.0)
+            1.0 / (1.0 + bounded_count_f64(token_count) / 150.0)
         } else {
             self.size_score
         };

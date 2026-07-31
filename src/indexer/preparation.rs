@@ -69,13 +69,15 @@ impl Indexer {
                             check_cancelled(cancellation)?;
                             let mut detail = FilePreparationDiagnostics::default();
                             let prepared = prepare_file_profiled(
-                                &self.repository_root,
-                                file,
-                                chunk_lines,
-                                chunk_bytes,
-                                tokenizer,
-                                limits.max_file_bytes,
-                                cancellation,
+                                super::prepare::PrepareFileParams {
+                                    root: &self.repository_root,
+                                    file,
+                                    chunk_lines,
+                                    chunk_bytes,
+                                    tokenizer,
+                                    max_file_bytes: limits.max_file_bytes,
+                                    cancellation,
+                                },
                                 &mut detail,
                             )?;
                             check_cancelled(cancellation)?;

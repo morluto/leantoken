@@ -746,17 +746,19 @@ fn parse_rollout(path: &Path) -> Result<ParsedRollout, DynError> {
             }
             "event_msg" => ingest_event(
                 payload,
-                &mut active_turn,
-                &mut turn_count,
-                &mut completed_turns,
-                &mut aborted_turns,
-                &mut provider_request_count,
-                &mut task_duration_ms,
-                &mut first_request_usage,
-                &mut provider_usage,
-                &mut final_answer,
-                &mut tool_calls,
-                &mut started_children,
+                &mut RolloutEventAccumulator {
+                    active_turn: &mut active_turn,
+                    turn_count: &mut turn_count,
+                    completed_turns: &mut completed_turns,
+                    aborted_turns: &mut aborted_turns,
+                    provider_request_count: &mut provider_request_count,
+                    task_duration_ms: &mut task_duration_ms,
+                    first_request_usage: &mut first_request_usage,
+                    provider_usage: &mut provider_usage,
+                    final_answer: &mut final_answer,
+                    tool_calls: &mut tool_calls,
+                    started_children: &mut started_children,
+                },
             )?,
             "response_item" => {
                 ingest_response_item(payload, &mut tool_calls, &mut collaboration_calls)?
@@ -828,21 +830,35 @@ fn live_record_start(
         .ok_or_else(|| "subagent rollout has no live task start".into())
 }
 
-#[allow(clippy::too_many_arguments)]
+struct RolloutEventAccumulator<'a> {
+    active_turn: &'a mut bool,
+    turn_count: &'a mut usize,
+    completed_turns: &'a mut usize,
+    aborted_turns: &'a mut usize,
+    provider_request_count: &'a mut usize,
+    task_duration_ms: &'a mut u64,
+    first_request_usage: &'a mut Option<UsageReceipt>,
+    provider_usage: &'a mut Option<UsageReceipt>,
+    final_answer: &'a mut Option<String>,
+    tool_calls: &'a mut ToolCallCounts,
+    started_children: &'a mut HashMap<String, String>,
+}
+
 fn ingest_event(
     payload: &Value,
-    active_turn: &mut bool,
-    turn_count: &mut usize,
-    completed_turns: &mut usize,
-    aborted_turns: &mut usize,
-    provider_request_count: &mut usize,
-    task_duration_ms: &mut u64,
-    first_request_usage: &mut Option<UsageReceipt>,
-    provider_usage: &mut Option<UsageReceipt>,
-    final_answer: &mut Option<String>,
-    tool_calls: &mut ToolCallCounts,
-    started_children: &mut HashMap<String, String>,
+    accumulator: &mut RolloutEventAccumulator<'_>,
 ) -> Result<(), DynError> {
+    let active_turn = &mut *accumulator.active_turn;
+    let turn_count = &mut *accumulator.turn_count;
+    let completed_turns = &mut *accumulator.completed_turns;
+    let aborted_turns = &mut *accumulator.aborted_turns;
+    let provider_request_count = &mut *accumulator.provider_request_count;
+    let task_duration_ms = &mut *accumulator.task_duration_ms;
+    let first_request_usage = &mut *accumulator.first_request_usage;
+    let provider_usage = &mut *accumulator.provider_usage;
+    let final_answer = &mut *accumulator.final_answer;
+    let tool_calls = &mut *accumulator.tool_calls;
+    let started_children = &mut *accumulator.started_children;
     match payload.pointer("/type").and_then(Value::as_str) {
         Some("task_started") => {
             if *active_turn {

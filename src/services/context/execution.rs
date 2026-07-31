@@ -1,22 +1,45 @@
+pub(super) struct ContextSyncRequest<'a> {
+    pub request: ContextRequest,
+    pub context: ContextExecution,
+    pub retrieval: ContextRetrieval<'a>,
+}
+
+pub(super) struct ContextRetrieval<'a> {
+    pub options: ServiceCallOptions,
+    pub cancellation: &'a CancellationToken,
+    pub diagnostics: CandidateDiagnostics,
+    pub signals: ContextSignals,
+}
+
+struct PreparedContext {
+    request: ContextRequest,
+    scoped_request: ContextRequest,
+    context: ContextExecution,
+    response_profile: ContextResponseProfile,
+    diff_scope: Option<DiffScopeReceipt>,
+    changed_paths: HashSet<String>,
+    working_tree_state: HandoffWorkingTreeState,
+    working_tree_paths: Vec<String>,
+    path_filter: PathFilter,
+}
+
 impl Services {
-    #[allow(clippy::cognitive_complexity, clippy::too_many_arguments)]
-    pub(super) fn context_sync(
+    fn prepare_context<'a>(
         &self,
-        mut request: ContextRequest,
-        workflow: ContextWorkflow,
-        handoff: Option<HandoffManifestRequest>,
-        options: ServiceCallOptions,
-        workflow_evidence: WorkflowEvidence,
-        cancellation: &CancellationToken,
-        diagnostics: CandidateDiagnostics,
-        signals: ContextSignals,
-    ) -> Result<(ContextEvaluation, Option<usize>)> {
-        check_cancelled(cancellation)?;
-        self.validate_call_options(options)?;
-        let response_profile = response::effective_context_response_profile(&request, options)?;
+        input: ContextSyncRequest<'a>,
+    ) -> Result<(PreparedContext, ContextRetrieval<'a>)> {
+        let ContextSyncRequest {
+            mut request,
+            context,
+            retrieval,
+        } = input;
+        check_cancelled(retrieval.cancellation)?;
+        self.validate_call_options(retrieval.options)?;
+        let response_profile =
+            response::effective_context_response_profile(&request, retrieval.options)?;
         request.verbose_diagnostics = response_profile == ContextResponseProfile::Explain;
-        self.validate_context_request(&request, handoff.as_ref())?;
-        self.validate_workflow_evidence(&workflow_evidence)?;
+        self.validate_context_request(&request, context.handoff.as_ref())?;
+        self.validate_workflow_evidence(&context.workflow_evidence)?;
         request.changed_paths = request
             .changed_paths
             .iter()
@@ -40,6 +63,49 @@ impl Services {
             changed_paths.extend(scope.changed_paths.iter().cloned());
         }
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
+        Ok((
+            PreparedContext {
+                request,
+                scoped_request,
+                context,
+                response_profile,
+                diff_scope,
+                changed_paths,
+                working_tree_state,
+                working_tree_paths,
+                path_filter,
+            },
+            retrieval,
+        ))
+    }
+
+    pub(super) fn context_sync(
+        &self,
+        input: ContextSyncRequest<'_>,
+    ) -> Result<(ContextEvaluation, Option<usize>)> {
+        let (prepared, retrieval) = self.prepare_context(input)?;
+        let PreparedContext {
+            request,
+            scoped_request,
+            context,
+            response_profile,
+            diff_scope,
+            changed_paths,
+            working_tree_state,
+            working_tree_paths,
+            path_filter,
+        } = prepared;
+        let ContextExecution {
+            workflow,
+            handoff,
+            workflow_evidence,
+        } = context;
+        let ContextRetrieval {
+            options,
+            cancellation,
+            diagnostics,
+            signals,
+        } = retrieval;
         let strict_changed_paths = request.strict_changed_paths.then(|| {
             scoped_request
                 .changed_paths

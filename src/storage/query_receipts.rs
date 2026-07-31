@@ -14,6 +14,22 @@ pub(crate) struct QueryReceiptUsage {
     pub(crate) logical_bytes: usize,
 }
 
+struct QueryReceiptRow {
+    repository_identity: String,
+    repository_generation: u64,
+    config_hash: String,
+    semantics_version: u64,
+    predicate_json: String,
+    predicate_blake3: String,
+    partition_blake3: String,
+    partition_file_count: usize,
+    match_count: usize,
+    result_blake3: String,
+    created_unix_millis: i64,
+    last_access_unix_millis: i64,
+    expires_unix_millis: i64,
+}
+
 impl Storage {
     pub(crate) fn persist_query_receipt(&self, record: &QueryReceiptRecord) -> Result<String> {
         self.persist_query_receipt_at(record, unix_millis(SystemTime::now()))
@@ -198,22 +214,7 @@ impl ReadSession {
             [],
             |row| row.get(0),
         )?;
-        #[allow(clippy::type_complexity)]
-        let row: Option<(
-            String,
-            u64,
-            String,
-            u64,
-            String,
-            String,
-            String,
-            usize,
-            usize,
-            String,
-            i64,
-            i64,
-            i64,
-        )> = self
+        let row: Option<QueryReceiptRow> = self
             .conn
             .query_row(
                 "SELECT repository_identity,
@@ -233,26 +234,26 @@ impl ReadSession {
                  WHERE id = ?1",
                 [row_id],
                 |row| {
-                    Ok((
-                        row.get(0)?,
-                        i64_to_u64(row.get(1)?)?,
-                        row.get(2)?,
-                        i64_to_u64(row.get(3)?)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        i64_to_usize(row.get(7)?)?,
-                        i64_to_usize(row.get(8)?)?,
-                        row.get(9)?,
-                        row.get(10)?,
-                        row.get(11)?,
-                        row.get(12)?,
-                    ))
+                    Ok(QueryReceiptRow {
+                        repository_identity: row.get(0)?,
+                        repository_generation: i64_to_u64(row.get(1)?)?,
+                        config_hash: row.get(2)?,
+                        semantics_version: i64_to_u64(row.get(3)?)?,
+                        predicate_json: row.get(4)?,
+                        predicate_blake3: row.get(5)?,
+                        partition_blake3: row.get(6)?,
+                        partition_file_count: i64_to_usize(row.get(7)?)?,
+                        match_count: i64_to_usize(row.get(8)?)?,
+                        result_blake3: row.get(9)?,
+                        created_unix_millis: row.get(10)?,
+                        last_access_unix_millis: row.get(11)?,
+                        expires_unix_millis: row.get(12)?,
+                    })
                 },
             )
             .optional()?;
-        let Some((
-            receipt_repository_identity,
+        let Some(QueryReceiptRow {
+            repository_identity: receipt_repository_identity,
             repository_generation,
             config_hash,
             semantics_version,
@@ -265,7 +266,7 @@ impl ReadSession {
             created_unix_millis,
             last_access_unix_millis,
             expires_unix_millis,
-        )) = row
+        }) = row
         else {
             return Err(Error::UnknownQueryReceipt(requested_id.to_owned()));
         };

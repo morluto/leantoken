@@ -56,6 +56,27 @@ pub(super) struct ContextExecution {
     pub(super) workflow_evidence: WorkflowEvidence,
 }
 
+/// A workflow-aware context request and its retrieval boundary.
+///
+/// This is the complete command used by adapters that provide both observed
+/// workflow evidence and an explicit index-consistency policy.
+pub struct ContextWorkflowOptions {
+    /// Task request driving candidate generation.
+    pub request: ContextRequest,
+    /// Optional host-triggered handoff manifest.
+    pub handoff: Option<HandoffManifestRequest>,
+    /// Requested or auto-detected workflow.
+    pub workflow: ContextWorkflow,
+    /// Caller-observed compiler, test, runtime, or log evidence.
+    pub workflow_evidence: WorkflowEvidence,
+    /// Index consistency boundary for this retrieval.
+    pub consistency: IndexConsistency,
+    /// Serialized-response and deadline controls.
+    pub options: ServiceCallOptions,
+    /// Cancellation token observed by the retrieval.
+    pub cancellation: CancellationToken,
+}
+
 impl ContextExecution {
     pub(super) fn new(workflow: ContextWorkflow) -> Self {
         Self {
@@ -148,8 +169,8 @@ pub(super) fn record_query_hit(
         return;
     }
     pub(super) const RRF_K: f64 = 60.0;
-    #[allow(clippy::cast_precision_loss)]
-    let score = weight * RRF_K / (RRF_K + rank as f64 + 1.0);
+    let rank = f64::from(u32::try_from(rank).unwrap_or(u32::MAX));
+    let score = weight * RRF_K / (RRF_K + rank + 1.0);
     fusion
         .entry(path.to_owned())
         .or_default()
