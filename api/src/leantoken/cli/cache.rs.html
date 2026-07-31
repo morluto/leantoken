@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// Keep caches with this exact index-content version (repeatable).
 <a href=#33 id=33 data-nosnippet>33</a>    </span><span class="attr">#[arg(long, value_name = <span class="string">"VERSION"</span>)]
 <a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>index_content_version: Vec&lt;u32&gt;,
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Keep only older or legacy-unversioned content.
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Keep only older or unversioned content.
 <a href=#36 id=36 data-nosnippet>36</a>    </span><span class="attr">#[arg(long)]
 <a href=#37 id=37 data-nosnippet>37</a>    </span><span class="kw">pub </span>incompatible_with_current: bool,
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Keep the exact recorded repository root.
@@ -56,67 +56,67 @@
 <a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// Current schema and access metadata.
 <a href=#57 id=57 data-nosnippet>57</a>    </span>Current,
 <a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// Readable older schema without current access metadata.
-<a href=#59 id=59 data-nosnippet>59</a>    </span>Legacy,
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Known artifacts without a readable database.
-<a href=#61 id=61 data-nosnippet>61</a>    </span>Incomplete,
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// SQLite metadata inspection failed.
-<a href=#63 id=63 data-nosnippet>63</a>    </span>Corrupt,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Newer or mismatched metadata unsafe for this binary.
-<a href=#65 id=65 data-nosnippet>65</a>    </span>Unsupported,
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Unexpected directory content.
-<a href=#67 id=67 data-nosnippet>67</a>    </span>Unrecognized,
-<a href=#68 id=68 data-nosnippet>68</a>}
-<a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Cache content compatibility accepted by `cache list --compatibility`.
-<a href=#71 id=71 data-nosnippet>71</a></span><span class="attr">#[derive(Debug, Clone, Copy, ValueEnum)]
-<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub enum </span>CacheCompatibilityArg {
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Content produced by the current index-content version.
-<a href=#74 id=74 data-nosnippet>74</a>    </span>CompatibleCurrent,
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Content produced by a known older version.
-<a href=#76 id=76 data-nosnippet>76</a>    </span>ObsoleteOlder,
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Legacy content without a versioned cache identity.
-<a href=#78 id=78 data-nosnippet>78</a>    </span>LegacyUnversioned,
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Content produced by a newer unsupported version.
-<a href=#80 id=80 data-nosnippet>80</a>    </span>NewerUnsupported,
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Content whose compatibility cannot be trusted.
-<a href=#82 id=82 data-nosnippet>82</a>    </span>Unknown,
-<a href=#83 id=83 data-nosnippet>83</a>}
-<a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">impl </span>From&lt;CacheStateArg&gt; <span class="kw">for </span>CacheState {
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">fn </span>from(value: CacheStateArg) -&gt; <span class="self">Self </span>{
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">match </span>value {
-<a href=#88 id=88 data-nosnippet>88</a>            CacheStateArg::Current =&gt; <span class="self">Self</span>::Current,
-<a href=#89 id=89 data-nosnippet>89</a>            CacheStateArg::Legacy =&gt; <span class="self">Self</span>::Legacy,
-<a href=#90 id=90 data-nosnippet>90</a>            CacheStateArg::Incomplete =&gt; <span class="self">Self</span>::Incomplete,
-<a href=#91 id=91 data-nosnippet>91</a>            CacheStateArg::Corrupt =&gt; <span class="self">Self</span>::Corrupt,
-<a href=#92 id=92 data-nosnippet>92</a>            CacheStateArg::Unsupported =&gt; <span class="self">Self</span>::Unsupported,
-<a href=#93 id=93 data-nosnippet>93</a>            CacheStateArg::Unrecognized =&gt; <span class="self">Self</span>::Unrecognized,
-<a href=#94 id=94 data-nosnippet>94</a>        }
-<a href=#95 id=95 data-nosnippet>95</a>    }
-<a href=#96 id=96 data-nosnippet>96</a>}
-<a href=#97 id=97 data-nosnippet>97</a>
-<a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>From&lt;CacheCompatibilityArg&gt; <span class="kw">for </span>CacheCompatibility {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">fn </span>from(value: CacheCompatibilityArg) -&gt; <span class="self">Self </span>{
-<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">match </span>value {
-<a href=#101 id=101 data-nosnippet>101</a>            CacheCompatibilityArg::CompatibleCurrent =&gt; <span class="self">Self</span>::CompatibleCurrent,
-<a href=#102 id=102 data-nosnippet>102</a>            CacheCompatibilityArg::ObsoleteOlder =&gt; <span class="self">Self</span>::ObsoleteOlder,
-<a href=#103 id=103 data-nosnippet>103</a>            CacheCompatibilityArg::LegacyUnversioned =&gt; <span class="self">Self</span>::LegacyUnversioned,
-<a href=#104 id=104 data-nosnippet>104</a>            CacheCompatibilityArg::NewerUnsupported =&gt; <span class="self">Self</span>::NewerUnsupported,
-<a href=#105 id=105 data-nosnippet>105</a>            CacheCompatibilityArg::Unknown =&gt; <span class="self">Self</span>::Unknown,
-<a href=#106 id=106 data-nosnippet>106</a>        }
-<a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>}
-<a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a><span class="kw">impl </span>From&lt;CacheListArgs&gt; <span class="kw">for </span>CacheListV2Request {
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">fn </span>from(args: CacheListArgs) -&gt; <span class="self">Self </span>{
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="self">Self </span>{
-<a href=#113 id=113 data-nosnippet>113</a>            request: CacheListRequest {
-<a href=#114 id=114 data-nosnippet>114</a>                summary: args.summary,
-<a href=#115 id=115 data-nosnippet>115</a>                states: args.state.into_iter().map(Into::into).collect(),
-<a href=#116 id=116 data-nosnippet>116</a>                repository_root: args.repository_root,
-<a href=#117 id=117 data-nosnippet>117</a>                limit: args.limit,
-<a href=#118 id=118 data-nosnippet>118</a>                cursor: args.cursor,
-<a href=#119 id=119 data-nosnippet>119</a>            },
+<a href=#59 id=59 data-nosnippet>59</a>    </span><span class="attr">#[value(name = <span class="string">"legacy"</span>)]
+<a href=#60 id=60 data-nosnippet>60</a>    </span>OlderSchema,
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Known artifacts without a readable database.
+<a href=#62 id=62 data-nosnippet>62</a>    </span>Incomplete,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// SQLite metadata inspection failed.
+<a href=#64 id=64 data-nosnippet>64</a>    </span>Corrupt,
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Newer or mismatched metadata unsafe for this binary.
+<a href=#66 id=66 data-nosnippet>66</a>    </span>Unsupported,
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Unexpected directory content.
+<a href=#68 id=68 data-nosnippet>68</a>    </span>Unrecognized,
+<a href=#69 id=69 data-nosnippet>69</a>}
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Cache content compatibility accepted by `cache list --compatibility`.
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="attr">#[derive(Debug, Clone, Copy, ValueEnum)]
+<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub enum </span>CacheCompatibilityArg {
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Content produced by the current index-content version.
+<a href=#75 id=75 data-nosnippet>75</a>    </span>CompatibleCurrent,
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Content produced by a known older version.
+<a href=#77 id=77 data-nosnippet>77</a>    </span>ObsoleteOlder,
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// Content without a versioned cache identity.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[value(name = <span class="string">"legacy-unversioned"</span>)]
+<a href=#80 id=80 data-nosnippet>80</a>    </span>Unversioned,
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Content produced by a newer unsupported version.
+<a href=#82 id=82 data-nosnippet>82</a>    </span>NewerUnsupported,
+<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Content whose compatibility cannot be trusted.
+<a href=#84 id=84 data-nosnippet>84</a>    </span>Unknown,
+<a href=#85 id=85 data-nosnippet>85</a>}
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a><span class="kw">impl </span>From&lt;CacheStateArg&gt; <span class="kw">for </span>CacheState {
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">fn </span>from(value: CacheStateArg) -&gt; <span class="self">Self </span>{
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">match </span>value {
+<a href=#90 id=90 data-nosnippet>90</a>            CacheStateArg::Current =&gt; <span class="self">Self</span>::Current,
+<a href=#91 id=91 data-nosnippet>91</a>            CacheStateArg::OlderSchema =&gt; <span class="self">Self</span>::OlderSchema,
+<a href=#92 id=92 data-nosnippet>92</a>            CacheStateArg::Incomplete =&gt; <span class="self">Self</span>::Incomplete,
+<a href=#93 id=93 data-nosnippet>93</a>            CacheStateArg::Corrupt =&gt; <span class="self">Self</span>::Corrupt,
+<a href=#94 id=94 data-nosnippet>94</a>            CacheStateArg::Unsupported =&gt; <span class="self">Self</span>::Unsupported,
+<a href=#95 id=95 data-nosnippet>95</a>            CacheStateArg::Unrecognized =&gt; <span class="self">Self</span>::Unrecognized,
+<a href=#96 id=96 data-nosnippet>96</a>        }
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>}
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a><span class="kw">impl </span>From&lt;CacheCompatibilityArg&gt; <span class="kw">for </span>CacheCompatibility {
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">fn </span>from(value: CacheCompatibilityArg) -&gt; <span class="self">Self </span>{
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">match </span>value {
+<a href=#103 id=103 data-nosnippet>103</a>            CacheCompatibilityArg::CompatibleCurrent =&gt; <span class="self">Self</span>::CompatibleCurrent,
+<a href=#104 id=104 data-nosnippet>104</a>            CacheCompatibilityArg::ObsoleteOlder =&gt; <span class="self">Self</span>::ObsoleteOlder,
+<a href=#105 id=105 data-nosnippet>105</a>            CacheCompatibilityArg::Unversioned =&gt; <span class="self">Self</span>::Unversioned,
+<a href=#106 id=106 data-nosnippet>106</a>            CacheCompatibilityArg::NewerUnsupported =&gt; <span class="self">Self</span>::NewerUnsupported,
+<a href=#107 id=107 data-nosnippet>107</a>            CacheCompatibilityArg::Unknown =&gt; <span class="self">Self</span>::Unknown,
+<a href=#108 id=108 data-nosnippet>108</a>        }
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="kw">impl </span>From&lt;CacheListArgs&gt; <span class="kw">for </span>CacheListRequest {
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">fn </span>from(args: CacheListArgs) -&gt; <span class="self">Self </span>{
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">Self </span>{
+<a href=#115 id=115 data-nosnippet>115</a>            summary: args.summary,
+<a href=#116 id=116 data-nosnippet>116</a>            states: args.state.into_iter().map(Into::into).collect(),
+<a href=#117 id=117 data-nosnippet>117</a>            repository_root: args.repository_root,
+<a href=#118 id=118 data-nosnippet>118</a>            limit: args.limit,
+<a href=#119 id=119 data-nosnippet>119</a>            cursor: args.cursor,
 <a href=#120 id=120 data-nosnippet>120</a>            compatibilities: args.compatibility.into_iter().map(Into::into).collect(),
 <a href=#121 id=121 data-nosnippet>121</a>            index_content_versions: args.index_content_version,
 <a href=#122 id=122 data-nosnippet>122</a>            incompatible_with_current: args.incompatible_with_current,
@@ -136,7 +136,7 @@
 <a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Remove caches whose recorded repository roots are currently missing.
 <a href=#137 id=137 data-nosnippet>137</a>    </span><span class="attr">#[arg(long)]
 <a href=#138 id=138 data-nosnippet>138</a>    </span><span class="kw">pub </span>remove_missing_roots: bool,
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Select inactive older or legacy-unversioned caches.
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Select inactive older or unversioned caches.
 <a href=#140 id=140 data-nosnippet>140</a>    ///
 <a href=#141 id=141 data-nosnippet>141</a>    /// Without `--yes`, this criterion defaults to a dry-run.
 <a href=#142 id=142 data-nosnippet>142</a>    </span><span class="attr">#[arg(long)]
@@ -149,18 +149,16 @@
 <a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub </span>yes: bool,
 <a href=#150 id=150 data-nosnippet>150</a>}
 <a href=#151 id=151 data-nosnippet>151</a>
-<a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>From&lt;CachePruneArgs&gt; <span class="kw">for </span>CachePruneV2Request {
+<a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>From&lt;CachePruneArgs&gt; <span class="kw">for </span>CachePruneRequest {
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">fn </span>from(args: CachePruneArgs) -&gt; <span class="self">Self </span>{
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="self">Self </span>{
-<a href=#155 id=155 data-nosnippet>155</a>            request: CachePruneRequest {
-<a href=#156 id=156 data-nosnippet>156</a>                older_than_days: args.older_than.map(NonZeroU64::get),
-<a href=#157 id=157 data-nosnippet>157</a>                max_total_bytes: args.max_total_bytes,
-<a href=#158 id=158 data-nosnippet>158</a>                remove_missing_roots: args.remove_missing_roots,
-<a href=#159 id=159 data-nosnippet>159</a>                dry_run: args.dry_run || (args.incompatible_with_current &amp;&amp; !args.yes),
-<a href=#160 id=160 data-nosnippet>160</a>                yes: args.yes,
-<a href=#161 id=161 data-nosnippet>161</a>            },
-<a href=#162 id=162 data-nosnippet>162</a>            incompatible_with_current: args.incompatible_with_current,
-<a href=#163 id=163 data-nosnippet>163</a>        }
-<a href=#164 id=164 data-nosnippet>164</a>    }
-<a href=#165 id=165 data-nosnippet>165</a>}
+<a href=#155 id=155 data-nosnippet>155</a>            older_than_days: args.older_than.map(NonZeroU64::get),
+<a href=#156 id=156 data-nosnippet>156</a>            max_total_bytes: args.max_total_bytes,
+<a href=#157 id=157 data-nosnippet>157</a>            remove_missing_roots: args.remove_missing_roots,
+<a href=#158 id=158 data-nosnippet>158</a>            dry_run: args.dry_run || (args.incompatible_with_current &amp;&amp; !args.yes),
+<a href=#159 id=159 data-nosnippet>159</a>            yes: args.yes,
+<a href=#160 id=160 data-nosnippet>160</a>            incompatible_with_current: args.incompatible_with_current,
+<a href=#161 id=161 data-nosnippet>161</a>        }
+<a href=#162 id=162 data-nosnippet>162</a>    }
+<a href=#163 id=163 data-nosnippet>163</a>}
 </code></pre></div></section></main></body></html>

@@ -217,7 +217,7 @@
 <a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>scope = SelectionScope::new(request, context_exclude_paths);
 <a href=#218 id=218 data-nosnippet>218</a>    apply_request_signals(<span class="kw-2">&amp;mut </span>candidates, request, <span class="kw-2">&amp;</span>scope.focus_paths);
 <a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">let </span>generated_focus = request
-<a href=#220 id=220 data-nosnippet>220</a>        .verbose_diagnostics
+<a href=#220 id=220 data-nosnippet>220</a>        .explain_diagnostics
 <a href=#221 id=221 data-nosnippet>221</a>        .then(|| generated_focus_facts(<span class="kw-2">&amp;</span>candidates, request));
 <a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>partition = partition_candidates(candidates, request, <span class="kw-2">&amp;</span>scope, weights, tokenizer);
 <a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span>selection = select_candidates(partition.eligible, request, weights, tokenizer);

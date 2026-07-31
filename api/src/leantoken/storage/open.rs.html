@@ -67,7 +67,7 @@
 <a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">let </span>actual_repository = repository_root.to_string_lossy();
 <a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>mismatched_identity =
 <a href=#69 id=69 data-nosnippet>69</a>            !expected_identity.is_empty() &amp;&amp; expected_identity != actual_identity;
-<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span>mismatched_legacy_root = expected_identity.is_empty()
+<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span>mismatched_unversioned_root = expected_identity.is_empty()
 <a href=#71 id=71 data-nosnippet>71</a>            &amp;&amp; !expected_repository.is_empty()
 <a href=#72 id=72 data-nosnippet>72</a>            &amp;&amp; expected_repository != actual_repository;
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if </span>mismatched_identity &amp;&amp; expected_repository == actual_repository {
@@ -75,7 +75,7 @@
 <a href=#75 id=75 data-nosnippet>75</a>                database: path.to_path_buf(),
 <a href=#76 id=76 data-nosnippet>76</a>            });
 <a href=#77 id=77 data-nosnippet>77</a>        }
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">if </span>mismatched_identity || mismatched_legacy_root {
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">if </span>mismatched_identity || mismatched_unversioned_root {
 <a href=#79 id=79 data-nosnippet>79</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RepositoryMismatch {
 <a href=#80 id=80 data-nosnippet>80</a>                database: path.to_path_buf(),
 <a href=#81 id=81 data-nosnippet>81</a>                expected_repository,

@@ -143,28 +143,30 @@
 <a href=#143 id=143 data-nosnippet>143</a>        next_cursor: <span class="prelude-val">None</span>,
 <a href=#144 id=144 data-nosnippet>144</a>    };
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = ContextResponse {
-<a href=#146 id=146 data-nosnippet>146</a>        effective_response_profile: ContextResponseProfile::from_legacy_verbose(
-<a href=#147 id=147 data-nosnippet>147</a>            request.verbose_diagnostics,
-<a href=#148 id=148 data-nosnippet>148</a>        ),
-<a href=#149 id=149 data-nosnippet>149</a>        workflow: <span class="kw">crate</span>::model::ContextWorkflow::Implementation,
-<a href=#150 id=150 data-nosnippet>150</a>        workflow_receipt: <span class="prelude-val">None</span>,
-<a href=#151 id=151 data-nosnippet>151</a>        plan,
-<a href=#152 id=152 data-nosnippet>152</a>        fragments,
-<a href=#153 id=153 data-nosnippet>153</a>        receipt,
-<a href=#154 id=154 data-nosnippet>154</a>        diff_scope: <span class="prelude-val">None</span>,
-<a href=#155 id=155 data-nosnippet>155</a>        omitted,
-<a href=#156 id=156 data-nosnippet>156</a>        omission_summary,
-<a href=#157 id=157 data-nosnippet>157</a>        coverage,
-<a href=#158 id=158 data-nosnippet>158</a>        routing: <span class="prelude-val">None</span>,
-<a href=#159 id=159 data-nosnippet>159</a>        handoff_manifest: <span class="prelude-val">None</span>,
-<a href=#160 id=160 data-nosnippet>160</a>        warnings,
-<a href=#161 id=161 data-nosnippet>161</a>        meta,
-<a href=#162 id=162 data-nosnippet>162</a>    };
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
-<a href=#164 id=164 data-nosnippet>164</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
-<a href=#165 id=165 data-nosnippet>165</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
-<a href=#166 id=166 data-nosnippet>166</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-<a href=#167 id=167 data-nosnippet>167</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
-<a href=#168 id=168 data-nosnippet>168</a>    response
-<a href=#169 id=169 data-nosnippet>169</a>}
+<a href=#146 id=146 data-nosnippet>146</a>        effective_response_profile: <span class="kw">if </span>request.explain_diagnostics {
+<a href=#147 id=147 data-nosnippet>147</a>            ContextResponseProfile::Explain
+<a href=#148 id=148 data-nosnippet>148</a>        } <span class="kw">else </span>{
+<a href=#149 id=149 data-nosnippet>149</a>            ContextResponseProfile::Balanced
+<a href=#150 id=150 data-nosnippet>150</a>        },
+<a href=#151 id=151 data-nosnippet>151</a>        workflow: <span class="kw">crate</span>::model::ContextWorkflow::Implementation,
+<a href=#152 id=152 data-nosnippet>152</a>        workflow_receipt: <span class="prelude-val">None</span>,
+<a href=#153 id=153 data-nosnippet>153</a>        plan,
+<a href=#154 id=154 data-nosnippet>154</a>        fragments,
+<a href=#155 id=155 data-nosnippet>155</a>        receipt,
+<a href=#156 id=156 data-nosnippet>156</a>        diff_scope: <span class="prelude-val">None</span>,
+<a href=#157 id=157 data-nosnippet>157</a>        omitted,
+<a href=#158 id=158 data-nosnippet>158</a>        omission_summary,
+<a href=#159 id=159 data-nosnippet>159</a>        coverage,
+<a href=#160 id=160 data-nosnippet>160</a>        routing: <span class="prelude-val">None</span>,
+<a href=#161 id=161 data-nosnippet>161</a>        handoff_manifest: <span class="prelude-val">None</span>,
+<a href=#162 id=162 data-nosnippet>162</a>        warnings,
+<a href=#163 id=163 data-nosnippet>163</a>        meta,
+<a href=#164 id=164 data-nosnippet>164</a>    };
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
+<a href=#166 id=166 data-nosnippet>166</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
+<a href=#167 id=167 data-nosnippet>167</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
+<a href=#168 id=168 data-nosnippet>168</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+<a href=#169 id=169 data-nosnippet>169</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
+<a href=#170 id=170 data-nosnippet>170</a>    response
+<a href=#171 id=171 data-nosnippet>171</a>}
 </code></pre></div></section></main></body></html>

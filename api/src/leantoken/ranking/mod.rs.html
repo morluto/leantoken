@@ -64,9 +64,13 @@
 <a href=#64 id=64 data-nosnippet>64</a>};
 <a href=#65 id=65 data-nosnippet>65</a>
 <a href=#66 id=66 data-nosnippet>66</a><span class="kw">fn </span>bounded_count_f64(value: usize) -&gt; f64 {
-<a href=#67 id=67 data-nosnippet>67</a>    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
-<a href=#68 id=68 data-nosnippet>68</a>}
-<a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a><span class="attr">#[cfg(test)]
-<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">mod </span>tests;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="comment">// `usize` is already the bounded count type used by the tokenizer and
+<a href=#68 id=68 data-nosnippet>68</a>    // selection budget. Converting directly preserves monotonic ordering for
+<a href=#69 id=69 data-nosnippet>69</a>    // counts above `u32::MAX`; saturating through `u32` made every larger
+<a href=#70 id=70 data-nosnippet>70</a>    // fragment indistinguishable to the ranker.
+<a href=#71 id=71 data-nosnippet>71</a>    </span>value <span class="kw">as </span>f64
+<a href=#72 id=72 data-nosnippet>72</a>}
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a><span class="attr">#[cfg(test)]
+<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

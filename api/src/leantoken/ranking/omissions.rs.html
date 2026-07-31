@@ -71,14 +71,14 @@
 <a href=#71 id=71 data-nosnippet>71</a>    prefiltered_path_omissions: <span class="kw-2">&amp;</span>[String],
 <a href=#72 id=72 data-nosnippet>72</a>    focus_paths: <span class="kw-2">&amp;</span>PathMatcher,
 <a href=#73 id=73 data-nosnippet>73</a>    changed_paths: <span class="kw-2">&amp;</span>HashSet&lt;<span class="kw-2">&amp;</span>str&gt;,
-<a href=#74 id=74 data-nosnippet>74</a>    verbose_diagnostics: bool,
+<a href=#74 id=74 data-nosnippet>74</a>    explain_diagnostics: bool,
 <a href=#75 id=75 data-nosnippet>75</a>) -&gt; ContextOmissionSummary {
 <a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">let </span>path_excluded = path_omitted
 <a href=#77 id=77 data-nosnippet>77</a>        .len()
 <a href=#78 id=78 data-nosnippet>78</a>        .saturating_add(prefiltered_path_omissions.len());
 <a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span>known_hash = known_omitted.len();
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">let </span>budget_or_result_limit = limit_omitted.len();
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">if </span>!verbose_diagnostics {
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">if </span>!explain_diagnostics {
 <a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">return </span>ContextOmissionSummary {
 <a href=#83 id=83 data-nosnippet>83</a>            path_excluded,
 <a href=#84 id=84 data-nosnippet>84</a>            known_hash,
@@ -171,7 +171,7 @@
 <a href=#171 id=171 data-nosnippet>171</a>        prefiltered_path_omissions,
 <a href=#172 id=172 data-nosnippet>172</a>        focus_paths,
 <a href=#173 id=173 data-nosnippet>173</a>        changed_paths,
-<a href=#174 id=174 data-nosnippet>174</a>        request.verbose_diagnostics,
+<a href=#174 id=174 data-nosnippet>174</a>        request.explain_diagnostics,
 <a href=#175 id=175 data-nosnippet>175</a>    );
 <a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span><span class="kw-2">mut </span>omitted = path_omitted
 <a href=#177 id=177 data-nosnippet>177</a>        .into_iter()
@@ -194,7 +194,7 @@
 <a href=#194 id=194 data-nosnippet>194</a>        end_line: scored.candidate.end_line,
 <a href=#195 id=195 data-nosnippet>195</a>        reason: <span class="string">"budget or result limit"</span>.to_string(),
 <a href=#196 id=196 data-nosnippet>196</a>    }));
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">if </span>!request.verbose_diagnostics {
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">if </span>!request.explain_diagnostics {
 <a href=#198 id=198 data-nosnippet>198</a>        omitted.clear();
 <a href=#199 id=199 data-nosnippet>199</a>    }
 <a href=#200 id=200 data-nosnippet>200</a>    omitted.truncate(MAX_OMITTED_DETAILS);

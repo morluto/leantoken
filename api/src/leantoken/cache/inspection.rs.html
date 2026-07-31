@@ -37,7 +37,7 @@
 <a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">let </span>database = path.join(DATABASE_NAME);
 <a href=#38 id=38 data-nosnippet>38</a>        <span class="kw">let </span>identity = parse_managed_cache_id(id).expect(<span class="string">"validated managed cache identity"</span>);
 <a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">let </span>(index_content_version, index_scope_digest) = <span class="kw">match </span>identity {
-<a href=#40 id=40 data-nosnippet>40</a>            ManagedCacheIdentity::Legacy =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#40 id=40 data-nosnippet>40</a>            ManagedCacheIdentity::Unversioned =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
 <a href=#41 id=41 data-nosnippet>41</a>            ManagedCacheIdentity::Versioned {
 <a href=#42 id=42 data-nosnippet>42</a>                version,
 <a href=#43 id=43 data-nosnippet>43</a>                scope_digest,
@@ -100,7 +100,7 @@
 <a href=#100 id=100 data-nosnippet>100</a>                    } <span class="kw">else if </span>metadata.current {
 <a href=#101 id=101 data-nosnippet>101</a>                        CacheState::Current
 <a href=#102 id=102 data-nosnippet>102</a>                    } <span class="kw">else </span>{
-<a href=#103 id=103 data-nosnippet>103</a>                        CacheState::Legacy
+<a href=#103 id=103 data-nosnippet>103</a>                        CacheState::OlderSchema
 <a href=#104 id=104 data-nosnippet>104</a>                    };
 <a href=#105 id=105 data-nosnippet>105</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(repository_root) = <span class="kw-2">&amp;</span>entry.repository_root
 <a href=#106 id=106 data-nosnippet>106</a>                        &amp;&amp; !managed_cache_id_matches_root(id, repository_root)

@@ -529,7 +529,7 @@
 <a href=#529 id=529 data-nosnippet>529</a>
 <a href=#530 id=530 data-nosnippet>530</a><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 <a href=#531 id=531 data-nosnippet>531</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>ManagedCacheIdentity {
-<a href=#532 id=532 data-nosnippet>532</a>    Legacy,
+<a href=#532 id=532 data-nosnippet>532</a>    Unversioned,
 <a href=#533 id=533 data-nosnippet>533</a>    Versioned {
 <a href=#534 id=534 data-nosnippet>534</a>        version: u32,
 <a href=#535 id=535 data-nosnippet>535</a>        root_hash: String,
@@ -548,7 +548,7 @@
 <a href=#548 id=548 data-nosnippet>548</a>
 <a href=#549 id=549 data-nosnippet>549</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_managed_cache_id(value: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;ManagedCacheIdentity&gt; {
 <a href=#550 id=550 data-nosnippet>550</a>    <span class="kw">if </span>is_managed_cache_hash(value) {
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(ManagedCacheIdentity::Legacy);
+<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(ManagedCacheIdentity::Unversioned);
 <a href=#552 id=552 data-nosnippet>552</a>    }
 <a href=#553 id=553 data-nosnippet>553</a>    <span class="kw">let </span>(version_text, remainder) = value.strip_prefix(<span class="string">'v'</span>)<span class="question-mark">?</span>.split_once(<span class="string">'-'</span>)<span class="question-mark">?</span>;
 <a href=#554 id=554 data-nosnippet>554</a>    <span class="kw">let </span>version = version_text
@@ -580,7 +580,7 @@
 <a href=#580 id=580 data-nosnippet>580</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>managed_cache_id_matches_root(value: <span class="kw-2">&amp;</span>str, root: <span class="kw-2">&amp;</span>Path) -&gt; bool {
 <a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">let </span>hash = managed_cache_root_hash(root);
 <a href=#582 id=582 data-nosnippet>582</a>    <span class="kw">match </span>parse_managed_cache_id(value) {
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="prelude-val">Some</span>(ManagedCacheIdentity::Legacy) =&gt; value == hash,
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="prelude-val">Some</span>(ManagedCacheIdentity::Unversioned) =&gt; value == hash,
 <a href=#584 id=584 data-nosnippet>584</a>        <span class="prelude-val">Some</span>(ManagedCacheIdentity::Versioned { root_hash, .. }) =&gt; root_hash == hash,
 <a href=#585 id=585 data-nosnippet>585</a>        <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
 <a href=#586 id=586 data-nosnippet>586</a>    }
@@ -647,13 +647,13 @@
 <a href=#647 id=647 data-nosnippet>647</a>    </span><span class="kw">fn </span>managed_cache_identity_is_versioned_and_strictly_parsed() {
 <a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">let </span>root = Path::new(<span class="string">"/tmp/repository"</span>);
 <a href=#649 id=649 data-nosnippet>649</a>        <span class="kw">let </span>id = managed_cache_id(root);
-<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>legacy_id = id
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>unversioned_id = id
 <a href=#651 id=651 data-nosnippet>651</a>            .split_once(<span class="string">'-'</span>)
 <a href=#652 id=652 data-nosnippet>652</a>            .expect(<span class="string">"versioned managed cache identity"</span>)
 <a href=#653 id=653 data-nosnippet>653</a>            .<span class="number">1</span>;
 <a href=#654 id=654 data-nosnippet>654</a>
 <a href=#655 id=655 data-nosnippet>655</a>        <span class="macro">assert!</span>(id.starts_with(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"v{INDEX_CONTENT_VERSION}-"</span>)));
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_ne!</span>(id, legacy_id);
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_ne!</span>(id, unversioned_id);
 <a href=#657 id=657 data-nosnippet>657</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
 <a href=#658 id=658 data-nosnippet>658</a>            parse_managed_cache_id(<span class="kw-2">&amp;</span>id),
 <a href=#659 id=659 data-nosnippet>659</a>            <span class="prelude-val">Some</span>(ManagedCacheIdentity::Versioned {
@@ -663,14 +663,14 @@
 <a href=#663 id=663 data-nosnippet>663</a>            })
 <a href=#664 id=664 data-nosnippet>664</a>        ));
 <a href=#665 id=665 data-nosnippet>665</a>        <span class="macro">assert!</span>(managed_cache_id_matches_root(<span class="kw-2">&amp;</span>id, root));
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert!</span>(managed_cache_id_matches_root(legacy_id, root));
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert!</span>(managed_cache_id_matches_root(unversioned_id, root));
 <a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert_ne!</span>(
 <a href=#668 id=668 data-nosnippet>668</a>            managed_cache_id_for_version(root, INDEX_CONTENT_VERSION - <span class="number">1</span>, <span class="prelude-val">None</span>),
 <a href=#669 id=669 data-nosnippet>669</a>            id
 <a href=#670 id=670 data-nosnippet>670</a>        );
 <a href=#671 id=671 data-nosnippet>671</a>        <span class="macro">assert_eq!</span>(
 <a href=#672 id=672 data-nosnippet>672</a>            parse_managed_cache_id(<span class="string">"0000000000000001"</span>),
-<a href=#673 id=673 data-nosnippet>673</a>            <span class="prelude-val">Some</span>(ManagedCacheIdentity::Legacy)
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="prelude-val">Some</span>(ManagedCacheIdentity::Unversioned)
 <a href=#674 id=674 data-nosnippet>674</a>        );
 <a href=#675 id=675 data-nosnippet>675</a>        <span class="macro">assert!</span>(parse_managed_cache_id(<span class="string">"v0-0000000000000001"</span>).is_none());
 <a href=#676 id=676 data-nosnippet>676</a>        <span class="macro">assert!</span>(parse_managed_cache_id(<span class="string">"v01-0000000000000001"</span>).is_none());
@@ -726,7 +726,7 @@
 <a href=#726 id=726 data-nosnippet>726</a>    }
 <a href=#727 id=727 data-nosnippet>727</a>
 <a href=#728 id=728 data-nosnippet>728</a>    <span class="attr">#[test]
-<a href=#729 id=729 data-nosnippet>729</a>    </span><span class="kw">fn </span>managed_fallback_excludes_current_and_legacy_cache_artifacts() {
+<a href=#729 id=729 data-nosnippet>729</a>    </span><span class="kw">fn </span>managed_fallback_excludes_current_and_unversioned_cache_artifacts() {
 <a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository"</span>);
 <a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>database = root
 <a href=#732 id=732 data-nosnippet>732</a>            .path()

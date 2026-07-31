@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a><span class="kw">impl </span>ContextPathScorer {
 <a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(terms: <span class="kw-2">&amp;</span>[String], task: <span class="kw-2">&amp;</span>str) -&gt; <span class="self">Self </span>{
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>code_token_parts = facets::legacy_code_tokens(task)
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>code_token_parts = facets::code_tokens(task)
 <a href=#56 id=56 data-nosnippet>56</a>            .into_iter()
 <a href=#57 id=57 data-nosnippet>57</a>            .filter(|token| {
 <a href=#58 id=58 data-nosnippet>58</a>                token.contains(<span class="string">"::"</span>)
