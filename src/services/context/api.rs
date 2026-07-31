@@ -120,41 +120,20 @@ impl Services {
         .await
     }
 
-    /// Retrieve context under adapter policy and explicit response controls.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn context_with_options_workflow_consistency_cancellable(
+    /// Retrieve context with typed caller-observed workflow evidence.
+    pub async fn context_with_workflow_evidence_options_consistency_cancellable(
         &self,
-        request: ContextRequest,
-        handoff: Option<HandoffManifestRequest>,
-        workflow: ContextWorkflow,
-        consistency: IndexConsistency,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
+        params: ContextWorkflowOptions,
     ) -> Result<ContextResponse> {
-        self.context_with_workflow_evidence_options_consistency_cancellable(
+        let ContextWorkflowOptions {
             request,
             handoff,
             workflow,
-            WorkflowEvidence::default(),
+            workflow_evidence,
             consistency,
             options,
             cancellation,
-        )
-        .await
-    }
-
-    /// Retrieve context with typed caller-observed workflow evidence.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn context_with_workflow_evidence_options_consistency_cancellable(
-        &self,
-        request: ContextRequest,
-        handoff: Option<HandoffManifestRequest>,
-        workflow: ContextWorkflow,
-        workflow_evidence: WorkflowEvidence,
-        consistency: IndexConsistency,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
-    ) -> Result<ContextResponse> {
+        } = params;
         self.context_execute(
             request,
             ContextExecution {
@@ -259,16 +238,21 @@ impl Services {
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                let (evaluation, baseline_source_tokens) = this.context_sync(
-                    request,
-                    workflow,
-                    handoff,
-                    options,
-                    workflow_evidence,
-                    cancellation,
-                    CandidateDiagnostics::Omit,
-                    ContextSignals::PRODUCTION,
-                )?;
+                let (evaluation, baseline_source_tokens) =
+                    this.context_sync(super::execution::ContextSyncRequest {
+                        request,
+                        context: ContextExecution {
+                            workflow,
+                            handoff,
+                            workflow_evidence,
+                        },
+                        retrieval: super::execution::ContextRetrieval {
+                            options,
+                            cancellation,
+                            diagnostics: CandidateDiagnostics::Omit,
+                            signals: ContextSignals::PRODUCTION,
+                        },
+                    })?;
                 Ok(AccountedContextResponse {
                     response: evaluation.response,
                     baseline_source_tokens,
@@ -287,16 +271,16 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
-                this.context_sync(
+                this.context_sync(super::execution::ContextSyncRequest {
                     request,
-                    ContextWorkflow::Implementation,
-                    None,
-                    ServiceCallOptions::default(),
-                    WorkflowEvidence::default(),
-                    cancellation,
-                    CandidateDiagnostics::Collect,
-                    ContextSignals::PRODUCTION,
-                )
+                    context: ContextExecution::new(ContextWorkflow::Implementation),
+                    retrieval: super::execution::ContextRetrieval {
+                        options: ServiceCallOptions::default(),
+                        cancellation,
+                        diagnostics: CandidateDiagnostics::Collect,
+                        signals: ContextSignals::PRODUCTION,
+                    },
+                })
                 .map(|(evaluation, _)| evaluation)
             })
             .await
@@ -311,16 +295,17 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
-                this.context_sync(
+                this.context_sync(super::execution::ContextSyncRequest {
                     request,
-                    ContextWorkflow::Implementation,
-                    None,
-                    ServiceCallOptions::default(),
-                    workflow_evidence,
-                    cancellation,
-                    CandidateDiagnostics::Collect,
-                    ContextSignals::PRODUCTION,
-                )
+                    context: ContextExecution::new(ContextWorkflow::Implementation)
+                        .with_workflow_evidence(workflow_evidence),
+                    retrieval: super::execution::ContextRetrieval {
+                        options: ServiceCallOptions::default(),
+                        cancellation,
+                        diagnostics: CandidateDiagnostics::Collect,
+                        signals: ContextSignals::PRODUCTION,
+                    },
+                })
                 .map(|(evaluation, _)| evaluation)
             })
             .await
@@ -338,16 +323,16 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
-                this.context_sync(
+                this.context_sync(super::execution::ContextSyncRequest {
                     request,
-                    ContextWorkflow::Implementation,
-                    None,
-                    ServiceCallOptions::default(),
-                    WorkflowEvidence::default(),
-                    cancellation,
-                    CandidateDiagnostics::Collect,
-                    ContextSignals::evaluation(policy),
-                )
+                    context: ContextExecution::new(ContextWorkflow::Implementation),
+                    retrieval: super::execution::ContextRetrieval {
+                        options: ServiceCallOptions::default(),
+                        cancellation,
+                        diagnostics: CandidateDiagnostics::Collect,
+                        signals: ContextSignals::evaluation(policy),
+                    },
+                })
                 .map(|(evaluation, _)| evaluation)
             })
             .await

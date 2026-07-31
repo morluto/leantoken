@@ -341,13 +341,15 @@ impl LeanTokenMcp {
                 async move {
                     services
                         .context_with_workflow_evidence_options_consistency_cancellable(
-                            request,
-                            handoff,
-                            workflow,
-                            workflow_evidence,
-                            consistency,
-                            options,
-                            cancellation,
+                            crate::services::ContextWorkflowOptions {
+                                request,
+                                handoff,
+                                workflow,
+                                workflow_evidence,
+                                consistency,
+                                options,
+                                cancellation,
+                            },
                         )
                         .await
                 }

@@ -484,14 +484,14 @@ impl Cli {
                 let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
                 let response_profile = args.response_profile.map(Into::into);
-                AppRequest::Context {
-                    request: args.into(),
+                AppRequest::Context(Box::new(ContextAppRequest {
+                    request: (*args).into(),
                     workflow,
                     workflow_evidence,
                     handoff: handoff.map(Box::new),
                     max_response_tokens,
                     response_profile,
-                }
+                }))
             }
             Commands::Doctor(args) => AppRequest::Doctor {
                 ready_timeout: Duration::from_secs(args.ready_timeout_seconds),
@@ -517,8 +517,6 @@ impl Cli {
 }
 
 /// Parsed application request produced by the CLI.
-// Boxing the established public variants would be a source-breaking API change.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum AppRequest {
     Index {
@@ -560,14 +558,7 @@ pub enum AppRequest {
         request: JsonRequest,
         max_response_tokens: usize,
     },
-    Context {
-        request: ContextRequest,
-        workflow: crate::model::ContextWorkflow,
-        workflow_evidence: WorkflowEvidence,
-        handoff: Option<Box<HandoffManifestRequest>>,
-        max_response_tokens: Option<usize>,
-        response_profile: Option<crate::model::ContextResponseProfile>,
-    },
+    Context(Box<ContextAppRequest>),
     Doctor {
         ready_timeout: Duration,
     },
@@ -587,8 +578,17 @@ pub enum AppRequest {
     },
 }
 
-// Clap owns this public command shape; keep it source-compatible with AppRequest.
-#[allow(clippy::large_enum_variant)]
+/// Typed payload for a context application request.
+#[derive(Debug, Clone)]
+pub struct ContextAppRequest {
+    pub request: ContextRequest,
+    pub workflow: crate::model::ContextWorkflow,
+    pub workflow_evidence: WorkflowEvidence,
+    pub handoff: Option<Box<HandoffManifestRequest>>,
+    pub max_response_tokens: Option<usize>,
+    pub response_profile: Option<crate::model::ContextResponseProfile>,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
     /// Index the repository.
@@ -626,7 +626,7 @@ pub enum Commands {
     Json(JsonArgs),
 
     /// Retrieve ranked task context within a token budget.
-    Context(ContextArgs),
+    Context(Box<ContextArgs>),
 
     /// Verify MCP identity, tools, and first-retrieval readiness.
     Doctor(DoctorArgs),

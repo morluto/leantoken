@@ -86,18 +86,20 @@ impl ContextPathScorer {
 
     pub(super) fn score(&self, path: &str) -> f64 {
         let path = path.to_lowercase();
-        let mut score = self
-            .terms
-            .iter()
-            .filter(|term| path.contains(term.as_str()))
-            .count() as f64;
+        let mut score = f64::from(
+            u32::try_from(
+                self.terms
+                    .iter()
+                    .filter(|term| path.contains(term.as_str()))
+                    .count(),
+            )
+            .unwrap_or(u32::MAX),
+        );
         for parts in &self.code_token_parts {
             let matched_parts = parts.iter().filter(|part| path.contains(*part)).count();
             if matched_parts >= 2 {
-                #[allow(clippy::cast_precision_loss)]
-                {
-                    score += (matched_parts * matched_parts) as f64;
-                }
+                let matched_parts = u32::try_from(matched_parts).unwrap_or(u32::MAX);
+                score += f64::from(matched_parts.saturating_mul(matched_parts));
             }
         }
         for (mentioned, component, extensions) in [

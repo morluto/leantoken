@@ -274,14 +274,17 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
     let mut conflicting_profile = context_limit_request(100);
     conflicting_profile.verbose_diagnostics = true;
     let invalid = services
-        .context_with_options_workflow_consistency_cancellable(
-            conflicting_profile,
-            None,
-            ContextWorkflow::Auto,
-            IndexConsistency::ReconcileWorkingTree,
-            ServiceCallOptions::new()
-                .with_context_response_profile(ContextResponseProfile::Balanced),
-            CancellationToken::new(),
+        .context_with_workflow_evidence_options_consistency_cancellable(
+            leantoken::services::ContextWorkflowOptions {
+                request: conflicting_profile,
+                handoff: None,
+                workflow: ContextWorkflow::Auto,
+                workflow_evidence: WorkflowEvidence::default(),
+                consistency: IndexConsistency::ReconcileWorkingTree,
+                options: ServiceCallOptions::new()
+                    .with_context_response_profile(ContextResponseProfile::Balanced),
+                cancellation: CancellationToken::new(),
+            },
         )
         .await
         .expect_err("explicit balanced profile must reject legacy verbose diagnostics");
@@ -302,13 +305,16 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
     );
 
     let invalid = services
-        .context_with_options_workflow_consistency_cancellable(
-            context_limit_request(100),
-            None,
-            ContextWorkflow::Auto,
-            IndexConsistency::ReconcileWorkingTree,
-            ServiceCallOptions::new().with_max_response_tokens(0),
-            CancellationToken::new(),
+        .context_with_workflow_evidence_options_consistency_cancellable(
+            leantoken::services::ContextWorkflowOptions {
+                request: context_limit_request(100),
+                handoff: None,
+                workflow: ContextWorkflow::Auto,
+                workflow_evidence: WorkflowEvidence::default(),
+                consistency: IndexConsistency::ReconcileWorkingTree,
+                options: ServiceCallOptions::new().with_max_response_tokens(0),
+                cancellation: CancellationToken::new(),
+            },
         )
         .await
         .expect_err("zero response limit must fail before reconciliation");

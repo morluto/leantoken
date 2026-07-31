@@ -514,14 +514,20 @@ impl Services {
         let prepared = self.prepare_search(&request)?;
         let mut snapshot = self.consistent(|session, generation| {
             self.search_snapshot(
-                session,
-                generation,
-                &request,
-                &prepared,
-                cancellation,
-                regex_planning,
-                diagnostics,
+                execution::SearchSnapshot {
+                    session,
+                    generation,
+                    cancellation,
+                },
+                execution::SearchQuery {
+                    request: &request,
+                    prepared: &prepared,
+                },
                 execution,
+                execution::SearchScan {
+                    regex_planning,
+                    diagnostics,
+                },
             )
         })?;
         self.finalize_bounded_response(&mut snapshot.response, execution.response_options)?;

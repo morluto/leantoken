@@ -53,18 +53,19 @@ impl Services {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn search_snapshot(
         &self,
-        session: &ReadSession,
-        generation: u64,
-        request: &SearchRequest,
-        prepared: &PreparedSearch,
-        cancellation: &CancellationToken,
-        regex_planning: RegexPlanning,
-        diagnostics: SearchDiagnostics,
+        snapshot: SearchSnapshot<'_>,
+        query: SearchQuery<'_>,
         execution: SearchExecutionOptions,
+        scan: SearchScan,
     ) -> Result<SearchSnapshotResult> {
+        let SearchSnapshot {
+            session,
+            generation,
+            cancellation,
+        } = snapshot;
+        let SearchQuery { request, prepared } = query;
         if request.query_receipt.is_some()
             && !matches!(
                 execution.output_shape,
@@ -96,27 +97,18 @@ impl Services {
             prepared.context_lines,
             cancellation,
         )?;
-        let lexical = self.collect_lexical_search_hits(
+        let snapshot = SearchSnapshot {
             session,
             generation,
-            request,
-            prepared,
             cancellation,
-            regex_planning,
-            diagnostics,
-        )?;
+        };
+        let query = SearchQuery { request, prepared };
+        let lexical = self.collect_lexical_search_hits(snapshot, query, scan)?;
         hits.extend(lexical.hits);
         let hits = order_search_hits(hits, request)?;
-        let (response, baseline_source_tokens, query_receipt) = self.build_search_page(
-            session,
-            generation,
-            request,
-            prepared,
-            execution,
-            cancellation,
-            hits,
-            offset,
-        )?;
+        let page = OrderedSearchPage { hits, offset };
+        let (response, baseline_source_tokens, query_receipt) =
+            self.build_search_page(snapshot, query, execution, page)?;
         Ok(SearchSnapshotResult {
             response,
             baseline_source_tokens,
@@ -304,17 +296,22 @@ impl Services {
         Ok(hits)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn collect_lexical_search_hits(
         &self,
-        session: &ReadSession,
-        generation: u64,
-        request: &SearchRequest,
-        prepared: &PreparedSearch,
-        cancellation: &CancellationToken,
-        regex_planning: RegexPlanning,
-        diagnostics: SearchDiagnostics,
+        snapshot: SearchSnapshot<'_>,
+        query: SearchQuery<'_>,
+        scan: SearchScan,
     ) -> Result<LexicalSearchBatch> {
+        let SearchSnapshot {
+            session,
+            generation,
+            cancellation,
+        } = snapshot;
+        let SearchQuery { request, prepared } = query;
+        let SearchScan {
+            regex_planning,
+            diagnostics,
+        } = scan;
         let mut phases = SearchPhaseCounters::default();
         let mut primitive_keys = Vec::new();
         let lexical = match request.mode {
@@ -500,18 +497,20 @@ impl Services {
             .collect())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_search_page(
         &self,
-        session: &ReadSession,
-        generation: u64,
-        request: &SearchRequest,
-        prepared: &PreparedSearch,
+        snapshot: SearchSnapshot<'_>,
+        query: SearchQuery<'_>,
         execution: SearchExecutionOptions,
-        cancellation: &CancellationToken,
-        hits: Vec<CandidateSearchHit>,
-        offset: usize,
+        page: OrderedSearchPage,
     ) -> Result<(SearchResponse, Option<usize>, QueryReceiptExecution)> {
+        let SearchSnapshot {
+            session,
+            generation,
+            cancellation,
+        } = snapshot;
+        let SearchQuery { request, prepared } = query;
+        let OrderedSearchPage { hits, offset } = page;
         let total_candidates = hits.len();
         let (mut selected, consumed, _) = select_search_page(
             &hits,
@@ -692,3 +691,28 @@ pub(super) fn order_search_hits(
     Ok(hits)
 }
 use super::*;
+use tokio_util::sync::CancellationToken;
+
+#[derive(Clone, Copy)]
+pub(super) struct SearchSnapshot<'a> {
+    pub session: &'a ReadSession,
+    pub generation: u64,
+    pub cancellation: &'a CancellationToken,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SearchQuery<'a> {
+    pub request: &'a SearchRequest,
+    pub prepared: &'a PreparedSearch,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct SearchScan {
+    pub regex_planning: RegexPlanning,
+    pub diagnostics: SearchDiagnostics,
+}
+
+pub(super) struct OrderedSearchPage {
+    pub hits: Vec<CandidateSearchHit>,
+    pub offset: usize,
+}

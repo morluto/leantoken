@@ -65,6 +65,7 @@ pub(super) use crate::text::{byte_to_line, expand_terms, identifier_words, line_
 pub(super) use crate::tokens::ResponseBudget;
 pub(super) use crate::{Error, Result};
 use facets::{ContextQuery, FacetKind};
+pub use pipeline::ContextWorkflowOptions;
 
 #[cfg(test)]
 mod tests;
