@@ -1,4 +1,4 @@
-pub(crate) const MAX_READ_CONNECTIONS: u32 = 8;
+pub(crate) use crate::concurrency::default_read_connection_capacity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReconciliationPublicationPhase {

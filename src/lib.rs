@@ -7,6 +7,7 @@
 pub mod cache;
 /// Command-line parsing and application requests.
 pub mod cli;
+mod concurrency;
 /// Repository configuration and cache-path discovery.
 pub mod config;
 /// Cross-process ownership and reconciliation locks for one repository cache.
