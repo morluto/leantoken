@@ -97,17 +97,15 @@ pub(super) fn select_candidates(
             non_exact_suffix[index] =
                 non_exact_suffix[index + 1] + usize::from(!available[index].exact_identifier);
         }
-        if !choose_stratified_subset(
-            &available,
-            0,
-            exact_quota,
-            config.non_exact_per_language,
-            config.max_tasks_per_repository,
-            &exact_suffix,
-            &non_exact_suffix,
-            &mut HashMap::new(),
-            &mut chosen,
-        ) {
+        let mut selector = StratifiedSelector {
+            candidates: &available,
+            repository_cap: config.max_tasks_per_repository,
+            exact_suffix: &exact_suffix,
+            non_exact_suffix: &non_exact_suffix,
+            repositories: &mut HashMap::new(),
+            chosen_indexes: &mut chosen,
+        };
+        if !selector.choose(0, exact_quota, config.non_exact_per_language) {
             return Err(format!(
                 "{} cannot satisfy exact/non-exact quotas {exact_quota}/{} from {exact_available}/{non_exact_available} available tasks with repository cap {}",
                 language.as_str(),
@@ -143,69 +141,53 @@ pub(super) fn select_candidates(
     Ok(selected)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn choose_stratified_subset<'a>(
+struct StratifiedSelector<'a> {
     candidates: &'a [Candidate],
-    index: usize,
-    exact_remaining: usize,
-    non_exact_remaining: usize,
     repository_cap: usize,
-    exact_suffix: &[usize],
-    non_exact_suffix: &[usize],
-    repositories: &mut HashMap<&'a str, usize>,
-    chosen_indexes: &mut Vec<usize>,
-) -> bool {
-    if exact_remaining == 0 && non_exact_remaining == 0 {
-        return true;
-    }
-    if index == candidates.len()
-        || exact_suffix[index] < exact_remaining
-        || non_exact_suffix[index] < non_exact_remaining
-    {
-        return false;
-    }
+    exact_suffix: &'a [usize],
+    non_exact_suffix: &'a [usize],
+    repositories: &'a mut HashMap<&'a str, usize>,
+    chosen_indexes: &'a mut Vec<usize>,
+}
 
-    let candidate = &candidates[index];
-    let needed = if candidate.exact_identifier {
-        exact_remaining > 0
-    } else {
-        non_exact_remaining > 0
-    };
-    let repository = candidate.repository.as_str();
-    let previous_count = repositories.get(repository).copied().unwrap_or(0);
-    if needed && previous_count < repository_cap {
-        repositories.insert(repository, previous_count + 1);
-        chosen_indexes.push(index);
-        let found = choose_stratified_subset(
-            candidates,
-            index + 1,
-            exact_remaining - usize::from(candidate.exact_identifier),
-            non_exact_remaining - usize::from(!candidate.exact_identifier),
-            repository_cap,
-            exact_suffix,
-            non_exact_suffix,
-            repositories,
-            chosen_indexes,
-        );
-        if found {
+impl<'a> StratifiedSelector<'a> {
+    fn choose(&mut self, index: usize, exact_remaining: usize, non_exact_remaining: usize) -> bool {
+        if exact_remaining == 0 && non_exact_remaining == 0 {
             return true;
         }
-        chosen_indexes.pop();
-        if previous_count == 0 {
-            repositories.remove(repository);
-        } else {
-            repositories.insert(repository, previous_count);
+        if index == self.candidates.len()
+            || self.exact_suffix[index] < exact_remaining
+            || self.non_exact_suffix[index] < non_exact_remaining
+        {
+            return false;
         }
+
+        let candidate = &self.candidates[index];
+        let needed = if candidate.exact_identifier {
+            exact_remaining > 0
+        } else {
+            non_exact_remaining > 0
+        };
+        let repository = candidate.repository.as_str();
+        let previous_count = self.repositories.get(repository).copied().unwrap_or(0);
+        if needed && previous_count < self.repository_cap {
+            self.repositories.insert(repository, previous_count + 1);
+            self.chosen_indexes.push(index);
+            let found = self.choose(
+                index + 1,
+                exact_remaining - usize::from(candidate.exact_identifier),
+                non_exact_remaining - usize::from(!candidate.exact_identifier),
+            );
+            if found {
+                return true;
+            }
+            self.chosen_indexes.pop();
+            if previous_count == 0 {
+                self.repositories.remove(repository);
+            } else {
+                self.repositories.insert(repository, previous_count);
+            }
+        }
+        self.choose(index + 1, exact_remaining, non_exact_remaining)
     }
-    choose_stratified_subset(
-        candidates,
-        index + 1,
-        exact_remaining,
-        non_exact_remaining,
-        repository_cap,
-        exact_suffix,
-        non_exact_suffix,
-        repositories,
-        chosen_indexes,
-    )
 }

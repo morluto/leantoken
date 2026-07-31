@@ -1455,13 +1455,15 @@ fn decide(args: &DecideArgs) -> Result<(), DynError> {
     let candidate_bytes = fs::read(&args.candidate_report_output)?;
     decide_report_pair(
         args,
-        evaluator,
-        ranked_region_evaluator,
+        ReportPairCommitments {
+            evaluator,
+            ranked_region_evaluator,
+            manifest_blake3: &manifest_blake3,
+            baseline_predictions_blake3: &baseline_predictions_blake3,
+            candidate_predictions_blake3: &candidate_predictions_blake3,
+        },
         &baseline_bytes,
         &candidate_bytes,
-        &manifest_blake3,
-        &baseline_predictions_blake3,
-        &candidate_predictions_blake3,
     )
 }
 
@@ -1485,17 +1487,27 @@ fn run_ranked_evaluation(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn decide_report_pair(
-    args: &DecideArgs,
+struct ReportPairCommitments<'a> {
     evaluator: ArtifactIdentity,
     ranked_region_evaluator: ArtifactIdentity,
+    manifest_blake3: &'a str,
+    baseline_predictions_blake3: &'a str,
+    candidate_predictions_blake3: &'a str,
+}
+
+fn decide_report_pair(
+    args: &DecideArgs,
+    commitments: ReportPairCommitments<'_>,
     baseline_bytes: &[u8],
     candidate_bytes: &[u8],
-    manifest_blake3: &str,
-    baseline_predictions_blake3: &str,
-    candidate_predictions_blake3: &str,
 ) -> Result<(), DynError> {
+    let ReportPairCommitments {
+        evaluator,
+        ranked_region_evaluator,
+        manifest_blake3,
+        baseline_predictions_blake3,
+        candidate_predictions_blake3,
+    } = commitments;
     let baseline: EvaluationReport = serde_json::from_slice(baseline_bytes)?;
     let candidate: EvaluationReport = serde_json::from_slice(candidate_bytes)?;
     validate_report_pair(&baseline, &candidate)?;
@@ -2148,13 +2160,15 @@ mod tests {
                     evaluator_binary_blake3: "d".repeat(HASH_HEX_LEN),
                 },
             },
-            test_artifact(),
-            test_artifact(),
+            ReportPairCommitments {
+                evaluator: test_artifact(),
+                ranked_region_evaluator: test_artifact(),
+                manifest_blake3: &baseline.manifest_blake3,
+                baseline_predictions_blake3: &baseline.predictions_blake3,
+                candidate_predictions_blake3: &candidate.predictions_blake3,
+            },
             &baseline_bytes,
             &candidate_bytes,
-            &baseline.manifest_blake3,
-            &baseline.predictions_blake3,
-            &candidate.predictions_blake3,
         )
         .expect("decide reports");
         serde_json::from_slice(&fs::read(output).expect("read decision")).expect("parse decision")

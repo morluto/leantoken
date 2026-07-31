@@ -428,23 +428,23 @@ pub(crate) fn prepare(config: &PrepareConfig<'_>) -> Result<PreparationReceipt, 
         return Err("--require-license-audit needs a complete repository license map".into());
     }
 
-    let receipt = build_receipt(
+    let receipt = build_receipt(ReceiptInputs {
         config,
-        &dataset_bytes,
-        &source_artifact_bytes,
-        &harness_binary_bytes,
-        &canonical_records_blake3,
+        dataset_bytes: &dataset_bytes,
+        source_artifact_bytes: &source_artifact_bytes,
+        harness_binary_bytes: &harness_binary_bytes,
+        canonical_records_blake3: &canonical_records_blake3,
         exclusion_receipt,
         availability_after_exclusions,
         input_record_count,
         eligible_candidate_count,
-        &selected,
-        &labels,
+        selected: &selected,
+        labels: &labels,
         skipped,
         licenses,
-        &task_bytes,
-        &label_bytes,
-    )?;
+        task_bytes: &task_bytes,
+        label_bytes: &label_bytes,
+    })?;
     let receipt_bytes = serde_json::to_vec_pretty(&receipt)?;
 
     write_new(config.tasks_output, &task_bytes, false)?;
@@ -805,24 +805,42 @@ fn load_license_audit(
     Ok(Some(values))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_receipt(
-    config: &PrepareConfig<'_>,
-    dataset_bytes: &[u8],
-    source_artifact_bytes: &[u8],
-    harness_binary_bytes: &[u8],
-    canonical_records_blake3: &str,
+struct ReceiptInputs<'a> {
+    config: &'a PrepareConfig<'a>,
+    dataset_bytes: &'a [u8],
+    source_artifact_bytes: &'a [u8],
+    harness_binary_bytes: &'a [u8],
+    canonical_records_blake3: &'a str,
     exclusion_receipt: Option<ExclusionReceipt>,
     availability_after_exclusions: Option<CandidateAvailabilityReceipt>,
     input_record_count: usize,
     eligible_candidate_count: usize,
-    selected: &[Candidate],
-    labels: &[SealedLabel],
+    selected: &'a [Candidate],
+    labels: &'a [SealedLabel],
     skipped: BTreeMap<String, usize>,
     licenses: Option<Vec<RepositoryLicense>>,
-    task_bytes: &[u8],
-    label_bytes: &[u8],
-) -> Result<PreparationReceipt, DynError> {
+    task_bytes: &'a [u8],
+    label_bytes: &'a [u8],
+}
+
+fn build_receipt(inputs: ReceiptInputs<'_>) -> Result<PreparationReceipt, DynError> {
+    let ReceiptInputs {
+        config,
+        dataset_bytes,
+        source_artifact_bytes,
+        harness_binary_bytes,
+        canonical_records_blake3,
+        exclusion_receipt,
+        availability_after_exclusions,
+        input_record_count,
+        eligible_candidate_count,
+        selected,
+        labels,
+        skipped,
+        licenses,
+        task_bytes,
+        label_bytes,
+    } = inputs;
     let mut language_tasks = BTreeMap::new();
     let mut repositories = BTreeMap::<&str, usize>::new();
     let mut exact_identifier_tasks = 0usize;

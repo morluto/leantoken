@@ -378,12 +378,14 @@ fn main() -> Result<(), DynError> {
     for run in &raw_report.runs {
         runs.push(classify_run(
             run,
-            &raw_report.experiment_id,
-            &raw_report.manifest_blake3,
-            &artifacts_root,
-            &labels,
-            &repositories,
-            &manifest,
+            RunClassificationEnv {
+                experiment_id: &raw_report.experiment_id,
+                model_ab_manifest_blake3: &raw_report.manifest_blake3,
+                artifacts_root: &artifacts_root,
+                labels: &labels,
+                repositories: &repositories,
+                manifest: &manifest,
+            },
             &mut line_counts,
             &mut verified_artifacts,
         )?);
@@ -492,18 +494,39 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), DynError> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct RunClassificationEnv<'a> {
+    experiment_id: &'a str,
+    model_ab_manifest_blake3: &'a str,
+    artifacts_root: &'a Path,
+    labels: &'a BTreeMap<String, BTreeSet<String>>,
+    repositories: &'a BTreeMap<String, PathBuf>,
+    manifest: &'a Manifest,
+}
+
+struct ClassificationContext<'a> {
+    repository: &'a Path,
+    task_id: &'a str,
+    relevant: &'a BTreeSet<String>,
+    manifest: &'a Manifest,
+    line_counts: &'a mut HashMap<(String, String), usize>,
+    metrics: &'a mut Metrics,
+}
+
 fn classify_run(
     run: &RawRun,
-    experiment_id: &str,
-    model_ab_manifest_blake3: &str,
-    artifacts_root: &Path,
-    labels: &BTreeMap<String, BTreeSet<String>>,
-    repositories: &BTreeMap<String, PathBuf>,
-    manifest: &Manifest,
+    env: RunClassificationEnv<'_>,
     line_counts: &mut HashMap<(String, String), usize>,
     verified_artifacts: &mut usize,
 ) -> Result<RunClassification, DynError> {
+    let RunClassificationEnv {
+        experiment_id,
+        model_ab_manifest_blake3,
+        artifacts_root,
+        labels,
+        repositories,
+        manifest,
+    } = env;
     let mut metrics = Metrics::default();
     let directory = artifacts_root
         .join(experiment_id)
@@ -549,25 +572,18 @@ fn classify_run(
             model_ab_manifest_blake3,
         )?;
         let call_tools = mcp_tools_by_call_id(&trajectory)?;
-        classify_trace(
-            &trace,
-            &call_tools,
-            repository,
-            &run.task_id,
-            relevant,
-            manifest,
-            line_counts,
-            &mut metrics,
-        )?;
-        classify_trajectory(
-            &trajectory,
-            repository,
-            &run.task_id,
-            relevant,
-            manifest,
-            line_counts,
-            &mut metrics,
-        )?;
+        {
+            let mut ctx = ClassificationContext {
+                repository,
+                task_id: &run.task_id,
+                relevant,
+                manifest,
+                line_counts: &mut *line_counts,
+                metrics: &mut metrics,
+            };
+            classify_trace(&trace, &call_tools, &mut ctx)?;
+            classify_trajectory(&trajectory, &mut ctx)?;
+        }
         evidence_scope = EvidenceScope::ExactTrace;
 
         if let Some(identity) = &run.artifacts.prewalk_handoff {
@@ -613,25 +629,18 @@ fn classify_run(
             calls: value.evidence_calls.clone(),
         };
         let call_tools = mcp_tools_by_call_id(&trajectory)?;
-        classify_trace(
-            &trace,
-            &call_tools,
-            repository,
-            &run.task_id,
-            relevant,
-            manifest,
-            line_counts,
-            &mut metrics,
-        )?;
-        classify_trajectory(
-            &trajectory,
-            repository,
-            &run.task_id,
-            relevant,
-            manifest,
-            line_counts,
-            &mut metrics,
-        )?;
+        {
+            let mut ctx = ClassificationContext {
+                repository,
+                task_id: &run.task_id,
+                relevant,
+                manifest,
+                line_counts: &mut *line_counts,
+                metrics: &mut metrics,
+            };
+            classify_trace(&trace, &call_tools, &mut ctx)?;
+            classify_trajectory(&trajectory, &mut ctx)?;
+        }
         metrics.first_edit_sequence = Some(value.first_validated_edit.edit_sequence);
         first_validated_edit_sequence = Some(value.first_validated_edit.edit_sequence);
         handoff = Some(summarize_handoff(&value, None));
@@ -682,29 +691,24 @@ fn classify_run(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn classify_trace(
     trace: &ToolTrace,
     call_tools: &HashMap<String, String>,
-    repository: &Path,
-    task_id: &str,
-    relevant: &BTreeSet<String>,
-    manifest: &Manifest,
-    line_counts: &mut HashMap<(String, String), usize>,
-    metrics: &mut Metrics,
+    ctx: &mut ClassificationContext<'_>,
 ) -> Result<(), DynError> {
     for call in &trace.calls {
         if call.tool_name == "leantoken" {
-            metrics.source_tokens = metrics
+            ctx.metrics.source_tokens = ctx
+                .metrics
                 .source_tokens
                 .checked_add(call.result_source_tokens)
                 .ok_or("source-token overflow")?;
         }
         if call.tool_name == "edit"
             && call.outcome == ToolOutcome::Success
-            && metrics.first_edit_sequence.is_none()
+            && ctx.metrics.first_edit_sequence.is_none()
         {
-            metrics.first_edit_sequence = Some(call.sequence);
+            ctx.metrics.first_edit_sequence = Some(call.sequence);
         }
         for range in &call.ranges {
             let tool = call_tools
@@ -728,12 +732,7 @@ fn classify_trace(
                         "leantoken_read" | "leantoken_context"
                     ),
                 },
-                repository,
-                task_id,
-                relevant,
-                manifest,
-                line_counts,
-                metrics,
+                ctx,
             )?;
         }
     }
@@ -742,12 +741,7 @@ fn classify_trace(
 
 fn classify_trajectory(
     trajectory: &Trajectory,
-    repository: &Path,
-    task_id: &str,
-    relevant: &BTreeSet<String>,
-    manifest: &Manifest,
-    line_counts: &mut HashMap<(String, String), usize>,
-    metrics: &mut Metrics,
+    ctx: &mut ClassificationContext<'_>,
 ) -> Result<(), DynError> {
     let mut event_sequence = 1_000_000usize;
     for event in &trajectory.events {
@@ -759,9 +753,9 @@ fn classify_trajectory(
             Some("mcp_tool_call") => {
                 let tool = item["tool"].as_str().unwrap_or_default();
                 if let Some(kind) = mcp_discovery_kind(tool) {
-                    metrics.discovery_order.push(kind);
-                    metrics.retrieval_calls += 1;
-                    classify_hash_and_generation(tool, item, metrics)?;
+                    ctx.metrics.discovery_order.push(kind);
+                    ctx.metrics.retrieval_calls += 1;
+                    classify_hash_and_generation(tool, item, ctx.metrics)?;
                 }
             }
             Some("command_execution") => {
@@ -773,30 +767,35 @@ fn classify_trajectory(
                 let failed =
                     (has_search || has_read) && (exit_code != Some(0) || output.trim().is_empty());
                 if has_search || has_read {
-                    observe_discovery_outcome(metrics, failed);
+                    observe_discovery_outcome(ctx.metrics, failed);
                 }
                 if has_search {
-                    metrics.discovery_order.push(DiscoveryKind::NativeSearch);
-                    metrics.retrieval_calls += 1;
+                    ctx.metrics
+                        .discovery_order
+                        .push(DiscoveryKind::NativeSearch);
+                    ctx.metrics.retrieval_calls += 1;
                     if failed {
-                        metrics.failed_searches += 1;
+                        ctx.metrics.failed_searches += 1;
                     }
                 }
                 if has_read {
-                    metrics.discovery_order.push(DiscoveryKind::NativeRead);
-                    metrics.retrieval_calls += 1;
-                    metrics.native_read_commands += 1;
-                    let reads = native_reads(command, repository, task_id, line_counts)?;
+                    ctx.metrics.discovery_order.push(DiscoveryKind::NativeRead);
+                    ctx.metrics.retrieval_calls += 1;
+                    ctx.metrics.native_read_commands += 1;
+                    let reads =
+                        native_reads(command, ctx.repository, ctx.task_id, ctx.line_counts)?;
                     if !reads.is_empty() {
-                        metrics.parsed_native_read_commands += 1;
+                        ctx.metrics.parsed_native_read_commands += 1;
                     }
-                    let output_tokens = u64::try_from(manifest.tokenizer.count(output))?;
-                    metrics.source_tokens = metrics
+                    let output_tokens = u64::try_from(ctx.manifest.tokenizer.count(output))?;
+                    ctx.metrics.source_tokens = ctx
+                        .metrics
                         .source_tokens
                         .checked_add(output_tokens)
                         .ok_or("source-token overflow")?;
                     if has_search || reads.len() != 1 {
-                        metrics.mixed_native_read_tokens = metrics
+                        ctx.metrics.mixed_native_read_tokens = ctx
+                            .metrics
                             .mixed_native_read_tokens
                             .checked_add(output_tokens)
                             .ok_or("mixed read-token overflow")?;
@@ -813,18 +812,14 @@ fn classify_trajectory(
                                 source_tokens,
                                 full_content_eligible: true,
                             },
-                            repository,
-                            task_id,
-                            relevant,
-                            manifest,
-                            line_counts,
-                            metrics,
+                            ctx,
                         )?;
                     }
                 } else if has_search {
-                    metrics.source_tokens = metrics
+                    ctx.metrics.source_tokens = ctx
+                        .metrics
                         .source_tokens
-                        .checked_add(u64::try_from(manifest.tokenizer.count(output))?)
+                        .checked_add(u64::try_from(ctx.manifest.tokenizer.count(output))?)
                         .ok_or("source-token overflow")?;
                 }
             }
@@ -909,48 +904,44 @@ fn observe_discovery_outcome(metrics: &mut Metrics, failed: bool) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn observe_range(
     range: ObservedRange,
-    repository: &Path,
-    task_id: &str,
-    relevant: &BTreeSet<String>,
-    manifest: &Manifest,
-    line_counts: &mut HashMap<(String, String), usize>,
-    metrics: &mut Metrics,
+    ctx: &mut ClassificationContext<'_>,
 ) -> Result<(), DynError> {
     if range.start_line == 0 || range.end_line < range.start_line {
         return Err("trajectory range is invalid".into());
     }
     let lines = range.end_line - range.start_line + 1;
-    advance_range_call(metrics, range.call_sequence);
-    let file_lines = file_line_count(repository, task_id, &range.path, line_counts)?;
+    advance_range_call(ctx.metrics, range.call_sequence);
+    let file_lines = file_line_count(ctx.repository, ctx.task_id, &range.path, ctx.line_counts)?;
     let whole =
         range.full_content_eligible && range.start_line == 1 && range.end_line >= file_lines;
     let broad = range.full_content_eligible
-        && (lines >= manifest.broad_read_min_lines
+        && (lines >= ctx.manifest.broad_read_min_lines
             || (lines >= 200
-                && lines as f64 / file_lines.max(1) as f64 >= manifest.broad_read_min_fraction));
+                && lines as f64 / file_lines.max(1) as f64
+                    >= ctx.manifest.broad_read_min_fraction));
     if whole {
-        metrics.whole_file_reads += 1;
-        metrics.whole_file_read_tokens += range.source_tokens;
+        ctx.metrics.whole_file_reads += 1;
+        ctx.metrics.whole_file_read_tokens += range.source_tokens;
     }
     if broad {
-        metrics.broad_reads += 1;
-        metrics.broad_read_tokens += range.source_tokens;
+        ctx.metrics.broad_reads += 1;
+        ctx.metrics.broad_read_tokens += range.source_tokens;
     }
-    if !relevant.contains(&range.path) {
-        metrics.dead_end_reads += 1;
-        metrics.dead_end_source_tokens += range.source_tokens;
-        metrics.active_call_has_dead_end = true;
+    if !ctx.relevant.contains(&range.path) {
+        ctx.metrics.dead_end_reads += 1;
+        ctx.metrics.dead_end_source_tokens += range.source_tokens;
+        ctx.metrics.active_call_has_dead_end = true;
     } else {
-        metrics.active_call_has_relevant = true;
-        if metrics.pending_dead_end {
-            metrics.dead_end_recoveries += 1;
-            metrics.pending_dead_end = false;
+        ctx.metrics.active_call_has_relevant = true;
+        if ctx.metrics.pending_dead_end {
+            ctx.metrics.dead_end_recoveries += 1;
+            ctx.metrics.pending_dead_end = false;
         }
     }
-    let previous = metrics
+    let previous = ctx
+        .metrics
         .ranges
         .iter()
         .filter(|seen| seen.call_sequence < range.call_sequence && seen.path == range.path)
@@ -959,16 +950,16 @@ fn observe_range(
         .iter()
         .any(|seen| seen.start_line == range.start_line && seen.end_line == range.end_line)
     {
-        metrics.exact_rereads += 1;
-        metrics.exact_reread_tokens += range.source_tokens;
+        ctx.metrics.exact_rereads += 1;
+        ctx.metrics.exact_reread_tokens += range.source_tokens;
     } else if previous
         .iter()
         .any(|seen| seen.start_line <= range.end_line && range.start_line <= seen.end_line)
     {
-        metrics.overlap_rereads += 1;
-        metrics.overlap_reread_tokens += range.source_tokens;
+        ctx.metrics.overlap_rereads += 1;
+        ctx.metrics.overlap_reread_tokens += range.source_tokens;
     }
-    metrics.ranges.push(range);
+    ctx.metrics.ranges.push(range);
     Ok(())
 }
 
@@ -1598,6 +1589,14 @@ mod tests {
         for (sequence, start, end, tokens) in
             [(1, 1, 450, 100), (2, 1, 450, 100), (3, 400, 500, 50)]
         {
+            let mut ctx = ClassificationContext {
+                repository: repository.path(),
+                task_id: "task",
+                relevant: &relevant,
+                manifest: &manifest,
+                line_counts: &mut cache,
+                metrics: &mut metrics,
+            };
             observe_range(
                 ObservedRange {
                     call_sequence: sequence,
@@ -1607,12 +1606,7 @@ mod tests {
                     source_tokens: tokens,
                     full_content_eligible: true,
                 },
-                repository.path(),
-                "task",
-                &relevant,
-                &manifest,
-                &mut cache,
-                &mut metrics,
+                &mut ctx,
             )
             .expect("range");
         }
@@ -1645,6 +1639,15 @@ mod tests {
             (3, "dead.rs"),
             (3, "target.rs"),
         ] {
+            let manifest = test_manifest();
+            let mut ctx = ClassificationContext {
+                repository: repository.path(),
+                task_id: "task",
+                relevant: &relevant,
+                manifest: &manifest,
+                line_counts: &mut cache,
+                metrics: &mut metrics,
+            };
             observe_range(
                 ObservedRange {
                     call_sequence: sequence,
@@ -1654,12 +1657,7 @@ mod tests {
                     source_tokens: 1,
                     full_content_eligible: true,
                 },
-                repository.path(),
-                "task",
-                &relevant,
-                &test_manifest(),
-                &mut cache,
-                &mut metrics,
+                &mut ctx,
             )
             .expect("range");
         }

@@ -439,294 +439,341 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
 
     let mut candidates = Vec::new();
     candidates.push(candidate(
-        "structured_mode",
-        "send the unchanged response as structuredContent only",
-        vec![compare(
-            &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &pre_change_context,
-            McpResultMode::Structured,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
-        )?],
-        true,
-        true,
-        true,
-        true,
-        "one frozen Codex task",
-        if codex_structured {
-            "Codex CLI 0.144.1 only"
-        } else {
-            "unproven"
+        CandidateSpec {
+            id: "structured_mode",
+            change: "send the unchanged response as structuredContent only",
+            round_trip: true,
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "one frozen Codex task",
+            host_compatibility: if codex_structured {
+                "Codex CLI 0.144.1 only"
+            } else {
+                "unproven"
+            },
+            decision: "host_scoped_opt_in",
+            rationale: "Codex CLI 0.144.1 consumed structured-only results in one frozen task; the global matrix remains incomplete.",
         },
-        "host_scoped_opt_in",
-        "Codex CLI 0.144.1 consumed structured-only results in one frozen task; the global matrix remains incomplete.",
-    ));
-    candidates.push(candidate(
-        "text_mode",
-        "send the unchanged response as text content only",
         vec![compare(
             &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &pre_change_context,
-            McpResultMode::Text,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &pre_change_context,
+                candidate_mode: McpResultMode::Structured,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        true,
-        true,
-        true,
-        true,
-        "none",
-        "no real-host text-only model-consumption proof",
-        "rejected",
-        "Local serialization savings cannot substitute for host compatibility evidence.",
     ));
     candidates.push(candidate(
-        "omit_task_fingerprint",
-        "omit the internal task hash from the serialized receipt",
+        CandidateSpec {
+            id: "text_mode",
+            change: "send the unchanged response as text content only",
+            round_trip: true,
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "none",
+            host_compatibility: "no real-host text-only model-consumption proof",
+            decision: "rejected",
+            rationale: "Local serialization savings cannot substitute for host compatibility evidence.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &compact_context,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &pre_change_context,
+                candidate_mode: McpResultMode::Text,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(compact_context.clone()).is_ok(),
-        true,
-        true,
-        true,
-        "not required: source and retrieval are unchanged",
-        "representation-neutral",
-        "accepted",
-        "The request already carries the task, no follow-up accepts the fingerprint, and aligned fragment hashes retain deduplication identity.",
+    ));
+    candidates.push(candidate(
+        CandidateSpec {
+            id: "omit_task_fingerprint",
+            change: "omit the internal task hash from the serialized receipt",
+            round_trip: serde_json::from_value::<ContextResponse>(compact_context.clone()).is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "not required: source and retrieval are unchanged",
+            host_compatibility: "representation-neutral",
+            decision: "accepted",
+            rationale: "The request already carries the task, no follow-up accepts the fingerprint, and aligned fragment hashes retain deduplication identity.",
+        },
+        vec![compare(
+            &wire,
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &compact_context,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
+        )?],
     ));
 
     let expanded_receipt = expand_receipt_identities(&pre_change_context, &response)?;
     candidates.push(candidate(
-        "aligned_receipt_hash_table",
-        "retain one hash array aligned with fragments instead of repeated identity objects",
+        CandidateSpec {
+            id: "aligned_receipt_hash_table",
+            change: "retain one hash array aligned with fragments instead of repeated identity objects",
+            round_trip: serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "not required: source and retrieval are unchanged",
+            host_compatibility: "representation-neutral",
+            decision: "retained_existing",
+            rationale: "The checked response keeps every path/range in fragments and every aligned content hash in the receipt.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &expanded_receipt,
-            McpResultMode::Dual,
-            &pre_change_context,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &expanded_receipt,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &pre_change_context,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
-        true,
-        true,
-        true,
-        "not required: source and retrieval are unchanged",
-        "representation-neutral",
-        "retained_existing",
-        "The checked response keeps every path/range in fragments and every aligned content hash in the receipt.",
     ));
 
     let expanded_fragments = expand_fragment_metadata(&pre_change_context, &response)?;
     candidates.push(candidate(
-        "compact_fragment_metadata",
-        "omit repeated hash, score, and token-count diagnostics from serialized fragments",
+        CandidateSpec {
+            id: "compact_fragment_metadata",
+            change: "omit repeated hash, score, and token-count diagnostics from serialized fragments",
+            round_trip: serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "not required: source and retrieval are unchanged",
+            host_compatibility: "representation-neutral",
+            decision: "retained_existing",
+            rationale: "Receipt hashes, range fields, selection reasons, and aggregate emitted tokens preserve the required semantics.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &expanded_fragments,
-            McpResultMode::Dual,
-            &pre_change_context,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &expanded_fragments,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &pre_change_context,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
-        true,
-        true,
-        true,
-        "not required: source and retrieval are unchanged",
-        "representation-neutral",
-        "retained_existing",
-        "Receipt hashes, range fields, selection reasons, and aggregate emitted tokens preserve the required semantics.",
     ));
 
     let expanded_defaults = expand_context_defaults(&pre_change_context, &response)?;
     let outline_empty_value = serde_json::to_value(&outline_empty)?;
     let outline_expanded = expand_outline_defaults(outline_empty_value.clone())?;
     candidates.push(candidate(
-        "omit_empty_and_default_fields",
-        "omit default source representation, null cursor, and empty outline collections",
+        CandidateSpec {
+            id: "omit_empty_and_default_fields",
+            change: "omit default source representation, null cursor, and empty outline collections",
+            round_trip: serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "not required: source and retrieval are unchanged",
+            host_compatibility: "representation-neutral",
+            decision: "retained_existing",
+            rationale: "Serde defaults round-trip each omitted value without hiding freshness or token-count exactness.",
+        },
         vec![
             compare(
                 &wire,
-                &context_call,
-                &expanded_defaults,
-                McpResultMode::Dual,
-                &pre_change_context,
-                McpResultMode::Dual,
-                response.meta.source_tokens,
-                follow_up,
-                "context_response",
+                ComparisonSpec {
+                    call_request: &context_call,
+                    baseline_value: &expanded_defaults,
+                    baseline_mode: McpResultMode::Dual,
+                    candidate_value: &pre_change_context,
+                    candidate_mode: McpResultMode::Dual,
+                    source_tokens: response.meta.source_tokens,
+                    follow_up,
+                    surface: "context_response",
+                },
             )?,
             compare(
                 &wire,
-                &outline_empty_call,
-                &outline_expanded,
-                McpResultMode::Dual,
-                &outline_empty_value,
-                McpResultMode::Dual,
-                outline_empty.meta.source_tokens,
-                FollowUp::default(),
-                "empty_outline_response",
+                ComparisonSpec {
+                    call_request: &outline_empty_call,
+                    baseline_value: &outline_expanded,
+                    baseline_mode: McpResultMode::Dual,
+                    candidate_value: &outline_empty_value,
+                    candidate_mode: McpResultMode::Dual,
+                    source_tokens: outline_empty.meta.source_tokens,
+                    follow_up: FollowUp::default(),
+                    surface: "empty_outline_response",
+                },
             )?,
         ],
-        serde_json::from_value::<ContextResponse>(pre_change_context.clone()).is_ok(),
-        true,
-        true,
-        true,
-        "not required: source and retrieval are unchanged",
-        "representation-neutral",
-        "retained_existing",
-        "Serde defaults round-trip each omitted value without hiding freshness or token-count exactness.",
     ));
 
     let short_reasons = encode_short_reasons(pre_change_context.clone())?;
     candidates.push(candidate(
-        "short_reason_codes",
-        "replace readable selection reasons with one-letter codes",
+        CandidateSpec {
+            id: "short_reason_codes",
+            change: "replace readable selection reasons with one-letter codes",
+            round_trip: serde_json::from_value::<ContextResponse>(short_reasons.clone()).is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "none",
+            host_compatibility: "representation-neutral but model interpretation untested",
+            decision: "rejected",
+            rationale: "The small local delta does not justify making grounded selection reasons opaque without controlled model evidence.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &short_reasons,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &short_reasons,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(short_reasons).is_ok(),
-        true,
-        true,
-        true,
-        "none",
-        "representation-neutral but model interpretation untested",
-        "rejected",
-        "The small local delta does not justify making grounded selection reasons opaque without controlled model evidence.",
     ));
 
     let no_omission_details = remove_field(pre_change_context.clone(), "omitted")?;
     candidates.push(candidate(
-        "omit_omission_details",
-        "remove bounded paths and ranges for omitted candidates",
+        CandidateSpec {
+            id: "omit_omission_details",
+            change: "remove bounded paths and ranges for omitted candidates",
+            round_trip: serde_json::from_value::<ContextResponse>(no_omission_details.clone())
+                .is_ok(),
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: false,
+            model_behavior_evidence: "not applicable",
+            host_compatibility: "representation-neutral",
+            decision: "rejected",
+            rationale: "The token saving removes explicit known-content and budget omission accounting required to diagnose resends.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &no_omission_details,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &no_omission_details,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(no_omission_details).is_ok(),
-        true,
-        true,
-        false,
-        "not applicable",
-        "representation-neutral",
-        "rejected",
-        "The token saving removes explicit known-content and budget omission accounting required to diagnose resends.",
     ));
 
     let no_default_meta = omit_default_meta(pre_change_context.clone())?;
     candidates.push(candidate(
-        "omit_default_meta",
-        "omit current freshness and exact-token flags",
+        CandidateSpec {
+            id: "omit_default_meta",
+            change: "omit current freshness and exact-token flags",
+            round_trip: serde_json::from_value::<ContextResponse>(no_default_meta.clone()).is_ok(),
+            freshness_semantics: false,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "not applicable",
+            host_compatibility: "representation-neutral",
+            decision: "rejected",
+            rationale: "Freshness and tokenizer exactness are explicit correctness boundaries, not optional diagnostics.",
+        },
         vec![compare(
             &wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            &no_default_meta,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
-            follow_up,
-            "context_response",
+            ComparisonSpec {
+                call_request: &context_call,
+                baseline_value: &pre_change_context,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &no_default_meta,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: response.meta.source_tokens,
+                follow_up,
+                surface: "context_response",
+            },
         )?],
-        serde_json::from_value::<ContextResponse>(no_default_meta).is_ok(),
-        false,
-        true,
-        true,
-        "not applicable",
-        "representation-neutral",
-        "rejected",
-        "Freshness and tokenizer exactness are explicit correctness boundaries, not optional diagnostics.",
     ));
 
     let outline_rich_value = serde_json::to_value(&outline_rich)?;
     let outline_tuples = compact_outline_tuples(outline_rich_value.clone())?;
     candidates.push(candidate(
-        "compact_outline_tuples",
-        "replace named outline objects with positional arrays",
+        CandidateSpec {
+            id: "compact_outline_tuples",
+            change: "replace named outline objects with positional arrays",
+            round_trip: false,
+            freshness_semantics: true,
+            range_identity: false,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "none",
+            host_compatibility: "representation-neutral",
+            decision: "rejected",
+            rationale: "Positional encoding breaks the current typed response and makes line and byte range fields ambiguous to generic clients.",
+        },
         vec![compare(
             &wire,
-            &outline_rich_call,
-            &outline_rich_value,
-            McpResultMode::Dual,
-            &outline_tuples,
-            McpResultMode::Dual,
-            outline_rich.meta.source_tokens,
-            FollowUp::default(),
-            "outline_response",
+            ComparisonSpec {
+                call_request: &outline_rich_call,
+                baseline_value: &outline_rich_value,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &outline_tuples,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: outline_rich.meta.source_tokens,
+                follow_up: FollowUp::default(),
+                surface: "outline_response",
+            },
         )?],
-        false,
-        true,
-        false,
-        true,
-        "none",
-        "representation-neutral",
-        "rejected",
-        "Positional encoding breaks the current typed response and makes line and byte range fields ambiguous to generic clients.",
     ));
 
     let files_value = serde_json::to_value(&files)?;
     let tree_paths = compact_tree_paths(files_value.clone())?;
     candidates.push(candidate(
-        "compact_tree_paths",
-        "replace tree entry objects with path strings",
+        CandidateSpec {
+            id: "compact_tree_paths",
+            change: "replace tree entry objects with path strings",
+            round_trip: false,
+            freshness_semantics: true,
+            range_identity: false,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "none",
+            host_compatibility: "representation-neutral",
+            decision: "rejected",
+            rationale: "Path strings lose file/directory kind and available language and size metadata.",
+        },
         vec![compare(
             &wire,
-            &files_call,
-            &files_value,
-            McpResultMode::Dual,
-            &tree_paths,
-            McpResultMode::Dual,
-            files.meta.source_tokens,
-            FollowUp::default(),
-            "files_tree_response",
+            ComparisonSpec {
+                call_request: &files_call,
+                baseline_value: &files_value,
+                baseline_mode: McpResultMode::Dual,
+                candidate_value: &tree_paths,
+                candidate_mode: McpResultMode::Dual,
+                source_tokens: files.meta.source_tokens,
+                follow_up: FollowUp::default(),
+                surface: "files_tree_response",
+            },
         )?],
-        false,
-        true,
-        false,
-        true,
-        "none",
-        "representation-neutral",
-        "rejected",
-        "Path strings lose file/directory kind and available language and size metadata.",
     ));
 
     let no_examples_catalog = remove_tool_examples(catalog.clone())?;
@@ -735,26 +782,28 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
         ..wire.clone()
     };
     candidates.push(candidate(
-        "remove_tool_examples",
-        "remove examples from every tool description",
-        vec![compare_wire_contexts(
-            &wire,
-            &candidate_wire,
-            &context_call,
-            &pre_change_context,
-            McpResultMode::Dual,
-            response.meta.source_tokens,
+        CandidateSpec {
+            id: "remove_tool_examples",
+            change: "remove examples from every tool description",
+            round_trip: true,
+            freshness_semantics: true,
+            range_identity: true,
+            known_hash_deduplication: true,
+            model_behavior_evidence: "none",
+            host_compatibility: "catalog behavior requires a model call-quality evaluation",
+            decision: "rejected",
+            rationale: "Catalog savings are local-only; removing examples without measuring malformed or extra calls could increase end-to-end cost.",
+        },
+        vec![compare_wire_contexts(WireComparisonSpec {
+            baseline_wire: &wire,
+            candidate_wire: &candidate_wire,
+            call_request: &context_call,
+            response: &pre_change_context,
+            mode: McpResultMode::Dual,
+            source_tokens: response.meta.source_tokens,
             follow_up,
-            "tool_catalog",
-        )?],
-        true,
-        true,
-        true,
-        true,
-        "none",
-        "catalog behavior requires a model call-quality evaluation",
-        "rejected",
-        "Catalog savings are local-only; removing examples without measuring malformed or extra calls could increase end-to-end cost.",
+            surface: "tool_catalog",
+        })?],
     ));
 
     validate_candidate_coverage(manifest, &candidates)?;
@@ -981,70 +1030,76 @@ fn measure(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compare(
-    wire: &WireContext<'_>,
-    call_request: &Value,
-    baseline_value: &Value,
+struct ComparisonSpec<'a> {
+    call_request: &'a Value,
+    baseline_value: &'a Value,
     baseline_mode: McpResultMode,
-    candidate_value: &Value,
+    candidate_value: &'a Value,
     candidate_mode: McpResultMode,
     source_tokens: usize,
     follow_up: FollowUp,
     surface: &'static str,
-) -> AnyResult<Comparison> {
+}
+
+fn compare(wire: &WireContext<'_>, spec: ComparisonSpec<'_>) -> AnyResult<Comparison> {
     let baseline = measure(
         wire,
-        call_request,
-        baseline_value,
-        baseline_mode,
-        source_tokens,
-        follow_up,
+        spec.call_request,
+        spec.baseline_value,
+        spec.baseline_mode,
+        spec.source_tokens,
+        spec.follow_up,
     )?;
     let candidate = measure(
         wire,
-        call_request,
-        candidate_value,
-        candidate_mode,
-        source_tokens,
-        follow_up,
+        spec.call_request,
+        spec.candidate_value,
+        spec.candidate_mode,
+        spec.source_tokens,
+        spec.follow_up,
     )?;
     Ok(comparison(
-        surface,
-        mode_name(candidate_mode),
+        spec.surface,
+        mode_name(spec.candidate_mode),
         baseline,
         candidate,
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compare_wire_contexts(
-    baseline_wire: &WireContext<'_>,
-    candidate_wire: &WireContext<'_>,
-    call_request: &Value,
-    response: &Value,
+struct WireComparisonSpec<'a> {
+    baseline_wire: &'a WireContext<'a>,
+    candidate_wire: &'a WireContext<'a>,
+    call_request: &'a Value,
+    response: &'a Value,
     mode: McpResultMode,
     source_tokens: usize,
     follow_up: FollowUp,
     surface: &'static str,
-) -> AnyResult<Comparison> {
+}
+
+fn compare_wire_contexts(spec: WireComparisonSpec<'_>) -> AnyResult<Comparison> {
     let baseline = measure(
-        baseline_wire,
-        call_request,
-        response,
-        mode,
-        source_tokens,
-        follow_up,
+        spec.baseline_wire,
+        spec.call_request,
+        spec.response,
+        spec.mode,
+        spec.source_tokens,
+        spec.follow_up,
     )?;
     let candidate = measure(
-        candidate_wire,
-        call_request,
-        response,
-        mode,
-        source_tokens,
-        follow_up,
+        spec.candidate_wire,
+        spec.call_request,
+        spec.response,
+        spec.mode,
+        spec.source_tokens,
+        spec.follow_up,
     )?;
-    Ok(comparison(surface, mode_name(mode), baseline, candidate))
+    Ok(comparison(
+        spec.surface,
+        mode_name(spec.mode),
+        baseline,
+        candidate,
+    ))
 }
 
 fn comparison(
@@ -1073,11 +1128,9 @@ fn comparison(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn candidate(
-    id: &str,
+struct CandidateSpec {
+    id: &'static str,
     change: &'static str,
-    measurements: Vec<Comparison>,
     round_trip: bool,
     freshness_semantics: bool,
     range_identity: bool,
@@ -1086,19 +1139,21 @@ fn candidate(
     host_compatibility: &'static str,
     decision: &'static str,
     rationale: &'static str,
-) -> CandidateReport {
+}
+
+fn candidate(spec: CandidateSpec, measurements: Vec<Comparison>) -> CandidateReport {
     CandidateReport {
-        id: id.to_owned(),
-        change,
+        id: spec.id.to_owned(),
+        change: spec.change,
         measurements,
-        round_trip,
-        freshness_semantics,
-        range_identity,
-        known_hash_deduplication,
-        model_behavior_evidence,
-        host_compatibility,
-        decision,
-        rationale,
+        round_trip: spec.round_trip,
+        freshness_semantics: spec.freshness_semantics,
+        range_identity: spec.range_identity,
+        known_hash_deduplication: spec.known_hash_deduplication,
+        model_behavior_evidence: spec.model_behavior_evidence,
+        host_compatibility: spec.host_compatibility,
+        decision: spec.decision,
+        rationale: spec.rationale,
     }
 }
 
