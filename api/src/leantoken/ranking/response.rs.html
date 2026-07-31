@@ -89,66 +89,82 @@
 <a href=#89 id=89 data-nosnippet>89</a>    (fragments, fragment_hashes, estimated_source_tokens)
 <a href=#90 id=90 data-nosnippet>90</a>}
 <a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>finalize_context_response(
-<a href=#94 id=94 data-nosnippet>94</a>    request: <span class="kw-2">&amp;</span>ContextRequest,
-<a href=#95 id=95 data-nosnippet>95</a>    repository_generation: u64,
-<a href=#96 id=96 data-nosnippet>96</a>    tokenizer: tokens::Tokenizer,
-<a href=#97 id=97 data-nosnippet>97</a>    plan: <span class="prelude-ty">Option</span>&lt;ContextQueryPlan&gt;,
-<a href=#98 id=98 data-nosnippet>98</a>    fragments: Vec&lt;ContextFragment&gt;,
-<a href=#99 id=99 data-nosnippet>99</a>    fragment_hashes: Vec&lt;String&gt;,
-<a href=#100 id=100 data-nosnippet>100</a>    emitted_tokens: usize,
-<a href=#101 id=101 data-nosnippet>101</a>    omitted: Vec&lt;OmittedCandidate&gt;,
-<a href=#102 id=102 data-nosnippet>102</a>    omission_summary: ContextOmissionSummary,
-<a href=#103 id=103 data-nosnippet>103</a>    coverage: ContextCoverageReceipt,
-<a href=#104 id=104 data-nosnippet>104</a>    warnings: Vec&lt;String&gt;,
-<a href=#105 id=105 data-nosnippet>105</a>) -&gt; ContextResponse {
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>task_hash = blake3::hash(request.task.as_bytes()).to_hex().to_string();
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>receipt = EvidenceReceipt {
-<a href=#108 id=108 data-nosnippet>108</a>        task_fingerprint: task_hash[..<span class="number">32</span>].to_string(),
-<a href=#109 id=109 data-nosnippet>109</a>        fragment_hashes,
-<a href=#110 id=110 data-nosnippet>110</a>    };
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>meta = ResponseMeta {
-<a href=#112 id=112 data-nosnippet>112</a>        repository_id: String::new(),
-<a href=#113 id=113 data-nosnippet>113</a>        repository_generation,
-<a href=#114 id=114 data-nosnippet>114</a>        freshness: Freshness::Current,
-<a href=#115 id=115 data-nosnippet>115</a>        index_scope: <span class="kw">crate</span>::model::IndexScopeMode::Full,
-<a href=#116 id=116 data-nosnippet>116</a>        index_scope_digest: <span class="prelude-val">None</span>,
-<a href=#117 id=117 data-nosnippet>117</a>        source_tokens: emitted_tokens,
-<a href=#118 id=118 data-nosnippet>118</a>        protocol_tokens: <span class="number">0</span>,
-<a href=#119 id=119 data-nosnippet>119</a>        path_and_metadata_tokens: <span class="number">0</span>,
-<a href=#120 id=120 data-nosnippet>120</a>        total_response_tokens: <span class="number">0</span>,
-<a href=#121 id=121 data-nosnippet>121</a>        tokenizer: tokenizer.name().into(),
-<a href=#122 id=122 data-nosnippet>122</a>        token_count_exact: tokenizer.is_exact(),
-<a href=#123 id=123 data-nosnippet>123</a>        receipt_id: <span class="prelude-val">None</span>,
-<a href=#124 id=124 data-nosnippet>124</a>        receipt_suppressed_exact: <span class="number">0</span>,
-<a href=#125 id=125 data-nosnippet>125</a>        receipt_suppressed_overlap: <span class="number">0</span>,
-<a href=#126 id=126 data-nosnippet>126</a>        receipt_near_duplicates: <span class="number">0</span>,
-<a href=#127 id=127 data-nosnippet>127</a>        next_cursor: <span class="prelude-val">None</span>,
-<a href=#128 id=128 data-nosnippet>128</a>    };
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = ContextResponse {
-<a href=#130 id=130 data-nosnippet>130</a>        effective_response_profile: ContextResponseProfile::from_legacy_verbose(
-<a href=#131 id=131 data-nosnippet>131</a>            request.verbose_diagnostics,
-<a href=#132 id=132 data-nosnippet>132</a>        ),
-<a href=#133 id=133 data-nosnippet>133</a>        workflow: <span class="kw">crate</span>::model::ContextWorkflow::Implementation,
-<a href=#134 id=134 data-nosnippet>134</a>        workflow_receipt: <span class="prelude-val">None</span>,
-<a href=#135 id=135 data-nosnippet>135</a>        plan,
-<a href=#136 id=136 data-nosnippet>136</a>        fragments,
-<a href=#137 id=137 data-nosnippet>137</a>        receipt,
-<a href=#138 id=138 data-nosnippet>138</a>        diff_scope: <span class="prelude-val">None</span>,
-<a href=#139 id=139 data-nosnippet>139</a>        omitted,
-<a href=#140 id=140 data-nosnippet>140</a>        omission_summary,
-<a href=#141 id=141 data-nosnippet>141</a>        coverage,
-<a href=#142 id=142 data-nosnippet>142</a>        routing: <span class="prelude-val">None</span>,
-<a href=#143 id=143 data-nosnippet>143</a>        handoff_manifest: <span class="prelude-val">None</span>,
-<a href=#144 id=144 data-nosnippet>144</a>        warnings,
-<a href=#145 id=145 data-nosnippet>145</a>        meta,
-<a href=#146 id=146 data-nosnippet>146</a>    };
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
-<a href=#148 id=148 data-nosnippet>148</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
-<a href=#149 id=149 data-nosnippet>149</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
-<a href=#150 id=150 data-nosnippet>150</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-<a href=#151 id=151 data-nosnippet>151</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
-<a href=#152 id=152 data-nosnippet>152</a>    response
-<a href=#153 id=153 data-nosnippet>153</a>}
+<a href=#92 id=92 data-nosnippet>92</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">struct </span>FinalizeContextParams&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">pub </span>request: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextRequest,
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">pub </span>repository_generation: u64,
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub </span>tokenizer: tokens::Tokenizer,
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">pub </span>plan: <span class="prelude-ty">Option</span>&lt;ContextQueryPlan&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">pub </span>fragments: Vec&lt;ContextFragment&gt;,
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">pub </span>fragment_hashes: Vec&lt;String&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">pub </span>emitted_tokens: usize,
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">pub </span>omitted: Vec&lt;OmittedCandidate&gt;,
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">pub </span>omission_summary: ContextOmissionSummary,
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">pub </span>coverage: ContextCoverageReceipt,
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">pub </span>warnings: Vec&lt;String&gt;,
+<a href=#104 id=104 data-nosnippet>104</a>}
+<a href=#105 id=105 data-nosnippet>105</a>
+<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>finalize_context_response(
+<a href=#107 id=107 data-nosnippet>107</a>    params: FinalizeContextParams&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#108 id=108 data-nosnippet>108</a>) -&gt; ContextResponse {
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span>FinalizeContextParams {
+<a href=#110 id=110 data-nosnippet>110</a>        request,
+<a href=#111 id=111 data-nosnippet>111</a>        repository_generation,
+<a href=#112 id=112 data-nosnippet>112</a>        tokenizer,
+<a href=#113 id=113 data-nosnippet>113</a>        plan,
+<a href=#114 id=114 data-nosnippet>114</a>        fragments,
+<a href=#115 id=115 data-nosnippet>115</a>        fragment_hashes,
+<a href=#116 id=116 data-nosnippet>116</a>        emitted_tokens,
+<a href=#117 id=117 data-nosnippet>117</a>        omitted,
+<a href=#118 id=118 data-nosnippet>118</a>        omission_summary,
+<a href=#119 id=119 data-nosnippet>119</a>        coverage,
+<a href=#120 id=120 data-nosnippet>120</a>        warnings,
+<a href=#121 id=121 data-nosnippet>121</a>    } = params;
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>task_hash = blake3::hash(request.task.as_bytes()).to_hex().to_string();
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">let </span>receipt = EvidenceReceipt {
+<a href=#124 id=124 data-nosnippet>124</a>        task_fingerprint: task_hash[..<span class="number">32</span>].to_string(),
+<a href=#125 id=125 data-nosnippet>125</a>        fragment_hashes,
+<a href=#126 id=126 data-nosnippet>126</a>    };
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">let </span>meta = ResponseMeta {
+<a href=#128 id=128 data-nosnippet>128</a>        repository_id: String::new(),
+<a href=#129 id=129 data-nosnippet>129</a>        repository_generation,
+<a href=#130 id=130 data-nosnippet>130</a>        freshness: Freshness::Current,
+<a href=#131 id=131 data-nosnippet>131</a>        index_scope: <span class="kw">crate</span>::model::IndexScopeMode::Full,
+<a href=#132 id=132 data-nosnippet>132</a>        index_scope_digest: <span class="prelude-val">None</span>,
+<a href=#133 id=133 data-nosnippet>133</a>        source_tokens: emitted_tokens,
+<a href=#134 id=134 data-nosnippet>134</a>        protocol_tokens: <span class="number">0</span>,
+<a href=#135 id=135 data-nosnippet>135</a>        path_and_metadata_tokens: <span class="number">0</span>,
+<a href=#136 id=136 data-nosnippet>136</a>        total_response_tokens: <span class="number">0</span>,
+<a href=#137 id=137 data-nosnippet>137</a>        tokenizer: tokenizer.name().into(),
+<a href=#138 id=138 data-nosnippet>138</a>        token_count_exact: tokenizer.is_exact(),
+<a href=#139 id=139 data-nosnippet>139</a>        receipt_id: <span class="prelude-val">None</span>,
+<a href=#140 id=140 data-nosnippet>140</a>        receipt_suppressed_exact: <span class="number">0</span>,
+<a href=#141 id=141 data-nosnippet>141</a>        receipt_suppressed_overlap: <span class="number">0</span>,
+<a href=#142 id=142 data-nosnippet>142</a>        receipt_near_duplicates: <span class="number">0</span>,
+<a href=#143 id=143 data-nosnippet>143</a>        next_cursor: <span class="prelude-val">None</span>,
+<a href=#144 id=144 data-nosnippet>144</a>    };
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="kw-2">mut </span>response = ContextResponse {
+<a href=#146 id=146 data-nosnippet>146</a>        effective_response_profile: ContextResponseProfile::from_legacy_verbose(
+<a href=#147 id=147 data-nosnippet>147</a>            request.verbose_diagnostics,
+<a href=#148 id=148 data-nosnippet>148</a>        ),
+<a href=#149 id=149 data-nosnippet>149</a>        workflow: <span class="kw">crate</span>::model::ContextWorkflow::Implementation,
+<a href=#150 id=150 data-nosnippet>150</a>        workflow_receipt: <span class="prelude-val">None</span>,
+<a href=#151 id=151 data-nosnippet>151</a>        plan,
+<a href=#152 id=152 data-nosnippet>152</a>        fragments,
+<a href=#153 id=153 data-nosnippet>153</a>        receipt,
+<a href=#154 id=154 data-nosnippet>154</a>        diff_scope: <span class="prelude-val">None</span>,
+<a href=#155 id=155 data-nosnippet>155</a>        omitted,
+<a href=#156 id=156 data-nosnippet>156</a>        omission_summary,
+<a href=#157 id=157 data-nosnippet>157</a>        coverage,
+<a href=#158 id=158 data-nosnippet>158</a>        routing: <span class="prelude-val">None</span>,
+<a href=#159 id=159 data-nosnippet>159</a>        handoff_manifest: <span class="prelude-val">None</span>,
+<a href=#160 id=160 data-nosnippet>160</a>        warnings,
+<a href=#161 id=161 data-nosnippet>161</a>        meta,
+<a href=#162 id=162 data-nosnippet>162</a>    };
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
+<a href=#164 id=164 data-nosnippet>164</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
+<a href=#165 id=165 data-nosnippet>165</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
+<a href=#166 id=166 data-nosnippet>166</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+<a href=#167 id=167 data-nosnippet>167</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
+<a href=#168 id=168 data-nosnippet>168</a>    response
+<a href=#169 id=169 data-nosnippet>169</a>}
 </code></pre></div></section></main></body></html>

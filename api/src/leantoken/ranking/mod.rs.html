@@ -63,6 +63,10 @@
 <a href=#63 id=63 data-nosnippet>63</a>    select, select_with_tokenizer, select_with_weights, select_with_weights_and_tokenizer,
 <a href=#64 id=64 data-nosnippet>64</a>};
 <a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a><span class="attr">#[cfg(test)]
-<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">mod </span>tests;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">fn </span>bounded_count_f64(value: usize) -&gt; f64 {
+<a href=#67 id=67 data-nosnippet>67</a>    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+<a href=#68 id=68 data-nosnippet>68</a>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="attr">#[cfg(test)]
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

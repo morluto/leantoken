@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["ServiceCallOptions","Services"]};
+window.SIDEBAR_ITEMS = {"struct":["ContextWorkflowOptions","ServiceCallOptions","Services"]};
