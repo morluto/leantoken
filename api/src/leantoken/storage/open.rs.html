@@ -152,7 +152,7 @@
 <a href=#152 id=152 data-nosnippet>152</a>                connection.pragma_update(<span class="prelude-val">None</span>, <span class="string">"foreign_keys"</span>, <span class="string">"ON"</span>)
 <a href=#153 id=153 data-nosnippet>153</a>            });
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>readers = r2d2::Pool::builder()
-<a href=#155 id=155 data-nosnippet>155</a>            .max_size(MAX_READ_CONNECTIONS)
+<a href=#155 id=155 data-nosnippet>155</a>            .max_size(default_read_connection_capacity())
 <a href=#156 id=156 data-nosnippet>156</a>            .connection_timeout(DEFAULT_BUSY_TIMEOUT)
 <a href=#157 id=157 data-nosnippet>157</a>            .test_on_check_out(<span class="bool-val">false</span>)
 <a href=#158 id=158 data-nosnippet>158</a>            .build(manager)<span class="question-mark">?</span>;

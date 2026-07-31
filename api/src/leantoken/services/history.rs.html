@@ -1158,9 +1158,9 @@
 <a href=#1158 id=1158 data-nosnippet>1158</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#1159 id=1159 data-nosnippet>1159</a>        }
 <a href=#1160 id=1160 data-nosnippet>1160</a>        <span class="kw">let </span>original = response.clone();
-<a href=#1161 id=1161 data-nosnippet>1161</a>        <span class="kw">let </span>max_response_tokens = options
-<a href=#1162 id=1162 data-nosnippet>1162</a>            .max_response_tokens()
-<a href=#1163 id=1163 data-nosnippet>1163</a>            .expect(<span class="string">"fitting only runs with a response limit"</span>);
+<a href=#1161 id=1161 data-nosnippet>1161</a>        <span class="kw">let </span>max_response_tokens = options.max_response_tokens().ok_or_else(|| {
+<a href=#1162 id=1162 data-nosnippet>1162</a>            Error::InvalidConfiguration(<span class="string">"fitting requires a response token limit"</span>.into())
+<a href=#1163 id=1163 data-nosnippet>1163</a>        })<span class="question-mark">?</span>;
 <a href=#1164 id=1164 data-nosnippet>1164</a>        <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
 <a href=#1165 id=1165 data-nosnippet>1165</a>        <span class="kw">let </span><span class="kw-2">mut </span>skeleton = original.clone();
 <a href=#1166 id=1166 data-nosnippet>1166</a>        <span class="kw">for </span>result <span class="kw">in </span><span class="kw-2">&amp;mut </span>skeleton.results {
@@ -1272,9 +1272,9 @@
 <a href=#1272 id=1272 data-nosnippet>1272</a>        options: ServiceCallOptions,
 <a href=#1273 id=1273 data-nosnippet>1273</a>        is_diff: bool,
 <a href=#1274 id=1274 data-nosnippet>1274</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;HistoryResponse&gt;&gt; {
-<a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="kw">let </span>max_response_tokens = options
-<a href=#1276 id=1276 data-nosnippet>1276</a>            .max_response_tokens()
-<a href=#1277 id=1277 data-nosnippet>1277</a>            .expect(<span class="string">"fitting only runs with a response limit"</span>);
+<a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="kw">let </span>max_response_tokens = options.max_response_tokens().ok_or_else(|| {
+<a href=#1276 id=1276 data-nosnippet>1276</a>            Error::InvalidConfiguration(<span class="string">"fitting requires a response token limit"</span>.into())
+<a href=#1277 id=1277 data-nosnippet>1277</a>        })<span class="question-mark">?</span>;
 <a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
 <a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="kw">let </span>keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(<span class="number">1</span>), |keep| {
 <a href=#1280 id=1280 data-nosnippet>1280</a>            <span class="kw">let </span>candidate =

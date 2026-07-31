@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>            result_mode: McpResultMode::Structured,
 <a href=#19 id=19 data-nosnippet>19</a>            request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
 <a href=#20 id=20 data-nosnippet>20</a>            request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
-<a href=#21 id=21 data-nosnippet>21</a>            resource_read_admission: RequestAdmission::new(DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY),
+<a href=#21 id=21 data-nosnippet>21</a>            resource_read_admission: RequestAdmission::new(default_receipt_resource_read_capacity()),
 <a href=#22 id=22 data-nosnippet>22</a>        }
 <a href=#23 id=23 data-nosnippet>23</a>    }
 <a href=#24 id=24 data-nosnippet>24</a>
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>                request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
 <a href=#34 id=34 data-nosnippet>34</a>                request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),
 <a href=#35 id=35 data-nosnippet>35</a>                resource_read_admission: RequestAdmission::new(
-<a href=#36 id=36 data-nosnippet>36</a>                    DEFAULT_RECEIPT_RESOURCE_READ_CAPACITY,
+<a href=#36 id=36 data-nosnippet>36</a>                    default_receipt_resource_read_capacity(),
 <a href=#37 id=37 data-nosnippet>37</a>                ),
 <a href=#38 id=38 data-nosnippet>38</a>            },
 <a href=#39 id=39 data-nosnippet>39</a>            services,
