@@ -1058,7 +1058,7 @@ expression: mcp_contract()
       "name": "history"
     },
     {
-      "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. Use JSON Pointer or JMESPath selectors; choose collapsed, keys, or schema projections for large values, numeric_summary for distributions, and diff_fields for selected comparisons. Keys paginate in depth-then-pointer order with explicit omission metadata. Example: {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"artifacts/results.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"runs[].score\"}}}.",
+      "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed.",
       "inputSchema": {
         "$defs": {
           "JsonMcpOperation": {

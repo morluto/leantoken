@@ -911,11 +911,49 @@ Reads exact repository-relative JSON files without requiring them to be indexed,
 including ignored artifact paths. Operations are:
 
 - `query`: select the root, an RFC 6901 JSON Pointer, or a standard JMESPath
-  expression, then return `value`, `collapsed`, `keys`, or `schema`.
+  expression, then return a `value`, `collapsed`, `keys`, or `schema`
+  projection.
 - `numeric_summary`: collect numeric leaves below the selection and return exact
   count, min, median, nearest-rank p95, max, and ignored non-numeric count.
 - `diff_fields`: evaluate up to 100 selectors against two files and report
   presence, projected before/after values, and whether each field changed.
+
+The JSON request has exactly these three operation kinds. `collapsed`, `keys`,
+and `schema` are projections of `query`, not operation kinds. For example:
+
+```json
+{
+  "operation": {
+    "kind": "query",
+    "path": "benchmarks/reports/graph-signal-ablation-v1.json",
+    "projection": "keys"
+  }
+}
+```
+
+JMESPath selectors are evaluated against the selected JSON document root. To
+summarize the graph benchmark's per-corpus cold-index values, select the actual
+field beneath `graph_index.corpora`:
+
+```json
+{
+  "operation": {
+    "kind": "numeric_summary",
+    "path": "benchmarks/reports/graph-signal-ablation-v1.json",
+    "selector": {
+      "kind": "jmespath",
+      "expression": "graph_index.corpora[].cold_index_ms"
+    }
+  }
+}
+```
+
+`consistency` belongs to applicable repository retrieval tools; it is not a
+field in this live JSON request. A numeric summary with `count: 0` means the
+selected path contained no numeric leaves, not necessarily that the JSON file
+was malformed. `keys(@)` only works when its selection context is an object;
+if a caller evaluates it against the wrong or null context, it fails. Use the
+`query` operation with `projection: "keys"` for bounded key traversal.
 
 `collapsed` replaces arrays with their total count and a bounded sample.
 `max_items` defaults to 1,000 (maximum 10,000), `array_sample_size` defaults to
