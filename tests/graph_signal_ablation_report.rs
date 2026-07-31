@@ -22,6 +22,23 @@ fn object_has_forbidden_key(value: &Value) -> bool {
     }
 }
 
+fn assert_hex_field(report: &Value, field: &str, length: usize) {
+    let value = report[field].as_str().expect(field);
+    assert_eq!(value.len(), length, "{field} length");
+    assert!(
+        value.chars().all(|character| character.is_ascii_hexdigit()),
+        "{field} is not hexadecimal"
+    );
+}
+
+fn assert_frozen_provenance_shape(report: &Value) {
+    // The report is frozen evidence; validate its provenance shape without
+    // coupling every source refactor to a new 96-run benchmark artifact.
+    assert_hex_field(report, "harness_revision", 40);
+    assert_hex_field(report, "harness_source_blake3", 64);
+    assert!(report["harness_worktree_dirty"].is_boolean());
+}
+
 #[test]
 fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
     let report: Value = serde_json::from_str(REPORT).expect("valid report");
@@ -35,21 +52,7 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
         report["source_manifest_blake3"],
         checkout_independent_hash(SOURCE_MANIFEST)
     );
-    // The report is frozen evidence; validate its provenance shape without
-    // coupling every source refactor to a new 96-run benchmark artifact.
-    let harness_revision = report["harness_revision"]
-        .as_str()
-        .expect("harness revision");
-    assert_eq!(harness_revision.len(), 40);
-    assert!(harness_revision.chars().all(|character| character.is_ascii_hexdigit()));
-    let harness_source_blake3 = report["harness_source_blake3"]
-        .as_str()
-        .expect("harness source digest");
-    assert_eq!(harness_source_blake3.len(), 64);
-    assert!(harness_source_blake3
-        .chars()
-        .all(|character| character.is_ascii_hexdigit()));
-    assert!(report["harness_worktree_dirty"].is_boolean());
+    assert_frozen_provenance_shape(&report);
     assert_eq!(report["runs"].as_array().expect("runs").len(), 96);
 
     let arms = report["arms"].as_array().expect("arms");
