@@ -37,7 +37,7 @@ impl Services {
         self.validate_call_options(retrieval.options)?;
         let response_profile =
             response::effective_context_response_profile(&request, retrieval.options)?;
-        request.verbose_diagnostics = response_profile == ContextResponseProfile::Explain;
+        request.explain_diagnostics = response_profile == ContextResponseProfile::Explain;
         self.validate_context_request(&request, context.handoff.as_ref())?;
         self.validate_workflow_evidence(&context.workflow_evidence)?;
         request.changed_paths = request

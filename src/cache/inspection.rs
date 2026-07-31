@@ -37,7 +37,7 @@ impl CacheManager {
         let database = path.join(DATABASE_NAME);
         let identity = parse_managed_cache_id(id).expect("validated managed cache identity");
         let (index_content_version, index_scope_digest) = match identity {
-            ManagedCacheIdentity::Legacy => (None, None),
+            ManagedCacheIdentity::Unversioned => (None, None),
             ManagedCacheIdentity::Versioned {
                 version,
                 scope_digest,
@@ -100,7 +100,7 @@ impl CacheManager {
                     } else if metadata.current {
                         CacheState::Current
                     } else {
-                        CacheState::Legacy
+                        CacheState::OlderSchema
                     };
                     if let Some(repository_root) = &entry.repository_root
                         && !managed_cache_id_matches_root(id, repository_root)

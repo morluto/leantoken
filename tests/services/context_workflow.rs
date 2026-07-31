@@ -62,7 +62,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
                 base_revision: None,
                 changed_paths: vec!["src/parser.rs".into()],
                 strict_changed_paths: false,
-                verbose_diagnostics: false,
+                explain_diagnostics: false,
             },
             ContextWorkflow::Contribution,
             IndexConsistency::IndexedGeneration,

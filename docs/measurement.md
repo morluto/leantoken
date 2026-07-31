@@ -928,9 +928,9 @@ iterative LeanToken used 50.9% more total input than thin native, lost two path
 successes, and was worse in all 20 pairs. The source payload itself was small;
 the child averaged 8.2 provider requests versus 4.7 for thin native, so repeated
 agent-context framing dominated. Traces also exposed common `range`,
-`line_range`, `start_line`, and `end_line` guesses. `leantoken_read` now accepts
-those aliases while retaining `lines`, `start`, and `end` as its canonical MCP
-schema.
+`line_range`, `start_line`, and `end_line` guesses. The current `leantoken_read`
+schema accepts only the canonical `lines`, `start`, and `end` fields; those
+guesses are rejected rather than retained as aliases.
 
 The v2 profile was frozen after inspecting v1. It permits exactly one context
 bundle and, only when a required implementation or test file is missing, one

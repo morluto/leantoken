@@ -83,6 +83,18 @@ fn larger_implicit_size_score_is_smaller() {
 }
 
 #[test]
+fn large_token_counts_keep_monotonic_size_penalties() {
+    let candidate = Candidate::new("a.rs", 1, 1, "x").exact(1.0);
+    let weights = Weights::default();
+    let at_u32_limit = candidate.score(&weights, u32::MAX as usize);
+    let much_larger = candidate.score(&weights, (u32::MAX as usize) * 2);
+    let far_larger = candidate.score(&weights, (u32::MAX as usize) * 4);
+
+    assert!(at_u32_limit > much_larger);
+    assert!(much_larger > far_larger);
+}
+
+#[test]
 fn content_hash_is_deterministic() {
     let a = Candidate::new("a.rs", 1, 2, "same content");
     let b = Candidate::new("b.rs", 3, 4, "same content");

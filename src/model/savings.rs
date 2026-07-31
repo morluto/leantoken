@@ -184,11 +184,8 @@ pub struct ResponseTokenAccounting {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-/// Source-only savings plus complete successful-response token accounting.
+/// Complete successful-response token accounting.
 pub struct TokenSavingsReport {
-    /// Backward-compatible source-only savings fields.
-    #[serde(flatten)]
-    pub source_savings: TokenSavingsResponse,
     /// Full-response costs and net estimate for every retrieval operation.
     pub response_accounting: ResponseTokenAccounting,
 }
@@ -213,8 +210,6 @@ pub struct TokenSavingsObservations {
     pub successful_response_records: u64,
     /// Successful responses with a represented-source baseline.
     pub responses_with_baseline: u64,
-    /// Backward-compatible source-compression comparisons.
-    pub source_compression_requests: u64,
     /// Failed service requests persisted at an instrumented operation boundary.
     pub failed_service_requests: u64,
     /// Exact `expected_hash` matches that returned `not_modified`.
@@ -230,9 +225,9 @@ pub struct TokenSavingsObservations {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-/// Backward-compatible savings report plus directly observed service outcomes.
+/// Response accounting plus directly observed service outcomes.
 pub struct ObservedTokenSavingsReport {
-    /// Existing source and full-response accounting fields.
+    /// Full-response accounting fields.
     #[serde(flatten)]
     pub report: TokenSavingsReport,
     /// Additive counters whose observation boundaries are explicitly documented.
@@ -266,8 +261,6 @@ pub struct TokenSavingsRequestClassification {
     pub unsupported: u64,
     /// Successful exact `expected_hash` suppression.
     pub hash_suppressed: u64,
-    /// Successful records created before outcome classification was available.
-    pub legacy_unclassified: u64,
     /// Observed errors other than typed unsupported-language outcomes.
     pub failed: u64,
 }

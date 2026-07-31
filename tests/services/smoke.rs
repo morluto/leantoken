@@ -125,7 +125,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("context");
@@ -157,7 +157,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("repeated context");
@@ -201,7 +201,7 @@ async fn five_services_return_bounded_grounded_responses() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("context delta");
@@ -380,7 +380,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             base_revision: None,
             changed_paths: vec![r".\src\lib.rs".into()],
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("normalized context path");

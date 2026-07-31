@@ -143,9 +143,11 @@ pub(in crate::ranking) fn finalize_context_response(
         next_cursor: None,
     };
     let mut response = ContextResponse {
-        effective_response_profile: ContextResponseProfile::from_legacy_verbose(
-            request.verbose_diagnostics,
-        ),
+        effective_response_profile: if request.explain_diagnostics {
+            ContextResponseProfile::Explain
+        } else {
+            ContextResponseProfile::Balanced
+        },
         workflow: crate::model::ContextWorkflow::Implementation,
         workflow_receipt: None,
         plan,

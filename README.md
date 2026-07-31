@@ -249,9 +249,7 @@ metadata without source fragments or receipt mutation. After approval, repeat
 the same request with `plan_only: false`. Set `response_profile: "compact"` for
 the smallest fail-loud response, keep the default `"balanced"` shape, or use
 `"explain"` for bounded individual omissions, facets, and diff evidence. The
-response reports the resolved choice as `effective_response_profile`. Legacy
-`verbose_diagnostics: true` maps to `"explain"` and conflicts with an explicit
-`"compact"` or `"balanced"` profile.
+response reports the resolved choice as `effective_response_profile`.
 
 </details>
 

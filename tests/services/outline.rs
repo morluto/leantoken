@@ -174,7 +174,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
         .expect("first outline page");
     assert!(first.parse_complete);
     assert!(first.files[0].parse_complete);
-    assert!(first.files[0].structurally_complete);
+    assert!(first.files[0].parse_complete);
     assert!(!first.result_complete);
     assert_eq!(first.total_symbols, 140);
     assert_eq!(first.returned_symbols, 100);
@@ -287,7 +287,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
         .expect("malformed outline");
     assert!(!malformed.parse_complete);
     assert!(!malformed.files[0].parse_complete);
-    assert!(!malformed.files[0].structurally_complete);
+    assert!(!malformed.files[0].parse_complete);
     assert!(malformed.result_complete);
 }
 

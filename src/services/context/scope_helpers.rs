@@ -52,7 +52,7 @@ pub(super) struct ContextPathScorer {
 
 impl ContextPathScorer {
     pub(super) fn new(terms: &[String], task: &str) -> Self {
-        let code_token_parts = facets::legacy_code_tokens(task)
+        let code_token_parts = facets::code_tokens(task)
             .into_iter()
             .filter(|token| {
                 token.contains("::")

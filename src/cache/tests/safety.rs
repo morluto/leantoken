@@ -23,10 +23,12 @@ fn corrupt_and_legacy_caches_are_listed_without_mutation() {
     drop(connection);
     let manager = CacheManager::new(root, 10_000);
 
-    let report = manager.list().expect("cache list");
+    let report = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
 
-    assert_eq!(report.entries[0].state, CacheState::Corrupt);
-    assert_eq!(report.entries[1].state, CacheState::Legacy);
+    assert_eq!(report.entries[0].entry.state, CacheState::Corrupt);
+    assert_eq!(report.entries[1].entry.state, CacheState::OlderSchema);
     assert!(corrupt.join(DATABASE_NAME).exists());
     assert!(legacy.join(DATABASE_NAME).exists());
 
@@ -45,23 +47,30 @@ fn legacy_wal_list_keeps_file_mtime_access_age_stable() {
     let manager = CacheManager::new(temp.path().join("managed"), 20 * SECONDS_PER_DAY);
     create_legacy_wal_cache(&manager, FIRST_ID, SECONDS_PER_DAY);
 
-    let first = manager.list().expect("first cache list");
-    let second = manager.list().expect("second cache list");
+    let first = manager
+        .list_with(&CacheListRequest::default())
+        .expect("first cache list");
+    let second = manager
+        .list_with(&CacheListRequest::default())
+        .expect("second cache list");
 
-    assert_eq!(first.entries[0].state, CacheState::Legacy);
+    assert_eq!(first.entries[0].entry.state, CacheState::OlderSchema);
     assert_eq!(
-        first.entries[0].access_time_source,
+        first.entries[0].entry.access_time_source,
         Some(AccessTimeSource::FileMtime)
     );
     assert_eq!(
-        first.entries[0].last_access_unix_seconds,
+        first.entries[0].entry.last_access_unix_seconds,
         Some(SECONDS_PER_DAY)
     );
     assert_eq!(
-        second.entries[0].last_access_unix_seconds,
-        first.entries[0].last_access_unix_seconds
+        second.entries[0].entry.last_access_unix_seconds,
+        first.entries[0].entry.last_access_unix_seconds
     );
-    assert_eq!(second.entries[0].age_seconds, first.entries[0].age_seconds);
+    assert_eq!(
+        second.entries[0].entry.age_seconds,
+        first.entries[0].entry.age_seconds
+    );
 }
 
 #[test]
@@ -186,17 +195,19 @@ fn future_index_content_cache_is_visible_but_never_removed() {
     );
     let manager = CacheManager::new(root, 10_000);
 
-    let listed = manager.list().expect("cache list");
+    let listed = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
 
     assert_eq!(listed.entries.len(), 1);
-    assert_eq!(listed.entries[0].id, future_id);
+    assert_eq!(listed.entries[0].entry.id, future_id);
     assert_eq!(
-        listed.entries[0].index_content_version,
+        listed.entries[0].entry.index_content_version,
         Some(INDEX_CONTENT_VERSION + 1)
     );
-    assert_eq!(listed.entries[0].state, CacheState::Unsupported);
+    assert_eq!(listed.entries[0].entry.state, CacheState::Unsupported);
     assert_eq!(
-        listed.entries[0].detail.as_deref(),
+        listed.entries[0].entry.detail.as_deref(),
         Some("cache uses a newer index-content version")
     );
 

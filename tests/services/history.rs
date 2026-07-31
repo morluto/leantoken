@@ -678,7 +678,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
             base_revision: Some(format!("{base}..{changed}")),
             changed_paths: Vec::new(),
             strict_changed_paths: true,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("immutable range context");

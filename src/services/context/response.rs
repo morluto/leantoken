@@ -16,16 +16,17 @@ pub(super) fn effective_context_response_profile(
 ) -> Result<ContextResponseProfile> {
     match (
         options.context_response_profile(),
-        request.verbose_diagnostics,
+        request.explain_diagnostics,
     ) {
         (Some(ContextResponseProfile::Compact | ContextResponseProfile::Balanced), true) => {
             Err(Error::InvalidInput {
                 field: "response_profile",
-                reason: "verbose_diagnostics=true requires response_profile=explain",
+                reason: "explain_diagnostics=true requires response_profile=explain",
             })
         }
         (Some(profile), _) => Ok(profile),
-        (None, verbose) => Ok(ContextResponseProfile::from_legacy_verbose(verbose)),
+        (None, true) => Ok(ContextResponseProfile::Explain),
+        (None, false) => Ok(ContextResponseProfile::Balanced),
     }
 }
 

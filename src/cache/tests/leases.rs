@@ -35,7 +35,13 @@ fn active_service_clones_block_prune_until_every_lease_is_dropped() {
     );
     assert!(!database.exists());
     assert!(coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX).exists());
-    assert!(manager.list().expect("empty list").entries.is_empty());
+    assert!(
+        manager
+            .list_with(&CacheListRequest::default())
+            .expect("empty list")
+            .entries
+            .is_empty()
+    );
 }
 
 #[test]
@@ -68,12 +74,15 @@ fn lru_budget_selects_oldest_cache_and_dry_run_preserves_files() {
     let manager = CacheManager::new(temp.path().join("managed"), 1_000);
     let (first_id, first) = create_current_cache(&manager, &first_root, 100);
     let (second_id, second) = create_current_cache(&manager, &second_root, 900);
-    let listed = manager.list().expect("cache list");
+    let listed = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
     let oldest_size = listed
         .entries
         .iter()
-        .find(|entry| entry.id == first_id)
+        .find(|entry| entry.entry.id == first_id)
         .expect("oldest cache")
+        .entry
         .size_bytes;
     let mut prune = request();
     prune.max_total_bytes = Some(listed.total_bytes - oldest_size);

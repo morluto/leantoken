@@ -485,8 +485,6 @@ impl Services {
                 target_end_line,
                 returned_start_line,
                 returned_end_line,
-                start_line: returned_start_line,
-                end_line: returned_end_line,
                 truncated,
                 next_start_line,
                 continuation_cursor,

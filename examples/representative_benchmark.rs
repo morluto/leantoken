@@ -2682,7 +2682,7 @@ async fn run_task(
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     };
     let workflow_evidence = if options.workflow_evidence_enabled {
         workflow_evidence_from_json_prompt(&task.prompt)?

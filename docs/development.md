@@ -431,7 +431,7 @@ cargo insta review
 Do not accept a snapshot solely because generation changed; inspect the schema
 diff first.
 
-## Public Rust API compatibility
+## Public Rust API and wire boundaries
 
 The crate remains on the `0.x` development line. `Error` is intentionally
 non-exhaustive: consumers must include a fallback arm and should only branch on
@@ -443,22 +443,21 @@ accounting. These are acknowledged source-compatibility changes for consumers
 that exhaustively matched the earlier enum. Release PRs own package version
 changes; feature and fix PRs do not edit `Cargo.toml` versions independently.
 
-`IndexResponse` retains its original constructible field set for downstream
-Rust source compatibility. Additive preparation accounting is exposed through
-`IndexReport`, returned by the new `Indexer::*_report` and
-`Services::*_report` methods. The report flattens the compatible response for
-JSON output, so CLI consumers receive `skip_reasons` without forcing existing
-Rust consumers to update struct literals or destructuring patterns.
+`IndexResponse` remains the stable response core. Additive preparation
+accounting is exposed through `IndexReport`, returned by the new
+`Indexer::*_report` and `Services::*_report` methods. The report keeps those
+core fields flattened in JSON, so CLI consumers receive `skip_reasons` without
+changing the established response shape.
 
-`CacheListRequest`, `CacheListReport`, and `CachePruneRequest` likewise retain
-their constructible field sets. Content-compatibility filters and summaries use
-`CacheListV2Request`/`CacheListV2Report`; compatibility pruning uses
-`CachePruneV2Request`. The CLI selects those versioned APIs while older Rust
-callers can continue using the original list/prune methods.
+`CacheListRequest` and `CachePruneRequest` are the canonical cache operation
+inputs. The cache-list response retains its `CacheListReport` JSON shape and
+`cl2` cursor encoding because those are cache-format boundaries; the CLI and
+internal cache manager use the same request path for metadata and content
+compatibility filters.
 
 Explicit indexing scope adds public provenance fields to `ResponseMeta`,
 `StatusResponse`, and `CacheEntry`, plus the `IndexScopeMismatch` error variant.
-This is wire-additive and legacy deserialization defaults to full scope, but
+This is wire-additive and older deserialization defaults to full scope, but
 downstream Rust consumers constructing those public response structs with
 literals must add the new fields. `IndexScope` is immutable after
 normalization; use `Config::discover_scoped` instead of mutating cache

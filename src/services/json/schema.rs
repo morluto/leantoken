@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use serde_json::{Map, Value, json};
 
 use super::MAX_SCHEMA_OMITTED_POINTERS;
-use super::projection::{ProjectionState, count_nodes, escape_pointer, json_type, take_item};
+use super::projection::{count_nodes, escape_pointer, json_type};
 use super::source::json_tokens;
 use crate::Result;
 use crate::services::Services;
@@ -256,45 +256,4 @@ pub(super) fn project_schema_page(
         incomplete_reason,
         projected_tokens,
     })
-}
-
-/// Legacy depth-first schema inference used by the streaming `project_json`
-/// path. Kept for behavioral parity with the breadth-first builder under full
-/// item budgets.
-pub(super) fn infer_schema(value: &Value, state: &mut ProjectionState) -> Value {
-    if !take_item(state) {
-        return json!({"type": "unknown"});
-    }
-    match value {
-        Value::Object(values) => {
-            let mut properties = Map::new();
-            for (key, value) in values {
-                if state.remaining() == 0 {
-                    state.mark_incomplete();
-                    break;
-                }
-                properties.insert(key.clone(), infer_schema(value, state));
-            }
-            json!({"type": "object", "properties": properties})
-        }
-        Value::Array(values) => {
-            let mut variants = BTreeMap::new();
-            for value in values {
-                if state.remaining() == 0 {
-                    state.mark_incomplete();
-                    break;
-                }
-                let schema = infer_schema(value, state);
-                let key = serde_json::to_string(&schema).unwrap_or_default();
-                variants.entry(key).or_insert(schema);
-            }
-            let items = match variants.len() {
-                0 => json!({}),
-                1 => variants.into_values().next().unwrap_or_else(|| json!({})),
-                _ => json!({"anyOf": variants.into_values().collect::<Vec<_>>() }),
-            };
-            json!({"type": "array", "count": values.len(), "items": items})
-        }
-        _ => json!({"type": json_type(value)}),
-    }
 }

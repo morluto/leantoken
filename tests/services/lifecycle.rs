@@ -81,7 +81,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
             },
             cancellation,
         )

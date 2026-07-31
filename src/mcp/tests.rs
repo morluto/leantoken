@@ -1107,7 +1107,6 @@ fn omitted_context_budget_uses_the_runtime_default() {
     .expect("context request without a budget");
     let (request, _, _, _, _, _, _) = request.into_parts(37);
     assert_eq!(request.token_budget, 37);
-    assert!(!request.verbose_diagnostics);
     let null_limit = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
         "task": "find answer",
         "max_response_tokens": null
@@ -1132,7 +1131,6 @@ fn omitted_context_budget_uses_the_runtime_default() {
         "changed_paths": ["src/lib.rs"],
         "strict_changed_paths": true,
         "response_profile": "explain",
-        "verbose_diagnostics": true,
         "workflow_evidence": {
             "failure_traces": ["error[E0001]"],
             "symbols": ["answer"],
@@ -1160,7 +1158,6 @@ fn omitted_context_budget_uses_the_runtime_default() {
     assert_eq!(request.required_evidence[0].minimum_query_matches, 2);
     assert_eq!(request.changed_paths, ["src/lib.rs"]);
     assert!(request.strict_changed_paths);
-    assert!(request.verbose_diagnostics);
     assert_eq!(workflow_evidence.failure_traces, ["error[E0001]"]);
     assert_eq!(workflow_evidence.symbols, ["answer"]);
     assert_eq!(workflow_evidence.paths, ["src/lib.rs"]);
@@ -1480,18 +1477,29 @@ fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
         }))
         .is_err()
     );
+    assert_read_target_shapes();
+}
+
+fn assert_read_target_shapes() {
+    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "src/mcp.rs",
+        "target": {"kind": "lines", "start": 10, "end": 20}
+    }))
+    .expect("canonical line-range target");
+    let (request, _, _, _) = request.into_parts();
+    assert_eq!(request.start_line, Some(10));
+    assert_eq!(request.end_line, Some(20));
     for target in [
         serde_json::json!({"kind": "range", "start": 10, "end": 20}),
         serde_json::json!({"kind": "line_range", "start_line": 10, "end_line": 20}),
     ] {
-        let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "src/mcp.rs",
-            "target": target
-        }))
-        .expect("common line-range aliases should remain readable");
-        let (request, _, _, _) = request.into_parts();
-        assert_eq!(request.start_line, Some(10));
-        assert_eq!(request.end_line, Some(20));
+        assert!(
+            serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+                "path": "src/mcp.rs",
+                "target": target
+            }))
+            .is_err()
+        );
     }
     let heading = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
         "path": "README.md",

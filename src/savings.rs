@@ -72,7 +72,6 @@ fn write_human_report(
     color: bool,
 ) -> Result<()> {
     let palette = Palette { enabled: color };
-    let source = &report.report.source_savings;
     let accounting = &report.report.response_accounting;
     let observations = &report.observations;
     let net = format_signed_count(accounting.estimated_net_tokens_saved);
@@ -91,12 +90,6 @@ fn write_human_report(
         std::cmp::Ordering::Less => YELLOW,
         std::cmp::Ordering::Equal => DIM,
     };
-    let count_quality = if source.token_count_exact {
-        palette.paint(GREEN, "exact token count")
-    } else {
-        palette.paint(YELLOW, "estimated token count")
-    };
-
     writeln!(
         output,
         "{}",
@@ -131,21 +124,9 @@ fn write_human_report(
     )?;
     writeln!(
         output,
-        "{} successful responses  |  {} with baselines  |  {} ({count_quality})",
+        "{} successful responses  |  {} with baselines",
         format_count(accounting.tracked_requests),
-        format_count(accounting.baseline_requests),
-        palette.paint(CYAN, &source.tokenizer)
-    )?;
-    writeln!(
-        output,
-        "Represented-source compression: {} baseline -> {} emitted ({} fewer source tokens, {} reduction)",
-        format_count(source.baseline_source_tokens),
-        format_count(source.emitted_source_tokens),
-        format_count(source.estimated_source_tokens_saved),
-        format_reduction(
-            source.estimated_source_tokens_saved,
-            source.baseline_source_tokens
-        )
+        format_count(accounting.baseline_requests)
     )?;
     writeln!(
         output,
@@ -162,13 +143,12 @@ fn write_human_report(
     let classification = &observations.request_classification;
     writeln!(
         output,
-        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} failed  |  {} legacy-unclassified",
+        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} failed",
         format_count(classification.useful),
         format_count(classification.incomplete),
         format_count(classification.unsupported),
         format_count(classification.hash_suppressed),
-        format_count(classification.failed),
-        format_count(classification.legacy_unclassified)
+        format_count(classification.failed)
     )?;
     for failure in &observations.failed_by_operation_and_category {
         writeln!(
@@ -250,14 +230,6 @@ fn write_human_report(
     }
 
     writeln!(output)?;
-    writeln!(
-        output,
-        "{}",
-        palette.paint(
-            DIM,
-            &format!("Source-compression basis: {}", source.estimate_basis)
-        )
-    )?;
     writeln!(
         output,
         "{}",
@@ -348,14 +320,6 @@ fn format_signed_count(value: i64) -> String {
     }
 }
 
-fn format_reduction(saved: u64, baseline: u64) -> String {
-    if baseline == 0 {
-        return "--".into();
-    }
-    let tenths = (u128::from(saved) * 1_000 + u128::from(baseline) / 2) / u128::from(baseline);
-    format!("{}.{:01}%", tenths / 10, tenths % 10)
-}
-
 fn format_net_reduction(saved: i64, baseline: u64) -> String {
     if baseline == 0 {
         return "--".into();
@@ -387,32 +351,13 @@ fn color_enabled(is_terminal: bool) -> bool {
 mod tests {
     use super::*;
     use leantoken::{
-        ResponseTokenAccounting, ServiceFailureObservation, TokenSavingsByOperation,
-        TokenSavingsObservations, TokenSavingsOperation, TokenSavingsReport,
-        TokenSavingsRequestClassification, TokenSavingsResponse,
+        ResponseTokenAccounting, ServiceFailureObservation, TokenSavingsObservations,
+        TokenSavingsReport, TokenSavingsRequestClassification,
     };
 
     fn report() -> ObservedTokenSavingsReport {
         ObservedTokenSavingsReport {
             report: TokenSavingsReport {
-                source_savings: TokenSavingsResponse {
-                    tokenizer: "o200k_base".into(),
-                    token_count_exact: true,
-                    estimate_basis:
-                        "requested read ranges or whole source files represented in each response"
-                            .into(),
-                    tracked_requests: 24,
-                    baseline_source_tokens: 324_656,
-                    emitted_source_tokens: 9_263,
-                    estimated_source_tokens_saved: 315_393,
-                    by_operation: vec![TokenSavingsByOperation {
-                        operation: TokenSavingsOperation::Search,
-                        tracked_requests: 9,
-                        baseline_source_tokens: 224_396,
-                        emitted_source_tokens: 3_513,
-                        estimated_source_tokens_saved: 220_883,
-                    }],
-                },
                 response_accounting: ResponseTokenAccounting {
                     accounting_scope: "successful responses; excludes pre-response failures".into(),
                     estimate_basis:
@@ -463,7 +408,6 @@ mod tests {
                     "best-effort service records; local writer contention skips accounting".into(),
                 successful_response_records: 27,
                 responses_with_baseline: 24,
-                source_compression_requests: 24,
                 failed_service_requests: 3,
                 expected_hash_not_modified_responses: 2,
                 expected_hash_suppressed_source_tokens: 8_192,
@@ -472,7 +416,6 @@ mod tests {
                     incomplete: 3,
                     unsupported: 1,
                     hash_suppressed: 2,
-                    legacy_unclassified: 1,
                     failed: 3,
                 },
                 failed_by_operation_and_category: vec![ServiceFailureObservation {
@@ -502,12 +445,7 @@ mod tests {
         ));
         assert!(output.contains("324,656 baseline  ->  23,663 total response"));
         assert!(output.contains("9,263 source + 12,000 metadata + 2,400 protocol"));
-        assert!(output.contains(
-            "27 successful responses  |  24 with baselines  |  o200k_base (exact token count)"
-        ));
-        assert!(
-            output.contains("Represented-source compression: 324,656 baseline -> 9,263 emitted")
-        );
+        assert!(output.contains("27 successful responses  |  24 with baselines"));
         assert!(output.contains(
             "Persisted observations: 27 successful  |  3 failed  |  2 expected-hash not-modified"
         ));
@@ -545,10 +483,6 @@ mod tests {
     fn count_and_reduction_formatting_cover_zero_and_large_values() {
         assert_eq!(format_count(0), "0");
         assert_eq!(format_count(u64::MAX), "18,446,744,073,709,551,615");
-        assert_eq!(format_reduction(0, 0), "--");
-        assert_eq!(format_reduction(0, 10), "0.0%");
-        assert_eq!(format_reduction(1, 3), "33.3%");
-        assert_eq!(format_reduction(2, 3), "66.7%");
         assert_eq!(format_signed_count(-1_234), "-1,234");
         assert_eq!(format_net_reduction(-1, 3), "-33.3%");
     }

@@ -529,7 +529,7 @@ pub(crate) fn managed_cache_root() -> Option<PathBuf> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ManagedCacheIdentity {
-    Legacy,
+    Unversioned,
     Versioned {
         version: u32,
         root_hash: String,
@@ -548,7 +548,7 @@ pub(crate) fn managed_cache_id_for_scope(root: &Path, scope: &IndexScope) -> Str
 
 pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity> {
     if is_managed_cache_hash(value) {
-        return Some(ManagedCacheIdentity::Legacy);
+        return Some(ManagedCacheIdentity::Unversioned);
     }
     let (version_text, remainder) = value.strip_prefix('v')?.split_once('-')?;
     let version = version_text
@@ -580,7 +580,7 @@ pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity
 pub(crate) fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
     let hash = managed_cache_root_hash(root);
     match parse_managed_cache_id(value) {
-        Some(ManagedCacheIdentity::Legacy) => value == hash,
+        Some(ManagedCacheIdentity::Unversioned) => value == hash,
         Some(ManagedCacheIdentity::Versioned { root_hash, .. }) => root_hash == hash,
         None => false,
     }
@@ -647,13 +647,13 @@ mod tests {
     fn managed_cache_identity_is_versioned_and_strictly_parsed() {
         let root = Path::new("/tmp/repository");
         let id = managed_cache_id(root);
-        let legacy_id = id
+        let unversioned_id = id
             .split_once('-')
             .expect("versioned managed cache identity")
             .1;
 
         assert!(id.starts_with(&format!("v{INDEX_CONTENT_VERSION}-")));
-        assert_ne!(id, legacy_id);
+        assert_ne!(id, unversioned_id);
         assert!(matches!(
             parse_managed_cache_id(&id),
             Some(ManagedCacheIdentity::Versioned {
@@ -663,14 +663,14 @@ mod tests {
             })
         ));
         assert!(managed_cache_id_matches_root(&id, root));
-        assert!(managed_cache_id_matches_root(legacy_id, root));
+        assert!(managed_cache_id_matches_root(unversioned_id, root));
         assert_ne!(
             managed_cache_id_for_version(root, INDEX_CONTENT_VERSION - 1, None),
             id
         );
         assert_eq!(
             parse_managed_cache_id("0000000000000001"),
-            Some(ManagedCacheIdentity::Legacy)
+            Some(ManagedCacheIdentity::Unversioned)
         );
         assert!(parse_managed_cache_id("v0-0000000000000001").is_none());
         assert!(parse_managed_cache_id("v01-0000000000000001").is_none());
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn managed_fallback_excludes_current_and_legacy_cache_artifacts() {
+    fn managed_fallback_excludes_current_and_unversioned_cache_artifacts() {
         let root = tempfile::tempdir().expect("repository");
         let database = root
             .path()

@@ -114,11 +114,6 @@ pub struct ReadArgs {
     /// Expected content hash; returns not_modified when current.
     #[arg(long)]
     pub expected_hash: Option<String>,
-
-    /// Compatibility field; one-shot CLI parsing never enables process-local delta state.
-    #[arg(skip)]
-    #[doc(hidden)]
-    pub delta: bool,
 }
 
 impl From<ReadArgs> for ReadRequest {
@@ -138,7 +133,6 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
-            // A one-shot CLI process cannot retain the base for a follow-up.
             delta: false,
             receipt_id: None,
         }

@@ -359,7 +359,6 @@ impl Services {
                         content_hash: hash(&serialized),
                         language: file.language,
                         parse_complete: file.parse_complete,
-                        structurally_complete: file.structurally_complete,
                         signatures,
                     });
                 }
@@ -460,7 +459,6 @@ impl Services {
                     path: file.path,
                     language: file.language,
                     parse_complete: file.structurally_complete,
-                    structurally_complete: file.structurally_complete,
                     symbols: Vec::new(),
                     imports: Vec::new(),
                 });

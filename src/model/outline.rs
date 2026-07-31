@@ -53,8 +53,6 @@ pub struct OutlineFile {
     /// Whether structural parsing covered the complete indexed file.
     #[serde(default)]
     pub parse_complete: bool,
-    /// Compatibility alias for `parse_complete`.
-    pub structurally_complete: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<Symbol>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -119,7 +117,6 @@ pub struct OutlineSignaturesFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     pub parse_complete: bool,
-    pub structurally_complete: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub signatures: Vec<OutlineSignature>,
 }

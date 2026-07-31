@@ -103,10 +103,6 @@ pub(in crate::mcp) struct ContextMcpRequest {
     /// optional diff and omission detail, while `explain` includes bounded detail.
     #[serde(default)]
     pub(in crate::mcp) response_profile: Option<ContextResponseProfile>,
-    /// Legacy alias for `response_profile=explain`; conflicts with an explicit
-    /// `compact` or `balanced` profile.
-    #[serde(default)]
-    pub(in crate::mcp) verbose_diagnostics: bool,
     /// Attach a compact provenance manifest for a host-triggered executor handoff;
     /// cannot be combined with `plan_only`.
     #[serde(default)]
@@ -174,7 +170,7 @@ impl ContextMcpRequest {
                 base_revision: self.base_revision,
                 changed_paths: self.changed_paths,
                 strict_changed_paths: self.strict_changed_paths,
-                verbose_diagnostics: self.verbose_diagnostics,
+                explain_diagnostics: false,
             },
             self.workflow,
             self.workflow_evidence,

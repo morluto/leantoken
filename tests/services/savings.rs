@@ -93,7 +93,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         .token_savings_report()
         .await
         .expect("effective savings");
-    assert_eq!(effective.source_savings, report);
     let accounting = &effective.response_accounting;
     assert_eq!(accounting.tracked_requests, 5);
     assert_eq!(accounting.baseline_requests, 5);
@@ -173,7 +172,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert_eq!(observed.report, effective);
     assert_eq!(observed.observations.successful_response_records, 5);
     assert_eq!(observed.observations.responses_with_baseline, 5);
-    assert_eq!(observed.observations.source_compression_requests, 4);
     assert_eq!(observed.observations.failed_service_requests, 1);
     assert_eq!(
         observed.observations.expected_hash_not_modified_responses,
@@ -210,13 +208,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         1
     );
     assert_eq!(observed.observations.request_classification.failed, 1);
-    assert_eq!(
-        observed
-            .observations
-            .request_classification
-            .legacy_unclassified,
-        0
-    );
     let delta = services
         .observed_token_savings_snapshot(Some(initial_snapshot.snapshot))
         .await
@@ -256,8 +247,12 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         })
     ));
     let serialized = serde_json::to_value(&observed).expect("serialize observed accounting");
-    assert!(serialized.get("tokenizer").is_some());
-    assert!(serialized.get("estimated_source_tokens_saved").is_some());
+    assert!(serialized
+        .pointer("/response_accounting/estimate_basis")
+        .is_some());
+    assert!(serialized
+        .pointer("/response_accounting/estimated_net_tokens_saved")
+        .is_some());
     assert!(serialized.get("response_accounting").is_some());
     assert!(serialized.get("observations").is_some());
     assert!(serialized.get("report").is_none());
@@ -422,7 +417,6 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
         .await
         .expect("classified delta");
     assert_eq!(delta.window, TokenSavingsWindow::Delta);
-    assert_eq!(delta.observed.report.source_savings.tracked_requests, 0);
     assert_eq!(
         delta
             .observed

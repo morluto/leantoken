@@ -73,12 +73,19 @@ fn cli_indexes_statuses_and_searches_as_json() {
     );
 
     let savings = run(root.path(), &database, &["savings"]);
-    assert_eq!(savings["tracked_requests"], 1);
-    assert_eq!(savings["by_operation"][0]["operation"], "search");
-    assert_eq!(savings["by_operation"][0]["tracked_requests"], 1);
+    assert_eq!(savings["response_accounting"]["tracked_requests"], 1);
+    let search_accounting = savings["response_accounting"]["by_operation"]
+        .as_array()
+        .and_then(|operations| {
+            operations
+                .iter()
+                .find(|operation| operation["operation"] == "search")
+        })
+        .expect("search accounting");
+    assert_eq!(search_accounting["tracked_requests"], 1);
     assert!(
-        savings["estimated_source_tokens_saved"]
-            .as_u64()
+        savings["response_accounting"]["estimated_net_tokens_saved"]
+            .as_i64()
             .is_some()
     );
     assert_eq!(savings["window"], "lifetime");
@@ -97,7 +104,7 @@ fn cli_indexes_statuses_and_searches_as_json() {
         &["savings", "--snapshot", &snapshot],
     );
     assert_eq!(delta["window"], "delta");
-    assert_eq!(delta["tracked_requests"], 1);
+    assert_eq!(delta["response_accounting"]["tracked_requests"], 1);
     assert_eq!(
         delta["observations"]["request_classification"]["useful"],
         1
@@ -264,13 +271,13 @@ fn cli_savings_renders_a_color_aware_human_table() {
     assert!(plain.starts_with(
         "LeanToken Observed Token Accounting\n===================================\n"
     ));
-    assert!(plain.contains("fewer source tokens"));
+    assert!(plain.contains("response tokens"));
     assert!(plain.contains("Persisted observations"));
     assert!(plain.contains("Request classes:"));
     assert!(plain.contains("Unobserved task outcomes"));
     assert!(plain.contains("Operation"));
     assert!(plain.contains("Search"));
-    assert!(plain.contains("reduction"));
+    assert!(plain.contains("response delta"));
     assert!(plain.contains("Window: lifetime"));
     assert!(plain.contains("Snapshot: lts1."));
     assert!(!plain.contains("\x1b["));

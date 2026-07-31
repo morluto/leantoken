@@ -127,7 +127,7 @@ fn budget_omits_low_value_candidates() {
     .exact(0.9);
 
     let mut req = request_with_budget(5);
-    req.verbose_diagnostics = true;
+    req.explain_diagnostics = true;
     let resp = select(vec![huge, tiny], &req, 1);
 
     // tiny should be selected; huge should not fit in a budget of 5 tokens.

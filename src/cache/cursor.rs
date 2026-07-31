@@ -33,6 +33,7 @@ pub(super) fn cache_list_filter_hash(
     repository_root: Option<&Path>,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
+    hasher.update(b"cache-list-v2\0");
     if request.states.is_empty() {
         hasher.update(b"all-states");
     } else {
@@ -47,15 +48,6 @@ pub(super) fn cache_list_filter_hash(
     if let Some(root) = repository_root {
         hasher.update(root.as_os_str().as_encoded_bytes());
     }
-    hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
-}
-
-pub(super) fn cache_list_v2_filter_hash(
-    request: &CacheListV2Request,
-    repository_root: Option<&Path>,
-) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(cache_list_filter_hash(&request.request, repository_root).as_bytes());
     hasher.update(b"\xffcompatibility\0");
     if request.compatibilities.is_empty() {
         hasher.update(b"all");
@@ -83,20 +75,12 @@ pub(super) fn cache_list_v2_filter_hash(
     hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
 }
 
-pub(super) fn encode_cache_list_cursor(filter_hash: &str, after_id: &str) -> String {
-    encode_cache_list_cursor_with_prefix(CACHE_LIST_CURSOR_PREFIX, filter_hash, after_id)
-}
-
 pub(super) fn encode_cache_list_cursor_with_prefix(
     prefix: &str,
     filter_hash: &str,
     after_id: &str,
 ) -> String {
     format!("{prefix}:{filter_hash}:{after_id}")
-}
-
-pub(super) fn decode_cache_list_cursor(cursor: &str, expected_filter_hash: &str) -> Result<String> {
-    decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, expected_filter_hash)
 }
 
 pub(super) fn decode_cache_list_cursor_with_prefix(

@@ -213,7 +213,7 @@ pub(super) fn project_key_page(
     })
 }
 
-/// Streaming keys projection used by the legacy `project_json` path. Honors
+/// Streaming keys projection used by the standard `project_json` path. Honors
 /// the shared `ProjectionState` item budget and deduplicates pointers.
 pub(super) fn collect_keys(
     value: &Value,

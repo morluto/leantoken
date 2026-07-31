@@ -462,7 +462,7 @@ subprocess, network request, or concurrency fan-out. The normalized full digest
 participates in the index configuration hash and storage binding. Managed cache
 directories carry a compact 16-hex-character digest, while SQLite binding uses
 the complete digest; even a compact-ID collision fails closed instead of
-sharing membership. The legacy full cache ID remains unchanged.
+sharing membership. The unversioned full cache ID remains readable.
 
 Status returns full/scoped mode, the compact digest, and the bounded normalized
 patterns. Every retrieval `ResponseMeta` returns full/scoped mode and the
@@ -549,7 +549,7 @@ mtime for corrupt, incomplete, or older-schema entries.
 Cache metadata/access state and index-content compatibility are separate
 classifications. A readable current metadata schema can therefore coexist with
 an `obsolete_older` or `legacy_unversioned` content identity without being
-reported as content-compatible. Versioned list requests accept at most five
+reported as content-compatible. Cache-list requests accept at most five
 compatibility classes and 32 exact content versions; both filters and the
 `incompatible_with_current` convenience predicate are included in the cursor
 shape.
@@ -560,13 +560,13 @@ active leaders and read-only followers are both protected rather than relying on
 the shorter leadership or operation locks. The lease identity remains after
 large cache artifacts and coordination sidecars are removed; replacing or
 unlinking the lock itself would let a returning process lock a different inode.
-Only strict legacy hashes or `v<index-content-version>-<hash>` directories under
+Only strict unversioned hashes or `v<index-content-version>-<hash>` directories under
 the platform-managed cache root participate; unexpected directory content,
 future content versions, and explicit databases outside that root fail closed
 from automatic deletion. Versioned identities let compatible builds share a
 cache without allowing an older process left alive during an upgrade to
 downgrade the newer index. Compatibility pruning deletes only inactive,
-recognizable older or legacy-unversioned entries and re-inspects the same
+recognizable older or unversioned entries and re-inspects the same
 criterion after acquiring the exclusive lease. Corrupt/unknown, future,
 unexpected, identity-mismatched, and lease-unavailable entries are never
 automatically deleted.
@@ -909,8 +909,8 @@ fragment identity and order, source budgets, hard constraints, and receipt
 suppression. Compact removes optional individual omission, facet, and diff
 detail while retaining fail-loud coverage, warnings, routing, aggregate
 omission counts, and receipt evidence. The selected profile starts no scan,
-query, storage write, or concurrency fan-out. Legacy
-`verbose_diagnostics=true` normalizes to `explain`.
+query, storage write, or concurrency fan-out. The CLI's
+`--verbose-diagnostics` option selects `explain`.
 
 Fitting is deterministic and happens inside `Services`, after candidate
 generation but before receipt evidence is committed. It first removes bounded
@@ -919,7 +919,7 @@ Only requests without include, must-cover, focus, diff, strict-scope, or
 handoff constraints may then drop lowest-ranked selected fragments. Constrained
 requests return a typed `ResponseBudgetExceeded` error when their correctness
 skeleton cannot fit; fitting never weakens their coverage contract. The error
-keeps the public `request_limit_exceeded` category and legacy
+keeps the public `request_limit_exceeded` category and established
 `requested`/`limit` adapter fields, while adding the caller-provided ceiling,
 the exact retryable minimum, and a bounded aggregate split across mandatory
 source, protocol, path/metadata, and receipt-reserve tokens. It never reports

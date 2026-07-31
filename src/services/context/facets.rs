@@ -310,7 +310,7 @@ fn build_queries(
     let available = limit.saturating_sub(usize::from(wants_tests));
     let mut queries = Vec::new();
     let mut positions = HashMap::<String, usize>::new();
-    let code_terms = legacy_code_tokens(task);
+    let code_terms = code_tokens(task);
     let exact_terms = facets
         .iter()
         .filter(|facet| facet.kind == FacetKind::ExactAtom)
@@ -541,7 +541,7 @@ fn push_facet(
     });
 }
 
-pub(super) fn legacy_code_tokens(task: &str) -> Vec<String> {
+pub(super) fn code_tokens(task: &str) -> Vec<String> {
     task.split_whitespace()
         .map(|token| {
             token.trim_matches(|character: char| !character.is_alphanumeric() && character != '_')

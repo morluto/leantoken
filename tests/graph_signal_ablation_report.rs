@@ -42,7 +42,7 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
     );
     assert_eq!(
         report["harness_revision"],
-        "acf0e240a58030b09f8326858ae1ed300ac6ed58"
+        "c9e2a11fea763d6cc20583073f4f3fd7a095c25e"
     );
     assert_eq!(report["harness_worktree_dirty"], true);
     assert_eq!(report["runs"].as_array().expect("runs").len(), 96);
@@ -97,8 +97,8 @@ fn graph_signal_report_binds_frozen_inputs_and_no_go_decision() {
         caller["per_repetition"][0]["false_positive_signal_candidate_files"],
         127
     );
-    assert_eq!(report["graph_index"]["unresolved_import_edges"], 8012);
-    assert_eq!(report["graph_index"]["total_database_bytes"], 113127424);
+    assert_eq!(report["graph_index"]["unresolved_import_edges"], 6990);
+    assert_eq!(report["graph_index"]["total_database_bytes"], 124682240);
 }
 
 #[test]

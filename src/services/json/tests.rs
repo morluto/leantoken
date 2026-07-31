@@ -8,9 +8,9 @@ use super::cursor::{decode_json_cursor, json_query_hash, make_json_cursor};
 use super::execution::{JsonCursorVersion, JsonKeyOrder};
 use super::keys::key_entries;
 use super::projection::{ProjectionState, count_nodes, project_json};
-use super::schema::{build_schema_breadth_first, infer_schema};
+use super::schema::build_schema_breadth_first;
 use super::validation::validate_json_request;
-use super::{DEFAULT_ARRAY_SAMPLE_SIZE, JsonExecutionOptions, MAX_JSON_DEPTH};
+use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
 use crate::model::{JsonOperation, JsonProjection, JsonRequest};
 use crate::services::{ServiceCallOptions, Services};
@@ -258,11 +258,11 @@ fn breadth_first_schema_preserves_complete_shape_and_shallow_siblings() {
         "c": [],
     });
     let total = count_nodes(&value);
-    let mut legacy_state = ProjectionState::new(total, DEFAULT_ARRAY_SAMPLE_SIZE);
-    let legacy = infer_schema(&value, &mut legacy_state);
     let complete = build_schema_breadth_first(&value, total);
-    assert!(legacy_state.is_complete());
-    assert_eq!(complete, legacy);
+    assert_eq!(
+        complete["properties"]["a"]["properties"]["deep"]["type"],
+        "object"
+    );
 
     let shallow = build_schema_breadth_first(&value, 4);
     let properties = shallow["properties"]

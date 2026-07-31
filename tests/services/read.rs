@@ -808,7 +808,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("exact range");
-    assert_eq!((exact.start_line, exact.end_line), (2, 3));
+    assert_eq!((exact.returned_start_line, exact.returned_end_line), (2, 3));
     assert_eq!(exact.content.as_deref(), Some("two\nthree\n"));
 
     let unchanged = services
@@ -847,7 +847,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("open-ended range");
-    assert_eq!((from_second.start_line, from_second.end_line), (2, 5));
+    assert_eq!((from_second.returned_start_line, from_second.returned_end_line), (2, 5));
     assert_eq!(from_second.content.as_deref(), Some("two\nthree\nfour\nfive\n"));
 
     let through_third = services
@@ -866,7 +866,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("open-start range");
-    assert_eq!((through_third.start_line, through_third.end_line), (1, 3));
+    assert_eq!((through_third.returned_start_line, through_third.returned_end_line), (1, 3));
     assert_eq!(through_third.content.as_deref(), Some("one\ntwo\nthree\n"));
 
     let whole = services
@@ -921,7 +921,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("range through EOF");
-    assert_eq!((through_eof.start_line, through_eof.end_line), (4, 5));
+    assert_eq!((through_eof.returned_start_line, through_eof.returned_end_line), (4, 5));
     assert_eq!(through_eof.content.as_deref(), Some("four\nfive\n"));
 
     std::fs::write(
@@ -973,7 +973,7 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
         .await
         .expect("symbol range");
 
-    assert_eq!((response.start_line, response.end_line), (3, 6));
+    assert_eq!((response.returned_start_line, response.returned_end_line), (3, 6));
     assert_eq!(
         response.content.as_deref(),
         Some("fn target() -> usize {\n    let value = PREFIX + 1;\n    value\n}\n")
@@ -1009,7 +1009,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
     let content = response.content.as_deref().expect("content");
     assert!(content.len() <= 12 * 32);
     assert!(content.contains("generated_5000"));
-    assert!(response.start_line >= 5_000);
+    assert!(response.returned_start_line >= 5_000);
     assert!(response.meta.source_tokens <= 12);
 }
 
@@ -1111,7 +1111,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
         .await
         .expect("open CRLF range");
 
-    assert_eq!((exact.start_line, exact.end_line), (2, 3));
+    assert_eq!((exact.returned_start_line, exact.returned_end_line), (2, 3));
     assert_eq!(exact.content.as_deref(), Some("beta\r\ngamma"));
     assert_eq!(exact.content, open.content);
     assert_eq!(exact.content_hash, open.content_hash);
@@ -1155,7 +1155,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
         })
         .await
         .expect("empty file");
-    assert_eq!((empty.start_line, empty.end_line), (1, 1));
+    assert_eq!((empty.returned_start_line, empty.returned_end_line), (1, 1));
     assert_eq!(empty.content.as_deref(), Some(""));
 
     for (start_line, end_line) in [(Some(0), Some(1)), (Some(3), Some(2)), (Some(2), Some(2))] {
@@ -1251,13 +1251,11 @@ async fn token_truncated_read_reports_the_returned_line_range() {
     assert_eq!(response.status, ReadStatus::Truncated);
     assert!(response.truncated);
     assert_eq!((response.target_start_line, response.target_end_line), (2, 4));
-    assert_eq!(response.returned_start_line, response.start_line);
-    assert_eq!(response.returned_end_line, response.end_line);
     assert!(response.next_start_line.is_some());
     assert!(response.continuation_cursor.is_some());
-    assert_eq!(response.start_line, 2);
-    assert_eq!(response.end_line, response.start_line + returned_lines - 1);
-    assert!(response.end_line <= 4);
+    assert_eq!(response.returned_start_line, 2);
+    assert_eq!(response.returned_end_line, response.returned_start_line + returned_lines - 1);
+    assert!(response.returned_end_line <= 4);
     assert!(response.meta.source_tokens <= 3);
 }
 
@@ -1290,8 +1288,8 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
         pages += 1;
         assert_eq!(response.target_start_line, 1);
         assert_eq!(response.target_end_line, 4);
-        assert_eq!(response.returned_start_line, response.start_line);
-        assert_eq!(response.returned_end_line, response.end_line);
+        assert_eq!(response.returned_start_line, response.returned_start_line);
+        assert_eq!(response.returned_end_line, response.returned_end_line);
         reconstructed.push_str(response.content.as_deref().expect("page content"));
 
         if response.truncated {
@@ -1480,7 +1478,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
         })
         .await
         .expect("qualified symbol");
-    assert_eq!((response.start_line, response.end_line), (6, 7));
+    assert_eq!((response.returned_start_line, response.returned_end_line), (6, 7));
     assert!(
         response
             .content
@@ -1540,7 +1538,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
         })
         .await
         .expect("late symbol read");
-    assert_eq!(read.start_line, 130);
+    assert_eq!(read.returned_start_line, 130);
     assert!(
         read.content
             .as_deref()

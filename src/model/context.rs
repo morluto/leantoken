@@ -37,16 +37,6 @@ pub enum ContextResponseProfile {
     Explain,
 }
 
-impl ContextResponseProfile {
-    pub(crate) const fn from_legacy_verbose(verbose_diagnostics: bool) -> Self {
-        if verbose_diagnostics {
-            Self::Explain
-        } else {
-            Self::Balanced
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.context`.
 pub struct ContextRequest {
@@ -105,9 +95,10 @@ pub struct ContextRequest {
     /// Require every returned fragment to belong to the resolved changed paths.
     #[serde(default)]
     pub strict_changed_paths: bool,
-    /// Legacy alias for the explain response profile.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub verbose_diagnostics: bool,
+    /// Internal presentation flag derived from the selected response profile.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub explain_diagnostics: bool,
 }
 
 /// Optional host-supplied state carried into a compact context handoff manifest.
@@ -409,9 +400,6 @@ pub struct ContextCoverageReceipt {
     /// Whether every requested strict or minimum path scope was satisfied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_scope_satisfied: Option<bool>,
-    /// Backward-compatible alias for `path_scope_satisfied`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub strict_scope_satisfied: Option<bool>,
     /// Per-contract coverage for explicit path-scoped evidence requirements.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_evidence: Vec<ContextRequiredEvidenceCoverage>,
@@ -451,7 +439,6 @@ impl ContextCoverageReceipt {
             && self.focus_path_coverage.is_empty()
             && self.changed_path_coverage.is_none()
             && self.path_scope_satisfied.is_none()
-            && self.strict_scope_satisfied.is_none()
             && self.required_evidence.is_empty()
             && self.evidence_scope_satisfied.is_none()
             && self.unmatched_include_paths.is_empty()
@@ -841,7 +828,7 @@ pub struct DiffRelatedPath {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextResponse {
-    /// Effective presentation profile after compatibility normalization.
+    /// Effective presentation profile after service-option normalization.
     #[serde(default)]
     pub effective_response_profile: ContextResponseProfile,
     /// Workflow selected by the context router.

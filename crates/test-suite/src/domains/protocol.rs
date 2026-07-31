@@ -1117,12 +1117,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_ne!(savings.is_error, Some(true));
     let savings_structured = savings.structured_content.expect("structured savings");
     assert!(
-        savings_structured["tracked_requests"]
+        savings_structured["response_accounting"]["tracked_requests"]
             .as_u64()
             .is_some_and(|requests| requests >= 1)
     );
     assert!(
-        savings_structured["estimated_source_tokens_saved"]
+        savings_structured["response_accounting"]["estimated_net_tokens_saved"]
             .as_u64()
             .is_some()
     );
@@ -1158,7 +1158,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     };
     let context_arguments = serde_json::to_value(context)
         .expect("serialize context request")

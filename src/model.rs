@@ -32,7 +32,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn consistency_names_are_explicit_and_legacy_inputs_remain_readable() {
+    fn consistency_names_are_explicit_and_legacy_inputs_are_rejected() {
         assert_eq!(
             serde_json::to_string(&IndexConsistency::IndexedGeneration)
                 .expect("serialize indexed generation"),
@@ -43,16 +43,8 @@ mod tests {
                 .expect("serialize working-tree reconciliation"),
             "\"reconcile_working_tree\""
         );
-        assert_eq!(
-            serde_json::from_str::<IndexConsistency>("\"committed\"")
-                .expect("legacy committed alias"),
-            IndexConsistency::IndexedGeneration
-        );
-        assert_eq!(
-            serde_json::from_str::<IndexConsistency>("\"working_tree\"")
-                .expect("legacy working-tree alias"),
-            IndexConsistency::ReconcileWorkingTree
-        );
+        assert!(serde_json::from_str::<IndexConsistency>("\"committed\"").is_err());
+        assert!(serde_json::from_str::<IndexConsistency>("\"working_tree\"").is_err());
     }
 
     #[test]
@@ -378,7 +370,6 @@ mod tests {
             path: "README.md".into(),
             language: None,
             parse_complete: true,
-            structurally_complete: true,
             symbols: Vec::new(),
             imports: Vec::new(),
         };

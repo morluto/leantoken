@@ -23,7 +23,7 @@ fn request_with_budget(budget: usize) -> ContextRequest {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     }
 }
 
@@ -160,7 +160,7 @@ fn select_omits_known_hashes_and_reports_them() {
     let known_hash = leantoken::text::hash("fn known() {}");
     let mut request = request_with_budget(50);
     request.known_hashes = vec![known_hash];
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
     let response = select(candidates, &request, 2);
     assert!(response.fragments.iter().all(|f| f.path != "known.rs"));
     assert!(response.omitted.iter().any(|o| o.path == "known.rs"));
