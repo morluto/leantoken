@@ -38,7 +38,7 @@ impl RetryableToolResponse {
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpResultMode {
-    /// Send JSON as both text and structured content for broad host compatibility.
+    /// Send JSON as both text and structured content for hosts that require both.
     Dual,
     /// Send JSON only as text content for hosts that ignore structured content.
     Text,

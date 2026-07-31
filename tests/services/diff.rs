@@ -25,7 +25,7 @@ async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
             base_revision: None,
             changed_paths: vec!["src/lib.rs".into()],
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("diff-scoped context");
@@ -110,7 +110,7 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
                 .iter()
                 .all(|fragment| fragment.path == "src/selected.rs")
     );
-    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
+    assert_eq!(response.coverage.path_scope_satisfied, Some(true));
     let coverage = response
         .coverage
         .changed_path_coverage
@@ -248,7 +248,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
                 base_revision: Some(base_revision),
                 changed_paths: Vec::new(),
                 strict_changed_paths: true,
-                verbose_diagnostics: false,
+                explain_diagnostics: false,
             },
             HandoffManifestRequest::default(),
             ContextWorkflow::Review,
@@ -258,7 +258,6 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
         .await
         .expect("base-revision context");
 
-    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
     assert!(
         response
             .coverage
@@ -354,10 +353,6 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
         .context(working_tree_request)
         .await
         .expect("strict working-tree scope");
-    assert_eq!(
-        working_tree.coverage.strict_scope_satisfied,
-        Some(true)
-    );
     let working_tree_scope = working_tree.diff_scope.expect("working-tree scope");
     assert!(
         working_tree
@@ -614,7 +609,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("task-only context");
@@ -651,7 +646,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
             base_revision: None,
             changed_paths: vec!["../escape.rs".into()],
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect_err("path traversal rejected");
@@ -688,7 +683,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
             base_revision: None,
             changed_paths: too_many,
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect_err("too many changed paths rejected");
@@ -721,7 +716,7 @@ async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
             base_revision: None,
             changed_paths: vec!["src/nonexistent.rs".into()],
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("context with unindexed changed path");

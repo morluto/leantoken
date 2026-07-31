@@ -11,8 +11,8 @@ use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 use crate::Config;
 use crate::Result;
 use crate::cache::{
-    CacheCompatibility, CacheListRequest, CacheListV2Request, CachePruneRequest,
-    CachePruneV2Request, CacheState, DEFAULT_CACHE_LIST_LIMIT, MAX_CACHE_LIST_LIMIT,
+    CacheCompatibility, CacheListRequest, CachePruneRequest, CacheState, DEFAULT_CACHE_LIST_LIMIT,
+    MAX_CACHE_LIST_LIMIT,
 };
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
@@ -421,62 +421,50 @@ impl Cli {
             Commands::Files(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: FilesRequest = args.into();
-                max_response_tokens.map_or(AppRequest::Files(request.clone()), |limit| {
-                    AppRequest::FilesWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::Files {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::Search(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: SearchRequest = args.into();
-                max_response_tokens.map_or(AppRequest::Search(request.clone()), |limit| {
-                    AppRequest::SearchWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::Search {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::Outline(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: OutlineRequest = args.into();
-                max_response_tokens.map_or(AppRequest::Outline(request.clone()), |limit| {
-                    AppRequest::OutlineWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::Outline {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::Read(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: ReadRequest = args.into();
-                max_response_tokens.map_or(AppRequest::Read(request.clone()), |limit| {
-                    AppRequest::ReadWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::Read {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::History(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: HistoryRequest = args.into();
-                max_response_tokens.map_or(AppRequest::History(request.clone()), |limit| {
-                    AppRequest::HistoryWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::History {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::Json(args) => {
                 let max_response_tokens = args.max_response_tokens;
                 let request: JsonRequest = args.into();
-                max_response_tokens.map_or(AppRequest::Json(request.clone()), |limit| {
-                    AppRequest::JsonWithOptions {
-                        request,
-                        max_response_tokens: limit,
-                    }
-                })
+                AppRequest::Json {
+                    request,
+                    max_response_tokens,
+                }
             }
             Commands::Context(args) => {
                 let workflow = args.workflow.into();
@@ -502,8 +490,8 @@ impl Cli {
             Commands::Setup(args) => AppRequest::Setup(args.into()),
             Commands::Remove(args) => AppRequest::Remove(args.into()),
             Commands::Cache(args) => match args.command {
-                CacheCommand::List(args) => AppRequest::CacheListV2(args.into()),
-                CacheCommand::Prune(args) => AppRequest::CachePruneV2(args.into()),
+                CacheCommand::List(args) => AppRequest::CacheList(args.into()),
+                CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
             },
             Commands::Episode(args) => match args.command {
                 EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.into()),
@@ -528,35 +516,29 @@ pub enum AppRequest {
     SavingsDelta {
         snapshot: String,
     },
-    Files(FilesRequest),
-    Search(SearchRequest),
-    Outline(OutlineRequest),
-    Read(ReadRequest),
-    History(HistoryRequest),
-    Json(JsonRequest),
-    FilesWithOptions {
+    Files {
         request: FilesRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
-    SearchWithOptions {
+    Search {
         request: SearchRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
-    OutlineWithOptions {
+    Outline {
         request: OutlineRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
-    ReadWithOptions {
+    Read {
         request: ReadRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
-    HistoryWithOptions {
+    History {
         request: HistoryRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
-    JsonWithOptions {
+    Json {
         request: JsonRequest,
-        max_response_tokens: usize,
+        max_response_tokens: Option<usize>,
     },
     Context(Box<ContextAppRequest>),
     Doctor {
@@ -569,8 +551,6 @@ pub enum AppRequest {
     Remove(SetupRequest),
     CacheList(CacheListRequest),
     CachePrune(CachePruneRequest),
-    CacheListV2(CacheListV2Request),
-    CachePruneV2(CachePruneV2Request),
     EpisodeAudit(crate::episode::EpisodeAuditRequest),
     Upgrade {
         check: bool,

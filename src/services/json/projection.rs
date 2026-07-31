@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 
 use super::collapsed::collapse_json;
 use super::keys::collect_keys;
-use super::schema::infer_schema;
 use crate::model::JsonProjection;
 use crate::{Error, Result};
 
@@ -129,6 +128,9 @@ pub(super) fn project_json(
                     .collect(),
             ))
         }
-        JsonProjection::Schema => Ok(infer_schema(value, state)),
+        JsonProjection::Schema => Err(Error::InvalidInput {
+            field: "projection",
+            reason: "schema projection requires bounded schema execution",
+        }),
     }
 }

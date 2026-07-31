@@ -126,7 +126,7 @@ pub struct Services {
     reconciliation: reconciliation::ReconciliationCoordinator,
 }
 
-/// Per-call response controls that preserve request-struct source compatibility.
+/// Per-call response controls shared by service entry points.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ServiceCallOptions {

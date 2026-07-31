@@ -45,7 +45,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("exact evaluation");
@@ -77,7 +77,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("multi-concept evaluation");
@@ -146,7 +146,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
-    verbose_diagnostics: false,
+    explain_diagnostics: false,
     };
 
     let baseline = services

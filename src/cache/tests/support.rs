@@ -13,6 +13,7 @@ pub(super) fn request() -> CachePruneRequest {
         remove_missing_roots: false,
         dry_run: true,
         yes: false,
+        incompatible_with_current: false,
     }
 }
 

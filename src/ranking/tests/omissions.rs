@@ -7,7 +7,7 @@ fn known_hash_omitted_and_reported() {
 
     let mut req = request_with_budget(10);
     req.known_hashes.push(hash);
-    req.verbose_diagnostics = true;
+    req.explain_diagnostics = true;
 
     let resp = select(vec![c], &req, 1);
 
@@ -22,7 +22,7 @@ fn exclude_paths_filter_candidates() {
     let excluded = Candidate::new("test/ranking.rs", 1, 2, "beta").exact(1.0);
 
     let mut req = request_excluding(10, "test");
-    req.verbose_diagnostics = true;
+    req.explain_diagnostics = true;
     let resp = select(vec![kept, excluded], &req, 1);
 
     assert_eq!(resp.fragments.len(), 1);
@@ -44,11 +44,11 @@ fn omission_summary_reports_bounded_coverage_facets() {
     request.changed_paths = vec!["src/changed.rs".into()];
     request.exclude_paths = vec!["tests/**".into()];
     request.known_hashes = vec![known_hash];
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
 
     let candidates = vec![selected, limited, known, excluded];
     let mut compact_request = request.clone();
-    compact_request.verbose_diagnostics = false;
+    compact_request.explain_diagnostics = false;
     let compact = select_with_tokenizer_and_context_exclusions(
         candidates.clone(),
         &compact_request,
@@ -127,7 +127,7 @@ fn compact_omission_diagnostics_preserve_selection_with_lower_response_cost() {
     compact_request.exclude_paths = vec!["tests/**".into()];
     compact_request.known_hashes = vec![known_hash];
     let mut verbose_request = compact_request.clone();
-    verbose_request.verbose_diagnostics = true;
+    verbose_request.explain_diagnostics = true;
 
     let compact = select(candidates.clone(), &compact_request, 1);
     let verbose = select(candidates, &verbose_request, 1);
@@ -217,7 +217,7 @@ fn include_paths_are_a_hard_fragment_boundary() {
     let unrelated = Candidate::new("src/managed/evidence.rs", 1, 2, "beta").exact(10.0);
     let mut request = request_with_budget(10);
     request.include_paths = vec!["src/browser/**".into()];
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
 
     let response = select(vec![unrelated, included], &request, 1);
 

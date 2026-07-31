@@ -86,7 +86,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
             })
             .await
             .expect("context");
@@ -242,7 +242,7 @@ public sealed class Worker {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("C# context");
@@ -437,7 +437,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
         .iter()
         .find(|file| file.path == "styles/clinic.css")
         .expect("CSS outline");
-    assert!(css.structurally_complete);
+    assert!(css.parse_complete);
     assert!(
         css.symbols
             .iter()
@@ -458,7 +458,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
         .iter()
         .find(|file| file.path == "index.html")
         .expect("HTML outline");
-    assert!(html.structurally_complete);
+    assert!(html.parse_complete);
     assert!(
         html.symbols
             .iter()
@@ -767,7 +767,7 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
     assert!(outline.result_complete);
     let latex = &outline.files[0];
     assert_eq!(latex.language.as_deref(), Some("latex"));
-    assert!(latex.structurally_complete);
+    assert!(latex.parse_complete);
     assert!(latex.symbols.iter().any(|symbol| {
         symbol.name == "Method"
             && symbol.kind == "latex_subsection"

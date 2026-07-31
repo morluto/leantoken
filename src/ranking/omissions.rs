@@ -71,14 +71,14 @@ pub(in crate::ranking) fn summarize_omissions(
     prefiltered_path_omissions: &[String],
     focus_paths: &PathMatcher,
     changed_paths: &HashSet<&str>,
-    verbose_diagnostics: bool,
+    explain_diagnostics: bool,
 ) -> ContextOmissionSummary {
     let path_excluded = path_omitted
         .len()
         .saturating_add(prefiltered_path_omissions.len());
     let known_hash = known_omitted.len();
     let budget_or_result_limit = limit_omitted.len();
-    if !verbose_diagnostics {
+    if !explain_diagnostics {
         return ContextOmissionSummary {
             path_excluded,
             known_hash,
@@ -171,7 +171,7 @@ pub(in crate::ranking) fn build_context_omissions(
         prefiltered_path_omissions,
         focus_paths,
         changed_paths,
-        request.verbose_diagnostics,
+        request.explain_diagnostics,
     );
     let mut omitted = path_omitted
         .into_iter()
@@ -194,7 +194,7 @@ pub(in crate::ranking) fn build_context_omissions(
         end_line: scored.candidate.end_line,
         reason: "budget or result limit".to_string(),
     }));
-    if !request.verbose_diagnostics {
+    if !request.explain_diagnostics {
         omitted.clear();
     }
     omitted.truncate(MAX_OMITTED_DETAILS);

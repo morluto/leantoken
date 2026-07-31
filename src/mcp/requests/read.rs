@@ -58,14 +58,11 @@ pub(in crate::mcp) enum ReadMcpTarget {
         occurrence: usize,
     },
     /// Read one inclusive one-based line range.
-    #[serde(alias = "range", alias = "line_range")]
     Lines {
         /// First one-based line.
-        #[serde(alias = "start_line")]
         #[schemars(range(min = 1))]
         start: usize,
         /// Last one-based line; must be at least `start`.
-        #[serde(alias = "end_line")]
         #[schemars(range(min = 1))]
         end: usize,
     },

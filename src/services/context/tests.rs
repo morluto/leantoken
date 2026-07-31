@@ -151,7 +151,7 @@ fn owner_test_matching_requires_filename_token_boundaries() {
         base_revision: None,
         changed_paths: vec!["src/core.rs".into()],
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     };
 
     assert_eq!(
@@ -284,7 +284,7 @@ fn oversized_diff_routing_is_bounded_deterministic_and_preserves_retry_inputs() 
         base_revision: Some("origin/main".into()),
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     };
     let changed_paths = (0..12)
         .flat_map(|index| {

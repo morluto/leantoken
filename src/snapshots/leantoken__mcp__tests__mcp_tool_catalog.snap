@@ -544,11 +544,6 @@ expression: tools
           "minimum": 1,
           "type": "integer"
         },
-        "verbose_diagnostics": {
-          "default": false,
-          "description": "Legacy alias for `response_profile=explain`; conflicts with an explicit\n`compact` or `balanced` profile.",
-          "type": "boolean"
-        },
         "workflow": {
           "$ref": "#/$defs/ContextWorkflow",
           "default": "auto",

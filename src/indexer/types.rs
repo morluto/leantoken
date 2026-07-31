@@ -92,7 +92,7 @@ pub struct ProfiledIndexResponse {
 /// Additive index report paired with full-reconciliation diagnostics.
 #[derive(Debug, Clone)]
 pub struct ProfiledIndexReport {
-    /// Flattened-compatible response plus preparation skip reasons.
+    /// Flattened wire response plus preparation skip reasons.
     pub report: IndexReport,
     /// Internal phase and batch measurements for profiling.
     pub diagnostics: IndexingDiagnostics,

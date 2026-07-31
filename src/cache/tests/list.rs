@@ -10,7 +10,9 @@ fn list_reports_current_metadata_and_ignores_non_cache_directories() {
     create_current_cache(&manager, &repository, 9_000);
     fs::create_dir_all(root.join("not-managed")).expect("unmanaged directory");
 
-    let report = manager.list().expect("cache list");
+    let report = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
 
     assert_eq!(report.entries.len(), 1);
     assert_eq!(report.total_entries, 1);
@@ -22,22 +24,25 @@ fn list_reports_current_metadata_and_ignores_non_cache_directories() {
     assert_eq!(report.state_counts["current"], 1);
     assert!(!report.summary_only);
     assert!(report.next_cursor.is_none());
-    assert_eq!(report.entries[0].state, CacheState::Current);
-    assert_eq!(report.entries[0].index_scope, IndexScopeMode::Full);
-    assert_eq!(report.entries[0].index_scope_digest, None);
+    assert_eq!(report.entries[0].entry.state, CacheState::Current);
+    assert_eq!(report.entries[0].entry.index_scope, IndexScopeMode::Full);
+    assert_eq!(report.entries[0].entry.index_scope_digest, None);
     assert_eq!(
-        report.entries[0].index_content_version,
+        report.entries[0].entry.index_content_version,
         Some(INDEX_CONTENT_VERSION)
     );
     assert_eq!(
-        report.entries[0].repository_root.as_deref(),
+        report.entries[0].entry.repository_root.as_deref(),
         Some(repository.as_path())
     );
-    assert_eq!(report.entries[0].repository_available, Some(true));
-    assert_eq!(report.entries[0].last_access_unix_seconds, Some(9_000));
-    assert_eq!(report.entries[0].age_seconds, Some(1_000));
+    assert_eq!(report.entries[0].entry.repository_available, Some(true));
     assert_eq!(
-        report.entries[0].access_time_source,
+        report.entries[0].entry.last_access_unix_seconds,
+        Some(9_000)
+    );
+    assert_eq!(report.entries[0].entry.age_seconds, Some(1_000));
+    assert_eq!(
+        report.entries[0].entry.access_time_source,
         Some(AccessTimeSource::Database)
     );
     assert!(report.total_bytes > 0);
@@ -56,17 +61,22 @@ fn list_distinguishes_scoped_cache_identity_without_exposing_patterns() {
         IndexScope::new(vec!["src/**".into()], vec!["third_party/**".into()]).expect("scope");
     let (id, _) = create_scoped_cache(&manager, &repository, &scope);
 
-    let report = manager.list().expect("cache list");
+    let report = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
     let entry = report.entries.first().expect("scoped entry");
-    assert_eq!(entry.id, id);
-    assert_eq!(entry.index_scope, IndexScopeMode::Scoped);
-    assert_eq!(entry.index_scope_digest.as_deref(), scope.digest());
-    assert_eq!(entry.repository_root.as_deref(), Some(repository.as_path()));
-    assert_eq!(entry.state, CacheState::Current);
+    assert_eq!(entry.entry.id, id);
+    assert_eq!(entry.entry.index_scope, IndexScopeMode::Scoped);
+    assert_eq!(entry.entry.index_scope_digest.as_deref(), scope.digest());
+    assert_eq!(
+        entry.entry.repository_root.as_deref(),
+        Some(repository.as_path())
+    );
+    assert_eq!(entry.entry.state, CacheState::Current);
 }
 
 #[test]
-fn list_v2_separates_metadata_state_from_content_compatibility() {
+fn list_separates_metadata_state_from_content_compatibility() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let manager = CacheManager::new(temp.path().join("managed"), 10_000);
     let repositories = (0..4)
@@ -97,7 +107,7 @@ fn list_v2_separates_metadata_state_from_content_compatibility() {
     fs::write(corrupt.join(DATABASE_NAME), b"not sqlite").expect("corrupt database");
 
     let report = manager
-        .list_v2_with(&CacheListV2Request::default())
+        .list_with(&CacheListRequest::default())
         .expect("versioned cache list");
 
     assert_eq!(report.report_version, 2);
@@ -132,7 +142,7 @@ fn list_v2_separates_metadata_state_from_content_compatibility() {
     );
     assert_eq!(
         project(&legacy_id),
-        (CacheState::Current, CacheCompatibility::LegacyUnversioned)
+        (CacheState::Current, CacheCompatibility::Unversioned)
     );
     assert_eq!(
         project(&future_id),
@@ -160,7 +170,7 @@ fn list_v2_separates_metadata_state_from_content_compatibility() {
 }
 
 #[test]
-fn list_v2_filters_and_cursors_bind_every_compatibility_dimension() {
+fn list_filters_and_cursors_bind_every_compatibility_dimension() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let manager = CacheManager::new(temp.path().join("managed"), 10_000);
     for (index, version) in [
@@ -180,64 +190,49 @@ fn list_v2_filters_and_cursors_bind_every_compatibility_dimension() {
         }
     }
 
-    let first_request = CacheListV2Request {
-        request: CacheListRequest {
-            limit: 1,
-            ..CacheListRequest::default()
-        },
+    let first_request = CacheListRequest {
+        limit: 1,
         incompatible_with_current: true,
-        ..CacheListV2Request::default()
+        ..CacheListRequest::default()
     };
     let first = manager
-        .list_v2_with(&first_request)
+        .list_with(&first_request)
         .expect("first incompatible page");
     assert_eq!(first.matched_entries, 2);
     assert_eq!(first.returned_entries, 1);
     let cursor = first.next_cursor.expect("next cursor");
     let second = manager
-        .list_v2_with(&CacheListV2Request {
-            request: CacheListRequest {
-                limit: 1,
-                cursor: Some(cursor.clone()),
-                ..CacheListRequest::default()
-            },
+        .list_with(&CacheListRequest {
+            limit: 1,
+            cursor: Some(cursor.clone()),
             incompatible_with_current: true,
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         })
         .expect("second incompatible page");
     assert_eq!(second.returned_entries, 1);
     assert!(second.next_cursor.is_none());
 
     for changed in [
-        CacheListV2Request {
-            request: CacheListRequest {
-                cursor: Some(cursor.clone()),
-                ..CacheListRequest::default()
-            },
+        CacheListRequest {
+            cursor: Some(cursor.clone()),
             compatibilities: vec![CacheCompatibility::ObsoleteOlder],
             incompatible_with_current: true,
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         },
-        CacheListV2Request {
-            request: CacheListRequest {
-                cursor: Some(cursor.clone()),
-                ..CacheListRequest::default()
-            },
+        CacheListRequest {
+            cursor: Some(cursor.clone()),
             index_content_versions: vec![INDEX_CONTENT_VERSION - 1],
             incompatible_with_current: true,
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         },
-        CacheListV2Request {
-            request: CacheListRequest {
-                cursor: Some(cursor.clone()),
-                ..CacheListRequest::default()
-            },
+        CacheListRequest {
+            cursor: Some(cursor.clone()),
             incompatible_with_current: false,
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         },
     ] {
         assert!(matches!(
-            manager.list_v2_with(&changed),
+            manager.list_with(&changed),
             Err(Error::InvalidInput {
                 field: "cache list cursor",
                 reason: "does not match the active cache filters"
@@ -246,9 +241,9 @@ fn list_v2_filters_and_cursors_bind_every_compatibility_dimension() {
     }
 
     let exact = manager
-        .list_v2_with(&CacheListV2Request {
+        .list_with(&CacheListRequest {
             index_content_versions: vec![INDEX_CONTENT_VERSION],
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         })
         .expect("exact content-version filter");
     assert_eq!(exact.matched_entries, 1);
@@ -288,7 +283,7 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
         first
             .entries
             .iter()
-            .map(|entry| entry.id.as_str())
+            .map(|entry| entry.entry.id.as_str())
             .collect::<Vec<_>>(),
         vec![FIRST_ID, SECOND_ID]
     );
@@ -302,7 +297,7 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
         })
         .expect("second cache page");
     assert_eq!(second.returned_entries, 1);
-    assert_eq!(second.entries[0].state, CacheState::Current);
+    assert_eq!(second.entries[0].entry.state, CacheState::Current);
     assert!(second.next_cursor.is_none());
 
     let summary = manager
@@ -329,9 +324,9 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
         })
         .expect("repository cache filter");
     assert_eq!(by_root.matched_entries, 1);
-    assert_eq!(by_root.entries[0].state, CacheState::Current);
+    assert_eq!(by_root.entries[0].entry.state, CacheState::Current);
     assert_eq!(
-        by_root.entries[0].repository_root.as_deref(),
+        by_root.entries[0].entry.repository_root.as_deref(),
         Some(repository.as_path())
     );
 
@@ -416,12 +411,12 @@ fn list_rejects_invalid_response_bounds_and_cursors() {
     ));
 
     let compatibility_limit = manager
-        .list_v2_with(&CacheListV2Request {
+        .list_with(&CacheListRequest {
             compatibilities: vec![
                 CacheCompatibility::CompatibleCurrent;
                 MAX_CACHE_COMPATIBILITY_FILTERS + 1
             ],
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         })
         .expect_err("compatibility filter fan-out");
     assert!(matches!(
@@ -432,12 +427,12 @@ fn list_rejects_invalid_response_bounds_and_cursors() {
         }
     ));
     let version_limit = manager
-        .list_v2_with(&CacheListV2Request {
+        .list_with(&CacheListRequest {
             index_content_versions: vec![
                 INDEX_CONTENT_VERSION;
                 MAX_CACHE_CONTENT_VERSION_FILTERS + 1
             ],
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         })
         .expect_err("content-version filter fan-out");
     assert!(matches!(
@@ -448,9 +443,9 @@ fn list_rejects_invalid_response_bounds_and_cursors() {
         }
     ));
     assert!(matches!(
-        manager.list_v2_with(&CacheListV2Request {
+        manager.list_with(&CacheListRequest {
             index_content_versions: vec![0],
-            ..CacheListV2Request::default()
+            ..CacheListRequest::default()
         }),
         Err(Error::InvalidInput {
             field: "cache content-version filter",
@@ -474,11 +469,13 @@ fn legacy_repository_only_identity_remains_visible_and_prunable() {
     drop(Storage::open_for_repository(&database, &repository).expect("legacy cache database"));
     let manager = CacheManager::new(root, 10_000);
 
-    let listed = manager.list().expect("cache list");
+    let listed = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
 
     assert_eq!(listed.entries.len(), 1);
-    assert_eq!(listed.entries[0].index_content_version, None);
-    assert_eq!(listed.entries[0].state, CacheState::Current);
+    assert_eq!(listed.entries[0].entry.index_content_version, None);
+    assert_eq!(listed.entries[0].entry.state, CacheState::Current);
 
     let mut request = request();
     request.max_total_bytes = Some(0);

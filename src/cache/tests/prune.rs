@@ -30,12 +30,12 @@ fn incompatible_prune_is_dry_run_first_and_fail_closed() {
     fs::create_dir_all(corrupt.parent().expect("corrupt directory"))
         .expect("corrupt cache directory");
     fs::write(&corrupt, b"not sqlite").expect("corrupt database");
-    let dry_run = CachePruneV2Request {
-        request: request(),
+    let dry_run = CachePruneRequest {
         incompatible_with_current: true,
+        ..request()
     };
 
-    let plan = manager.prune_v2(&dry_run).expect("incompatible dry run");
+    let plan = manager.prune(&dry_run).expect("incompatible dry run");
 
     for id in [&older_id, &legacy_id] {
         let result = plan
@@ -64,13 +64,11 @@ fn incompatible_prune_is_dry_run_first_and_fail_closed() {
     }
 
     let applied = manager
-        .prune_v2(&CachePruneV2Request {
-            request: CachePruneRequest {
-                dry_run: false,
-                yes: true,
-                ..request()
-            },
+        .prune(&CachePruneRequest {
+            dry_run: false,
+            yes: true,
             incompatible_with_current: true,
+            ..request()
         })
         .expect("apply incompatible prune");
     for id in [&older_id, &legacy_id] {
@@ -107,24 +105,24 @@ fn incompatible_prune_never_projects_an_active_cache_as_reclaimable() {
     let config =
         Config::discover(&repository, Some(database.clone())).expect("active cache config");
     let services = Services::open(config).expect("active cache service");
-    let request = CachePruneV2Request {
-        request: request(),
+    let request = CachePruneRequest {
         incompatible_with_current: true,
+        ..request()
     };
 
     let listed = manager
-        .list_v2_with(&CacheListV2Request::default())
+        .list_with(&CacheListRequest::default())
         .expect("active compatibility summary");
     assert_eq!(listed.compatibility_counts["obsolete_older"].entries, 1);
     assert_eq!(listed.safely_reclaimable_incompatible_entries, 0);
     assert_eq!(listed.safely_reclaimable_incompatible_bytes, 0);
 
-    let active = manager.prune_v2(&request).expect("active prune plan");
+    let active = manager.prune(&request).expect("active prune plan");
     assert_eq!(active.results[0].action, CachePruneAction::SkippedActive);
     assert!(database.exists());
 
     drop(services);
-    let inactive = manager.prune_v2(&request).expect("inactive prune plan");
+    let inactive = manager.prune(&request).expect("inactive prune plan");
     assert_eq!(inactive.results[0].action, CachePruneAction::WouldDelete);
     assert!(database.exists());
 }
@@ -164,7 +162,13 @@ fn explicit_database_outside_managed_root_is_never_considered() {
     drop(Services::open(config).expect("services"));
     let manager = CacheManager::new(temp.path().join("managed"), 10_000);
 
-    assert!(manager.list().expect("cache list").entries.is_empty());
+    assert!(
+        manager
+            .list_with(&CacheListRequest::default())
+            .expect("cache list")
+            .entries
+            .is_empty()
+    );
     let mut prune = request();
     prune.max_total_bytes = Some(1);
     assert!(manager.prune(&prune).expect("prune").results.is_empty());

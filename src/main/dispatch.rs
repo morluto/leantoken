@@ -51,15 +51,6 @@ pub(super) fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
             cache::print_prune(&report, json)?;
             ensure_cache_prune_succeeded(&report)
         }
-        AppRequest::CacheListV2(request) => {
-            let report = cache::list_v2_with(&request)?;
-            cache::print_list_v2(&report, json)
-        }
-        AppRequest::CachePruneV2(request) => {
-            let report = cache::prune_v2(&request)?;
-            cache::print_prune(&report, json)?;
-            ensure_cache_prune_succeeded(&report)
-        }
         _ => unreachable!("cache command checked by dispatch"),
     }
 }
@@ -152,13 +143,7 @@ pub(super) async fn dispatch_repository_request(
                 .await?,
             json,
         ),
-        AppRequest::Files(request) => print(
-            &services
-                .files_with_consistency_cancellable(request, consistency, CancellationToken::new())
-                .await?,
-            json,
-        ),
-        AppRequest::FilesWithOptions {
+        AppRequest::Files {
             request,
             max_response_tokens,
         } => print(
@@ -166,19 +151,13 @@ pub(super) async fn dispatch_repository_request(
                 .files_with_options_consistency_cancellable(
                     request,
                     consistency,
-                    service_call_options(Some(max_response_tokens)),
+                    service_call_options(max_response_tokens),
                     CancellationToken::new(),
                 )
                 .await?,
             json,
         ),
-        AppRequest::Search(request) => print(
-            &services
-                .search_with_consistency_cancellable(request, consistency, CancellationToken::new())
-                .await?,
-            json,
-        ),
-        AppRequest::SearchWithOptions {
+        AppRequest::Search {
             request,
             max_response_tokens,
         } => print(
@@ -186,23 +165,13 @@ pub(super) async fn dispatch_repository_request(
                 .search_with_options_consistency_cancellable(
                     request,
                     consistency,
-                    service_call_options(Some(max_response_tokens)),
+                    service_call_options(max_response_tokens),
                     CancellationToken::new(),
                 )
                 .await?,
             json,
         ),
-        AppRequest::Outline(request) => print(
-            &services
-                .outline_with_consistency_cancellable(
-                    request,
-                    consistency,
-                    CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
-        AppRequest::OutlineWithOptions {
+        AppRequest::Outline {
             request,
             max_response_tokens,
         } => print(
@@ -210,19 +179,13 @@ pub(super) async fn dispatch_repository_request(
                 .outline_with_options_consistency_cancellable(
                     request,
                     consistency,
-                    service_call_options(Some(max_response_tokens)),
+                    service_call_options(max_response_tokens),
                     CancellationToken::new(),
                 )
                 .await?,
             json,
         ),
-        AppRequest::Read(request) => print(
-            &services
-                .read_with_consistency_cancellable(request, consistency, CancellationToken::new())
-                .await?,
-            json,
-        ),
-        AppRequest::ReadWithOptions {
+        AppRequest::Read {
             request,
             max_response_tokens,
         } => print(
@@ -230,29 +193,27 @@ pub(super) async fn dispatch_repository_request(
                 .read_with_options_consistency_cancellable(
                     request,
                     consistency,
-                    service_call_options(Some(max_response_tokens)),
+                    service_call_options(max_response_tokens),
                     CancellationToken::new(),
                 )
                 .await?,
             json,
         ),
-        AppRequest::History(request) => print(&services.history(request).await?, json),
-        AppRequest::HistoryWithOptions {
+        AppRequest::History {
             request,
             max_response_tokens,
         } => print(
             &services
-                .history_with_options(request, service_call_options(Some(max_response_tokens)))
+                .history_with_options(request, service_call_options(max_response_tokens))
                 .await?,
             json,
         ),
-        AppRequest::Json(request) => print(&services.json(request).await?, json),
-        AppRequest::JsonWithOptions {
+        AppRequest::Json {
             request,
             max_response_tokens,
         } => print(
             &services
-                .json_with_options(request, service_call_options(Some(max_response_tokens)))
+                .json_with_options(request, service_call_options(max_response_tokens))
                 .await?,
             json,
         ),
@@ -292,8 +253,6 @@ pub(super) async fn dispatch_repository_request(
         | AppRequest::Remove(_)
         | AppRequest::CacheList(_)
         | AppRequest::CachePrune(_)
-        | AppRequest::CacheListV2(_)
-        | AppRequest::CachePruneV2(_)
         | AppRequest::EpisodeAudit(_)
         | AppRequest::Upgrade { .. } => {
             unreachable!("repository-free command handled by top-level dispatch")

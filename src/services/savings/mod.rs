@@ -2,7 +2,7 @@ use super::*;
 
 const TOKEN_SAVINGS_ESTIMATE_BASIS: &str = "represented-source baseline minus source tokens emitted in successful useful responses for \
     newly classified records; incomplete, unsupported, hash-suppressed, and failed requests are \
-    excluded, while upgraded lifetime totals may retain legacy unclassified comparisons";
+    excluded";
 const RESPONSE_ACCOUNTING_SCOPE: &str = "successful repository retrieval responses recorded after \
     full-response accounting was enabled; includes successful retries as separate requests but \
     excludes pre-response failures, tool discovery, task success, and native-tool costs; request \
@@ -291,7 +291,7 @@ impl Services {
         Ok(self.source_savings_from_records(&stored))
     }
 
-    /// Return source-only savings plus complete successful-response accounting.
+    /// Return complete successful-response accounting.
     pub async fn token_savings_report(&self) -> Result<TokenSavingsReport> {
         let this = self.clone();
         self.blocking_executor
@@ -301,7 +301,7 @@ impl Services {
             .await
     }
 
-    /// Return the backward-compatible report plus directly observed service outcomes.
+    /// Return response accounting plus directly observed service outcomes.
     pub async fn observed_token_savings_report(&self) -> Result<ObservedTokenSavingsReport> {
         let this = self.clone();
         self.blocking_executor
@@ -416,16 +416,11 @@ impl Services {
             .values()
             .map(|record| record.hash_suppressed_requests)
             .fold(0u64, u64::saturating_add);
-        let classified_successes = useful
-            .saturating_add(incomplete)
-            .saturating_add(successful_unsupported)
-            .saturating_add(hash_suppressed);
         Ok(ObservedTokenSavingsReport {
             observations: TokenSavingsObservations {
                 observation_scope: OBSERVATION_SCOPE.to_owned(),
                 successful_response_records: report.response_accounting.tracked_requests,
                 responses_with_baseline: report.response_accounting.baseline_requests,
-                source_compression_requests: report.source_savings.tracked_requests,
                 failed_service_requests,
                 expected_hash_not_modified_responses,
                 expected_hash_suppressed_source_tokens,
@@ -434,10 +429,6 @@ impl Services {
                     incomplete,
                     unsupported,
                     hash_suppressed,
-                    legacy_unclassified: report
-                        .response_accounting
-                        .tracked_requests
-                        .saturating_sub(classified_successes),
                     failed: failed_service_requests.saturating_sub(unsupported_failures),
                 },
                 failed_by_operation_and_category,
@@ -457,7 +448,6 @@ impl Services {
         &self,
         stored: &HashMap<String, TokenSavingsRecord>,
     ) -> TokenSavingsReport {
-        let source_savings = self.source_savings_from_records(stored);
         let mut tracked_requests = 0u64;
         let mut baseline_requests = 0u64;
         let mut baseline_source_tokens = 0u64;
@@ -507,7 +497,6 @@ impl Services {
             })
             .collect();
         TokenSavingsReport {
-            source_savings,
             response_accounting: ResponseTokenAccounting {
                 accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
                 estimate_basis: RESPONSE_ACCOUNTING_ESTIMATE_BASIS.to_owned(),

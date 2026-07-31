@@ -37,10 +37,8 @@ pub enum IndexState {
 pub enum IndexConsistency {
     /// Query the latest completed index generation without scanning filesystem changes.
     #[default]
-    #[serde(alias = "committed")]
     IndexedGeneration,
     /// Reconcile the current working tree before querying the resulting generation.
-    #[serde(alias = "working_tree")]
     ReconcileWorkingTree,
 }
 

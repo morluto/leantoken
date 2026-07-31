@@ -54,10 +54,6 @@ pub struct ReadResponse {
     /// Last line represented by this response page.
     #[serde(default)]
     pub returned_end_line: usize,
-    /// Compatibility alias for `returned_start_line`.
-    pub start_line: usize,
-    /// Compatibility alias for `returned_end_line`.
-    pub end_line: usize,
     /// Whether source remains after this response page.
     #[serde(default)]
     pub truncated: bool,

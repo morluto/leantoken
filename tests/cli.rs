@@ -97,7 +97,7 @@ fn usage_guide_tracks_runtime_cli_surface() {
 #[test]
 fn cli_files_tree_request() {
     let cli = parse(&["files", "tree", "--path", "src", "--depth", "2"]);
-    let AppRequest::Files(request) = cli.app_request() else {
+    let AppRequest::Files { request, .. } = cli.app_request() else {
         panic!("expected files request");
     };
     assert_eq!(request.operation, FileOperation::Tree);
@@ -106,7 +106,7 @@ fn cli_files_tree_request() {
 }
 
 #[test]
-fn cli_retrieval_response_budget_uses_nonbreaking_options_variants() {
+fn cli_retrieval_response_budget_is_carried_in_the_typed_request() {
     let cli = parse(&[
         "files",
         "tree",
@@ -115,7 +115,7 @@ fn cli_retrieval_response_budget_uses_nonbreaking_options_variants() {
         "--max-response-tokens",
         "777",
     ]);
-    let AppRequest::FilesWithOptions {
+    let AppRequest::Files {
         request,
         max_response_tokens,
     } = cli.app_request()
@@ -123,7 +123,7 @@ fn cli_retrieval_response_budget_uses_nonbreaking_options_variants() {
         panic!("expected response-bounded files request");
     };
     assert_eq!(request.operation, FileOperation::Tree);
-    assert_eq!(max_response_tokens, 777);
+    assert_eq!(max_response_tokens, Some(777));
 
     let error = Cli::try_parse_from([
         "leantoken",
@@ -139,7 +139,7 @@ fn cli_retrieval_response_budget_uses_nonbreaking_options_variants() {
 #[test]
 fn cli_files_find_request() {
     let cli = parse(&["files", "find", "--query", "cli", "--max-results", "10"]);
-    let AppRequest::Files(request) = cli.app_request() else {
+    let AppRequest::Files { request, .. } = cli.app_request() else {
         panic!("expected files request");
     };
     assert_eq!(request.operation, FileOperation::Find);
@@ -150,7 +150,7 @@ fn cli_files_find_request() {
 #[test]
 fn cli_files_glob_request() {
     let cli = parse(&["files", "glob", "--pattern", "*.rs"]);
-    let AppRequest::Files(request) = cli.app_request() else {
+    let AppRequest::Files { request, .. } = cli.app_request() else {
         panic!("expected files request");
     };
     assert_eq!(request.operation, FileOperation::Glob);
@@ -177,7 +177,7 @@ fn cli_search_request() {
         "--case-sensitive",
         "--all-occurrences",
     ]);
-    let AppRequest::Search(request) = cli.app_request() else {
+    let AppRequest::Search { request, .. } = cli.app_request() else {
         panic!("expected search request");
     };
     assert_eq!(request.query, "foo");
@@ -200,7 +200,7 @@ fn cli_identifier_search_prefers_structural_hits() {
         "identifier",
         "--prefer-structural",
     ]);
-    let AppRequest::Search(request) = cli.app_request() else {
+    let AppRequest::Search { request, .. } = cli.app_request() else {
         panic!("expected search request");
     };
 
@@ -211,7 +211,7 @@ fn cli_identifier_search_prefers_structural_hits() {
 #[test]
 fn cli_search_default_mode_is_auto() {
     let cli = parse(&["search", "bar"]);
-    let AppRequest::Search(request) = cli.app_request() else {
+    let AppRequest::Search { request, .. } = cli.app_request() else {
         panic!("expected search request");
     };
     assert_eq!(request.mode, SearchMode::Auto);
@@ -230,7 +230,7 @@ fn cli_outline_request() {
         "--cursor",
         "12:34",
     ]);
-    let AppRequest::Outline(request) = cli.app_request() else {
+    let AppRequest::Outline { request, .. } = cli.app_request() else {
         panic!("expected outline request");
     };
     assert_eq!(
@@ -254,7 +254,7 @@ fn cli_read_request() {
         "--expected-hash",
         "abc123",
     ]);
-    let AppRequest::Read(request) = cli.app_request() else {
+    let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert_eq!(request.path, "src/lib.rs");
@@ -290,7 +290,7 @@ fn cli_history_request() {
         "--max-tokens",
         "500",
     ]);
-    let AppRequest::History(request) = cli.app_request() else {
+    let AppRequest::History { request, .. } = cli.app_request() else {
         panic!("expected history request");
     };
     assert_eq!(request.max_tokens, Some(500));
@@ -326,7 +326,7 @@ fn cli_json_request() {
         "--array-sample-size",
         "2",
     ]);
-    let AppRequest::Json(request) = cli.app_request() else {
+    let AppRequest::Json { request, .. } = cli.app_request() else {
         panic!("expected JSON request");
     };
     assert_eq!(request.max_items, Some(50));
@@ -360,7 +360,7 @@ fn cli_json_request() {
         "--projection",
         "keys",
     ]);
-    let AppRequest::Json(request) = cli.app_request() else {
+    let AppRequest::Json { request, .. } = cli.app_request() else {
         panic!("expected paged JSON request");
     };
     assert_eq!(request.cursor.as_deref(), Some("j1:source:query:2"));
@@ -418,7 +418,7 @@ fn cli_nested_limits_accept_parent_and_leaf_placement() {
             "500",
         ],
     ] {
-        let AppRequest::History(request) = parse(&args).app_request() else {
+        let AppRequest::History { request, .. } = parse(&args).app_request() else {
             panic!("expected history request");
         };
         assert_eq!(request.max_tokens, Some(500));
@@ -428,7 +428,7 @@ fn cli_nested_limits_accept_parent_and_leaf_placement() {
         ["json", "--max-items", "50", "query", "report.json"],
         ["json", "query", "report.json", "--max-items", "50"],
     ] {
-        let AppRequest::Json(request) = parse(&args).app_request() else {
+        let AppRequest::Json { request, .. } = parse(&args).app_request() else {
             panic!("expected JSON request");
         };
         assert_eq!(request.max_items, Some(50));
@@ -467,7 +467,7 @@ fn cli_read_markdown_heading_occurrence() {
         "--heading-occurrence",
         "2",
     ]);
-    let AppRequest::Read(request) = cli.app_request() else {
+    let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert_eq!(request.heading.as_deref(), Some("Installation"));
@@ -503,7 +503,7 @@ fn cli_read_markdown_heading_occurrence() {
 #[test]
 fn cli_read_continuation_request_conflicts_with_new_targets() {
     let cli = parse(&["read", "src/lib.rs", "--cursor", "opaque"]);
-    let AppRequest::Read(request) = cli.app_request() else {
+    let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert_eq!(request.path, "src/lib.rs");
@@ -633,14 +633,14 @@ fn cli_tokenizer_global_option() {
 #[test]
 fn cli_read_line_range_allows_open_ends() {
     let cli = parse(&["read", "src/lib.rs", "--lines", "10:"]);
-    let AppRequest::Read(request) = cli.app_request() else {
+    let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert_eq!(request.start_line, Some(10));
     assert_eq!(request.end_line, None);
 
     let cli = parse(&["read", "src/lib.rs", "--lines", ":20"]);
-    let AppRequest::Read(request) = cli.app_request() else {
+    let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert_eq!(request.start_line, None);
@@ -737,7 +737,7 @@ fn cli_context_request() {
     assert_eq!(request.known_hashes, vec!["abc".to_string()]);
     assert_eq!(request.prior_repository_generation, Some(7));
     assert!(request.strict_changed_paths);
-    assert!(request.verbose_diagnostics);
+    assert!(request.explain_diagnostics);
 }
 
 #[test]
@@ -1017,19 +1017,19 @@ fn cli_update_and_upgrade_are_aliases() {
 
 #[test]
 fn cli_cache_list_resolves_without_repository_configuration() {
-    let AppRequest::CacheListV2(default_list) = parse(&["cache", "list"]).app_request() else {
+    let AppRequest::CacheList(default_list) = parse(&["cache", "list"]).app_request() else {
         panic!("expected cache list request");
     };
-    assert!(!default_list.request.summary);
-    assert!(default_list.request.states.is_empty());
-    assert!(default_list.request.repository_root.is_none());
-    assert_eq!(default_list.request.limit, DEFAULT_CACHE_LIST_LIMIT);
-    assert!(default_list.request.cursor.is_none());
+    assert!(!default_list.summary);
+    assert!(default_list.states.is_empty());
+    assert!(default_list.repository_root.is_none());
+    assert_eq!(default_list.limit, DEFAULT_CACHE_LIST_LIMIT);
+    assert!(default_list.cursor.is_none());
     assert!(default_list.compatibilities.is_empty());
     assert!(default_list.index_content_versions.is_empty());
     assert!(!default_list.incompatible_with_current);
 
-    let AppRequest::CacheListV2(filtered_list) = parse(&[
+    let AppRequest::CacheList(filtered_list) = parse(&[
         "cache",
         "list",
         "--state",
@@ -1053,8 +1053,8 @@ fn cli_cache_list_resolves_without_repository_configuration() {
         panic!("expected filtered cache list request");
     };
     assert_eq!(
-        filtered_list.request.states,
-        vec![CacheState::Corrupt, CacheState::Legacy]
+        filtered_list.states,
+        vec![CacheState::Corrupt, CacheState::OlderSchema]
     );
     assert_eq!(
         filtered_list.compatibilities,
@@ -1063,19 +1063,19 @@ fn cli_cache_list_resolves_without_repository_configuration() {
     assert_eq!(filtered_list.index_content_versions, vec![11]);
     assert!(filtered_list.incompatible_with_current);
     assert_eq!(
-        filtered_list.request.repository_root.as_deref(),
+        filtered_list.repository_root.as_deref(),
         Some(std::path::Path::new("repository"))
     );
-    assert_eq!(filtered_list.request.limit, 7);
-    assert_eq!(filtered_list.request.cursor.as_deref(), Some("opaque"));
+    assert_eq!(filtered_list.limit, 7);
+    assert_eq!(filtered_list.cursor.as_deref(), Some("opaque"));
 
-    let AppRequest::CacheListV2(summary) =
+    let AppRequest::CacheList(summary) =
         parse(&["cache", "list", "--summary", "--state", "current"]).app_request()
     else {
         panic!("expected summary cache list request");
     };
-    assert!(summary.request.summary);
-    assert_eq!(summary.request.states, vec![CacheState::Current]);
+    assert!(summary.summary);
+    assert_eq!(summary.states, vec![CacheState::Current]);
     assert!(
         Cli::try_parse_from([
             "leantoken",
@@ -1105,32 +1105,32 @@ fn cli_cache_prune_resolves_without_repository_configuration() {
         "--dry-run",
     ])
     .app_request();
-    let AppRequest::CachePruneV2(request) = request else {
+    let AppRequest::CachePrune(request) = request else {
         panic!("expected cache prune request");
     };
-    assert_eq!(request.request.older_than_days, Some(30));
-    assert_eq!(request.request.max_total_bytes, Some(1_048_576));
-    assert!(request.request.remove_missing_roots);
-    assert!(request.request.dry_run);
-    assert!(!request.request.yes);
+    assert_eq!(request.older_than_days, Some(30));
+    assert_eq!(request.max_total_bytes, Some(1_048_576));
+    assert!(request.remove_missing_roots);
+    assert!(request.dry_run);
+    assert!(!request.yes);
     assert!(!request.incompatible_with_current);
 
-    let AppRequest::CachePruneV2(zero_budget) =
+    let AppRequest::CachePrune(zero_budget) =
         parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"])
             .app_request()
     else {
         panic!("expected zero-budget cache prune request");
     };
-    assert_eq!(zero_budget.request.max_total_bytes, Some(0));
+    assert_eq!(zero_budget.max_total_bytes, Some(0));
 
-    let AppRequest::CachePruneV2(incompatible) =
+    let AppRequest::CachePrune(incompatible) =
         parse(&["cache", "prune", "--incompatible-with-current"]).app_request()
     else {
         panic!("expected incompatible cache prune request");
     };
     assert!(incompatible.incompatible_with_current);
-    assert!(incompatible.request.dry_run);
-    assert!(!incompatible.request.yes);
+    assert!(incompatible.dry_run);
+    assert!(!incompatible.yes);
 }
 
 #[test]

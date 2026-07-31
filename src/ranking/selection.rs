@@ -217,7 +217,7 @@ pub(in crate::ranking) fn select_with_options(
     let scope = SelectionScope::new(request, context_exclude_paths);
     apply_request_signals(&mut candidates, request, &scope.focus_paths);
     let generated_focus = request
-        .verbose_diagnostics
+        .explain_diagnostics
         .then(|| generated_focus_facts(&candidates, request));
     let partition = partition_candidates(candidates, request, &scope, weights, tokenizer);
     let selection = select_candidates(partition.eligible, request, weights, tokenizer);

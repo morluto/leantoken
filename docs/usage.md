@@ -188,11 +188,10 @@ completed snapshot is intentional. Changes written concurrently may require a
 later request.
 
 `leantoken savings` reports persistent repository-local observed token
-accounting. The backward-compatible source-only fields cover successful
-`search`, `outline`, `read`, and materialized `context` responses.
-Search, outline, and context compare emitted source with whole-file reads of
-the unique represented files. Read compares the emitted range with the
-requested live range before truncation or suppression.
+accounting for complete serialized responses. Search, outline, and context
+compare emitted source with whole-file reads of the unique represented files.
+Read compares the emitted range with the requested live range before
+truncation or suppression.
 
 The nested `response_accounting` object additionally covers `files`,
 `context_plan`, `json`, and `history`. It separates source,
@@ -206,8 +205,7 @@ The default terminal view presents an aligned summary and per-operation table,
 using color when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
 color, while `CLICOLOR_FORCE=1` enables it for compatible redirected output.
 Pass `--json` for the stable compact JSON representation used by scripts. The
-legacy top-level fields remain unchanged; the additive `observations` object
-reports persisted successful and failed service records, exact
+`observations` object reports persisted successful and failed service records, exact
 `expected_hash` not-modified responses, their suppressed represented-source
 tokens, and a fixed-order failure breakdown with non-sensitive categories.
 
@@ -231,7 +229,7 @@ historical full-response costs and are therefore excluded from
 Current index responses retain the aggregate `files_skipped` count and explain
 it with the bounded `skip_reasons` object: `binary`,
 `oversized_during_read`, and `failed`. These counts cover files admitted for
-preparation and always sum to `files_skipped`. Legacy serialized responses can
+preparation and always sum to `files_skipped`. Older serialized responses can
 omit the object because their breakdown is unknown. No per-file skip list is
 returned; bounded failure warnings may still identify files that could not be
 read. `files_seen` counts admitted files plus deletions directly observed from
@@ -582,13 +580,7 @@ snapshot; the response returns a replacement snapshot. Snapshots are
 caller-carried, repository- and tokenizer-bound, checksummed, and limited to
 32 KiB. They do not create a per-request event table.
 
-Existing top-level fields are the effective source-compression comparison and
-its four operation rows. Only successful requests classified as `useful` enter
-that comparison for newly written records. An upgraded lifetime report can
-retain earlier unclassified source comparisons; take a snapshot and use its
-subsequent delta when a strictly post-classification measurement is required.
-`response_accounting` separately retains every successful
-response and reports comparable baseline counts,
+`response_accounting` retains every successful response and reports comparable baseline counts,
 source/path-metadata/protocol/total response tokens, signed response deltas,
 receipt-suppression counts, and fixed rows for all nine retrieval operations.
 
@@ -602,7 +594,6 @@ suppression. `request_classification` divides new requests into `useful`,
 `incomplete`, `unsupported`, `hash_suppressed`, and `failed`.
 Typed `unsupported_language` failures belong to `unsupported`; the broader
 `failed_service_requests` observation still reports every returned error.
-`legacy_unclassified` makes pre-classification successful records explicit.
 Incomplete or unsupported retrievals—including a zero-symbol LaTeX
 outline—remain visible as full response cost but do not inflate effective
 source compression.
@@ -613,10 +604,6 @@ chains, whether returned evidence was used, superseded calls, provider framing,
 or task success. Those limits are returned in `observations.unobserved`. Treat
 the signed response delta as local response accounting, not as a
 correctness-adjusted claim about an agent's full workflow.
-In particular, a source-compression percentage such as 82.15% describes only
-represented source in useful retrieval responses; it is not an estimate of
-the complete agent session. Use `response_accounting` for the full serialized
-response net cost within the same represented-source baseline.
 
 This is a read-only observation: calling `leantoken.savings` does not update
 the tracker. Accounting writes never delay retrieval: local writer contention
@@ -690,7 +677,7 @@ including repeated alternatives on one line. MCP defaults these requests to
 excerpt plus an array of every exact `{line, start_column, end_column}` span.
 Columns are zero-based UTF-8 byte columns; a multi-line regular expression also
 reports `end_line`. Set `coordinates_only=true` to group only by path and omit
-source and hashes, or explicitly request `projection="full"` for legacy
+source and hashes, or explicitly request `projection="full"` for the older
 per-occurrence ranked hits and global byte offsets.
 
 Both shapes report `occurrences_returned` for the current page and an exact
@@ -792,9 +779,8 @@ filesystem to guess which cause applies. Invalid or unsafe paths remain
 request-level errors.
 
 `parse_complete` reports whether every requested path was indexed and parsed
-completely; each file reports the same state independently.
-`structurally_complete` remains as a compatibility alias on each file. Parse
-completeness does not imply result completeness.
+completely; each file reports the same state independently. Parse completeness
+does not imply result completeness.
 
 `result_complete` is true only when every path was indexed and the response
 contains every filtered symbol and import. Exact `total_symbols`,
@@ -1152,8 +1138,7 @@ covered requirements, indexed requirements blocked by path or budget limits,
 and requirements absent from the index. Every focus path returns indexed and
 selected fragment counts with an implicit minimum of one; strict or explicit
 minimum requests contribute to `path_scope_satisfied`.
-`strict_scope_satisfied` remains as a backward-compatible alias with the same
-path-only meaning. Neither field claims task relevance. Explicit
+The field reports path coverage only; it does not claim task relevance. Explicit
 `required_evidence` contracts instead contribute to
 `evidence_scope_satisfied` and report matched and unmatched queries per path.
 Strict changed-path requests return resolved and selected changed-path counts.
@@ -1176,8 +1161,8 @@ Choose the MCP `response_profile` field or CLI `--response-profile` flag:
 Every response reports `effective_response_profile`. Profiles do not change
 candidate generation, ranking, fragment membership or order, source-token
 budgets, hard constraints, or receipt suppression. They only change the
-serialized presentation cost. Legacy `verbose_diagnostics=true`
-(`--verbose-diagnostics` in the CLI) maps to `explain`; combining it with an
+serialized presentation cost. The `--verbose-diagnostics` CLI option maps to
+`explain`; combining it with an
 explicit `compact` or `balanced` profile is rejected. Facet lists are
 deterministic and bounded to 12 values; longer path or file-type tails are
 combined into `[other]`. Candidates rejected before scoring use the `not scored`
@@ -1325,7 +1310,7 @@ that second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or
 CLI `--max-response-tokens`; a mandatory correctness skeleton that cannot fit
 returns a typed `ResponseBudgetExceeded` error. CLI JSON and MCP error data
 include `provided_max_response_tokens`, `minimum_required_response_tokens`,
-`retry_with_at_least`, and a bounded aggregate `breakdown`; the legacy
+`retry_with_at_least`, and a bounded aggregate `breakdown`; the established
 `requested` and `limit` fields remain available. Retrying with the reported
 minimum is exact, while one token less remains insufficient. `files`, `read`,
 history text/commit results,
@@ -1346,17 +1331,13 @@ available locally. It does not guarantee that a provider will accept a payload
 at the reported budget; responses mark this with `token_count_exact: false`.
 
 `savings` uses the same tokenizer and marks whether its local counts are exact.
-The backward-compatible `estimated_source_tokens_saved` total still sums a
-saturating per-request represented-source difference; the field name is
-retained for JSON compatibility. The signed
-`response_accounting.estimated_net_tokens_saved` instead subtracts every
+The `response_accounting.estimated_net_tokens_saved` value subtracts every
 recorded complete response from the represented-source baseline, so metadata,
 protocol, plan-only, discovery, and history costs can reduce the net result.
-Its field name is likewise retained for compatibility and does not establish
-task-level savings. Only successful persisted responses contribute token
-deltas. `observations` separately counts persisted service failures and exact
-expected-hash suppression. Retry chains, evidence use, superseded calls, and
-task outcomes remain explicitly unobserved.
+It does not establish task-level savings. Only successful persisted responses
+contribute token deltas. `observations` separately counts persisted service
+failures and exact expected-hash suppression. Retry chains, evidence use,
+superseded calls, and task outcomes remain explicitly unobserved.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. `total_response_tokens` captures the compact response
@@ -1373,7 +1354,7 @@ state.
 
 Failed CLI commands emit a human-readable `Error: ...` line by default. With
 `--json`, they emit one compact JSON object on stderr and retain the existing
-top-level `error` string for backward compatibility. The additive `category`
+top-level `error` string as an established error-wire field. The additive `category`
 field is the stable machine-readable discriminator. Request errors may also
 include the public `field`, `requested`, and active `limit`; clients should
 branch on these fields instead of parsing `error` text.

@@ -133,7 +133,7 @@ impl Services {
                         minimum_fragments: minimum_focus_fragments,
                         selected_fragments: 0,
                         satisfied: false,
-                        diagnostics: request.verbose_diagnostics.then(|| {
+                        diagnostics: request.explain_diagnostics.then(|| {
                             ContextFocusPathDiagnostics {
                                 eligible_paths: *eligible_paths,
                                 ..ContextFocusPathDiagnostics::default()

@@ -112,9 +112,9 @@ pub struct ContextArgs {
     #[arg(long, value_enum)]
     pub response_profile: Option<ContextResponseProfileArg>,
 
-    /// Legacy alias for --response-profile explain.
-    #[arg(long)]
-    pub verbose_diagnostics: bool,
+    /// Include the full bounded omission and diff diagnostics.
+    #[arg(long = "verbose-diagnostics")]
+    pub explain_diagnostics: bool,
 
     /// Attach compact provenance for a host-triggered executor handoff; cannot be
     /// combined with --plan-only.
@@ -204,7 +204,7 @@ impl From<ContextArgs> for ContextRequest {
             base_revision: args.base_revision,
             changed_paths: args.changed_paths,
             strict_changed_paths: args.strict_changed_paths,
-            verbose_diagnostics: args.verbose_diagnostics,
+            explain_diagnostics: args.explain_diagnostics,
         }
     }
 }

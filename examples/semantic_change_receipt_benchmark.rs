@@ -293,7 +293,7 @@ impl Fixture {
                     base_revision: Some(format!("{}..{}", self.base, self.head)),
                     changed_paths: Vec::new(),
                     strict_changed_paths: true,
-                    verbose_diagnostics: false,
+                    explain_diagnostics: false,
                 },
                 ContextWorkflow::Review,
                 IndexConsistency::IndexedGeneration,

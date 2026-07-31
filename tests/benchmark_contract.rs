@@ -116,7 +116,7 @@ async fn main() {
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
         };
         let warm_start = Instant::now();
         let response = services.context(request.clone()).await.expect("context");

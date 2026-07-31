@@ -96,7 +96,7 @@ async fn mcp_handoff_token_costs() {
         base_revision: None,
         changed_paths: vec!["src/rust/math.rs".into()],
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
     };
     let compact_context = services
         .context_with_options(

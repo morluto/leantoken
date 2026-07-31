@@ -1,5 +1,5 @@
 //! Cursor versions, key ordering, and execution options shared by the JSON
-//! service entry points and the legacy/MCP adapters.
+//! service entry points and the standard JSON/MCP adapters.
 
 pub(crate) const MAX_JSON_DEPTH: usize = 64;
 
@@ -32,7 +32,7 @@ pub(crate) struct JsonExecutionOptions {
 }
 
 impl JsonExecutionOptions {
-    pub(super) fn legacy() -> Self {
+    pub(super) fn standard() -> Self {
         Self {
             depth: None,
             key_order: JsonKeyOrder::Pointer,

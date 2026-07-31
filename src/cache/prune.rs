@@ -2,19 +2,7 @@ use super::*;
 
 impl CacheManager {
     pub(super) fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
-        self.prune_with_compatibility(request, false)
-    }
-
-    pub(super) fn prune_v2(&self, request: &CachePruneV2Request) -> Result<CachePruneReport> {
-        self.prune_with_compatibility(&request.request, request.incompatible_with_current)
-    }
-
-    pub(super) fn prune_with_compatibility(
-        &self,
-        request: &CachePruneRequest,
-        incompatible_with_current: bool,
-    ) -> Result<CachePruneReport> {
-        validate_prune_request(request, incompatible_with_current)?;
+        validate_prune_request(request, request.incompatible_with_current)?;
         let (entries, _) = self.inspect_all()?;
         let total_bytes_before = entries.iter().fold(0u64, |total, cache| {
             total.saturating_add(cache.entry.size_bytes)
@@ -23,7 +11,7 @@ impl CacheManager {
             &entries,
             request,
             total_bytes_before,
-            incompatible_with_current,
+            request.incompatible_with_current,
         );
         let mut reclaimed_bytes = 0u64;
         let mut results = Vec::with_capacity(entries.len());

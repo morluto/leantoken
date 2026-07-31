@@ -770,8 +770,6 @@ mod tests {
             target_end_line: 1,
             returned_start_line: 1,
             returned_end_line: 1,
-            start_line: 1,
-            end_line: 1,
             truncated: false,
             next_start_line: None,
             continuation_cursor: None,

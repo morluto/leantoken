@@ -82,7 +82,7 @@ impl Services {
         self.json_cancellable_with_execution_options(
             request,
             options,
-            execution::JsonExecutionOptions::legacy(),
+            execution::JsonExecutionOptions::standard(),
             cancellation,
         )
         .await

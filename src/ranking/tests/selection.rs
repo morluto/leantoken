@@ -185,7 +185,7 @@ fn focus_diagnostics_explain_soft_production_displacement() {
     let example = Candidate::new("examples/demo.rs", 1, 2, "example evidence").exact(20.0);
     let mut request = request_focused(100, "src/owner.rs");
     request.max_fragments = Some(1);
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
 
     let response = select(vec![production, example], &request, 1);
 
@@ -220,7 +220,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
     let mut known_request = request_focused(100, "known.rs");
     known_request.strict_focus_paths = true;
     known_request.known_hashes = vec![known.content_hash()];
-    known_request.verbose_diagnostics = true;
+    known_request.explain_diagnostics = true;
     let known_response = select(vec![known], &known_request, 1);
     let known_diagnostics = known_response.coverage.focus_path_coverage[0]
         .diagnostics
@@ -241,7 +241,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
     let expensive = Candidate::new("expensive.rs", 1, 20, "expensive ".repeat(40)).exact(1.0);
     let mut token_request = request_focused(1, "expensive.rs");
     token_request.strict_focus_paths = true;
-    token_request.verbose_diagnostics = true;
+    token_request.explain_diagnostics = true;
     let token_response = select(vec![expensive], &token_request, 1);
     let token_diagnostics = token_response.coverage.focus_path_coverage[0]
         .diagnostics
@@ -265,7 +265,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
     dedup_request.strict_focus_paths = true;
     dedup_request.minimum_fragments_per_focus_path = Some(2);
     dedup_request.max_fragments = Some(2);
-    dedup_request.verbose_diagnostics = true;
+    dedup_request.explain_diagnostics = true;
     let dedup_response = select(vec![first, second], &dedup_request, 1);
     let dedup_diagnostics = dedup_response.coverage.focus_path_coverage[0]
         .diagnostics
@@ -287,7 +287,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
     let mut policy_request = request_focused(100, "src/**");
     policy_request.strict_focus_paths = true;
     policy_request.exclude_paths = vec!["src/**".into()];
-    policy_request.verbose_diagnostics = true;
+    policy_request.explain_diagnostics = true;
     let policy_response = select(vec![excluded], &policy_request, 1);
     let policy_diagnostics = policy_response.coverage.focus_path_coverage[0]
         .diagnostics
@@ -309,7 +309,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
     let second = Candidate::new("src/owner.rs", 10, 10, "second").exact(1.0);
     let other = Candidate::new("examples/demo.rs", 1, 1, "other").exact(0.5);
     let mut diversity_request = request_focused(100, "src/owner.rs");
-    diversity_request.verbose_diagnostics = true;
+    diversity_request.explain_diagnostics = true;
     let diversity_response = select(vec![first, second, other], &diversity_request, 1);
     let diversity_diagnostics = diversity_response.coverage.focus_path_coverage[0]
         .diagnostics

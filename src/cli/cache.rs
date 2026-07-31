@@ -32,7 +32,7 @@ pub struct CacheListArgs {
     /// Keep caches with this exact index-content version (repeatable).
     #[arg(long, value_name = "VERSION")]
     pub index_content_version: Vec<u32>,
-    /// Keep only older or legacy-unversioned content.
+    /// Keep only older or unversioned content.
     #[arg(long)]
     pub incompatible_with_current: bool,
     /// Keep the exact recorded repository root.
@@ -56,7 +56,8 @@ pub enum CacheStateArg {
     /// Current schema and access metadata.
     Current,
     /// Readable older schema without current access metadata.
-    Legacy,
+    #[value(name = "legacy")]
+    OlderSchema,
     /// Known artifacts without a readable database.
     Incomplete,
     /// SQLite metadata inspection failed.
@@ -74,8 +75,9 @@ pub enum CacheCompatibilityArg {
     CompatibleCurrent,
     /// Content produced by a known older version.
     ObsoleteOlder,
-    /// Legacy content without a versioned cache identity.
-    LegacyUnversioned,
+    /// Content without a versioned cache identity.
+    #[value(name = "legacy-unversioned")]
+    Unversioned,
     /// Content produced by a newer unsupported version.
     NewerUnsupported,
     /// Content whose compatibility cannot be trusted.
@@ -86,7 +88,7 @@ impl From<CacheStateArg> for CacheState {
     fn from(value: CacheStateArg) -> Self {
         match value {
             CacheStateArg::Current => Self::Current,
-            CacheStateArg::Legacy => Self::Legacy,
+            CacheStateArg::OlderSchema => Self::OlderSchema,
             CacheStateArg::Incomplete => Self::Incomplete,
             CacheStateArg::Corrupt => Self::Corrupt,
             CacheStateArg::Unsupported => Self::Unsupported,
@@ -100,23 +102,21 @@ impl From<CacheCompatibilityArg> for CacheCompatibility {
         match value {
             CacheCompatibilityArg::CompatibleCurrent => Self::CompatibleCurrent,
             CacheCompatibilityArg::ObsoleteOlder => Self::ObsoleteOlder,
-            CacheCompatibilityArg::LegacyUnversioned => Self::LegacyUnversioned,
+            CacheCompatibilityArg::Unversioned => Self::Unversioned,
             CacheCompatibilityArg::NewerUnsupported => Self::NewerUnsupported,
             CacheCompatibilityArg::Unknown => Self::Unknown,
         }
     }
 }
 
-impl From<CacheListArgs> for CacheListV2Request {
+impl From<CacheListArgs> for CacheListRequest {
     fn from(args: CacheListArgs) -> Self {
         Self {
-            request: CacheListRequest {
-                summary: args.summary,
-                states: args.state.into_iter().map(Into::into).collect(),
-                repository_root: args.repository_root,
-                limit: args.limit,
-                cursor: args.cursor,
-            },
+            summary: args.summary,
+            states: args.state.into_iter().map(Into::into).collect(),
+            repository_root: args.repository_root,
+            limit: args.limit,
+            cursor: args.cursor,
             compatibilities: args.compatibility.into_iter().map(Into::into).collect(),
             index_content_versions: args.index_content_version,
             incompatible_with_current: args.incompatible_with_current,
@@ -136,7 +136,7 @@ pub struct CachePruneArgs {
     /// Remove caches whose recorded repository roots are currently missing.
     #[arg(long)]
     pub remove_missing_roots: bool,
-    /// Select inactive older or legacy-unversioned caches.
+    /// Select inactive older or unversioned caches.
     ///
     /// Without `--yes`, this criterion defaults to a dry-run.
     #[arg(long)]
@@ -149,16 +149,14 @@ pub struct CachePruneArgs {
     pub yes: bool,
 }
 
-impl From<CachePruneArgs> for CachePruneV2Request {
+impl From<CachePruneArgs> for CachePruneRequest {
     fn from(args: CachePruneArgs) -> Self {
         Self {
-            request: CachePruneRequest {
-                older_than_days: args.older_than.map(NonZeroU64::get),
-                max_total_bytes: args.max_total_bytes,
-                remove_missing_roots: args.remove_missing_roots,
-                dry_run: args.dry_run || (args.incompatible_with_current && !args.yes),
-                yes: args.yes,
-            },
+            older_than_days: args.older_than.map(NonZeroU64::get),
+            max_total_bytes: args.max_total_bytes,
+            remove_missing_roots: args.remove_missing_roots,
+            dry_run: args.dry_run || (args.incompatible_with_current && !args.yes),
+            yes: args.yes,
             incompatible_with_current: args.incompatible_with_current,
         }
     }

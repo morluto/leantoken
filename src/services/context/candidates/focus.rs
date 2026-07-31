@@ -287,7 +287,6 @@ impl Services {
                     .as_ref()
                     .is_none_or(|changed| changed.satisfied);
             coverage.path_scope_satisfied = Some(satisfied);
-            coverage.strict_scope_satisfied = Some(satisfied);
         }
         Ok(())
     }

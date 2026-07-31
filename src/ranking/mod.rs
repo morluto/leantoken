@@ -64,7 +64,11 @@ pub use selection::{
 };
 
 fn bounded_count_f64(value: usize) -> f64 {
-    f64::from(u32::try_from(value).unwrap_or(u32::MAX))
+    // `usize` is already the bounded count type used by the tokenizer and
+    // selection budget. Converting directly preserves monotonic ordering for
+    // counts above `u32::MAX`; saturating through `u32` made every larger
+    // fragment indistinguishable to the ranker.
+    value as f64
 }
 
 #[cfg(test)]

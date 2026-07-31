@@ -62,12 +62,12 @@ pub(in crate::mcp) struct FilesMcpRequest {
 #[serde(untagged)]
 pub(in crate::mcp) enum FilesMcpOperationInput {
     Flat(FileOperation),
-    Nested(LegacyFilesMcpOperation),
+    Nested(NestedFilesMcpOperation),
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(in crate::mcp) enum LegacyFilesMcpOperation {
+pub(in crate::mcp) enum NestedFilesMcpOperation {
     Tree {
         #[serde(default)]
         path: Option<String>,
@@ -109,13 +109,13 @@ impl FilesMcpRequest {
                 self.pattern.as_ref(),
                 self.depth,
             ),
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Tree { path, depth }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Tree { path, depth }) => {
                 (FileOperation::Tree, path.as_ref(), None, None, *depth)
             }
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Find { query }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Find { query }) => {
                 (FileOperation::Find, None, Some(query), None, None)
             }
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Glob { pattern }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Glob { pattern }) => {
                 (FileOperation::Glob, None, None, Some(pattern), None)
             }
         };
@@ -154,13 +154,13 @@ impl FilesMcpRequest {
             FilesMcpOperationInput::Flat(operation) => {
                 (operation, self.path, self.query, self.pattern, self.depth)
             }
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Tree { path, depth }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Tree { path, depth }) => {
                 (FileOperation::Tree, path, None, None, depth)
             }
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Find { query }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Find { query }) => {
                 (FileOperation::Find, None, Some(query), None, None)
             }
-            FilesMcpOperationInput::Nested(LegacyFilesMcpOperation::Glob { pattern }) => {
+            FilesMcpOperationInput::Nested(NestedFilesMcpOperation::Glob { pattern }) => {
                 (FileOperation::Glob, None, None, Some(pattern), None)
             }
         };

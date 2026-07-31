@@ -38,7 +38,7 @@ async fn working_tree_diff_boosts_changed_files() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .unwrap();
@@ -91,7 +91,7 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
     base_revision: None,
     changed_paths: Vec::new(),
     strict_changed_paths: false,
-    verbose_diagnostics: false,
+    explain_diagnostics: false,
     };
 
     let (exact_response, estimate_response) =
@@ -141,7 +141,7 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("context");
@@ -194,7 +194,7 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
         base_revision: None,
         changed_paths: Vec::new(),
         strict_changed_paths: false,
-        verbose_diagnostics: false,
+        explain_diagnostics: false,
         })
         .await
         .expect("context");
@@ -453,7 +453,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
             base_revision: None,
             changed_paths: Vec::new(),
             strict_changed_paths: false,
-            verbose_diagnostics: false,
+            explain_diagnostics: false,
             },
             IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),

@@ -474,7 +474,7 @@ impl Services {
     /// Search with regex candidate planning disabled for differential evaluation.
     ///
     /// This API is not exposed through CLI or MCP adapters. It retains the
-    /// bounded legacy scan so tests and benchmarks can prove optimized parity.
+    /// bounded reference scan so tests and benchmarks can prove optimized parity.
     pub async fn search_full_scan_evaluation(
         &self,
         request: SearchRequest,

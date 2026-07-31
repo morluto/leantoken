@@ -32,15 +32,15 @@ pub struct IndexResponse {
     pub warnings: Vec<String>,
 }
 
-/// Additive index details serialized beside the compatible response fields.
+/// Additive index details serialized alongside the stable response fields.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexReport {
-    /// Source-compatible index response retained for existing Rust consumers.
+    /// Stable index response fields shared by all report representations.
     #[serde(flatten)]
     pub response: IndexResponse,
     /// Known aggregate preparation skip counts whose sum equals `files_skipped`.
     ///
-    /// Legacy deserialized responses omit this field because their reason
+    /// Older deserialized responses omit this field because their reason
     /// breakdown is unknown. Responses produced by this version always include
     /// the fixed-shape object.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,7 +48,7 @@ pub struct IndexReport {
 }
 
 impl IndexReport {
-    /// Attach a known preparation breakdown to a compatible index response.
+    /// Attach a known preparation breakdown to an index response.
     #[must_use]
     pub fn with_skip_reasons(response: IndexResponse, skip_reasons: IndexSkipReasonCounts) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl IndexReport {
         }
     }
 
-    /// Discard additive details and return the compatible index response.
+    /// Discard additive details and return the stable index response.
     #[must_use]
     pub fn into_response(self) -> IndexResponse {
         self.response

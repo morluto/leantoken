@@ -272,7 +272,7 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
     )
     .expect("write pending change");
     let mut conflicting_profile = context_limit_request(100);
-    conflicting_profile.verbose_diagnostics = true;
+    conflicting_profile.explain_diagnostics = true;
     let invalid = services
         .context_with_workflow_evidence_options_consistency_cancellable(
             leantoken::services::ContextWorkflowOptions {
@@ -287,12 +287,12 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
             },
         )
         .await
-        .expect_err("explicit balanced profile must reject legacy verbose diagnostics");
+        .expect_err("explicit balanced profile must reject explain diagnostics");
     assert!(matches!(
         invalid,
         Error::InvalidInput {
             field: "response_profile",
-            reason: "verbose_diagnostics=true requires response_profile=explain",
+            reason: "explain_diagnostics=true requires response_profile=explain",
         }
     ));
     assert_eq!(
@@ -432,7 +432,7 @@ async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() 
             .is_none()
     );
 
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
     let expanded = services.context(request).await.expect("expanded diff plan");
     assert_eq!(
         expanded.effective_response_profile,
@@ -504,19 +504,19 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         .context(request.clone())
         .await
         .expect("default balanced response");
-    request.verbose_diagnostics = true;
-    let explicit_legacy_explain = services
+    request.explain_diagnostics = true;
+    let explicit_explain = services
         .context_with_options(
             request.clone(),
             ServiceCallOptions::new()
                 .with_context_response_profile(ContextResponseProfile::Explain),
         )
         .await
-        .expect("explicit explain accepts legacy verbose diagnostics");
-    let legacy_explain = services
+        .expect("explicit explain accepts explain diagnostics");
+    let default_explain = services
         .context(request)
         .await
-        .expect("legacy verbose response");
+        .expect("default response");
 
     assert_eq!(
         balanced.effective_response_profile,
@@ -535,11 +535,11 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         ContextResponseProfile::Balanced
     );
     assert_eq!(
-        legacy_explain.effective_response_profile,
+        default_explain.effective_response_profile,
         ContextResponseProfile::Explain
     );
     assert_eq!(
-        explicit_legacy_explain.effective_response_profile,
+        explicit_explain.effective_response_profile,
         ContextResponseProfile::Explain
     );
     assert!(
@@ -558,7 +558,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
             .is_some()
     );
     assert!(
-        legacy_explain.coverage.focus_path_coverage[0]
+        default_explain.coverage.focus_path_coverage[0]
             .diagnostics
             .is_some()
     );
@@ -593,8 +593,8 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         &compact,
         &explain,
         &default,
-        &legacy_explain,
-        &explicit_legacy_explain,
+        &default_explain,
+        &explicit_explain,
     ] {
         assert_eq!(identities(response), balanced_identities);
         assert_eq!(
@@ -660,11 +660,11 @@ async fn context_response_profiles_only_change_bounded_presentation() {
             .is_some()
     );
     assert_eq!(
-        serde_json::to_value(&legacy_explain.omitted).expect("legacy omission details"),
+        serde_json::to_value(&default_explain.omitted).expect("legacy omission details"),
         serde_json::to_value(&explain.omitted).expect("explicit omission details")
     );
     assert_eq!(
-        legacy_explain.omission_summary,
+        default_explain.omission_summary,
         explain.omission_summary
     );
 
@@ -812,7 +812,7 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     assert!(compact.omission_summary.by_path.is_empty());
     assert!(compact.omission_summary.by_reason.is_empty());
 
-    request.verbose_diagnostics = true;
+    request.explain_diagnostics = true;
 
     let response = services.context(request).await.expect("constrained context");
 
@@ -997,7 +997,6 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         .context(ordinary_focus)
         .await
         .expect("ordinary focus context");
-    assert_eq!(ordinary_focus.coverage.strict_scope_satisfied, None);
     assert_eq!(ordinary_focus.coverage.path_scope_satisfied, None);
     assert_eq!(ordinary_focus.coverage.focus_path_coverage.len(), 2);
     assert!(
@@ -1033,7 +1032,6 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
             .all(|fragment| fragment.path.starts_with("src/alpha/")
                 || fragment.path.starts_with("src/beta/"))
     );
-    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
     assert_eq!(response.coverage.path_scope_satisfied, Some(true));
     assert_eq!(response.coverage.focus_path_coverage.len(), 2);
     assert!(
@@ -1058,7 +1056,6 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         .await
         .expect("soft focus minimum");
     assert_eq!(soft_minimum.fragments.len(), 3);
-    assert_eq!(soft_minimum.coverage.strict_scope_satisfied, Some(true));
     assert_eq!(soft_minimum.coverage.path_scope_satisfied, Some(true));
     assert_eq!(
         soft_minimum.coverage.focus_path_coverage[0].selected_fragments,
@@ -1077,13 +1074,12 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     underfilled.strict_focus_paths = true;
     underfilled.minimum_fragments_per_focus_path = Some(2);
     underfilled.max_fragments = Some(3);
-    underfilled.verbose_diagnostics = true;
+    underfilled.explain_diagnostics = true;
     let underfilled = services
         .context(underfilled)
         .await
         .expect("underfilled focus context");
     assert_eq!(underfilled.fragments.len(), 3);
-    assert_eq!(underfilled.coverage.strict_scope_satisfied, Some(false));
     assert_eq!(underfilled.coverage.path_scope_satisfied, Some(false));
     assert_eq!(
         underfilled
@@ -1138,10 +1134,9 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     missing.task = "change shared_scope_target".into();
     missing.focus_paths = vec!["src/missing/**".into()];
     missing.strict_focus_paths = true;
-    missing.verbose_diagnostics = true;
+    missing.explain_diagnostics = true;
     let missing = services.context(missing).await.expect("missing strict focus");
     assert!(missing.fragments.is_empty());
-    assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
     assert_eq!(missing.coverage.path_scope_satisfied, Some(false));
     assert_eq!(missing.coverage.unmatched_focus_paths, ["src/missing/**"]);
     assert_eq!(missing.coverage.focus_path_coverage[0].indexed_paths, 0);
@@ -1206,7 +1201,6 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
         .expect("deterministic focused context");
 
     assert_eq!(first.fragments.len(), focus_paths.len());
-    assert_eq!(first.coverage.strict_scope_satisfied, Some(true));
     assert!(first.coverage.focus_path_coverage.iter().all(
         |focus| focus.indexed_paths == 1
             && focus.selected_fragments == 1
@@ -1313,7 +1307,7 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
     fanout_limited.minimum_fragments_per_focus_path = Some(8);
     fanout_limited.max_fragments = Some(8);
     fanout_limited.plan_only = true;
-    fanout_limited.verbose_diagnostics = true;
+    fanout_limited.explain_diagnostics = true;
     let fanout_limited = services
         .context(fanout_limited)
         .await
@@ -1334,7 +1328,7 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
     excluded.focus_paths = vec!["focus/owner_0.rs".into()];
     excluded.exclude_paths = vec!["focus/owner_0.rs".into()];
     excluded.strict_focus_paths = true;
-    excluded.verbose_diagnostics = true;
+    excluded.explain_diagnostics = true;
     let excluded = services
         .context(excluded)
         .await
@@ -1433,7 +1427,7 @@ async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
         request.strict_focus_paths = true;
         request.minimum_fragments_per_focus_path = Some(2);
         request.max_fragments = Some(9);
-        request.verbose_diagnostics = true;
+        request.explain_diagnostics = true;
         request
     };
     let materialized = services
@@ -1555,7 +1549,7 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
     };
     let mut plan_request = request.clone();
     plan_request.plan_only = true;
-    plan_request.verbose_diagnostics = true;
+    plan_request.explain_diagnostics = true;
     let preview = services
         .context_with_consistency_cancellable(
             plan_request,
@@ -1585,7 +1579,7 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
     );
 
     let mut materialized_request = request.clone();
-    materialized_request.verbose_diagnostics = true;
+    materialized_request.explain_diagnostics = true;
     let first = services
         .context(materialized_request)
         .await
@@ -1655,7 +1649,6 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
             .iter()
             .all(|fragment| fragment.path == "src/active.rs")
     );
-    assert_eq!(response.coverage.strict_scope_satisfied, Some(true));
     let changed = response
         .coverage
         .changed_path_coverage
@@ -1676,10 +1669,6 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
         .await
         .expect("intersected hard scopes");
     assert!(intersection.fragments.is_empty());
-    assert_eq!(
-        intersection.coverage.strict_scope_satisfied,
-        Some(false)
-    );
     assert!(
         !intersection
             .coverage
@@ -1706,7 +1695,6 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
         .await
         .expect("missing changed scope");
     assert!(missing.fragments.is_empty());
-    assert_eq!(missing.coverage.strict_scope_satisfied, Some(false));
     let changed = missing
         .coverage
         .changed_path_coverage

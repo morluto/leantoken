@@ -67,7 +67,7 @@ impl Storage {
         let actual_repository = repository_root.to_string_lossy();
         let mismatched_identity =
             !expected_identity.is_empty() && expected_identity != actual_identity;
-        let mismatched_legacy_root = expected_identity.is_empty()
+        let mismatched_unversioned_root = expected_identity.is_empty()
             && !expected_repository.is_empty()
             && expected_repository != actual_repository;
         if mismatched_identity && expected_repository == actual_repository {
@@ -75,7 +75,7 @@ impl Storage {
                 database: path.to_path_buf(),
             });
         }
-        if mismatched_identity || mismatched_legacy_root {
+        if mismatched_identity || mismatched_unversioned_root {
             return Err(Error::RepositoryMismatch {
                 database: path.to_path_buf(),
                 expected_repository,

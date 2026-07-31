@@ -315,7 +315,7 @@ impl Services {
             }
             scope.indexed_changed_paths = indexed;
             scope.evidence = (response_profile != ContextResponseProfile::Compact
-                && (!request.plan_only || request.verbose_diagnostics))
+                && (!request.plan_only || request.explain_diagnostics))
                 .then(|| {
                     self.build_diff_evidence(
                         session,

@@ -9,8 +9,7 @@ pub(super) const PRUNABLE_ARTIFACTS: &[&str] = &[
     "index.sqlite-journal",
 ];
 pub(super) const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
-pub(super) const CACHE_LIST_CURSOR_PREFIX: &str = "cl1";
-pub(super) const CACHE_LIST_V2_CURSOR_PREFIX: &str = "cl2";
+pub(super) const CACHE_LIST_CURSOR_PREFIX: &str = "cl2";
 pub(super) const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
 pub(super) const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
 pub(super) const MAX_CACHE_COMPATIBILITY_FILTERS: usize = 5;
@@ -34,6 +33,12 @@ pub struct CacheListRequest {
     pub limit: usize,
     /// Opaque continuation cursor returned by the same filters.
     pub cursor: Option<String>,
+    /// Keep entries in any of these content-compatibility classes.
+    pub compatibilities: Vec<CacheCompatibility>,
+    /// Keep entries with one of these exact versioned content identities.
+    pub index_content_versions: Vec<u32>,
+    /// Keep only safely classifiable older or unversioned content.
+    pub incompatible_with_current: bool,
 }
 
 impl Default for CacheListRequest {
@@ -44,24 +49,11 @@ impl Default for CacheListRequest {
             repository_root: None,
             limit: DEFAULT_CACHE_LIST_LIMIT,
             cursor: None,
+            compatibilities: Vec::new(),
+            index_content_versions: Vec::new(),
+            incompatible_with_current: false,
         }
     }
-}
-
-/// Versioned compatibility filters layered over the stable cache-list request.
-///
-/// This separate options type preserves Rust struct-literal compatibility for
-/// [`CacheListRequest`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CacheListV2Request {
-    /// Existing metadata-state filters and response bounds.
-    pub request: CacheListRequest,
-    /// Keep entries in any of these content-compatibility classes.
-    pub compatibilities: Vec<CacheCompatibility>,
-    /// Keep entries with one of these exact versioned content identities.
-    pub index_content_versions: Vec<u32>,
-    /// Keep only safely classifiable older or legacy-unversioned content.
-    pub incompatible_with_current: bool,
 }
 
 /// Criteria and consent for one managed-cache prune operation.
@@ -77,14 +69,7 @@ pub struct CachePruneRequest {
     pub dry_run: bool,
     /// Confirm a non-dry-run deletion plan.
     pub yes: bool,
-}
-
-/// Versioned cache-prune criteria that preserve [`CachePruneRequest`] literals.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CachePruneV2Request {
-    /// Existing age, storage, missing-root, and consent criteria.
-    pub request: CachePruneRequest,
-    /// Select inactive, recognizable older or legacy-unversioned caches.
+    /// Select inactive, recognizable older or unversioned caches.
     pub incompatible_with_current: bool,
 }
 
@@ -95,7 +80,8 @@ pub enum CacheState {
     /// Current schema and access metadata were read successfully.
     Current,
     /// A readable older schema lacks current access metadata.
-    Legacy,
+    #[serde(rename = "legacy")]
+    OlderSchema,
     /// Known cache artifacts exist without a readable database.
     Incomplete,
     /// The SQLite database could not be inspected.
@@ -114,8 +100,9 @@ pub enum CacheCompatibility {
     CompatibleCurrent,
     /// Content was produced by a known older index-content version.
     ObsoleteOlder,
-    /// The legacy cache identity did not record an index-content version.
-    LegacyUnversioned,
+    /// The cache identity did not record an index-content version.
+    #[serde(rename = "legacy_unversioned")]
+    Unversioned,
     /// Content was produced by a newer version this build must preserve.
     NewerUnsupported,
     /// Corrupt or unexpected metadata prevents a trustworthy classification.
@@ -176,42 +163,10 @@ pub struct CacheEntry {
     pub detail: Option<String>,
 }
 
-/// Complete report for `cache list`.
+/// Entry with explicit content compatibility for the cache list report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CacheListReport {
-    /// Platform-managed cache root inspected by the command.
-    pub cache_root: PathBuf,
-    /// Number of recognized caches before filters.
-    pub total_entries: usize,
-    /// Number of recognized caches after filters.
-    pub matched_entries: usize,
-    /// Number of entries included in this response page.
-    pub returned_entries: usize,
-    /// Sum of managed artifact bytes before filters.
-    pub total_bytes: u64,
-    /// Sum of managed artifact bytes after filters.
-    pub matched_bytes: u64,
-    /// Active leases among caches after filters.
-    pub active_entries: usize,
-    /// Recorded missing repository roots among caches after filters.
-    pub missing_root_entries: usize,
-    /// Counts by metadata state after filters.
-    pub state_counts: BTreeMap<String, usize>,
-    /// Entries ignored because their names are not managed cache identities.
-    pub ignored_entries: usize,
-    /// Whether the request omitted per-cache entries.
-    pub summary_only: bool,
-    /// Cursor for the next stable identifier page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-    /// Stable cache entries sorted by identifier and bounded to one page.
-    pub entries: Vec<CacheEntry>,
-}
-
-/// Entry with explicit content compatibility for the versioned list report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CacheEntryV2 {
-    /// Existing auditable metadata fields, including the legacy `state` field.
+pub struct CacheEntryReport {
+    /// Existing auditable metadata fields, including the persisted `state` field.
     #[serde(flatten)]
     pub entry: CacheEntry,
     /// Content compatibility independent from metadata/access state.
@@ -227,9 +182,9 @@ pub struct CacheCompatibilitySummary {
     pub bytes: u64,
 }
 
-/// Versioned `cache list` report with content-compatibility diagnostics.
+/// `cache list` report with content-compatibility diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CacheListV2Report {
+pub struct CacheListReport {
     /// Report schema version.
     pub report_version: u32,
     /// Platform-managed cache root inspected by the command.
@@ -252,7 +207,7 @@ pub struct CacheListV2Report {
     pub state_counts: BTreeMap<String, usize>,
     /// Entry and byte totals by content compatibility after filters.
     pub compatibility_counts: BTreeMap<String, CacheCompatibilitySummary>,
-    /// Inactive older or legacy entries whose metadata is safe to prune.
+    /// Inactive older or unversioned entries whose metadata is safe to prune.
     pub safely_reclaimable_incompatible_entries: usize,
     /// Bytes in safely reclaimable incompatible entries.
     pub safely_reclaimable_incompatible_bytes: u64,
@@ -264,7 +219,7 @@ pub struct CacheListV2Report {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Stable cache entries sorted by identifier and bounded to one page.
-    pub entries: Vec<CacheEntryV2>,
+    pub entries: Vec<CacheEntryReport>,
 }
 
 /// Result action for one cache considered by prune.
@@ -336,7 +291,7 @@ impl CachePruneReport {
 impl CacheState {
     pub(super) const ALL: [Self; 6] = [
         Self::Current,
-        Self::Legacy,
+        Self::OlderSchema,
         Self::Incomplete,
         Self::Corrupt,
         Self::Unsupported,
@@ -346,7 +301,7 @@ impl CacheState {
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Current => "current",
-            Self::Legacy => "legacy",
+            Self::OlderSchema => "legacy",
             Self::Incomplete => "incomplete",
             Self::Corrupt => "corrupt",
             Self::Unsupported => "unsupported",
@@ -359,7 +314,7 @@ impl CacheCompatibility {
     pub(super) const ALL: [Self; 5] = [
         Self::CompatibleCurrent,
         Self::ObsoleteOlder,
-        Self::LegacyUnversioned,
+        Self::Unversioned,
         Self::NewerUnsupported,
         Self::Unknown,
     ];
@@ -372,7 +327,7 @@ impl CacheCompatibility {
             Some(version) if version == INDEX_CONTENT_VERSION => Self::CompatibleCurrent,
             Some(version) if version < INDEX_CONTENT_VERSION => Self::ObsoleteOlder,
             Some(_) => Self::NewerUnsupported,
-            None => Self::LegacyUnversioned,
+            None => Self::Unversioned,
         }
     }
 
@@ -380,14 +335,14 @@ impl CacheCompatibility {
         match self {
             Self::CompatibleCurrent => "compatible_current",
             Self::ObsoleteOlder => "obsolete_older",
-            Self::LegacyUnversioned => "legacy_unversioned",
+            Self::Unversioned => "legacy_unversioned",
             Self::NewerUnsupported => "newer_unsupported",
             Self::Unknown => "unknown",
         }
     }
 
     pub(super) fn safely_incompatible(self) -> bool {
-        matches!(self, Self::ObsoleteOlder | Self::LegacyUnversioned)
+        matches!(self, Self::ObsoleteOlder | Self::Unversioned)
     }
 }
 
