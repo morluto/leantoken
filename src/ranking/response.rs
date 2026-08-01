@@ -160,6 +160,7 @@ pub(in crate::ranking) fn finalize_context_response(
         coverage,
         routing: None,
         handoff_manifest: None,
+        provenance: None,
         warnings,
         meta,
     };

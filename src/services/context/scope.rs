@@ -1,8 +1,10 @@
+type DiffScopeResolution = (Option<DiffScopeReceipt>, HashSet<String>, bool, bool, bool);
+
 impl Services {
     pub(super) fn resolve_diff_scope(
         &self,
         request: &ContextRequest,
-    ) -> Result<(Option<DiffScopeReceipt>, HashSet<String>, bool)> {
+    ) -> Result<DiffScopeResolution> {
         let has_base = request
             .base_revision
             .as_deref()
@@ -42,7 +44,13 @@ impl Services {
         let working_tree_paths = working_tree_status.changed_paths;
         let working_tree_state_available = working_tree_status.available;
         if !has_base && !has_paths && !request.strict_changed_paths {
-            return Ok((None, working_tree_paths, working_tree_state_available));
+            return Ok((
+                None,
+                working_tree_paths,
+                working_tree_state_available,
+                working_tree_status.modified,
+                working_tree_status.untracked,
+            ));
         }
         if let Some(git_result) = git_result {
             let mut changed_paths = request.changed_paths.clone();
@@ -74,6 +82,8 @@ impl Services {
                 }),
                 working_tree_paths,
                 working_tree_state_available,
+                working_tree_status.modified,
+                working_tree_status.untracked,
             ));
         }
         let mut resolved_paths = if has_paths {
@@ -93,6 +103,8 @@ impl Services {
             }),
             working_tree_paths,
             working_tree_state_available,
+            working_tree_status.modified,
+            working_tree_status.untracked,
         ))
     }
 }

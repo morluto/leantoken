@@ -12,6 +12,8 @@ pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
 pub(crate) struct GitWorkingTreeStatus {
     pub(crate) changed_paths: HashSet<String>,
     pub(crate) available: bool,
+    pub(crate) modified: bool,
+    pub(crate) untracked: bool,
 }
 
 /// Observe bounded working-tree state without changing the public empty-set fallback.
@@ -38,6 +40,8 @@ pub(crate) fn git_working_tree_status_with(
         return GitWorkingTreeStatus {
             changed_paths: HashSet::new(),
             available: true,
+            modified: false,
+            untracked: false,
         };
     }
     let prefix = git_worktree_prefix(root);
@@ -68,12 +72,17 @@ pub(crate) fn git_working_tree_status_with(
         return GitWorkingTreeStatus {
             changed_paths: HashSet::new(),
             available: false,
+            modified: false,
+            untracked: false,
         };
     };
-    let (changed_paths, available) = parse_git_status_observation(output.as_slice(), max, &prefix);
+    let (changed_paths, available, modified, untracked) =
+        parse_git_status_observation(output.as_slice(), max, &prefix);
     GitWorkingTreeStatus {
         changed_paths,
         available,
+        modified,
+        untracked,
     }
 }
 
@@ -107,11 +116,13 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
-) -> (HashSet<String>, bool) {
+) -> (HashSet<String>, bool, bool, bool) {
     if max == 0 {
-        return (HashSet::new(), true);
+        return (HashSet::new(), true, false, false);
     }
     let mut changed = HashSet::new();
+    let mut modified = false;
+    let mut untracked = false;
     let mut record = Vec::new();
 
     loop {
@@ -119,7 +130,7 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         match reader.read_until(0, &mut record) {
             Ok(0) => break,
             Ok(_) => {}
-            Err(_) => return (changed, false),
+            Err(_) => return (changed, false, modified, untracked),
         }
 
         if record.last() == Some(&0) {
@@ -137,6 +148,12 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
             continue;
         }
 
+        if status == b"??" {
+            untracked = true;
+        } else {
+            modified = true;
+        }
+
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
@@ -145,6 +162,6 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
             break;
         }
     }
-    (changed, true)
+    (changed, true, modified, untracked)
 }
 use super::*;

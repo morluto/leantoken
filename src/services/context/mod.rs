@@ -56,8 +56,9 @@ pub(super) use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 pub(super) use crate::model::*;
 pub(super) use crate::ranking::{self, Candidate};
 pub(super) use crate::repository::{
-    git_diff_hunks_scoped, git_diff_identity, git_diff_paths, git_diff_paths_between,
-    git_head_revision, git_working_tree_status, normalize_relative, validate_relative,
+    git_branch_name, git_diff_hunks_scoped, git_diff_identity, git_diff_paths,
+    git_diff_paths_between, git_head_revision, git_working_tree_status, normalize_relative,
+    validate_relative,
 };
 pub(super) use crate::storage::ChunkHit;
 pub(super) use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
