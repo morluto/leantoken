@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use tempfile::Builder;
 
 #[derive(Debug)]
 pub struct Sandbox {
@@ -53,19 +53,15 @@ impl Sandbox {
         let parent = workspace_root.join("target").join("test-sandboxes");
         fs::create_dir_all(&parent)?;
 
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default();
-        let preservation_id = format!("{id}-{nonce:x}");
-        let root = parent.join(&preservation_id);
-        fs::create_dir(&root).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                SandboxError::CreationFailed(root.clone())
-            } else {
-                SandboxError::Io(error)
-            }
-        })?;
+        let root = Builder::new()
+            .prefix(&format!("{id}-"))
+            .tempdir_in(&parent)?
+            .keep();
+        let preservation_id = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .ok_or_else(|| SandboxError::CreationFailed(root.clone()))?;
 
         let sandbox = Self {
             id,
@@ -228,6 +224,9 @@ fn rerun_command(module: &str, callsite: &str, test_name: Option<&str>) -> Strin
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::thread;
+
     use super::{Sandbox, rerun_command, stable_id};
 
     #[test]
@@ -256,6 +255,20 @@ mod tests {
         let second = Sandbox::new(module_path!(), "storage_case").unwrap();
         assert_eq!(first.id(), second.id());
         assert_ne!(first.preservation_id, second.preservation_id);
+    }
+
+    #[test]
+    fn concurrent_sandbox_creation_has_unique_roots() {
+        let sandboxes = (0..64)
+            .map(|_| thread::spawn(|| Sandbox::new(module_path!(), "concurrent_case").unwrap()))
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        let roots = sandboxes
+            .iter()
+            .map(|sandbox| sandbox.root().to_owned())
+            .collect::<HashSet<_>>();
+
+        assert_eq!(roots.len(), sandboxes.len());
     }
 
     #[test]
