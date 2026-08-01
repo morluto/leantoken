@@ -353,17 +353,21 @@ fn result_modes_emit_only_the_selected_representations() {
 }
 
 #[test]
-fn receipt_results_expose_one_consistent_resource_handoff() {
+fn structured_receipt_results_preserve_materialized_evidence_and_resource_handoff() {
     let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
-            "source_tokens": 0,
+            "source_tokens": 6,
             "protocol_tokens": 0,
             "path_and_metadata_tokens": 0,
             "total_response_tokens": 0,
             "tokenizer": "cl100k_base"
-        }
+        },
+        "fragments": [{
+            "path": "lib.rs",
+            "content": "fn ready() {}"
+        }]
     });
     let result = tool_result(value, McpResultMode::Structured).expect("receipt result");
     let structured = result
@@ -373,6 +377,8 @@ fn receipt_results_expose_one_consistent_resource_handoff() {
     assert_eq!(structured["receipt_resource"]["kind"], "retrieval_receipt");
     assert_eq!(structured["receipt_resource"]["id"], receipt_id);
     assert_eq!(structured["receipt_resource"]["uri"], uri);
+    assert_eq!(structured["fragments"][0]["path"], "lib.rs");
+    assert_eq!(structured["fragments"][0]["content"], "fn ready() {}");
     assert!(result.content.iter().any(|content| {
         content
             .as_text()

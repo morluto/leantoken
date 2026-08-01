@@ -73,7 +73,7 @@ impl McpLauncher {
     pub(super) fn from_executable_with_version(executable: &Path, version: &str) -> Self {
         Self {
             command: executable.into(),
-            args: vec!["mcp".into()],
+            args: vec!["--managed-by-setup".into(), "mcp".into()],
             version: version.into(),
             package_manager: None,
             package: None,
@@ -154,6 +154,7 @@ impl McpLauncher {
                 format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
+                "--managed-by-setup".into(),
                 "mcp".into(),
             ],
             version: version.into(),
@@ -185,6 +186,7 @@ impl McpLauncher {
                 format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
+                "--managed-by-setup".into(),
                 "mcp".into(),
             ],
             version: version.into(),
@@ -199,17 +201,28 @@ impl McpLauncher {
     ) -> Self {
         let package = format!("leantoken@{version}");
         let args = match package_manager {
-            PackageManager::Npx => vec!["--yes".into(), package.clone(), "mcp".into()],
+            PackageManager::Npx => vec![
+                "--yes".into(),
+                package.clone(),
+                "--managed-by-setup".into(),
+                "mcp".into(),
+            ],
             PackageManager::Npm => vec![
                 "exec".into(),
                 "--yes".into(),
                 format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
+                "--managed-by-setup".into(),
                 "mcp".into(),
             ],
             PackageManager::Pnpm | PackageManager::Yarn => {
-                vec!["dlx".into(), package.clone(), "mcp".into()]
+                vec![
+                    "dlx".into(),
+                    package.clone(),
+                    "--managed-by-setup".into(),
+                    "mcp".into(),
+                ]
             }
         };
         Self {
@@ -249,6 +262,7 @@ mod tests {
                     "--package=leantoken@1.2.3".into(),
                     "--".into(),
                     "leantoken".into(),
+                    "--managed-by-setup".into(),
                     "mcp".into(),
                 ],
                 version: version.into(),
@@ -275,6 +289,7 @@ mod tests {
         assert_eq!(launcher.command, root.join("node"));
         assert_eq!(launcher.args[0], root.join("npx cli.js").to_string_lossy());
         assert_eq!(launcher.args[3], "--package=leantoken@1.2.3");
+        assert_eq!(launcher.args[6], "--managed-by-setup");
     }
 
     #[test]
@@ -288,12 +303,16 @@ mod tests {
                 "--package=leantoken@1.2.3",
                 "--",
                 "leantoken",
+                "--managed-by-setup",
                 "mcp"
             ]
         );
         let pnpm = McpLauncher::from_package_manager_with_version(PackageManager::Pnpm, "1.2.3");
         assert_eq!(pnpm.command, Path::new("pnpm"));
-        assert_eq!(pnpm.args, ["dlx", "leantoken@1.2.3", "mcp"]);
+        assert_eq!(
+            pnpm.args,
+            ["dlx", "leantoken@1.2.3", "--managed-by-setup", "mcp"]
+        );
         assert_eq!(
             pnpm.doctor_command(),
             "pnpm dlx leantoken@1.2.3 doctor --json"
@@ -301,7 +320,10 @@ mod tests {
 
         let yarn = McpLauncher::from_package_manager_with_version(PackageManager::Yarn, "1.2.3");
         assert_eq!(yarn.command, Path::new("yarn"));
-        assert_eq!(yarn.args, ["dlx", "leantoken@1.2.3", "mcp"]);
+        assert_eq!(
+            yarn.args,
+            ["dlx", "leantoken@1.2.3", "--managed-by-setup", "mcp"]
+        );
         assert_eq!(
             yarn.doctor_command(),
             "yarn dlx leantoken@1.2.3 doctor --json"

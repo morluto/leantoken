@@ -77,17 +77,21 @@ pub(super) fn run_with(
         ));
     }
 
-    let runtime = request
-        .private_runtime
-        .then(|| runtime_install_plan(environment))
+    let inventory_required_for_selection = request.refresh
+        || (operation == SetupOperation::Remove
+            && environment.interactive
+            && !request.all
+            && request.clients.is_empty()
+            && !request.yes);
+    let selection_inventory = inventory_required_for_selection
+        .then(|| {
+            configured_registrations_with_snapshots(
+                &environment.home,
+                &environment.launcher,
+                &SetupClient::ALL,
+            )
+        })
         .transpose()?;
-    let private_launcher = runtime.as_ref().map(|runtime| {
-        McpLauncher::from_executable_with_version(
-            &runtime.destination,
-            environment.launcher.version(),
-        )
-    });
-    let launcher = private_launcher.as_ref().unwrap_or(&environment.launcher);
 
     let detected = SetupClient::ALL
         .into_iter()
@@ -95,7 +99,12 @@ pub(super) fn run_with(
         .collect::<Vec<_>>();
 
     let clients = if request.refresh {
-        configured_clients(&environment.home, launcher)?
+        managed_clients_from_registrations(
+            &selection_inventory
+                .as_ref()
+                .expect("refresh captured configuration inventory")
+                .0,
+        )
     } else if request.all {
         SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
@@ -114,7 +123,12 @@ pub(super) fn run_with(
         let preferred = if operation == SetupOperation::Setup {
             detected.clone()
         } else {
-            configured_clients(&environment.home, launcher)?
+            managed_clients_from_registrations(
+                &selection_inventory
+                    .as_ref()
+                    .expect("interactive remove captured configuration inventory")
+                    .0,
+            )
         };
         let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
             return Ok(empty_report(operation, environment.persistent_cli));
@@ -131,12 +145,81 @@ pub(super) fn run_with(
                 .into(),
         ));
     }
-    let manage_discovery = if operation == SetupOperation::Setup {
-        true
-    } else {
-        configured_clients(&environment.home, launcher)?
+    let runtime = (request.private_runtime && !clients.is_empty())
+        .then(|| runtime_install_plan(environment))
+        .transpose()?;
+    let private_launcher = runtime.as_ref().map(|runtime| {
+        McpLauncher::from_executable_with_version(
+            &runtime.destination,
+            environment.launcher.version(),
+        )
+    });
+    let launcher = private_launcher.as_ref().unwrap_or(&environment.launcher);
+    let selected_discovery_paths = clients
+        .iter()
+        .map(|client| client.discovery_path(&environment.home))
+        .collect::<std::collections::BTreeSet<_>>();
+    let (registrations, configuration_snapshots) = match selection_inventory {
+        Some((_registrations, snapshots)) => (
+            configured_registrations_from_snapshots(
+                &environment.home,
+                launcher,
+                &SetupClient::ALL,
+                &snapshots,
+            )?,
+            snapshots,
+        ),
+        None => {
+            configured_registrations_with_snapshots(&environment.home, launcher, &SetupClient::ALL)?
+        }
+    };
+    let unselected_registrations = registrations
+        .into_iter()
+        .filter(|registration| !clients.contains(&registration.client))
+        .collect::<Vec<_>>();
+    let (discovery_paths, discovery_cleanup_paths) = if operation == SetupOperation::Setup {
+        let mut required_paths = unselected_registrations
             .into_iter()
-            .all(|configured| clients.contains(&configured))
+            .filter(|registration| registration.managed)
+            .map(|registration| registration.client.discovery_path(&environment.home))
+            .collect::<std::collections::BTreeSet<_>>();
+        required_paths.extend(selected_discovery_paths.iter().cloned());
+        let cleanup_paths = [
+            environment.home.join(".agents/skills/leantoken/SKILL.md"),
+            environment.home.join(".claude/skills/leantoken/SKILL.md"),
+        ]
+        .into_iter()
+        .filter(|path| !required_paths.contains(path))
+        .collect();
+        (
+            selected_discovery_paths.into_iter().collect(),
+            cleanup_paths,
+        )
+    } else {
+        let remaining_paths = unselected_registrations
+            .into_iter()
+            .map(|registration| registration.client)
+            .map(|client| client.discovery_path(&environment.home))
+            .collect::<std::collections::BTreeSet<_>>();
+        if remaining_paths.is_empty() {
+            (
+                [
+                    environment.home.join(".agents/skills/leantoken/SKILL.md"),
+                    environment.home.join(".claude/skills/leantoken/SKILL.md"),
+                ]
+                .into_iter()
+                .collect(),
+                Vec::new(),
+            )
+        } else {
+            (
+                selected_discovery_paths
+                    .difference(&remaining_paths)
+                    .cloned()
+                    .collect(),
+                Vec::new(),
+            )
+        }
     };
 
     let plan = resolve_plan(
@@ -148,38 +231,60 @@ pub(super) fn run_with(
             launcher,
             persistent_cli: environment.persistent_cli,
             runtime,
-            manage_discovery,
+            discovery_paths,
+            discovery_cleanup_paths,
+            configuration_snapshots,
+            force_unmanaged: request.force_unmanaged,
             transaction_root: &environment.runtime_root,
         },
     )?;
 
     if request.dry_run {
-        return Ok(report_from_plan(&plan, false, true, Vec::new(), None));
+        return Ok(report_from_plan(&plan, false, true, Vec::new(), None, None));
     }
 
     if !request.yes && !prompt.confirm(operation, &plan)? {
-        return Ok(report_from_plan(&plan, true, false, Vec::new(), None));
+        return Ok(report_from_plan(&plan, true, false, Vec::new(), None, None));
     }
 
-    let results = apply_plan(&plan);
-    let verification = verify_applied_setup(&plan, &results);
-    Ok(report_from_plan(&plan, false, false, results, verification))
+    let outcome = apply_plan(&plan);
+    let verification = verify_applied_setup(&plan, &outcome.results, outcome.error.as_deref());
+    Ok(report_from_plan(
+        &plan,
+        false,
+        false,
+        outcome.results,
+        outcome.error,
+        verification,
+    ))
 }
 
 fn verify_applied_setup(
     plan: &ResolvedSetupPlan,
     results: &[ClientSetupResult],
+    apply_error: Option<&str>,
 ) -> Option<SetupVerification> {
     let launcher = plan.launcher.as_ref()?;
-    let repair_command = launcher.package.as_ref().map_or_else(
-        || "leantoken doctor --json".to_owned(),
-        |package| format!("npx --yes {package} doctor --json"),
-    );
-    if results.iter().any(|result| result.error.is_some()) {
+    let client_argument = plan
+        .edits
+        .first()
+        .map(|edit| format!(" --client {}", edit.public.client.cli_name()))
+        .unwrap_or_default();
+    let repair_command = if let Some(package) = &launcher.package {
+        format!("npx --yes {package} doctor{client_argument} --json")
+    } else if plan.persistent_cli {
+        format!("leantoken doctor{client_argument} --json")
+    } else {
+        format!(
+            "npx --yes leantoken@{} doctor{client_argument} --json",
+            launcher.version
+        )
+    };
+    if apply_error.is_some() || results.iter().any(|result| result.error.is_some()) {
         return Some(SetupVerification {
             status: SetupVerificationStatus::Skipped,
             stage: None,
-            message: Some("one or more selected client configurations failed".into()),
+            message: Some("setup transaction did not complete".into()),
             repair_command: Some(repair_command),
         });
     }
@@ -194,12 +299,14 @@ fn verify_applied_setup(
             repository.path(),
             Some(repository.path().join("index.sqlite")),
         )?;
-        crate::doctor::run_launcher(
+        let report = crate::doctor::run_launcher(
             &config,
             &launcher.command,
             &launcher.args,
             SETUP_VERIFICATION_TIMEOUT,
-        )
+        )?;
+        revalidate_applied_client_edits(&plan.edits)?;
+        Ok(report)
     })();
 
     Some(match result {
@@ -224,11 +331,35 @@ fn verify_applied_setup(
     })
 }
 
+pub(super) fn revalidate_applied_client_edits(edits: &[PlannedClientEdit]) -> Result<()> {
+    for edit in edits {
+        let expected = edit.updated.as_ref().or(edit.original.as_ref());
+        let current = read_optional(&edit.public.path).map_err(|error| Error::DoctorFailure {
+            stage: "registration",
+            message: format!(
+                "could not revalidate {} after launcher verification: {error}",
+                edit.public.path.display()
+            ),
+        })?;
+        if current.as_ref() != expected {
+            return Err(Error::DoctorFailure {
+                stage: "registration",
+                message: format!(
+                    "{} changed during launcher verification",
+                    edit.public.path.display()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn report_from_plan(
     plan: &ResolvedSetupPlan,
     cancelled: bool,
     dry_run: bool,
     results: Vec<ClientSetupResult>,
+    apply_error: Option<String>,
     verification: Option<SetupVerification>,
 ) -> SetupReport {
     let discovery_skill_tokens = plan.discovery_edits.first().and_then(|edit| {
@@ -241,6 +372,7 @@ pub(super) fn report_from_plan(
         operation: plan.operation,
         cancelled,
         dry_run,
+        ownership_override: plan.ownership_override,
         persistent_cli: plan.persistent_cli,
         launcher: plan.launcher.clone(),
         plan: plan.edits.iter().map(|edit| edit.public.clone()).collect(),
@@ -251,6 +383,7 @@ pub(super) fn report_from_plan(
             .collect(),
         discovery_skill_tokens,
         results,
+        apply_error,
         verification,
     }
 }
@@ -260,12 +393,14 @@ pub(super) fn empty_report(operation: SetupOperation, persistent_cli: bool) -> S
         operation,
         cancelled: true,
         dry_run: false,
+        ownership_override: false,
         persistent_cli,
         launcher: None,
         plan: Vec::new(),
         discovery_plan: Vec::new(),
         discovery_skill_tokens: None,
         results: Vec::new(),
+        apply_error: None,
         verification: None,
     }
 }

@@ -8,6 +8,8 @@ pub(super) struct ResolvedSetupPlan {
     pub(super) runtime: Option<RuntimeInstallPlan>,
     pub(super) edits: Vec<PlannedClientEdit>,
     pub(super) discovery_edits: Vec<PlannedDiscoveryEdit>,
+    pub(super) configuration_snapshots: Vec<PlannedConfigurationSnapshot>,
+    pub(super) ownership_override: bool,
     pub(super) transaction_root: PathBuf,
 }
 
@@ -31,18 +33,26 @@ pub(super) struct SetupTransaction {
 
 pub(super) struct SetupLock {
     _file: fs::File,
+    runtime_root: cap_std::fs::Dir,
 }
 
 pub(super) fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
     fs::create_dir_all(runtime_root)?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(runtime_root.join("setup.lock"))?;
+    let runtime_root = open_runtime_root(runtime_root)?;
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    let file = runtime_root.open_with("setup.lock", &options)?.into_std();
     file.lock()?;
-    Ok(SetupLock { _file: file })
+    Ok(SetupLock {
+        _file: file,
+        runtime_root,
+    })
+}
+
+impl SetupLock {
+    pub(super) fn runtime_root(&self) -> &cap_std::fs::Dir {
+        &self.runtime_root
+    }
 }
 
 impl SetupTransaction {
@@ -63,7 +73,7 @@ pub(super) fn content_hash(content: &str) -> String {
 
 pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
     let path = transaction_path(runtime_root);
-    let Some(serialized) = read_optional(&path)? else {
+    let Some(serialized) = read_optional_with_limit(&path, MAX_SETUP_JOURNAL_BYTES)? else {
         return Ok(());
     };
     let journal: SetupTransactionJournal = serde_json::from_str(&serialized).map_err(|error| {
@@ -146,6 +156,11 @@ pub(super) fn begin_setup_transaction(
         entries,
     };
     let serialized = serde_json::to_string(&journal)?;
+    if serialized.len() as u64 > MAX_SETUP_JOURNAL_BYTES {
+        return Err(Error::SetupFailure(format!(
+            "setup recovery journal exceeds the {MAX_SETUP_JOURNAL_BYTES}-byte aggregate limit"
+        )));
+    }
     let mut temporary = NamedTempFile::new_in(&plan.transaction_root)?;
     temporary.write_all(serialized.as_bytes())?;
     temporary.as_file_mut().sync_all()?;

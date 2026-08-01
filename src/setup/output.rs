@@ -61,10 +61,17 @@ pub(super) fn print_preflight(plan: &ResolvedSetupPlan) -> Result<()> {
         }
     }
     writeln!(output)?;
-    writeln!(
-        output,
-        "  Only LeanToken-owned client entries and discovery files will change."
-    )?;
+    if plan.ownership_override {
+        writeln!(
+            output,
+            "  Explicit override: selected unmanaged client entries may change."
+        )?;
+    } else {
+        writeln!(
+            output,
+            "  Only LeanToken-owned client entries and discovery files will change."
+        )?;
+    }
     if plan.operation == SetupOperation::Setup {
         writeln!(
             output,
@@ -84,6 +91,12 @@ pub(super) fn plan_symbol(action: ClientPlanAction) -> &'static str {
 pub(super) fn print_report_plan(output: &mut impl Write, report: &SetupReport) -> Result<()> {
     writeln!(output, "◆ LeanToken dry-run")?;
     writeln!(output, "  No changes were made.")?;
+    if report.ownership_override {
+        writeln!(
+            output,
+            "  Explicit override: applying this plan may replace an unmanaged client entry."
+        )?;
+    }
     for effect in &report.plan {
         writeln!(
             output,
@@ -175,11 +188,15 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
         }
     }
+    if let Some(error) = &report.apply_error {
+        writeln!(output, "  ✗ Setup transaction: {error}")?;
+    }
     if let Some(verification) = &report.verification {
         match verification.status {
-            SetupVerificationStatus::Passed => {
-                writeln!(output, "  ✓ Launcher verification: MCP ready")?
-            }
+            SetupVerificationStatus::Passed => writeln!(
+                output,
+                "  ✓ Exact launcher verified: initialize, 9-tool catalog, first retrieval"
+            )?,
             SetupVerificationStatus::Skipped => writeln!(
                 output,
                 "  ─ Launcher verification skipped: {}",
@@ -215,7 +232,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             "LeanToken is configured for {configured} client{}.",
             if configured == 1 { "" } else { "s" }
         )?;
-        if report.has_client_failures() {
+        if report.has_apply_failure() {
+            writeln!(
+                output,
+                "The setup transaction did not complete; planned discovery cleanup may remain."
+            )?;
+        } else if report.has_client_failures() {
             writeln!(
                 output,
                 "Some selected clients failed; successful changes were not rolled back."
@@ -223,12 +245,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         } else if report.has_verification_failure() {
             writeln!(
                 output,
-                "Client configuration succeeded, but launcher verification failed."
+                "Client configuration succeeded, but launcher verification failed. The configured entries remain in place for diagnosis."
             )?;
         } else if changed > 0 {
             writeln!(
                 output,
-                "Restart or reload the configured clients to connect LeanToken."
+                "Next: restart or reload the configured clients to connect LeanToken."
             )?;
         } else {
             writeln!(output, "No configuration changes were needed.")?;
@@ -244,9 +266,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 "MCP clients now launch the pinned private native runtime directly."
             )?;
             writeln!(output, "Versioned runtimes are retained during removal.")?;
-            writeln!(output, "Verify from a repository: leantoken doctor")?;
+            writeln!(
+                output,
+                "Inspect or reclaim them later with: {} runtime list",
+                command_prefix(report)
+            )?;
         } else if report.persistent_cli {
-            writeln!(output, "Verify from a repository: leantoken doctor")?;
             writeln!(output, "Update later with: leantoken upgrade")?;
         } else {
             let version = report
@@ -269,13 +294,45 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
             writeln!(
                 output,
-                "Verify from a repository: npx leantoken@{version} doctor"
+                "Recommended direct launcher: npx --yes leantoken@{version} setup --refresh --private-runtime --yes"
             )?;
             writeln!(
                 output,
                 "Install the shell command with: npm install --global leantoken@latest"
             )?;
         }
+        if let Some(client) = report
+            .results
+            .iter()
+            .find(|result| result.error.is_none())
+            .map(|result| result.client)
+        {
+            writeln!(
+                output,
+                "Verify the stored {} launcher from a repository: {} doctor --client {}",
+                client.display_name(),
+                command_prefix(report),
+                client.cli_name()
+            )?;
+        }
+        writeln!(
+            output,
+            "In-agent smoke test: Ask the client to use LeanToken to find the code related to request cancellation."
+        )?;
     }
     Ok(())
+}
+
+fn command_prefix(report: &SetupReport) -> String {
+    if report.persistent_cli {
+        "leantoken".into()
+    } else {
+        let version = report
+            .launcher
+            .as_ref()
+            .map_or(env!("CARGO_PKG_VERSION"), |launcher| {
+                launcher.version.as_str()
+            });
+        format!("npx --yes leantoken@{version}")
+    }
 }

@@ -7,6 +7,7 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             run_upgrade_command(cli, json)
         }
         leantoken::cli::Commands::Cache(_) => run_cache_command(cli, json),
+        leantoken::cli::Commands::Runtime(_) => run_runtime_command(cli, json),
         leantoken::cli::Commands::Episode(_) => run_episode_command(cli, json),
         leantoken::cli::Commands::Setup(_) | leantoken::cli::Commands::Remove(_) => {
             run_integration_command(cli, json)
@@ -16,6 +17,23 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             run_mcp(cli, result_mode).await
         }
         _ => run_repository_command(cli, json).await,
+    }
+}
+
+pub(super) fn run_runtime_command(cli: Cli, json: bool) -> Result<()> {
+    match cli.app_request() {
+        AppRequest::RuntimeList => setup::print_runtime_list(&setup::list_runtimes()?, json),
+        AppRequest::RuntimePrune(request) => {
+            let report = setup::prune_runtimes(request)?;
+            setup::print_runtime_prune(&report, json)?;
+            if report.has_failures() {
+                return Err(leantoken::Error::SetupFailure(
+                    "one or more private runtimes could not be pruned".into(),
+                ));
+            }
+            Ok(())
+        }
+        _ => unreachable!("runtime command checked by dispatch"),
     }
 }
 
@@ -73,14 +91,22 @@ pub(super) fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     let report = setup::run(operation, request, json)?;
     setup::print_report(&report, json)?;
     if report.has_failures() {
-        let message = match (
-            report.has_client_failures(),
-            report.has_verification_failure(),
-        ) {
-            (true, true) => "MCP client configuration and launcher verification failed",
-            (true, false) => "one or more MCP client configurations failed",
-            (false, true) => "MCP launcher verification failed",
-            (false, false) => unreachable!("failure predicate already checked"),
+        let message = if report.has_apply_failure() {
+            if report.has_verification_failure() {
+                "setup transaction and launcher verification failed"
+            } else {
+                "setup transaction failed"
+            }
+        } else {
+            match (
+                report.has_client_failures(),
+                report.has_verification_failure(),
+            ) {
+                (true, true) => "MCP client configuration and launcher verification failed",
+                (true, false) => "one or more MCP client configurations failed",
+                (false, true) => "MCP launcher verification failed",
+                (false, false) => unreachable!("failure predicate already checked"),
+            }
         };
         return Err(leantoken::Error::SetupFailure(message.into()));
     }
@@ -92,11 +118,18 @@ pub(super) async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
     let config = cli.config()?;
     let request = cli.app_request();
 
-    if let AppRequest::Doctor { ready_timeout } = request {
+    if let AppRequest::Doctor {
+        ready_timeout,
+        client,
+    } = request
+    {
         if !json {
             doctor::print_progress()?;
         }
-        let report = doctor::run(&config, ready_timeout)?;
+        let report = client.map_or_else(
+            || doctor::run(&config, ready_timeout),
+            |client| doctor::run_configured_client(&config, ready_timeout, client),
+        )?;
         doctor::print_report(&report, json)?;
         return Ok(());
     }
@@ -253,6 +286,8 @@ pub(super) async fn dispatch_repository_request(
         | AppRequest::Remove(_)
         | AppRequest::CacheList(_)
         | AppRequest::CachePrune(_)
+        | AppRequest::RuntimeList
+        | AppRequest::RuntimePrune(_)
         | AppRequest::EpisodeAudit(_)
         | AppRequest::Upgrade { .. } => {
             unreachable!("repository-free command handled by top-level dispatch")

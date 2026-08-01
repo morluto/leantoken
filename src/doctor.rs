@@ -28,11 +28,30 @@ const EXPECTED_TOOLS: [&str; 9] = [
     "savings",
     "search",
 ];
+const V0_1_17_TO_V0_1_18_TOOLS: [&str; 8] = [
+    "context", "files", "history", "json", "outline", "read", "savings", "search",
+];
+const V0_1_19_TOOLS: [&str; 9] = [
+    "context",
+    "files",
+    "history",
+    "json",
+    "outline",
+    "read",
+    "receipt_rebase",
+    "savings",
+    "search",
+];
+const COMPATIBLE_REQUIRED_TOOLS: [&str; 8] = [
+    "context", "files", "history", "json", "outline", "read", "savings", "search",
+];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
 const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = MAX_DIAGNOSTIC_LINE_CHARS * 4;
+const MAX_PROTOCOL_LINE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROTOCOL_QUEUED_RECORDS: usize = 4;
 
 /// Successful MCP self-diagnostic report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -45,8 +64,10 @@ pub struct DoctorReport {
     pub server_name: String,
     /// MCP implementation version returned during initialization.
     pub server_version: String,
-    /// Index-content compatibility version used by the executable.
-    pub index_content_version: u32,
+    /// Index-content compatibility version, when the verified child exposes a
+    /// version this process can identify.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_content_version: Option<u32>,
     /// Whether server-wide agent workflow guidance was present.
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
@@ -62,13 +83,17 @@ pub struct DoctorReport {
 /// Structured host-integration status independent of repository readiness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IntegrationReport {
+    /// Configured client whose exact launcher was exercised, when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_client: Option<SetupClient>,
     /// `registered`, `not_registered`, or `unknown`.
     pub registration_status: &'static str,
     /// Clients with an existing LeanToken MCP registration.
     pub configured_clients: Vec<SetupClient>,
     /// Configured executable and version details for each LeanToken entry.
     pub registrations: Vec<RegistrationReport>,
-    /// `current`, `stale`, `not_registered`, or `unknown`.
+    /// `current`, `disabled`, `stale`, `unmanaged_stale`, `not_registered`, or
+    /// `unknown`.
     pub registration_health: &'static str,
     /// `installed`, `partial`, `missing`, or `unknown`.
     pub discovery_status: &'static str,
@@ -102,6 +127,10 @@ pub struct RegistrationReport {
     pub expected_version: String,
     /// Whether command and arguments match the current launcher exactly.
     pub matches_current: bool,
+    /// Whether setup ownership was explicit or recognized from a legacy launcher.
+    pub managed: bool,
+    /// Whether the host client will launch this registration.
+    pub enabled: bool,
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -134,7 +163,42 @@ pub fn print_progress() -> Result<()> {
 /// first-run contract against the configured repository.
 pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
-    run_with_transport(config, ready_timeout, &mut transport)
+    run_with_transport(config, ready_timeout, &mut transport, None)
+}
+
+/// Verify the exact launcher currently stored for one configured MCP client.
+pub fn run_configured_client(
+    config: &Config,
+    ready_timeout: Duration,
+    client: SetupClient,
+) -> Result<DoctorReport> {
+    let registration = setup::configured_registration(client)
+        .map_err(|error| doctor_error("registration", error.to_string()))?
+        .ok_or_else(|| {
+            doctor_error(
+                "registration",
+                format!(
+                    "{} has no LeanToken MCP registration",
+                    client.display_name()
+                ),
+            )
+        })?;
+    if !registration.enabled {
+        return Err(doctor_error(
+            "registration",
+            format!(
+                "{} has a disabled LeanToken MCP registration",
+                client.display_name()
+            ),
+        ));
+    }
+    let mut transport = DoctorTransport::spawn_launcher(
+        config,
+        &registration.command,
+        &registration.args,
+        DatabaseForwarding::ExplicitOnly,
+    )?;
+    run_with_transport(config, ready_timeout, &mut transport, Some(&registration))
 }
 
 /// Verify an exact setup launcher through the same MCP contract used by
@@ -146,15 +210,18 @@ pub(crate) fn run_launcher(
     args: &[String],
     ready_timeout: Duration,
 ) -> Result<DoctorReport> {
-    let mut transport = DoctorTransport::spawn_launcher(config, command, args)?;
-    run_with_transport(config, ready_timeout, &mut transport)
+    let mut transport =
+        DoctorTransport::spawn_launcher(config, command, args, DatabaseForwarding::Resolved)?;
+    run_with_transport(config, ready_timeout, &mut transport, None)
 }
 
 fn run_with_transport(
     config: &Config,
     ready_timeout: Duration,
     transport: &mut DoctorTransport,
+    verified_registration: Option<&setup::ConfiguredRegistration>,
 ) -> Result<DoctorReport> {
+    let expected_server_version = expected_server_version(verified_registration);
     transport.send(
         json!({
             "jsonrpc": "2.0",
@@ -171,7 +238,11 @@ fn run_with_transport(
         }),
         "handshake",
     )?;
-    let initialize = transport.response(1, RESPONSE_TIMEOUT, "handshake")?;
+    let initialize = transport.response(
+        1,
+        configured_handshake_timeout(verified_registration),
+        "handshake",
+    )?;
     let result = result_object(&initialize, "initialize", "handshake")?;
     required_string(result, "/protocolVersion", "protocol version", "handshake")?;
     let server_name = required_string(result, "/serverInfo/name", "server name", "handshake")?;
@@ -183,25 +254,27 @@ fn run_with_transport(
             format!("MCP identified itself as {server_name:?}, expected \"leantoken\""),
         ));
     }
-    if !server_version_matches_current_runtime(&server_version) {
+    if !server_version_matches_runtime(&server_version, expected_server_version) {
+        let expected = expected_server_version.map_or_else(
+            || "a compatible semantic release with a 32-hex contract fingerprint".to_owned(),
+            |version| {
+                format!(
+                    "{version}+{}.<32 hex characters>",
+                    version_marker_for_release(version)
+                )
+            },
+        );
         return Err(doctor_error(
             "handshake",
-            format!(
-                "MCP reported version {server_version}, expected {}+contract.<32 hex characters>",
-                env!("CARGO_PKG_VERSION")
-            ),
+            format!("MCP reported version {server_version}, expected {expected}"),
         ));
     }
+    let server_release = server_version_release(&server_version)
+        .expect("a matching runtime version has a semantic release");
     let instructions_loaded = result
         .get("instructions")
         .and_then(Value::as_str)
-        .is_some_and(|instructions| {
-            instructions.contains("call leantoken.savings directly")
-                && instructions.contains("call leantoken.context once")
-                && instructions.contains("plan_only=false")
-                && instructions.contains("Reserve plan_only=true")
-                && instructions.contains("leantoken.search over grep or rg")
-        });
+        .is_some_and(|instructions| instructions_match_release(instructions, server_release));
     if !instructions_loaded {
         return Err(doctor_error(
             "handshake",
@@ -239,9 +312,7 @@ fn run_with_transport(
                 .ok_or_else(|| doctor_error("catalog", "tools/list returned a tool without a name"))
         })
         .collect::<Result<Vec<_>>>()?;
-    let actual = tools.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    let expected = EXPECTED_TOOLS.into_iter().collect::<BTreeSet<_>>();
-    if actual != expected || tools.len() != EXPECTED_TOOLS.len() {
+    if !catalog_matches_release(&tools, server_release) {
         return Err(doctor_error(
             "catalog",
             format!("unexpected MCP tool catalog: {}", tools.join(", ")),
@@ -330,7 +401,30 @@ fn run_with_transport(
     };
 
     transport.close();
-    let setup = setup::diagnostic_state();
+    if let Some(registration) = verified_registration {
+        let current = setup::configured_registration(registration.client)
+            .map_err(|error| doctor_error("registration", error.to_string()))?;
+        if !current.is_some_and(|current| {
+            current.path == registration.path && current.source_hash == registration.source_hash
+        }) {
+            return Err(doctor_error(
+                "registration",
+                format!(
+                    "{} MCP registration changed while its launcher was being verified",
+                    registration.client.display_name()
+                ),
+            ));
+        }
+    }
+    let expected_launcher = verified_registration.map(|registration| {
+        (
+            registration.command.as_str(),
+            registration.args.as_slice(),
+            expected_server_version.unwrap_or(server_release),
+        )
+    });
+    let setup = setup::diagnostic_state(expected_launcher);
+    let verified_client = verified_registration.map(|registration| registration.client);
     let registrations = setup
         .registrations
         .iter()
@@ -342,29 +436,33 @@ fn run_with_transport(
             configured_version: registration.version.clone(),
             expected_version: registration.expected_version.clone(),
             matches_current: registration.matches_current,
+            managed: registration.managed,
+            enabled: registration.enabled,
         })
         .collect::<Vec<_>>();
-    let registration_health = if registrations.is_empty() {
-        setup.registration_status
-    } else if registrations
-        .iter()
-        .all(|registration| registration.matches_current)
-    {
-        "current"
-    } else {
-        "stale"
-    };
+    let registration_health = registration_health(setup.registration_status, &registrations);
+    let repair_command = registration_repair_command(
+        setup.registration_status,
+        registration_health,
+        &registrations,
+    );
     let result_mode = McpResultMode::Structured;
     Ok(DoctorReport {
         status: "ready",
         repository_root: config.root.clone(),
         server_name,
         server_version,
-        index_content_version: INDEX_CONTENT_VERSION,
+        // The MCP child contract does not currently disclose its index schema.
+        // A configured launcher can target another exact release, so only
+        // report the value for the current executable's own launcher.
+        index_content_version: verified_registration
+            .is_none()
+            .then_some(INDEX_CONTENT_VERSION),
         instructions_loaded,
         tools,
         result_mode,
         integration: IntegrationReport {
+            verified_client,
             registration_status: setup.registration_status,
             configured_clients: setup.configured_clients,
             registrations,
@@ -374,13 +472,7 @@ fn run_with_transport(
             launcher_status: "healthy",
             handshake_status: "healthy",
             catalog_status: "healthy",
-            repair_command: if setup.registration_status == "not_registered" {
-                "leantoken setup --all --dry-run".into()
-            } else if registration_health == "stale" {
-                "leantoken setup --refresh --yes".into()
-            } else {
-                "leantoken doctor --json".into()
-            },
+            repair_command,
         },
         first_call: FirstCallReport {
             status: "ready",
@@ -391,12 +483,157 @@ fn run_with_transport(
     })
 }
 
-fn server_version_matches_current_runtime(version: &str) -> bool {
-    version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
-        .is_some_and(|fingerprint| {
-            fingerprint.len() == 32 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
+fn registration_health(
+    registration_status: &'static str,
+    registrations: &[RegistrationReport],
+) -> &'static str {
+    if registrations.is_empty() {
+        registration_status
+    } else if registrations
+        .iter()
+        .any(|registration| !registration.enabled)
+    {
+        "disabled"
+    } else if registrations
+        .iter()
+        .all(|registration| registration.matches_current)
+    {
+        "current"
+    } else if registrations
+        .iter()
+        .any(|registration| !registration.matches_current && !registration.managed)
+    {
+        "unmanaged_stale"
+    } else {
+        "stale"
+    }
+}
+
+fn registration_repair_command(
+    registration_status: &str,
+    registration_health: &str,
+    registrations: &[RegistrationReport],
+) -> String {
+    if registration_status == "not_registered" {
+        return "leantoken setup --all --dry-run".into();
+    }
+    if registration_health == "unmanaged_stale" {
+        let client_flags = registrations
+            .iter()
+            .filter(|registration| !registration.matches_current)
+            .map(|registration| format!("--{}", registration.client.cli_name()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        return format!("leantoken setup {client_flags} --force-unmanaged --dry-run");
+    }
+    if registration_health == "disabled" {
+        let affected = registrations
+            .iter()
+            .filter(|registration| !registration.enabled || !registration.matches_current)
+            .collect::<Vec<_>>();
+        if affected.iter().any(|registration| !registration.managed) {
+            let client_flags = affected
+                .into_iter()
+                .map(|registration| format!("--{}", registration.client.cli_name()))
+                .collect::<Vec<_>>();
+            return format!(
+                "leantoken setup {} --force-unmanaged --dry-run",
+                client_flags.join(" ")
+            );
+        }
+    }
+    if matches!(registration_health, "disabled" | "stale") {
+        "leantoken setup --refresh --yes".into()
+    } else {
+        "leantoken doctor --json".into()
+    }
+}
+
+fn server_version_release(version: &str) -> Option<&str> {
+    let (release, fingerprint, marker) =
+        if let Some((release, fingerprint)) = version.split_once("+contract.") {
+            (release, fingerprint, "contract")
+        } else {
+            let (release, fingerprint) = version.split_once("+schema.")?;
+            (release, fingerprint, "schema")
+        };
+    (semver::Version::parse(release).is_ok()
+        && marker == version_marker_for_release(release)
+        && fingerprint.len() == 32
+        && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(release)
+}
+
+fn version_marker_for_release(release: &str) -> &'static str {
+    match release {
+        "0.1.17" | "0.1.18" | "0.1.19" => "schema",
+        _ => "contract",
+    }
+}
+
+fn instructions_match_release(instructions: &str, release: &str) -> bool {
+    let common = instructions.contains("call leantoken.savings directly")
+        && instructions.contains("plan_only=false")
+        && instructions.contains("leantoken.search over grep or rg");
+    common
+        && if release == "0.1.17" {
+            instructions.contains("call leantoken.context first")
+                && instructions.contains("context plan_only=true")
+        } else {
+            instructions.contains("call leantoken.context once")
+                && instructions.contains("Reserve plan_only=true")
+        }
+}
+
+fn catalog_matches_release(tools: &[String], release: &str) -> bool {
+    let actual = tools.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if actual.len() != tools.len() {
+        return false;
+    }
+    let exact = match release {
+        "0.1.17" | "0.1.18" => Some(V0_1_17_TO_V0_1_18_TOOLS.as_slice()),
+        "0.1.19" => Some(V0_1_19_TOOLS.as_slice()),
+        env!("CARGO_PKG_VERSION") => Some(EXPECTED_TOOLS.as_slice()),
+        _ => None,
+    };
+    exact.map_or_else(
+        || {
+            COMPATIBLE_REQUIRED_TOOLS
+                .iter()
+                .all(|name| actual.contains(name))
+        },
+        |expected| {
+            tools.len() == expected.len()
+                && actual == expected.iter().copied().collect::<BTreeSet<_>>()
+        },
+    )
+}
+
+fn server_version_matches_runtime(version: &str, expected_version: Option<&str>) -> bool {
+    server_version_release(version).is_some_and(|release| {
+        expected_version.is_none_or(|expected_version| release == expected_version)
+    })
+}
+
+fn expected_server_version(
+    verified_registration: Option<&setup::ConfiguredRegistration>,
+) -> Option<&str> {
+    match verified_registration {
+        Some(registration) => registration
+            .version
+            .as_deref()
+            .filter(|version| semver::Version::parse(version).is_ok()),
+        None => Some(env!("CARGO_PKG_VERSION")),
+    }
+}
+
+fn configured_handshake_timeout(
+    verified_registration: Option<&setup::ConfiguredRegistration>,
+) -> Duration {
+    verified_registration
+        .and_then(|registration| registration.startup_timeout_seconds)
+        .map(Duration::from_secs)
+        .map_or(RESPONSE_TIMEOUT, |timeout| timeout.min(RESPONSE_TIMEOUT))
 }
 
 /// Print a doctor report as JSON or Context Distillery terminal output.
@@ -416,14 +653,24 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
         "  ✓ MCP identity: {} {}",
         report.server_name, report.server_version
     )?;
-    writeln!(
-        output,
-        "  ✓ Index compatibility: v{}",
-        report.index_content_version
-    )?;
+    if let Some(index_content_version) = report.index_content_version {
+        writeln!(output, "  ✓ Index compatibility: v{index_content_version}")?;
+    } else {
+        writeln!(
+            output,
+            "  ◇ Index compatibility: not disclosed by configured launcher"
+        )?;
+    }
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
     writeln!(output, "  ✓ Result mode: {:?}", report.result_mode)?;
+    if let Some(client) = report.integration.verified_client {
+        writeln!(
+            output,
+            "  ✓ Verified configured launcher: {}",
+            client.display_name()
+        )?;
+    }
     writeln!(
         output,
         "  {} Host registration: {}",
@@ -445,10 +692,13 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
             registration.client, registration.command, version
         )?;
     }
-    if report.integration.registration_health == "stale" {
+    if matches!(
+        report.integration.registration_health,
+        "disabled" | "stale" | "unmanaged_stale"
+    ) {
         writeln!(
             output,
-            "    Configured host entries do not match this executable; run {}.",
+            "    Configured host entries are not launch-ready; run {}.",
             report.integration.repair_command
         )?;
     }
@@ -530,8 +780,17 @@ fn doctor_error(stage: &'static str, message: impl Into<String>) -> Error {
 struct DoctorTransport {
     child: Child,
     stdin: Option<ChildStdin>,
-    lines: mpsc::Receiver<String>,
+    lines: mpsc::Receiver<std::io::Result<String>>,
     diagnostics: Arc<DiagnosticBuffer>,
+}
+
+type ProtocolRecord = std::io::Result<String>;
+
+fn protocol_channel() -> (
+    mpsc::SyncSender<ProtocolRecord>,
+    mpsc::Receiver<ProtocolRecord>,
+) {
+    mpsc::sync_channel(MAX_PROTOCOL_QUEUED_RECORDS)
 }
 
 #[derive(Default)]
@@ -584,7 +843,17 @@ fn diagnostic_context(lines: &VecDeque<String>) -> String {
     }
 }
 
-fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>> {
+#[derive(Clone, Copy)]
+enum DatabaseForwarding {
+    Resolved,
+    ExplicitOnly,
+}
+
+fn launcher_arguments(
+    config: &Config,
+    args: &[String],
+    database_forwarding: DatabaseForwarding,
+) -> Result<Vec<OsString>> {
     let Some(mcp_index) = args.iter().rposition(|argument| argument == "mcp") else {
         return Err(doctor_error(
             "launch",
@@ -592,17 +861,17 @@ fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>>
         ));
     };
     let mut launch_args = args.iter().map(OsString::from).collect::<Vec<_>>();
-    launch_args.splice(
-        mcp_index..mcp_index,
-        [
-            "--root".into(),
-            config.root.as_os_str().to_owned(),
+    let mut global_args = vec!["--root".into(), config.root.as_os_str().to_owned()];
+    if matches!(database_forwarding, DatabaseForwarding::Resolved)
+        || !config.database_is_managed_cache
+    {
+        global_args.extend([
             "--database".into(),
             config.database_path.as_os_str().to_owned(),
-            "--tokenizer".into(),
-            config.tokenizer.name().into(),
-        ],
-    );
+        ]);
+    }
+    global_args.extend(["--tokenizer".into(), config.tokenizer.name().into()]);
+    launch_args.splice(mcp_index..mcp_index, global_args);
     launch_args.extend(["--result-mode".into(), "structured".into()]);
     Ok(launch_args)
 }
@@ -612,17 +881,34 @@ impl DoctorTransport {
         let executable = std::env::current_exe()
             .and_then(|path| path.canonicalize())
             .map_err(|error| doctor_error("launch", error.to_string()))?;
-        Self::spawn_command(config, executable.as_os_str(), &["mcp".into()])
+        Self::spawn_command(
+            config,
+            executable.as_os_str(),
+            &["mcp".into()],
+            DatabaseForwarding::Resolved,
+        )
     }
 
-    fn spawn_launcher(config: &Config, command: &str, args: &[String]) -> Result<Self> {
-        Self::spawn_command(config, OsStr::new(command), args)
+    fn spawn_launcher(
+        config: &Config,
+        command: &str,
+        args: &[String],
+        database_forwarding: DatabaseForwarding,
+    ) -> Result<Self> {
+        Self::spawn_command(config, OsStr::new(command), args, database_forwarding)
     }
 
-    fn spawn_command(config: &Config, command: &OsStr, args: &[String]) -> Result<Self> {
-        let launch_args = launcher_arguments(config, args)?;
+    fn spawn_command(
+        config: &Config,
+        command: &OsStr,
+        args: &[String],
+        database_forwarding: DatabaseForwarding,
+    ) -> Result<Self> {
+        let launch_args = launcher_arguments(config, args, database_forwarding)?;
+        let command = launcher_command_from_root(&config.root, command);
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
+            .current_dir(&config.root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -640,12 +926,21 @@ impl DoctorTransport {
             .stderr
             .take()
             .ok_or_else(|| doctor_error("launch", "could not open MCP stderr"))?;
-        let (sender, lines) = mpsc::channel();
+        let (sender, lines) = protocol_channel();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if sender.send(line).is_err() {
-                    break;
+            let mut reader = BufReader::new(stdout);
+            loop {
+                match read_bounded_protocol_line(&mut reader) {
+                    Ok(Some(line)) => {
+                        if sender.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        break;
+                    }
                 }
             }
         });
@@ -706,6 +1001,9 @@ impl DoctorTransport {
                     ),
                 )
             })?;
+            let line = line.map_err(|error| {
+                doctor_error(stage, format!("invalid MCP protocol output: {error}"))
+            })?;
             let message: Value = serde_json::from_str(&line)
                 .map_err(|error| doctor_error(stage, error.to_string()))?;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
@@ -733,6 +1031,54 @@ impl DoctorTransport {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+fn launcher_command_from_root(root: &std::path::Path, command: &OsStr) -> OsString {
+    let path = std::path::Path::new(command);
+    if path.is_relative() && path.components().count() > 1 {
+        root.join(path).into_os_string()
+    } else {
+        command.to_os_string()
+    }
+}
+
+fn read_bounded_protocol_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let (consumed, line_ended) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if line.is_empty() {
+                    return Ok(None);
+                }
+                return String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let content_end = newline.unwrap_or(available.len());
+            if line.len().saturating_add(content_end) > MAX_PROTOCOL_LINE_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("MCP response line exceeds the {MAX_PROTOCOL_LINE_BYTES}-byte limit"),
+                ));
+            }
+            line.extend_from_slice(&available[..content_end]);
+            (
+                newline.map_or(available.len(), |index| index + 1),
+                newline.is_some(),
+            )
+        };
+        reader.consume(consumed);
+        if line_ended {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return String::from_utf8(line)
+                .map(Some)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+        }
     }
 }
 
@@ -821,7 +1167,8 @@ mod tests {
             .path()
             .join(OsString::from_vec(b"index-\xfe.sqlite".to_vec()));
 
-        let arguments = launcher_arguments(&config, &["mcp".into()]).expect("launcher arguments");
+        let arguments = launcher_arguments(&config, &["mcp".into()], DatabaseForwarding::Resolved)
+            .expect("launcher arguments");
 
         assert!(
             arguments
@@ -837,6 +1184,54 @@ mod tests {
     }
 
     #[test]
+    fn configured_launcher_omits_only_implicit_managed_database_paths() {
+        let root = tempfile::tempdir().expect("repository");
+        let managed = Config::discover(root.path(), None).expect("managed config");
+        let managed_arguments =
+            launcher_arguments(&managed, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
+                .expect("managed launcher arguments");
+        assert!(
+            !managed_arguments
+                .iter()
+                .any(|argument| argument == "--database")
+        );
+
+        let explicit_path = root.path().join("explicit.sqlite");
+        let explicit = Config::discover(root.path(), Some(explicit_path)).expect("explicit config");
+        let explicit_arguments =
+            launcher_arguments(&explicit, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
+                .expect("explicit launcher arguments");
+        let database_index = explicit_arguments
+            .iter()
+            .position(|argument| argument == "--database")
+            .expect("explicit database flag");
+        assert_eq!(
+            explicit_arguments.get(database_index + 1),
+            Some(&explicit.database_path.into_os_string())
+        );
+    }
+
+    #[test]
+    fn path_bearing_relative_launchers_resolve_from_the_repository_root() {
+        let root = std::path::Path::new("workspace-root");
+        let executable = if cfg!(windows) {
+            "leantoken.exe"
+        } else {
+            "leantoken"
+        };
+        let relative = std::path::Path::new(".").join("bin").join(executable);
+
+        assert_eq!(
+            launcher_command_from_root(root, relative.as_os_str()),
+            root.join(&relative).into_os_string()
+        );
+        assert_eq!(
+            launcher_command_from_root(root, OsStr::new(executable)),
+            OsString::from(executable)
+        );
+    }
+
+    #[test]
     fn child_diagnostics_are_bounded_and_redact_configured_paths() {
         let path = "/private/repository";
         let line = format!("error opening {path}: {}", "x".repeat(1_000));
@@ -849,22 +1244,184 @@ mod tests {
     }
 
     #[test]
-    fn runtime_version_requires_the_current_semver_and_bounded_schema_fingerprint() {
+    fn unmanaged_stale_registration_prescribes_a_client_scoped_override_preview() {
+        let registration = |client, matches_current, managed| RegistrationReport {
+            client,
+            config_path: std::path::PathBuf::from("config"),
+            command: "/opt/manual-leantoken".into(),
+            args: vec!["mcp".into()],
+            configured_version: None,
+            expected_version: env!("CARGO_PKG_VERSION").into(),
+            matches_current,
+            managed,
+            enabled: true,
+        };
+        let registrations = vec![
+            registration(SetupClient::Codex, false, false),
+            registration(SetupClient::Cursor, false, true),
+        ];
+
+        let health = registration_health("registered", &registrations);
+
+        assert_eq!(health, "unmanaged_stale");
+        assert_eq!(
+            registration_repair_command("registered", health, &registrations),
+            "leantoken setup --codex --cursor --force-unmanaged --dry-run"
+        );
+        let managed = vec![registration(SetupClient::Claude, false, true)];
+        assert_eq!(registration_health("registered", &managed), "stale");
+        assert_eq!(
+            registration_repair_command("registered", "stale", &managed),
+            "leantoken setup --refresh --yes"
+        );
+
+        let mut disabled = registration(SetupClient::OpenCode, true, true);
+        disabled.enabled = false;
+        assert_eq!(
+            registration_health("registered", std::slice::from_ref(&disabled)),
+            "disabled"
+        );
+        assert_eq!(
+            registration_repair_command("registered", "disabled", &[disabled]),
+            "leantoken setup --refresh --yes"
+        );
+    }
+
+    #[test]
+    fn runtime_version_requires_the_expected_semver_and_bounded_schema_fingerprint() {
         let current = concat!(
             env!("CARGO_PKG_VERSION"),
             "+contract.0123456789abcdef0123456789abcdef"
         );
-        assert!(server_version_matches_current_runtime(current));
-        assert!(!server_version_matches_current_runtime(env!(
-            "CARGO_PKG_VERSION"
-        )));
-        assert!(!server_version_matches_current_runtime(concat!(
-            env!("CARGO_PKG_VERSION"),
-            "+contract.short"
-        )));
-        assert!(!server_version_matches_current_runtime(
-            "999.0.0+contract.0123456789abcdef0123456789abcdef"
+        let pinned = "0.1.19+schema.0123456789abcdef0123456789abcdef";
+        let rollback = "0.1.18+schema.0123456789abcdef0123456789abcdef";
+        let first_schema = "0.1.17+schema.0123456789abcdef0123456789abcdef";
+        assert!(server_version_matches_runtime(
+            current,
+            Some(env!("CARGO_PKG_VERSION"))
         ));
+        assert!(server_version_matches_runtime(pinned, Some("0.1.19")));
+        assert!(server_version_matches_runtime(rollback, Some("0.1.18")));
+        assert!(server_version_matches_runtime(first_schema, Some("0.1.17")));
+        assert!(server_version_matches_runtime(pinned, None));
+        assert!(!server_version_matches_runtime(
+            env!("CARGO_PKG_VERSION"),
+            Some(env!("CARGO_PKG_VERSION"))
+        ));
+        assert!(!server_version_matches_runtime(
+            concat!(env!("CARGO_PKG_VERSION"), "+contract.short"),
+            None
+        ));
+        assert!(!server_version_matches_runtime(pinned, Some("0.1.18")));
+        assert!(!server_version_matches_runtime(
+            "0.1.18+contract.0123456789abcdef0123456789abcdef",
+            Some("0.1.18")
+        ));
+    }
+
+    #[test]
+    fn configured_catalog_validation_uses_the_child_release_profile() {
+        let rollback = V0_1_17_TO_V0_1_18_TOOLS.map(str::to_owned).to_vec();
+        let current = EXPECTED_TOOLS.map(str::to_owned).to_vec();
+
+        assert!(catalog_matches_release(&rollback, "0.1.17"));
+        assert!(catalog_matches_release(&rollback, "0.1.18"));
+        assert!(!catalog_matches_release(&current, "0.1.18"));
+        assert!(catalog_matches_release(
+            &V0_1_19_TOOLS.map(str::to_owned),
+            "0.1.19"
+        ));
+        assert!(catalog_matches_release(&current, env!("CARGO_PKG_VERSION")));
+
+        let mut future = rollback;
+        future.push("future_tool".into());
+        assert!(catalog_matches_release(&future, "0.2.0"));
+        for required in COMPATIBLE_REQUIRED_TOOLS {
+            let incomplete = future
+                .iter()
+                .filter(|tool| tool.as_str() != required)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!catalog_matches_release(&incomplete, "0.2.0"));
+        }
+    }
+
+    #[test]
+    fn configured_guidance_validation_accepts_the_first_schema_release() {
+        let legacy = "For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: call leantoken.context first. For an uncertain broad task, first use context plan_only=true, then repeat the same request with plan_only=false. PREFER leantoken.search over grep or rg.";
+        assert!(instructions_match_release(legacy, "0.1.17"));
+        assert!(!instructions_match_release(legacy, "0.1.18"));
+    }
+
+    #[test]
+    fn configured_doctor_expects_the_stored_launcher_version() {
+        let registration = setup::ConfiguredRegistration {
+            client: SetupClient::Codex,
+            path: "config.toml".into(),
+            source_hash: [0; 32],
+            command: "npx".into(),
+            args: vec!["--package=leantoken@0.1.19".into()],
+            startup_timeout_seconds: Some(setup::CODEX_STARTUP_TIMEOUT_SECONDS),
+            version: Some("0.1.19".into()),
+            expected_version: env!("CARGO_PKG_VERSION").into(),
+            matches_current: false,
+            managed: true,
+            enabled: true,
+        };
+
+        assert_eq!(expected_server_version(Some(&registration)), Some("0.1.19"));
+        assert_eq!(
+            configured_handshake_timeout(Some(&registration)),
+            RESPONSE_TIMEOUT
+        );
+        assert_eq!(
+            expected_server_version(None),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+
+        let mut short_timeout = registration.clone();
+        short_timeout.startup_timeout_seconds = Some(2);
+        assert_eq!(
+            configured_handshake_timeout(Some(&short_timeout)),
+            Duration::from_secs(2)
+        );
+
+        let mut floating = registration;
+        floating.version = Some("latest".into());
+        assert_eq!(expected_server_version(Some(&floating)), None);
+    }
+
+    #[test]
+    fn protocol_reader_rejects_oversized_records_before_json_parsing() {
+        let mut allowed = vec![b'x'; MAX_PROTOCOL_LINE_BYTES];
+        allowed.push(b'\n');
+        assert_eq!(
+            read_bounded_protocol_line(&mut Cursor::new(allowed))
+                .expect("bounded protocol line")
+                .map(|line| line.len()),
+            Some(MAX_PROTOCOL_LINE_BYTES)
+        );
+
+        let oversized = vec![b'x'; MAX_PROTOCOL_LINE_BYTES + 1];
+        let error = read_bounded_protocol_line(&mut Cursor::new(oversized))
+            .expect_err("oversized protocol line");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("MCP response line exceeds"));
+    }
+
+    #[test]
+    fn protocol_output_queue_has_an_exact_record_bound() {
+        let (sender, receiver) = protocol_channel();
+        for index in 0..MAX_PROTOCOL_QUEUED_RECORDS {
+            sender
+                .try_send(Ok(format!("record {index}")))
+                .expect("record within queue bound");
+        }
+        assert!(matches!(
+            sender.try_send(Ok("over bound".into())),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        drop(receiver);
     }
 
     #[test]

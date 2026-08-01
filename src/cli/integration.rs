@@ -47,8 +47,8 @@ pub struct IntegrationArgs {
     /// Refresh existing LeanToken MCP entries without selecting new clients.
     #[arg(long)]
     pub refresh: bool,
-    /// Copy the verified native executable into LeanToken's private runtime
-    /// directory and register it directly instead of retaining an npx chain.
+    /// Recommended: register a verified private native runtime instead of
+    /// retaining an npx/Node process chain.
     #[arg(long)]
     pub private_runtime: bool,
     /// Apply without prompting; requires explicit clients, --all, or --refresh.
@@ -60,6 +60,9 @@ pub struct IntegrationArgs {
     /// Permit setup from an older npx release for an intentional rollback.
     #[arg(long)]
     pub allow_outdated: bool,
+    /// Replace or remove a `leantoken` entry not recognized as setup-managed.
+    #[arg(long)]
+    pub force_unmanaged: bool,
 }
 
 impl From<IntegrationArgs> for SetupRequest {
@@ -91,6 +94,7 @@ impl From<IntegrationArgs> for SetupRequest {
             yes: args.yes,
             dry_run: args.dry_run,
             allow_outdated: args.allow_outdated,
+            force_unmanaged: args.force_unmanaged,
         }
     }
 }

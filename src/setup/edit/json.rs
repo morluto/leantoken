@@ -25,6 +25,7 @@ pub(super) fn edit_json_config(
     Ok(status)
 }
 
+#[cfg(test)]
 pub(super) fn resolve_json_edit(
     operation: SetupOperation,
     path: &Path,
@@ -33,6 +34,17 @@ pub(super) fn resolve_json_edit(
     launcher: &McpLauncher,
 ) -> Result<(EditStatus, Option<String>, Option<String>)> {
     let original = read_optional(path)?;
+    resolve_json_edit_from_source(operation, path, section_name, shape, launcher, original)
+}
+
+pub(super) fn resolve_json_edit_from_source(
+    operation: SetupOperation,
+    path: &Path,
+    section_name: &str,
+    shape: JsonEntryShape,
+    launcher: &McpLauncher,
+    original: Option<String>,
+) -> Result<(EditStatus, Option<String>, Option<String>)> {
     let source = original.clone().unwrap_or_else(|| "{}\n".into());
     let root = CstRootNode::parse(&source, &ParseOptions::default())
         .map_err(|error| invalid_config(path, error))?;
