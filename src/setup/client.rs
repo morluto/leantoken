@@ -16,12 +16,14 @@ pub(crate) struct SetupDiagnostic {
 pub(crate) struct ConfiguredRegistration {
     pub(crate) client: SetupClient,
     pub(crate) path: PathBuf,
+    pub(crate) source_hash: [u8; 32],
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
     pub(crate) version: Option<String>,
     pub(crate) expected_version: String,
     pub(crate) matches_current: bool,
     pub(crate) managed: bool,
+    pub(crate) enabled: bool,
 }
 
 /// Coding clients supported by the global setup wizard.

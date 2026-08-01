@@ -268,7 +268,7 @@ fn configured_registration_from_source_against(
     let Some(source) = source else {
         return Ok(None);
     };
-    let (command, args) = match definition.format {
+    let (command, args, enabled) = match definition.format {
         ConfigFormat::Json { section, shape } => {
             let root: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())
                 .map_err(|error| invalid_config(&definition.path, error))?;
@@ -279,7 +279,23 @@ fn configured_registration_from_source_against(
             else {
                 return Ok(None);
             };
-            json_registration_command(entry, shape, &definition.path)?
+            let enabled = match shape {
+                JsonEntryShape::CommandAndArgs => true,
+                JsonEntryShape::OpenCode => entry
+                    .get("enabled")
+                    .map(|enabled| {
+                        enabled.as_bool().ok_or_else(|| {
+                            invalid_config(
+                                &definition.path,
+                                "OpenCode MCP enabled flag must be a boolean",
+                            )
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or(true),
+            };
+            let (command, args) = json_registration_command(entry, shape, &definition.path)?;
+            (command, args, enabled)
         }
         ConfigFormat::Toml => {
             let document = source
@@ -292,7 +308,8 @@ fn configured_registration_from_source_against(
             else {
                 return Ok(None);
             };
-            toml_registration_command(entry, &definition.path)?
+            let (command, args) = toml_registration_command(entry, &definition.path)?;
+            (command, args, true)
         }
     };
     let matches_current = command == expected_command && args == expected_args;
@@ -300,12 +317,14 @@ fn configured_registration_from_source_against(
     Ok(Some(ConfiguredRegistration {
         client,
         path: definition.path,
+        source_hash: *blake3::hash(source.as_bytes()).as_bytes(),
         version: registered_version(&command, &args),
         command,
         args,
         expected_version: expected_version.to_owned(),
         matches_current,
         managed,
+        enabled,
     }))
 }
 

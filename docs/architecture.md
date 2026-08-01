@@ -561,6 +561,19 @@ the transport closes stdin and reaps or kills the child, and dropping the
 temporary directory removes its database and source. Setup never fans this
 verification out per configured client.
 
+Configured-client doctor probes read at most one 8 MiB host configuration,
+retain only its 32-byte content digest, and require the post-probe diagnostic
+snapshot to contain the same client, path, and digest before reporting success.
+Malformed, unreadable, oversized, missing, changed, and explicitly disabled
+selected registrations fail at the registration stage. A release inferred from
+the configured launcher is matched exactly; launchers without an inferable pin
+may report any valid semantic release carrying the 32-hex-character MCP contract
+fingerprint. Doctor forwards a user-explicit SQLite path, but does not turn an
+implicit versioned managed cache into an explicit path for a differently pinned
+child. Each child stdout protocol record is limited to 8 MiB before UTF-8 or JSON
+parsing, and an over-limit unterminated record terminates the probe without
+unbounded allocation.
+
 Private-runtime inventory is repository-free and bounded to 512 entries below
 the application runtime root and eight entries within any recognized semantic
 version directory. Setup and inventory reads are capped at 8 MiB per client

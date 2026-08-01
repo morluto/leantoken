@@ -33,6 +33,7 @@ const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
 const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = MAX_DIAGNOSTIC_LINE_CHARS * 4;
+const MAX_PROTOCOL_LINE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Successful MCP self-diagnostic report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -148,17 +149,32 @@ pub fn run_configured_client(
     ready_timeout: Duration,
     client: SetupClient,
 ) -> Result<DoctorReport> {
-    let registration = setup::configured_registration(client)?.ok_or_else(|| {
-        doctor_error(
+    let registration = setup::configured_registration(client)
+        .map_err(|error| doctor_error("registration", error.to_string()))?
+        .ok_or_else(|| {
+            doctor_error(
+                "registration",
+                format!(
+                    "{} has no LeanToken MCP registration",
+                    client.display_name()
+                ),
+            )
+        })?;
+    if !registration.enabled {
+        return Err(doctor_error(
             "registration",
             format!(
-                "{} has no LeanToken MCP registration",
+                "{} has a disabled LeanToken MCP registration",
                 client.display_name()
             ),
-        )
-    })?;
-    let mut transport =
-        DoctorTransport::spawn_launcher(config, &registration.command, &registration.args)?;
+        ));
+    }
+    let mut transport = DoctorTransport::spawn_launcher(
+        config,
+        &registration.command,
+        &registration.args,
+        DatabaseForwarding::ExplicitOnly,
+    )?;
     run_with_transport(config, ready_timeout, &mut transport, Some(&registration))
 }
 
@@ -171,7 +187,8 @@ pub(crate) fn run_launcher(
     args: &[String],
     ready_timeout: Duration,
 ) -> Result<DoctorReport> {
-    let mut transport = DoctorTransport::spawn_launcher(config, command, args)?;
+    let mut transport =
+        DoctorTransport::spawn_launcher(config, command, args, DatabaseForwarding::Resolved)?;
     run_with_transport(config, ready_timeout, &mut transport, None)
 }
 
@@ -211,14 +228,17 @@ fn run_with_transport(
         ));
     }
     if !server_version_matches_runtime(&server_version, expected_server_version) {
+        let expected = expected_server_version.map_or_else(
+            || "a semantic release+contract.<32 hex characters>".to_owned(),
+            |version| format!("{version}+contract.<32 hex characters>"),
+        );
         return Err(doctor_error(
             "handshake",
-            format!(
-                "MCP reported version {server_version}, expected {}+contract.<32 hex characters>",
-                expected_server_version
-            ),
+            format!("MCP reported version {server_version}, expected {expected}"),
         ));
     }
+    let server_release = server_version_release(&server_version)
+        .expect("a matching runtime version has a semantic release");
     let instructions_loaded = result
         .get("instructions")
         .and_then(Value::as_str)
@@ -361,10 +381,25 @@ fn run_with_transport(
         (
             registration.command.as_str(),
             registration.args.as_slice(),
-            expected_server_version,
+            expected_server_version.unwrap_or(server_release),
         )
     });
     let setup = setup::diagnostic_state(expected_launcher);
+    if let Some(registration) = verified_registration
+        && !setup.registrations.iter().any(|current| {
+            current.client == registration.client
+                && current.path == registration.path
+                && current.source_hash == registration.source_hash
+        })
+    {
+        return Err(doctor_error(
+            "registration",
+            format!(
+                "{} MCP registration changed while its launcher was being verified",
+                registration.client.display_name()
+            ),
+        ));
+    }
     let verified_client = verified_registration.map(|registration| registration.client);
     let registrations = setup
         .registrations
@@ -463,19 +498,30 @@ fn registration_repair_command(
     }
 }
 
-fn server_version_matches_runtime(version: &str, expected_version: &str) -> bool {
-    version
-        .strip_prefix(&format!("{expected_version}+contract."))
-        .is_some_and(|fingerprint| {
-            fingerprint.len() == 32 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
+fn server_version_release(version: &str) -> Option<&str> {
+    let (release, fingerprint) = version.split_once("+contract.")?;
+    (semver::Version::parse(release).is_ok()
+        && fingerprint.len() == 32
+        && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(release)
 }
 
-fn expected_server_version(verified_registration: Option<&setup::ConfiguredRegistration>) -> &str {
-    verified_registration
-        .and_then(|registration| registration.version.as_deref())
-        .filter(|version| semver::Version::parse(version).is_ok())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
+fn server_version_matches_runtime(version: &str, expected_version: Option<&str>) -> bool {
+    server_version_release(version).is_some_and(|release| {
+        expected_version.is_none_or(|expected_version| release == expected_version)
+    })
+}
+
+fn expected_server_version(
+    verified_registration: Option<&setup::ConfiguredRegistration>,
+) -> Option<&str> {
+    match verified_registration {
+        Some(registration) => registration
+            .version
+            .as_deref()
+            .filter(|version| semver::Version::parse(version).is_ok()),
+        None => Some(env!("CARGO_PKG_VERSION")),
+    }
 }
 
 /// Print a doctor report as JSON or Context Distillery terminal output.
@@ -619,7 +665,7 @@ fn doctor_error(stage: &'static str, message: impl Into<String>) -> Error {
 struct DoctorTransport {
     child: Child,
     stdin: Option<ChildStdin>,
-    lines: mpsc::Receiver<String>,
+    lines: mpsc::Receiver<std::io::Result<String>>,
     diagnostics: Arc<DiagnosticBuffer>,
 }
 
@@ -673,7 +719,17 @@ fn diagnostic_context(lines: &VecDeque<String>) -> String {
     }
 }
 
-fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>> {
+#[derive(Clone, Copy)]
+enum DatabaseForwarding {
+    Resolved,
+    ExplicitOnly,
+}
+
+fn launcher_arguments(
+    config: &Config,
+    args: &[String],
+    database_forwarding: DatabaseForwarding,
+) -> Result<Vec<OsString>> {
     let Some(mcp_index) = args.iter().rposition(|argument| argument == "mcp") else {
         return Err(doctor_error(
             "launch",
@@ -681,17 +737,17 @@ fn launcher_arguments(config: &Config, args: &[String]) -> Result<Vec<OsString>>
         ));
     };
     let mut launch_args = args.iter().map(OsString::from).collect::<Vec<_>>();
-    launch_args.splice(
-        mcp_index..mcp_index,
-        [
-            "--root".into(),
-            config.root.as_os_str().to_owned(),
+    let mut global_args = vec!["--root".into(), config.root.as_os_str().to_owned()];
+    if matches!(database_forwarding, DatabaseForwarding::Resolved)
+        || !config.database_is_managed_cache
+    {
+        global_args.extend([
             "--database".into(),
             config.database_path.as_os_str().to_owned(),
-            "--tokenizer".into(),
-            config.tokenizer.name().into(),
-        ],
-    );
+        ]);
+    }
+    global_args.extend(["--tokenizer".into(), config.tokenizer.name().into()]);
+    launch_args.splice(mcp_index..mcp_index, global_args);
     launch_args.extend(["--result-mode".into(), "structured".into()]);
     Ok(launch_args)
 }
@@ -701,15 +757,30 @@ impl DoctorTransport {
         let executable = std::env::current_exe()
             .and_then(|path| path.canonicalize())
             .map_err(|error| doctor_error("launch", error.to_string()))?;
-        Self::spawn_command(config, executable.as_os_str(), &["mcp".into()])
+        Self::spawn_command(
+            config,
+            executable.as_os_str(),
+            &["mcp".into()],
+            DatabaseForwarding::Resolved,
+        )
     }
 
-    fn spawn_launcher(config: &Config, command: &str, args: &[String]) -> Result<Self> {
-        Self::spawn_command(config, OsStr::new(command), args)
+    fn spawn_launcher(
+        config: &Config,
+        command: &str,
+        args: &[String],
+        database_forwarding: DatabaseForwarding,
+    ) -> Result<Self> {
+        Self::spawn_command(config, OsStr::new(command), args, database_forwarding)
     }
 
-    fn spawn_command(config: &Config, command: &OsStr, args: &[String]) -> Result<Self> {
-        let launch_args = launcher_arguments(config, args)?;
+    fn spawn_command(
+        config: &Config,
+        command: &OsStr,
+        args: &[String],
+        database_forwarding: DatabaseForwarding,
+    ) -> Result<Self> {
+        let launch_args = launcher_arguments(config, args, database_forwarding)?;
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
             .stdin(Stdio::piped())
@@ -731,10 +802,19 @@ impl DoctorTransport {
             .ok_or_else(|| doctor_error("launch", "could not open MCP stderr"))?;
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if sender.send(line).is_err() {
-                    break;
+            let mut reader = BufReader::new(stdout);
+            loop {
+                match read_bounded_protocol_line(&mut reader) {
+                    Ok(Some(line)) => {
+                        if sender.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        break;
+                    }
                 }
             }
         });
@@ -795,6 +875,9 @@ impl DoctorTransport {
                     ),
                 )
             })?;
+            let line = line.map_err(|error| {
+                doctor_error(stage, format!("invalid MCP protocol output: {error}"))
+            })?;
             let message: Value = serde_json::from_str(&line)
                 .map_err(|error| doctor_error(stage, error.to_string()))?;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
@@ -822,6 +905,45 @@ impl DoctorTransport {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+fn read_bounded_protocol_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let (consumed, line_ended) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                if line.is_empty() {
+                    return Ok(None);
+                }
+                return String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let content_end = newline.unwrap_or(available.len());
+            if line.len().saturating_add(content_end) > MAX_PROTOCOL_LINE_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("MCP response line exceeds the {MAX_PROTOCOL_LINE_BYTES}-byte limit"),
+                ));
+            }
+            line.extend_from_slice(&available[..content_end]);
+            (
+                newline.map_or(available.len(), |index| index + 1),
+                newline.is_some(),
+            )
+        };
+        reader.consume(consumed);
+        if line_ended {
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return String::from_utf8(line)
+                .map(Some)
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error));
+        }
     }
 }
 
@@ -910,7 +1032,8 @@ mod tests {
             .path()
             .join(OsString::from_vec(b"index-\xfe.sqlite".to_vec()));
 
-        let arguments = launcher_arguments(&config, &["mcp".into()]).expect("launcher arguments");
+        let arguments = launcher_arguments(&config, &["mcp".into()], DatabaseForwarding::Resolved)
+            .expect("launcher arguments");
 
         assert!(
             arguments
@@ -923,6 +1046,35 @@ mod tests {
                 .as_bytes()
                 .ends_with(b"index-\xfe.sqlite")
         }));
+    }
+
+    #[test]
+    fn configured_launcher_omits_only_implicit_managed_database_paths() {
+        let root = tempfile::tempdir().expect("repository");
+        let managed = Config::discover(root.path(), None).expect("managed config");
+        let managed_arguments =
+            launcher_arguments(&managed, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
+                .expect("managed launcher arguments");
+        assert!(
+            !managed_arguments
+                .iter()
+                .any(|argument| argument == "--database")
+        );
+
+        let explicit_path = root.path().join("explicit.sqlite");
+        let explicit =
+            Config::discover(root.path(), Some(explicit_path.clone())).expect("explicit config");
+        let explicit_arguments =
+            launcher_arguments(&explicit, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
+                .expect("explicit launcher arguments");
+        let database_index = explicit_arguments
+            .iter()
+            .position(|argument| argument == "--database")
+            .expect("explicit database flag");
+        assert_eq!(
+            explicit_arguments.get(database_index + 1),
+            Some(&explicit_path.into_os_string())
+        );
     }
 
     #[test]
@@ -978,18 +1130,19 @@ mod tests {
         let pinned = "0.1.19+contract.0123456789abcdef0123456789abcdef";
         assert!(server_version_matches_runtime(
             current,
-            env!("CARGO_PKG_VERSION")
+            Some(env!("CARGO_PKG_VERSION"))
         ));
-        assert!(server_version_matches_runtime(pinned, "0.1.19"));
+        assert!(server_version_matches_runtime(pinned, Some("0.1.19")));
+        assert!(server_version_matches_runtime(pinned, None));
         assert!(!server_version_matches_runtime(
             env!("CARGO_PKG_VERSION"),
-            env!("CARGO_PKG_VERSION")
+            Some(env!("CARGO_PKG_VERSION"))
         ));
         assert!(!server_version_matches_runtime(
             concat!(env!("CARGO_PKG_VERSION"), "+contract.short"),
-            env!("CARGO_PKG_VERSION")
+            None
         ));
-        assert!(!server_version_matches_runtime(pinned, "0.1.18"));
+        assert!(!server_version_matches_runtime(pinned, Some("0.1.18")));
     }
 
     #[test]
@@ -997,23 +1150,43 @@ mod tests {
         let registration = setup::ConfiguredRegistration {
             client: SetupClient::Codex,
             path: "config.toml".into(),
+            source_hash: [0; 32],
             command: "npx".into(),
             args: vec!["--package=leantoken@0.1.19".into()],
             version: Some("0.1.19".into()),
             expected_version: env!("CARGO_PKG_VERSION").into(),
             matches_current: false,
             managed: true,
+            enabled: true,
         };
 
-        assert_eq!(expected_server_version(Some(&registration)), "0.1.19");
-        assert_eq!(expected_server_version(None), env!("CARGO_PKG_VERSION"));
+        assert_eq!(expected_server_version(Some(&registration)), Some("0.1.19"));
+        assert_eq!(
+            expected_server_version(None),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
 
         let mut floating = registration;
         floating.version = Some("latest".into());
+        assert_eq!(expected_server_version(Some(&floating)), None);
+    }
+
+    #[test]
+    fn protocol_reader_rejects_oversized_records_before_json_parsing() {
+        let mut allowed = vec![b'x'; MAX_PROTOCOL_LINE_BYTES];
+        allowed.push(b'\n');
         assert_eq!(
-            expected_server_version(Some(&floating)),
-            env!("CARGO_PKG_VERSION")
+            read_bounded_protocol_line(&mut Cursor::new(allowed))
+                .expect("bounded protocol line")
+                .map(|line| line.len()),
+            Some(MAX_PROTOCOL_LINE_BYTES)
         );
+
+        let oversized = vec![b'x'; MAX_PROTOCOL_LINE_BYTES + 1];
+        let error = read_bounded_protocol_line(&mut Cursor::new(oversized))
+            .expect_err("oversized protocol line");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("MCP response line exceeds"));
     }
 
     #[test]

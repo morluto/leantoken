@@ -663,6 +663,156 @@ fn doctor_can_exercise_the_exact_codex_registration() {
 }
 
 #[test]
+fn configured_doctor_maps_malformed_client_config_to_registration_stage() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
+    let config = home.path().join(".codex/config.toml");
+    std::fs::create_dir_all(config.parent().expect("config parent"))
+        .expect("create config parent");
+    std::fs::write(config, "[broken").expect("write malformed config");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured doctor");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    assert_eq!(error["category"], "doctor_failure");
+    assert_eq!(error["stage"], "registration");
+}
+
+#[test]
+fn configured_doctor_rejects_a_disabled_opencode_registration() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
+    let config = home.path().join(".config/opencode/opencode.json");
+    std::fs::create_dir_all(config.parent().expect("config parent"))
+        .expect("create config parent");
+    std::fs::write(
+        config,
+        serde_json::to_vec(&serde_json::json!({
+            "mcp": {
+                "leantoken": {
+                    "type": "local",
+                    "command": ["missing-leantoken", "mcp"],
+                    "enabled": false
+                }
+            }
+        }))
+        .expect("serialize OpenCode config"),
+    )
+    .expect("write OpenCode config");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "opencode",
+        ])
+        .output()
+        .expect("run configured doctor");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    assert_eq!(error["category"], "doctor_failure");
+    assert_eq!(error["stage"], "registration");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("disabled"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_doctor_rejects_a_registration_changed_during_the_probe() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let config = home.path().join(".codex/config.toml");
+    std::fs::create_dir_all(config.parent().expect("config parent"))
+        .expect("create config parent");
+    let launcher = home.path().join("mutating-leantoken");
+    std::fs::write(
+        &launcher,
+        "#!/bin/sh\nprintf '\\n# changed during doctor probe\\n' >> \"$LEANTOKEN_TEST_CONFIG\"\nexec \"$LEANTOKEN_TEST_BINARY\" \"$@\"\n",
+    )
+    .expect("write launcher shim");
+    let mut permissions = std::fs::metadata(&launcher)
+        .expect("launcher metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&launcher, permissions).expect("make launcher executable");
+    let launcher_toml = serde_json::to_string(launcher.to_str().expect("launcher UTF-8"))
+        .expect("quote launcher path");
+    std::fs::write(
+        &config,
+        format!(
+            "[mcp_servers.leantoken]\ncommand = {launcher_toml}\nargs = [\"mcp\"]\n"
+        ),
+    )
+    .expect("write Codex config");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("LEANTOKEN_TEST_CONFIG", &config)
+        .env(
+            "LEANTOKEN_TEST_BINARY",
+            assert_cmd::cargo::cargo_bin!("leantoken"),
+        )
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured doctor");
+
+    assert!(!output.status.success());
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    assert_eq!(error["category"], "doctor_failure");
+    assert_eq!(error["stage"], "registration");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("changed while")),
+        "{error}"
+    );
+}
+
+#[test]
 fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
