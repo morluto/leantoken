@@ -32,19 +32,6 @@ pub(super) fn resolve_plan(
     clients: &[SetupClient],
     environment: PlanEnvironment<'_>,
 ) -> Result<ResolvedSetupPlan> {
-    for client in clients {
-        if let Some(registration) =
-            read_configured_registration(*client, environment.home, environment.launcher)?
-            && !registration.managed
-            && !environment.force_unmanaged
-        {
-            return Err(Error::SetupFailure(format!(
-                "refusing to {} unmanaged LeanToken entry in {}; review it, then preview the override with --force-unmanaged --dry-run",
-                operation.action(),
-                registration.path.display()
-            )));
-        }
-    }
     let edits = clients
         .iter()
         .copied()
@@ -59,6 +46,13 @@ pub(super) fn resolve_plan(
         })
         .collect::<Result<Vec<_>>>()?;
     for edit in &edits {
+        validate_client_edit_ownership(
+            operation,
+            edit,
+            environment.home,
+            environment.launcher,
+            environment.force_unmanaged,
+        )?;
         if let Some(updated) = &edit.updated {
             validate_setup_content_size(&edit.public.path, updated)?;
         }
@@ -93,6 +87,30 @@ pub(super) fn resolve_plan(
         ownership_override: environment.force_unmanaged,
         transaction_root: environment.transaction_root.to_path_buf(),
     })
+}
+
+pub(super) fn validate_client_edit_ownership(
+    operation: SetupOperation,
+    edit: &PlannedClientEdit,
+    home: &Path,
+    launcher: &McpLauncher,
+    force_unmanaged: bool,
+) -> Result<()> {
+    if let Some(registration) = configured_registration_from_source(
+        edit.public.client,
+        home,
+        launcher,
+        edit.original.as_deref(),
+    )? && !registration.managed
+        && !force_unmanaged
+    {
+        return Err(Error::SetupFailure(format!(
+            "refusing to {} unmanaged LeanToken entry in {}; review it, then preview the override with --force-unmanaged --dry-run",
+            operation.action(),
+            registration.path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn launcher_plan(

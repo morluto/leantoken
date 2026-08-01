@@ -1305,6 +1305,45 @@ fn unmanaged_registration_requires_an_explicit_override() {
 }
 
 #[test]
+fn ownership_and_edit_share_one_snapshot_before_preflight() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let path = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let managed = format!(
+        "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\n",
+        environment.launcher.command().unwrap(),
+        environment.launcher.args
+    );
+    fs::write(&path, &managed).unwrap();
+    let edit = resolve_client_edit(
+        SetupOperation::Setup,
+        SetupClient::Codex,
+        &[SetupClient::Codex],
+        &environment.home,
+        &environment.launcher,
+    )
+    .unwrap();
+    let unmanaged =
+        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n";
+    fs::write(&path, unmanaged).unwrap();
+
+    validate_client_edit_ownership(
+        SetupOperation::Setup,
+        &edit,
+        &environment.home,
+        &environment.launcher,
+        false,
+    )
+    .expect("ownership must come from the edit snapshot");
+    let error = preflight_edits(std::slice::from_ref(&edit))
+        .expect_err("the changed configuration must fail closed before apply");
+
+    assert!(error.to_string().contains("changed after preflight"));
+    assert_eq!(fs::read_to_string(path).unwrap(), unmanaged);
+}
+
+#[test]
 fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
     let runtime_root = Path::new("/data/leantoken/runtimes");
     let managed_runtime = runtime_root

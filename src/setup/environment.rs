@@ -188,12 +188,23 @@ pub(super) fn read_configured_registration(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Option<ConfiguredRegistration>> {
-    read_configured_registration_against(
+    let source = read_optional(&client.definition(home).path)?;
+    configured_registration_from_source(client, home, launcher, source.as_deref())
+}
+
+pub(super) fn configured_registration_from_source(
+    client: SetupClient,
+    home: &Path,
+    launcher: &McpLauncher,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
+    configured_registration_from_source_against(
         client,
         home,
         launcher.command()?,
         &launcher.args,
         launcher.version(),
+        source,
     )
 }
 
@@ -205,12 +216,32 @@ fn read_configured_registration_against(
     expected_version: &str,
 ) -> Result<Option<ConfiguredRegistration>> {
     let definition = client.definition(home);
-    let Some(source) = read_optional(&definition.path)? else {
+    let source = read_optional(&definition.path)?;
+    configured_registration_from_source_against(
+        client,
+        home,
+        expected_command,
+        expected_args,
+        expected_version,
+        source.as_deref(),
+    )
+}
+
+fn configured_registration_from_source_against(
+    client: SetupClient,
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
+    let definition = client.definition(home);
+    let Some(source) = source else {
         return Ok(None);
     };
     let (command, args) = match definition.format {
         ConfigFormat::Json { section, shape } => {
-            let root: Value = jsonc_parser::parse_to_serde_value(&source, &ParseOptions::default())
+            let root: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())
                 .map_err(|error| invalid_config(&definition.path, error))?;
             let Some(entry) = root
                 .get(section)
