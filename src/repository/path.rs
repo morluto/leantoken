@@ -216,7 +216,12 @@ impl<'de> Deserialize<'de> for RepositoryPath {
     where
         Deserializer: serde::Deserializer<'de>,
     {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+        Self::parse(String::deserialize(deserializer)?).map_err(|error| match error {
+            Error::PathOutsideRoot(_) => {
+                serde::de::Error::custom("path must stay within the repository root")
+            }
+            error => serde::de::Error::custom(error.to_string()),
+        })
     }
 }
 
@@ -256,7 +261,12 @@ impl<'de> Deserialize<'de> for RepositoryPattern {
     where
         Deserializer: serde::Deserializer<'de>,
     {
-        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+        Self::parse(String::deserialize(deserializer)?).map_err(|error| match error {
+            Error::PathOutsideRoot(_) => {
+                serde::de::Error::custom("path pattern must stay within the repository root")
+            }
+            error => serde::de::Error::custom(error.to_string()),
+        })
     }
 }
 

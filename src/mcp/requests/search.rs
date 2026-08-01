@@ -1,133 +1,265 @@
 use super::*;
 use crate::model::QueryReceiptAction;
 
+/// A search query that preserves significant leading and trailing whitespace.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub(in crate::mcp) struct SearchMcpQuery(String);
+
+impl JsonSchema for SearchMcpQuery {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SearchMcpQuery".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Non-empty search query; leading and trailing whitespace is significant.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for SearchMcpQuery {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        if value.trim().is_empty() {
+            Err(serde::de::Error::custom(
+                "must not be empty or whitespace-only",
+            ))
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl SearchMcpQuery {
+    fn into_string(self) -> String {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-/// Response projection for indexed search.
 pub(in crate::mcp) enum SearchMcpProjection {
-    /// Select `occurrences` for exhaustive lexical search and `full` otherwise.
     #[default]
     Auto,
-    /// Preserve the complete ranked-hit response.
     Full,
-    /// Group the selected page into symbol or file summaries.
     Grouped,
-    /// Share each exhaustive lexical excerpt across its exact occurrence coordinates.
     Occurrences,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(transform = add_search_option_constraints)]
 pub(in crate::mcp) struct SearchMcpRequest {
-    /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     pub(in crate::mcp) expected_repository_id: Option<String>,
-    /// Non-empty text, identifier, symbol, or Rust regular expression to find.
-    #[schemars(length(min = 1, max = 65536))]
-    pub(in crate::mcp) query: String,
-    /// Candidate source to search (default `auto`).
-    /// `symbol` is ranked and structural; exhaustive occurrences require `text` or `regex`.
-    #[serde(default)]
-    pub(in crate::mcp) mode: SearchMode,
-    /// Include only matching repository paths.
+    /// Search semantics and all bounds are owned by the selected tagged operation.
+    pub(in crate::mcp) operation: SearchMcpOperation,
+}
+
+#[derive(Debug, Clone, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(in crate::mcp) enum SearchMcpOperation {
+    Auto {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+    Text {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+    Regex {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+    Identifier {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+    Symbol {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+    Reference {
+        #[serde(flatten)]
+        options: SearchMcpOptions,
+    },
+}
+
+impl<'de> Deserialize<'de> for SearchMcpOperation {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object_mut()
+            .ok_or_else(|| serde::de::Error::custom("search operation must be an object"))?;
+        let kind = object
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| serde::de::Error::missing_field("kind"))?;
+        object.remove("kind");
+        let options = serde_json::from_value::<SearchMcpOptions>(serde_json::Value::Object(
+            std::mem::take(object),
+        ))
+        .map_err(|error| serde::de::Error::custom(error.to_string()))?;
+        match kind.as_str() {
+            "auto" => Ok(Self::Auto { options }),
+            "text" => Ok(Self::Text { options }),
+            "regex" => Ok(Self::Regex { options }),
+            "identifier" => Ok(Self::Identifier { options }),
+            "symbol" => Ok(Self::Symbol { options }),
+            "reference" => Ok(Self::Reference { options }),
+            _ => Err(serde::de::Error::unknown_variant(
+                &kind,
+                &["auto", "text", "regex", "identifier", "symbol", "reference"],
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(
+    description = "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection."
+)]
+pub(in crate::mcp) struct SearchMcpOptions {
+    pub(in crate::mcp) query: SearchMcpQuery,
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
-    pub(in crate::mcp) include_paths: Vec<String>,
-    /// Exclude matching repository paths.
+    pub(in crate::mcp) include_paths: Vec<RepositoryPattern>,
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
-    pub(in crate::mcp) exclude_paths: Vec<String>,
-    /// Boost matching paths without filtering other results.
+    pub(in crate::mcp) exclude_paths: Vec<RepositoryPattern>,
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 4096)))]
-    pub(in crate::mcp) focus_paths: Vec<String>,
-    /// Maximum hits to return (default 20, maximum 100).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    pub(in crate::mcp) focus_paths: Vec<RepositoryPattern>,
+    #[serde(default)]
     #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
     pub(in crate::mcp) max_results: Option<usize>,
-    /// Maximum source tokens across excerpts (default 8000, maximum 32000).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     pub(in crate::mcp) max_tokens: Option<usize>,
-    /// Maximum tokens in the final serialized service response.
     #[serde(default)]
     #[schemars(schema_with = "response_token_limit_schema")]
     pub(in crate::mcp) max_response_tokens: Option<usize>,
-    /// Lines before and after each match (default 2, maximum 20).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(
         schema_with = "context_line_limit_schema",
         default = "default_context_line_option"
     )]
     pub(in crate::mcp) context_lines: Option<usize>,
-    /// Preserve query case when matching.
     #[serde(default)]
     pub(in crate::mcp) case_sensitive: bool,
-    /// Return every text or regex occurrence with exact coordinates and counts;
-    /// requires `mode=text` or `mode=regex` and cannot broaden `symbol` search.
     #[serde(default)]
     pub(in crate::mcp) all_occurrences: bool,
-    /// Omit excerpts and hashes from an exhaustive occurrence response.
     #[serde(default)]
     pub(in crate::mcp) coordinates_only: bool,
-    /// Prefer structural definitions when identifier channels find the same definition.
     #[serde(default)]
     pub(in crate::mcp) prefer_structural: bool,
-    /// Suppress evidence already returned under this server-managed receipt.
     #[serde(default)]
     #[schemars(length(max = 128))]
     pub(in crate::mcp) receipt_id: Option<String>,
-    /// Explicitly record or reuse complete exhaustive-query coverage.
     #[serde(default)]
     pub(in crate::mcp) query_receipt: Option<QueryReceiptAction>,
-    /// Cursor returned by the same search and repository generation.
     #[serde(default)]
     #[schemars(length(max = 4096))]
     pub(in crate::mcp) cursor: Option<String>,
-    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     pub(in crate::mcp) consistency: IndexConsistency,
-    /// Response shape. Exhaustive searches default to `occurrences`; others default to `full`.
     #[serde(default)]
     pub(in crate::mcp) projection: SearchMcpProjection,
 }
 
+impl SearchMcpOperation {
+    fn mode(&self) -> SearchMode {
+        match self {
+            Self::Auto { .. } => SearchMode::Auto,
+            Self::Text { .. } => SearchMode::Text,
+            Self::Regex { .. } => SearchMode::Regex,
+            Self::Identifier { .. } => SearchMode::Identifier,
+            Self::Symbol { .. } => SearchMode::Symbol,
+            Self::Reference { .. } => SearchMode::Reference,
+        }
+    }
+
+    fn options(&self) -> &SearchMcpOptions {
+        match self {
+            Self::Auto { options }
+            | Self::Text { options }
+            | Self::Regex { options }
+            | Self::Identifier { options }
+            | Self::Symbol { options }
+            | Self::Reference { options } => options,
+        }
+    }
+
+    fn into_parts(self) -> (SearchMode, SearchMcpOptions) {
+        match self {
+            Self::Auto { options } => (SearchMode::Auto, options),
+            Self::Text { options } => (SearchMode::Text, options),
+            Self::Regex { options } => (SearchMode::Regex, options),
+            Self::Identifier { options } => (SearchMode::Identifier, options),
+            Self::Symbol { options } => (SearchMode::Symbol, options),
+            Self::Reference { options } => (SearchMode::Reference, options),
+        }
+    }
+}
+
 impl SearchMcpRequest {
     pub(in crate::mcp) fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
-        validate_optional_positive_limit("max_results", self.max_results, limits.max_results)?;
-        validate_optional_positive_limit("max_tokens", self.max_tokens, limits.max_output_tokens)?;
+        let options = self.operation.options();
+        validate_optional_positive_limit("max_results", options.max_results, limits.max_results)?;
+        validate_optional_positive_limit(
+            "max_tokens",
+            options.max_tokens,
+            limits.max_output_tokens,
+        )?;
         validate_optional_positive_limit(
             "max_response_tokens",
-            self.max_response_tokens,
+            options.max_response_tokens,
             limits.max_response_tokens,
         )?;
         validate_optional_limit(
             "context_lines",
-            self.context_lines,
+            options.context_lines,
             limits.max_context_lines,
         )?;
-        if self.all_occurrences && !self.mode.supports_all_occurrences() {
+        if options.all_occurrences && !self.operation.mode().supports_all_occurrences() {
             let mut conflicts = vec!["all_occurrences=true".into()];
-            if self.projection == SearchMcpProjection::Occurrences {
+            if options.projection == SearchMcpProjection::Occurrences {
                 conflicts.push("projection=occurrences".into());
             }
-            if self.coordinates_only {
+            if options.coordinates_only {
                 conflicts.push("coordinates_only=true".into());
             }
-            return Err(crate::incompatible_occurrence_options(self.mode, conflicts));
+            return Err(crate::incompatible_occurrence_options(
+                self.operation.mode(),
+                conflicts,
+            ));
         }
-        if self.coordinates_only && !self.all_occurrences {
+        if options.coordinates_only && !options.all_occurrences {
             return Err(crate::Error::InvalidInput {
                 field: "coordinates_only",
                 reason: "requires all_occurrences=true",
             });
         }
-        if self.coordinates_only
+        if options.coordinates_only
             && !matches!(
-                self.projection,
+                options.projection,
                 SearchMcpProjection::Auto | SearchMcpProjection::Occurrences
             )
         {
@@ -136,15 +268,15 @@ impl SearchMcpRequest {
                 reason: "requires the occurrences projection",
             });
         }
-        if self.projection == SearchMcpProjection::Occurrences && !self.all_occurrences {
+        if options.projection == SearchMcpProjection::Occurrences && !options.all_occurrences {
             return Err(crate::Error::InvalidInput {
                 field: "projection",
                 reason: "occurrences requires all_occurrences=true",
             });
         }
-        if self.query_receipt.is_some()
+        if options.query_receipt.is_some()
             && !matches!(
-                self.projection,
+                options.projection,
                 SearchMcpProjection::Auto | SearchMcpProjection::Occurrences
             )
         {
@@ -154,6 +286,10 @@ impl SearchMcpRequest {
             });
         }
         Ok(())
+    }
+
+    pub(in crate::mcp) fn max_response_tokens(&self) -> Option<usize> {
+        self.operation.options().max_response_tokens
     }
 
     pub(in crate::mcp) fn into_parts(
@@ -166,64 +302,48 @@ impl SearchMcpRequest {
         ServiceCallOptions,
         Option<String>,
     ) {
-        let projection = match self.projection {
-            SearchMcpProjection::Auto if self.all_occurrences => SearchMcpProjection::Occurrences,
+        let (mode, options) = self.operation.into_parts();
+        let projection = match options.projection {
+            SearchMcpProjection::Auto if options.all_occurrences => {
+                SearchMcpProjection::Occurrences
+            }
             SearchMcpProjection::Auto => SearchMcpProjection::Full,
             projection => projection,
         };
         (
             SearchRequest {
-                query: self.query,
-                mode: self.mode,
-                include_paths: self.include_paths,
-                exclude_paths: self.exclude_paths,
-                focus_paths: self.focus_paths,
-                max_results: self.max_results,
-                max_tokens: self.max_tokens,
-                context_lines: self.context_lines,
-                case_sensitive: self.case_sensitive,
-                all_occurrences: self.all_occurrences,
-                prefer_structural: self.prefer_structural,
-                receipt_id: self.receipt_id,
-                query_receipt: self.query_receipt,
-                cursor: self.cursor,
+                query: options.query.into_string(),
+                mode,
+                include_paths: options
+                    .include_paths
+                    .iter()
+                    .map(|pattern| pattern.as_str().to_owned())
+                    .collect(),
+                exclude_paths: options
+                    .exclude_paths
+                    .iter()
+                    .map(|pattern| pattern.as_str().to_owned())
+                    .collect(),
+                focus_paths: options
+                    .focus_paths
+                    .iter()
+                    .map(|pattern| pattern.as_str().to_owned())
+                    .collect(),
+                max_results: options.max_results,
+                max_tokens: options.max_tokens,
+                context_lines: options.context_lines,
+                case_sensitive: options.case_sensitive,
+                all_occurrences: options.all_occurrences,
+                prefer_structural: options.prefer_structural,
+                receipt_id: options.receipt_id,
+                query_receipt: options.query_receipt,
+                cursor: options.cursor,
             },
             projection,
-            self.coordinates_only,
-            self.consistency,
-            service_call_options(self.max_response_tokens),
+            options.coordinates_only,
+            options.consistency,
+            service_call_options(options.max_response_tokens),
             self.expected_repository_id,
         )
     }
-}
-
-pub(in crate::mcp) fn add_search_option_constraints(schema: &mut Schema) {
-    let exhaustive_modes = SearchMode::EXHAUSTIVE_MODES.map(SearchMode::wire_name);
-    schema.insert(
-        "allOf".into(),
-        serde_json::json!([
-            {
-                "if": {
-                    "properties": {"all_occurrences": {"const": true}},
-                    "required": ["all_occurrences"]
-                },
-                "then": {
-                    "properties": {
-                        "mode": {"enum": exhaustive_modes}
-                    },
-                    "required": ["mode"]
-                }
-            },
-            {
-                "if": {
-                    "properties": {"projection": {"const": "occurrences"}},
-                    "required": ["projection"]
-                },
-                "then": {
-                    "properties": {"all_occurrences": {"const": true}},
-                    "required": ["all_occurrences"]
-                }
-            }
-        ]),
-    );
 }

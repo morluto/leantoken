@@ -7,7 +7,7 @@ pub(in crate::mcp) struct ReceiptRebaseMcpRequest {
     #[schemars(length(min = 1, max = 128))]
     pub(in crate::mcp) receipt_id: String,
     /// Maximum source-free examples per outcome; complete counts and digest are always returned.
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(range(min = 0, max = 16))]
     pub(in crate::mcp) max_samples_per_outcome: Option<usize>,
     /// Maximum tokens in the final serialized service response.
