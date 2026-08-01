@@ -579,7 +579,9 @@ bounded compatibility check. Doctor forwards a user-explicit SQLite path, but
 does not turn an implicit versioned managed cache into an explicit path for a
 differently pinned child. The child working directory is the canonical requested
 repository root, so workspace-relative configured commands are exercised with
-the same cwd contract used by supported hosts. Each child stdout protocol record
+the same cwd contract used by supported hosts; path-bearing relative commands
+are resolved against that root before spawn for consistent Windows behavior.
+Each child stdout protocol record
 is limited to 8 MiB before UTF-8 or JSON parsing, and at most four parsed records
 are queued between the stdout reader and doctor consumer. A full queue backpressures the child,
 bounding queued protocol content to 32 MiB; an over-limit unterminated record

@@ -890,6 +890,7 @@ impl DoctorTransport {
         database_forwarding: DatabaseForwarding,
     ) -> Result<Self> {
         let launch_args = launcher_arguments(config, args, database_forwarding)?;
+        let command = launcher_command_from_root(&config.root, command);
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
             .current_dir(&config.root)
@@ -1015,6 +1016,15 @@ impl DoctorTransport {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+fn launcher_command_from_root(root: &std::path::Path, command: &OsStr) -> OsString {
+    let path = std::path::Path::new(command);
+    if path.is_relative() && path.components().count() > 1 {
+        root.join(path).into_os_string()
+    } else {
+        command.to_os_string()
     }
 }
 
@@ -1183,6 +1193,26 @@ mod tests {
         assert_eq!(
             explicit_arguments.get(database_index + 1),
             Some(&explicit.database_path.into_os_string())
+        );
+    }
+
+    #[test]
+    fn path_bearing_relative_launchers_resolve_from_the_repository_root() {
+        let root = std::path::Path::new("workspace-root");
+        let executable = if cfg!(windows) {
+            "leantoken.exe"
+        } else {
+            "leantoken"
+        };
+        let relative = std::path::Path::new(".").join("bin").join(executable);
+
+        assert_eq!(
+            launcher_command_from_root(root, relative.as_os_str()),
+            root.join(&relative).into_os_string()
+        );
+        assert_eq!(
+            launcher_command_from_root(root, OsStr::new(executable)),
+            OsString::from(executable)
         );
     }
 
