@@ -341,28 +341,90 @@ pub(super) fn is_managed_registration(command: &str, args: &[String], runtime_ro
     if args.iter().any(|argument| argument == "--managed-by-setup") {
         return true;
     }
-    is_legacy_npx_registration(command, args)
+    is_legacy_package_manager_registration(command, args)
         || is_legacy_private_runtime_registration(command, args, runtime_root)
 }
 
-fn is_legacy_npx_registration(command: &str, args: &[String]) -> bool {
+fn is_legacy_package_manager_registration(command: &str, args: &[String]) -> bool {
+    is_legacy_node_npx_registration(command, args)
+        || is_legacy_node_npm_registration(command, args)
+        || is_legacy_direct_npx_registration(command, args)
+        || is_legacy_direct_npm_registration(command, args)
+        || is_legacy_dlx_registration(command, args)
+}
+
+fn command_has_stem(command: &str, expected: &str) -> bool {
     Path::new(command)
         .file_stem()
         .and_then(|name| name.to_str())
-        == Some("node")
+        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn argument_has_file_name(argument: &str, expected: &str) -> bool {
+    Path::new(argument)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn is_exact_legacy_package(argument: &str, prefix: &str) -> bool {
+    argument
+        .strip_prefix(prefix)
+        .is_some_and(|version| semver::Version::parse(version).is_ok())
+}
+
+fn is_legacy_node_npx_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "node")
         && args.len() == 7
         && Path::new(&args[0])
             .file_name()
             .and_then(|name| name.to_str())
-            == Some("npx-cli.js")
+            .is_some_and(|name| name.eq_ignore_ascii_case("npx-cli.js"))
         && args[1] == "--yes"
         && args[2] == "--prefer-offline"
-        && args[3]
-            .strip_prefix("--package=leantoken@")
-            .is_some_and(|version| semver::Version::parse(version).is_ok())
+        && is_exact_legacy_package(&args[3], "--package=leantoken@")
         && args[4] == "--"
         && args[5] == "leantoken"
         && args[6] == "mcp"
+}
+
+fn is_legacy_node_npm_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "node")
+        && args.len() == 7
+        && argument_has_file_name(&args[0], "npm-cli.js")
+        && args[1] == "exec"
+        && args[2] == "--yes"
+        && is_exact_legacy_package(&args[3], "--package=leantoken@")
+        && args[4] == "--"
+        && args[5] == "leantoken"
+        && args[6] == "mcp"
+}
+
+fn is_legacy_direct_npx_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "npx")
+        && args.len() == 3
+        && args[0] == "--yes"
+        && is_exact_legacy_package(&args[1], "leantoken@")
+        && args[2] == "mcp"
+}
+
+fn is_legacy_direct_npm_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "npm")
+        && args.len() == 6
+        && args[0] == "exec"
+        && args[1] == "--yes"
+        && is_exact_legacy_package(&args[2], "--package=leantoken@")
+        && args[3] == "--"
+        && args[4] == "leantoken"
+        && args[5] == "mcp"
+}
+
+fn is_legacy_dlx_registration(command: &str, args: &[String]) -> bool {
+    (command_has_stem(command, "pnpm") || command_has_stem(command, "yarn"))
+        && args.len() == 3
+        && args[0] == "dlx"
+        && is_exact_legacy_package(&args[1], "leantoken@")
+        && args[2] == "mcp"
 }
 
 fn is_legacy_private_runtime_registration(

@@ -982,7 +982,10 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     let mut apply = request;
     apply.dry_run = false;
     let first = run_with(SetupOperation::Setup, apply.clone(), &environment, &prompt).unwrap();
-    assert!(first.results.iter().all(|result| result.error.is_none()));
+    assert!(
+        first.results.iter().all(|result| result.error.is_none()),
+        "{first:#?}"
+    );
     assert_eq!(
         first.verification.as_ref().map(|result| result.status),
         Some(SetupVerificationStatus::Failed)
@@ -1032,6 +1035,36 @@ fn private_runtime_uses_native_executable_names_for_supported_package_layouts() 
     ] {
         assert_eq!(runtime_executable_name(windows), expected, "{platform}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn private_runtime_install_rejects_a_symlinked_version_directory() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtimes");
+    let external = temp.path().join("external");
+    fs::create_dir(&runtime_root).unwrap();
+    fs::create_dir(&external).unwrap();
+    symlink(&external, runtime_root.join("1.2.3")).unwrap();
+    let source = temp.path().join("source-leantoken");
+    fs::write(&source, "verified runtime").unwrap();
+    let digest = file_digest(&source).unwrap();
+    let destination = runtime_root
+        .join("1.2.3")
+        .join(runtime_executable_name(false));
+    let plan = RuntimeInstallPlan {
+        runtime_root,
+        source,
+        destination,
+        digest,
+        install_required: true,
+    };
+
+    let error = install_runtime(&plan).unwrap_err().to_string();
+    assert!(error.contains("non-symlink directory"), "{error}");
+    assert!(!external.join(runtime_executable_name(false)).exists());
 }
 
 #[test]
@@ -1661,6 +1694,45 @@ fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
         ],
         runtime_root
     ));
+    for (command, args) in [
+        (
+            "/usr/bin/node",
+            vec![
+                "/usr/lib/node_modules/npm/bin/npm-cli.js".into(),
+                "exec".into(),
+                "--yes".into(),
+                "--package=leantoken@1.2.3".into(),
+                "--".into(),
+                "leantoken".into(),
+                "mcp".into(),
+            ],
+        ),
+        (
+            "npx",
+            vec!["--yes".into(), "leantoken@1.2.3".into(), "mcp".into()],
+        ),
+        (
+            "npm",
+            vec![
+                "exec".into(),
+                "--yes".into(),
+                "--package=leantoken@1.2.3".into(),
+                "--".into(),
+                "leantoken".into(),
+                "mcp".into(),
+            ],
+        ),
+        (
+            "pnpm",
+            vec!["dlx".into(), "leantoken@1.2.3".into(), "mcp".into()],
+        ),
+        (
+            "yarn",
+            vec!["dlx".into(), "leantoken@1.2.3".into(), "mcp".into()],
+        ),
+    ] {
+        assert!(is_managed_registration(command, &args, runtime_root));
+    }
     assert!(is_managed_registration(
         &managed_runtime,
         &["mcp".into()],
@@ -1690,7 +1762,22 @@ fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
             ],
             runtime_root
         ));
+        assert!(!is_managed_registration(
+            "pnpm",
+            &["dlx".into(), format!("leantoken@{package}"), "mcp".into()],
+            runtime_root
+        ));
     }
+    assert!(!is_managed_registration(
+        "pnpm",
+        &[
+            "dlx".into(),
+            "leantoken@1.2.3".into(),
+            "--silent".into(),
+            "mcp".into(),
+        ],
+        runtime_root
+    ));
 }
 
 #[test]

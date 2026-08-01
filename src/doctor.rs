@@ -46,8 +46,10 @@ pub struct DoctorReport {
     pub server_name: String,
     /// MCP implementation version returned during initialization.
     pub server_version: String,
-    /// Index-content compatibility version used by the executable.
-    pub index_content_version: u32,
+    /// Index-content compatibility version, when the verified child exposes a
+    /// version this process can identify.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_content_version: Option<u32>,
     /// Whether server-wide agent workflow guidance was present.
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
@@ -377,6 +379,21 @@ fn run_with_transport(
     };
 
     transport.close();
+    if let Some(registration) = verified_registration {
+        let current = setup::configured_registration(registration.client)
+            .map_err(|error| doctor_error("registration", error.to_string()))?;
+        if !current.is_some_and(|current| {
+            current.path == registration.path && current.source_hash == registration.source_hash
+        }) {
+            return Err(doctor_error(
+                "registration",
+                format!(
+                    "{} MCP registration changed while its launcher was being verified",
+                    registration.client.display_name()
+                ),
+            ));
+        }
+    }
     let expected_launcher = verified_registration.map(|registration| {
         (
             registration.command.as_str(),
@@ -385,21 +402,6 @@ fn run_with_transport(
         )
     });
     let setup = setup::diagnostic_state(expected_launcher);
-    if let Some(registration) = verified_registration
-        && !setup.registrations.iter().any(|current| {
-            current.client == registration.client
-                && current.path == registration.path
-                && current.source_hash == registration.source_hash
-        })
-    {
-        return Err(doctor_error(
-            "registration",
-            format!(
-                "{} MCP registration changed while its launcher was being verified",
-                registration.client.display_name()
-            ),
-        ));
-    }
     let verified_client = verified_registration.map(|registration| registration.client);
     let registrations = setup
         .registrations
@@ -427,7 +429,12 @@ fn run_with_transport(
         repository_root: config.root.clone(),
         server_name,
         server_version,
-        index_content_version: INDEX_CONTENT_VERSION,
+        // The MCP child contract does not currently disclose its index schema.
+        // A configured launcher can target another exact release, so only
+        // report the value for the current executable's own launcher.
+        index_content_version: verified_registration
+            .is_none()
+            .then_some(INDEX_CONTENT_VERSION),
         instructions_loaded,
         tools,
         result_mode,
@@ -541,11 +548,14 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
         "  ✓ MCP identity: {} {}",
         report.server_name, report.server_version
     )?;
-    writeln!(
-        output,
-        "  ✓ Index compatibility: v{}",
-        report.index_content_version
-    )?;
+    if let Some(index_content_version) = report.index_content_version {
+        writeln!(output, "  ✓ Index compatibility: v{index_content_version}")?;
+    } else {
+        writeln!(
+            output,
+            "  ◇ Index compatibility: not disclosed by configured launcher"
+        )?;
+    }
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
     writeln!(output, "  ✓ Result mode: {:?}", report.result_mode)?;

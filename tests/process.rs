@@ -650,6 +650,7 @@ fn doctor_can_exercise_the_exact_codex_registration() {
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("doctor report");
     assert_eq!(report["integration"]["verified_client"], "codex");
+    assert!(report.get("index_content_version").is_none());
     let codex = report["integration"]["registrations"]
         .as_array()
         .and_then(|registrations| {
@@ -660,6 +661,54 @@ fn doctor_can_exercise_the_exact_codex_registration() {
         .expect("Codex registration");
     assert_eq!(codex["managed"], true);
     assert_eq!(report["first_call"]["status"], "ready");
+}
+
+#[test]
+fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
+        .expect("write fixture");
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("npm_lifecycle_event")
+        .args(["--json", "setup", "--codex", "--yes"])
+        .output()
+        .expect("configure Codex");
+    assert!(setup.status.success());
+    std::fs::write(home.path().join(".claude.json"), "{ broken")
+        .expect("write unrelated malformed config");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("npm_lifecycle_event")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured-client doctor");
+
+    assert!(
+        output.status.success(),
+        "doctor stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor report");
+    assert_eq!(report["integration"]["verified_client"], "codex");
+    assert_eq!(report["integration"]["registration_status"], "unknown");
+    assert!(report["integration"]["registrations"]
+        .as_array()
+        .is_some_and(Vec::is_empty));
 }
 
 #[test]

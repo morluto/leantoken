@@ -15,17 +15,39 @@ pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<Run
         .runtime_root
         .join(environment.launcher.version())
         .join(executable_name);
-    let install_required = if destination.exists() {
-        let installed_digest = file_digest(&destination)?;
-        if installed_digest != digest {
+    let version_directory = destination
+        .parent()
+        .expect("a versioned runtime destination has a parent");
+    match fs::symlink_metadata(version_directory) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => {
             return Err(Error::SetupFailure(format!(
-                "private runtime identity mismatch at {}",
+                "private runtime version must be a non-symlink directory: {}",
+                version_directory.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let install_required = match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+            let installed_digest = file_digest(&destination)?;
+            if installed_digest != digest {
+                return Err(Error::SetupFailure(format!(
+                    "private runtime identity mismatch at {}",
+                    destination.display()
+                )));
+            }
+            false
+        }
+        Ok(_) => {
+            return Err(Error::SetupFailure(format!(
+                "private runtime must be a non-symlink file: {}",
                 destination.display()
             )));
         }
-        false
-    } else {
-        true
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => return Err(error.into()),
     };
     Ok(RuntimeInstallPlan {
         runtime_root: environment.runtime_root.clone(),
@@ -46,6 +68,10 @@ pub(super) fn runtime_executable_name(windows: bool) -> &'static str {
 
 pub(super) fn file_digest(path: &Path) -> Result<String> {
     let mut input = fs::File::open(path)?;
+    digest_reader(&mut input)
+}
+
+fn digest_reader(input: &mut impl Read) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
@@ -59,47 +85,174 @@ pub(super) fn file_digest(path: &Path) -> Result<String> {
 }
 
 pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
-    if !plan.install_required {
-        return Ok(false);
-    }
     if !validate_runtime_root(&plan.runtime_root)? {
         return Err(Error::SetupFailure(format!(
             "private runtime root disappeared before installation: {}",
             plan.runtime_root.display()
         )));
     }
-    let parent = plan
-        .destination
-        .parent()
-        .ok_or_else(|| Error::SetupFailure("private runtime destination has no parent".into()))?;
-    fs::create_dir_all(parent)?;
-    validate_runtime_root(&plan.runtime_root)?;
-    let mut staged = NamedTempFile::new_in(parent)?;
+    let (version, executable_name) = runtime_destination_components(plan)?;
+    let runtime_root = open_runtime_root(&plan.runtime_root)?;
+    let version_directory = open_or_create_runtime_version_directory(
+        &runtime_root,
+        version,
+        plan.destination.parent().ok_or_else(|| {
+            Error::SetupFailure("private runtime destination has no parent".into())
+        })?,
+    )?;
+    if !plan.install_required {
+        return if capability_runtime_file_matches(
+            &version_directory,
+            executable_name,
+            &plan.digest,
+        )? {
+            Ok(false)
+        } else {
+            Err(Error::SetupFailure(format!(
+                "private runtime identity mismatch at {}",
+                plan.destination.display()
+            )))
+        };
+    }
+    let temporary_name = format!(
+        ".leantoken-install-{}-{}.tmp",
+        std::process::id(),
+        RUNTIME_INSTALL_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let mut source = fs::File::open(&plan.source)?;
-    std::io::copy(&mut source, staged.as_file_mut())?;
-    staged
-        .as_file_mut()
-        .set_permissions(source.metadata()?.permissions())?;
-    staged.as_file_mut().sync_all()?;
-    if file_digest(staged.path())? != plan.digest {
-        return Err(Error::SetupFailure(
-            "staged private runtime digest mismatch".into(),
-        ));
-    }
-    match staged.persist_noclobber(&plan.destination) {
-        Ok(_) => Ok(true),
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            if file_digest(&plan.destination)? == plan.digest {
-                Ok(false)
-            } else {
-                Err(Error::SetupFailure(format!(
-                    "private runtime identity mismatch at {}",
-                    plan.destination.display()
-                )))
-            }
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    let mut staged = version_directory
+        .open_with(&temporary_name, &options)?
+        .into_std();
+    let staged_result = (|| -> Result<()> {
+        std::io::copy(&mut source, &mut staged)?;
+        staged.set_permissions(source.metadata()?.permissions())?;
+        staged.sync_all()?;
+        std::io::Seek::seek(&mut staged, std::io::SeekFrom::Start(0))?;
+        if digest_reader(&mut staged)? != plan.digest {
+            return Err(Error::SetupFailure(
+                "staged private runtime digest mismatch".into(),
+            ));
         }
-        Err(error) => Err(Error::Io(error.error)),
+        Ok(())
+    })();
+    let publish_result = staged_result.and_then(|()| {
+        match version_directory.hard_link(&temporary_name, &version_directory, executable_name) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if capability_runtime_file_matches(
+                    &version_directory,
+                    executable_name,
+                    &plan.digest,
+                )? {
+                    Ok(false)
+                } else {
+                    Err(Error::SetupFailure(format!(
+                        "private runtime identity mismatch at {}",
+                        plan.destination.display()
+                    )))
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    });
+    drop(staged);
+    let cleanup_result = version_directory.remove_file(&temporary_name);
+    match publish_result {
+        Ok(installed) => {
+            cleanup_result?;
+            sync_capability_directory(&version_directory)?;
+            Ok(installed)
+        }
+        Err(error) => Err(error),
     }
+}
+
+static RUNTIME_INSTALL_SEQUENCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+fn runtime_destination_components(plan: &RuntimeInstallPlan) -> Result<(&Path, &Path)> {
+    let relative = plan
+        .destination
+        .strip_prefix(&plan.runtime_root)
+        .map_err(|_| Error::SetupFailure("private runtime destination left its root".into()))?;
+    let components = relative.components().collect::<Vec<_>>();
+    if components.len() != 2
+        || semver::Version::parse(components[0].as_os_str().to_str().unwrap_or_default()).is_err()
+        || components[1].as_os_str() != runtime_executable_name(cfg!(windows))
+    {
+        return Err(Error::SetupFailure(format!(
+            "invalid private runtime destination: {}",
+            plan.destination.display()
+        )));
+    }
+    Ok((
+        Path::new(components[0].as_os_str()),
+        Path::new(components[1].as_os_str()),
+    ))
+}
+
+fn open_or_create_runtime_version_directory(
+    runtime_root: &cap_std::fs::Dir,
+    version: &Path,
+    display_path: &Path,
+) -> Result<cap_std::fs::Dir> {
+    match runtime_root.create_dir(version) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    let before = runtime_root.symlink_metadata(version)?;
+    if !before.file_type().is_dir() || before.file_type().is_symlink() {
+        return Err(Error::SetupFailure(format!(
+            "private runtime version must be a non-symlink directory: {}",
+            display_path.display()
+        )));
+    }
+    let expected_identity = capability_directory_identity(&before);
+    let directory = runtime_root.open_dir(version)?;
+    if capability_directory_identity(&directory.dir_metadata()?) != expected_identity {
+        return Err(Error::SetupFailure(format!(
+            "private runtime version changed while it was opened: {}",
+            display_path.display()
+        )));
+    }
+    let current = runtime_root.symlink_metadata(version)?;
+    if !current.file_type().is_dir()
+        || current.file_type().is_symlink()
+        || capability_directory_identity(&current) != expected_identity
+    {
+        return Err(Error::SetupFailure(format!(
+            "private runtime version changed while it was opened: {}",
+            display_path.display()
+        )));
+    }
+    Ok(directory)
+}
+
+fn capability_runtime_file_matches(
+    directory: &cap_std::fs::Dir,
+    executable_name: &Path,
+    expected_digest: &str,
+) -> Result<bool> {
+    let metadata = directory.symlink_metadata(executable_name)?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let mut executable = directory.open(executable_name)?;
+    Ok(digest_reader(&mut executable)? == expected_digest)
+}
+
+#[cfg(unix)]
+fn sync_capability_directory(directory: &cap_std::fs::Dir) -> Result<()> {
+    directory.open(".")?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_capability_directory(_directory: &cap_std::fs::Dir) -> Result<()> {
+    Ok(())
 }
 
 #[derive(Debug)]

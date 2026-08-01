@@ -403,7 +403,9 @@ registration and launch its exact command and arguments instead. This verifies
 the configuration users actually restart into, including pinned npx and private
 runtime launchers. When the registration exposes an exact pinned release, the
 handshake is validated against that configured release rather than the version
-of the doctor process that launched it.
+of the doctor process that launched it. The configured-child MCP contract does
+not expose its index schema, so this mode omits `index_content_version` instead
+of reporting the launching doctor's compile-time value.
 Failures use the `doctor_failure` category and identify the `registration`,
 `launch`, `handshake`, `catalog`, or `first_retrieval` stage so repair tooling
 does not need to parse prose.
