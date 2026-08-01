@@ -509,7 +509,7 @@ impl TestPlan {
                 "integration",
                 "process::",
                 "-j",
-                "2",
+                process_test_jobs(),
             ]),
         ];
         if has_checked_in_fixtures(root)? {
@@ -544,7 +544,7 @@ impl TestPlan {
                 "integration",
                 "process::",
                 "-j",
-                "2",
+                process_test_jobs(),
             ])],
             repetitions,
         })
@@ -585,6 +585,18 @@ fn nextest_command<const N: usize>(args: [&str; N]) -> Vec<String> {
         .chain(["nextest".to_owned(), "run".to_owned()])
         .chain(args.into_iter().map(str::to_owned))
         .collect()
+}
+
+fn process_test_jobs() -> &'static str {
+    process_test_jobs_for_os(std::env::consts::OS)
+}
+
+fn process_test_jobs_for_os(os: &str) -> &'static str {
+    match os {
+        "macos" => "3",
+        "linux" | "windows" => "4",
+        _ => "2",
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1013,7 +1025,8 @@ impl From<FixtureError> for XtaskError {
 mod tests {
     use super::{
         BENCHMARKS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError, listed_test_count,
-        run_parallel_product_plan, valid_fixture_identity, workspace_root,
+        process_test_jobs_for_os, run_parallel_product_plan, valid_fixture_identity,
+        workspace_root,
     };
     use std::fs;
 
@@ -1048,7 +1061,7 @@ mod tests {
         assert!(
             plan.commands[PRODUCT_PARALLEL_LANES]
                 .windows(2)
-                .any(|args| args == ["-j", "2"])
+                .any(|args| args == ["-j", process_test_jobs_for_os(std::env::consts::OS)])
         );
         assert!(
             plan.commands
@@ -1066,6 +1079,14 @@ mod tests {
                 && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
                 && command.contains(&"--exact".to_owned())
         }));
+    }
+
+    #[test]
+    fn process_worker_bound_matches_supported_runner_capacity() {
+        assert_eq!(process_test_jobs_for_os("macos"), "3");
+        assert_eq!(process_test_jobs_for_os("linux"), "4");
+        assert_eq!(process_test_jobs_for_os("windows"), "4");
+        assert_eq!(process_test_jobs_for_os("freebsd"), "2");
     }
 
     #[test]
