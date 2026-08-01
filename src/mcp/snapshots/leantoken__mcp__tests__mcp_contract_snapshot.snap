@@ -1062,7 +1062,6 @@ expression: mcp_contract()
             "properties": {
               "head_path": {
                 "default": null,
-                "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                 "maxLength": 4096,
                 "minLength": 1,
                 "type": [
@@ -1222,7 +1221,6 @@ expression: mcp_contract()
                     ]
                   },
                   "path": {
-                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1301,7 +1299,6 @@ expression: mcp_contract()
                     ]
                   },
                   "path": {
-                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1339,13 +1336,11 @@ expression: mcp_contract()
                     ]
                   },
                   "base_path": {
-                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "head_path": {
-                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"

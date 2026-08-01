@@ -483,14 +483,14 @@ impl Cli {
                 let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
                 let response_profile = args.response_profile.map(Into::into);
-                AppRequest::Context(Box::new(ContextAppRequest {
+                AppRequest::Context {
                     request: (*args).into(),
                     workflow,
                     workflow_evidence,
-                    handoff: handoff.map(Box::new),
+                    handoff,
                     max_response_tokens,
                     response_profile,
-                }))
+                }
             }
             Commands::Doctor(args) => AppRequest::Doctor {
                 ready_timeout: Duration::from_secs(args.ready_timeout_seconds),
@@ -522,6 +522,7 @@ impl Cli {
 
 /// Parsed application request produced by the CLI.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AppRequest {
     Index {
         rebuild: bool,
@@ -556,7 +557,14 @@ pub enum AppRequest {
         request: JsonRequest,
         max_response_tokens: Option<usize>,
     },
-    Context(Box<ContextAppRequest>),
+    Context {
+        request: ContextRequest,
+        workflow: crate::model::ContextWorkflow,
+        workflow_evidence: WorkflowEvidence,
+        handoff: Option<HandoffManifestRequest>,
+        max_response_tokens: Option<usize>,
+        response_profile: Option<crate::model::ContextResponseProfile>,
+    },
     Doctor {
         ready_timeout: Duration,
         client: Option<SetupClient>,

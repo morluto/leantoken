@@ -340,7 +340,7 @@ impl LeanTokenMcp {
                 let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     services
-                        .context_with_workflow_evidence_options_consistency_cancellable(
+                        .context_with_workflow_options_consistency_cancellable(
                             crate::services::ContextWorkflowOptions {
                                 request,
                                 handoff,

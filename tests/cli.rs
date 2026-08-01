@@ -694,17 +694,16 @@ fn cli_context_request() {
         "--test-intent",
         "owner regression",
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
-        panic!("expected context request");
-    };
-    let leantoken::cli::ContextAppRequest {
+    let AppRequest::Context {
         request,
         workflow,
         workflow_evidence,
         handoff,
         max_response_tokens,
         response_profile,
-    } = *context;
+    } = cli.app_request() else {
+        panic!("expected context request");
+    };
     assert!(handoff.is_none());
     assert_eq!(workflow, ContextWorkflow::Contribution);
     assert_eq!(workflow_evidence.failure_traces, vec!["error[E0001]"]);
@@ -750,11 +749,9 @@ fn cli_context_parses_required_evidence_json() {
         "--required-evidence",
         r#"{"path":"paper/**","queries":["failure boundary","disclosure"],"minimum_query_matches":2}"#,
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
+    let AppRequest::Context { request, .. } = cli.app_request() else {
         panic!("expected context request");
     };
-    let request = context.request;
-
     assert_eq!(request.required_evidence.len(), 1);
     assert_eq!(request.required_evidence[0].path, "paper/**");
     assert_eq!(
@@ -771,10 +768,9 @@ fn cli_context_requires_task_and_defaults_budget() {
 
     let no_budget = Cli::try_parse_from(["leantoken", "context", "--task", "x"]);
     assert!(no_budget.is_ok());
-    let AppRequest::Context(context) = no_budget.expect("default budget").app_request() else {
+    let AppRequest::Context { request, .. } = no_budget.expect("default budget").app_request() else {
         panic!("expected context request");
     };
-    let request = context.request;
     assert_eq!(request.token_budget, 3_000);
 }
 
@@ -788,10 +784,9 @@ fn cli_context_maps_opt_in_handoff_summary() {
         "--handoff-summary",
         "bounded executor state",
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
+    let AppRequest::Context { handoff, .. } = cli.app_request() else {
         panic!("expected context request");
     };
-    let handoff = context.handoff;
     assert_eq!(
         handoff.expect("handoff").summary.as_deref(),
         Some("bounded executor state")

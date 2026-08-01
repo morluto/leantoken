@@ -56,10 +56,10 @@ impl McpLauncher {
                     })?,
                 ),
                 PackageManager::Pnpm | PackageManager::Yarn => {
-                    Ok(Self::from_package_manager_with_version(
+                    Self::from_package_manager_with_version_resolved(
                         package_manager,
                         env!("CARGO_PKG_VERSION"),
-                    ))
+                    )
                 }
             };
         }
@@ -233,6 +233,38 @@ impl McpLauncher {
             package: Some(package),
         }
     }
+
+    fn from_package_manager_with_version_resolved(
+        package_manager: PackageManager,
+        version: &str,
+    ) -> Result<Self> {
+        let command = resolve_path_command(package_manager.command())?;
+        let mut launcher = Self::from_package_manager_with_version(package_manager, version);
+        launcher.command = command;
+        Ok(launcher)
+    }
+}
+
+fn resolve_path_command(command: &str) -> Result<PathBuf> {
+    let paths = std::env::var_os("PATH").ok_or_else(|| {
+        Error::SetupFailure(format!("PATH is unavailable while resolving {command}"))
+    })?;
+    for directory in std::env::split_paths(&paths) {
+        let candidate = directory.join(command);
+        if candidate.is_file() {
+            return candidate.canonicalize().map_err(Into::into);
+        }
+        #[cfg(windows)]
+        for extension in [".cmd", ".exe", ".bat"] {
+            let candidate = directory.join(format!("{command}{extension}"));
+            if candidate.is_file() {
+                return candidate.canonicalize().map_err(Into::into);
+            }
+        }
+    }
+    Err(Error::SetupFailure(format!(
+        "could not resolve {command} to an executable path"
+    )))
 }
 
 #[cfg(test)]

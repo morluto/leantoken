@@ -995,8 +995,8 @@ fn assert_search_option_error_mapping() {
                 "projection=occurrences",
             ],
             "examples": {
-                "ranked_symbol": "{\"query\":\"Services\",\"mode\":\"symbol\"}",
-                "exhaustive_text": "{\"query\":\"Services\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}",
+                "ranked_symbol": "{\"operation\":{\"kind\":\"symbol\",\"query\":\"Services\"}}",
+                "exhaustive_text": "{\"operation\":{\"kind\":\"text\",\"query\":\"Services\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}",
             },
         }))
     );
@@ -1206,7 +1206,7 @@ fn omitted_context_budget_uses_the_runtime_default() {
     .expect("context request with a budget");
     let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
     assert_eq!(request.token_budget, 23);
-    assert_eq!(options.max_response_tokens(), Some(1));
+    assert_eq!(options.max_response_tokens(), Some(47));
     assert_eq!(
         options.context_response_profile(),
         Some(ContextResponseProfile::Explain)
@@ -1778,10 +1778,7 @@ fn receipt_rebase_maps_explicit_exact_only_controls() {
     assert_eq!(request.receipt_id, "r0000000000000001");
     assert_eq!(request.max_samples_per_outcome, Some(0));
     assert_eq!(consistency, IndexConsistency::ReconcileWorkingTree);
-    assert_eq!(
-        options.max_response_tokens(),
-        Some(1_000 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
-    );
+    assert_eq!(options.max_response_tokens(), Some(1_000));
     assert_eq!(expected_repository_id.as_deref(), Some("repository"));
 
     let oversized = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
@@ -1860,10 +1857,7 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("batched history limits");
     let (call, options, _) = request.into_parts().expect("batched history parts");
-    assert_eq!(
-        options.max_response_tokens(),
-        Some(900 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
-    );
+    assert_eq!(options.max_response_tokens(), Some(900));
     let HistoryMcpCall::DiffSymbols(request) = call else {
         panic!("expected batched-symbol history call");
     };

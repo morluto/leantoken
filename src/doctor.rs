@@ -397,7 +397,13 @@ fn run_with_transport(
         }
         break structured
             .pointer("/meta/repository_generation")
-            .and_then(Value::as_u64);
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                doctor_error(
+                    "first_retrieval",
+                    "ready response omitted committed repository_generation",
+                )
+            })?;
     };
 
     transport.close();
@@ -478,7 +484,7 @@ fn run_with_transport(
             status: "ready",
             warmed_index,
             attempts,
-            repository_generation,
+            repository_generation: Some(repository_generation),
         },
     })
 }

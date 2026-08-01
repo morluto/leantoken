@@ -223,7 +223,7 @@ pub(in crate::mcp) struct HistoryMcpTarget {
     pub(in crate::mcp) symbol: SymbolIdentity,
     #[serde(default)]
     #[schemars(length(min = 1, max = 4096))]
-    pub(in crate::mcp) head_path: Option<NonEmptyText>,
+    pub(in crate::mcp) head_path: Option<RepositoryPath>,
     #[serde(default)]
     #[schemars(length(min = 1, max = 4096))]
     pub(in crate::mcp) head_symbol: Option<SymbolIdentity>,
@@ -319,7 +319,7 @@ impl HistoryMcpRequest {
                         .map(|target| DiffSymbolsTarget {
                             path: target.path.into_string(),
                             symbol: target.symbol.qualified_name(),
-                            head_path: target.head_path.map(NonEmptyText::into_string),
+                            head_path: target.head_path.map(RepositoryPath::into_string),
                             head_symbol: target.head_symbol.map(|symbol| symbol.qualified_name()),
                         })
                         .collect(),

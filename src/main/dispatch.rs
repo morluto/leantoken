@@ -250,24 +250,23 @@ pub(super) async fn dispatch_repository_request(
                 .await?,
             json,
         ),
-        AppRequest::Context(context) => {
-            let leantoken::cli::ContextAppRequest {
-                request,
-                workflow,
-                workflow_evidence,
-                handoff,
-                max_response_tokens,
-                response_profile,
-            } = *context;
+        AppRequest::Context {
+            request,
+            workflow,
+            workflow_evidence,
+            handoff,
+            max_response_tokens,
+            response_profile,
+        } => {
             let mut options = service_call_options(max_response_tokens);
             if let Some(profile) = response_profile {
                 options = options.with_context_response_profile(profile);
             }
             let response = services
-                .context_with_workflow_evidence_options_consistency_cancellable(
+                .context_with_workflow_options_consistency_cancellable(
                     leantoken::services::ContextWorkflowOptions {
                         request,
-                        handoff: handoff.map(|handoff| *handoff),
+                        handoff,
                         workflow,
                         workflow_evidence,
                         consistency,
