@@ -73,7 +73,6 @@ impl Services {
             });
         }
         validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
-        validate_glob_patterns(&request.include_paths)?;
         if request
             .include_paths
             .iter()
@@ -84,7 +83,7 @@ impl Services {
                 reason: "must not contain empty patterns",
             });
         }
-        validate_glob_patterns(&request.must_include_paths)?;
+        validate_glob_patterns(&request.include_paths)?;
         if request
             .must_include_paths
             .iter()
@@ -95,7 +94,7 @@ impl Services {
                 reason: "must not contain empty patterns",
             });
         }
-        validate_glob_patterns(&request.focus_paths)?;
+        validate_glob_patterns(&request.must_include_paths)?;
         if request
             .focus_paths
             .iter()
@@ -106,7 +105,7 @@ impl Services {
                 reason: "must not contain empty patterns",
             });
         }
-        validate_glob_patterns(&request.exclude_paths)?;
+        validate_glob_patterns(&request.focus_paths)?;
         if request
             .exclude_paths
             .iter()
@@ -117,6 +116,7 @@ impl Services {
                 reason: "must not contain empty patterns",
             });
         }
+        validate_glob_patterns(&request.exclude_paths)?;
         if request.focus_symbols.len() > MAX_INPUT_ITEMS {
             return Err(Error::LimitExceeded);
         }
