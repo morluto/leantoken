@@ -128,7 +128,7 @@ jobs:
           git cliff --config cliff.toml \
             --github-repo "morluto/leantoken" \
             --tag "${{ steps.version.outputs.new_tag }}" \
-            --output CHANGELOG.md \
+            --prepend CHANGELOG.md \
             ${{ steps.version.outputs.latest_tag }}..HEAD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
