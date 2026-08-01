@@ -21,10 +21,10 @@ fn paired_rename_event_coalesces_both_paths() {
         &mut reconcile,
     );
 
-    assert!(!reconcile);
-    assert_eq!(
-        pending,
-        BTreeSet::from(["a.txt".to_string(), "b.txt".to_string()])
+    assert!(reconcile);
+    assert!(
+        pending.is_empty(),
+        "unknown renames trigger bounded reconciliation instead of queuing stale paths"
     );
 }
 
@@ -86,6 +86,78 @@ fn removed_generated_directory_is_filtered_after_it_disappears() {
         root.path(),
         &DiscoveryPolicy::default(),
     ));
+}
+
+#[test]
+fn rename_shapes_with_missing_endpoints_fail_closed_to_reconciliation() {
+    let root = tempfile::tempdir().unwrap();
+    let shapes = [
+        // Linux inotify commonly reports both endpoints in one notification.
+        ("linux", "src/old.rs", "src/new.rs"),
+        // Windows ReadDirectoryChangesW may surface a generated-tree rename.
+        (
+            "windows",
+            "node_modules/pkg/old.js",
+            "node_modules/pkg/new.js",
+        ),
+        // macOS FSEvents can report only a path after the source disappeared;
+        // the second endpoint here is deliberately outside the active scope.
+        ("macos", "src/old.rs", "generated/missing.rs"),
+    ];
+
+    for (platform, source, target) in shapes {
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(root.path().join(source))
+            .add_path(root.path().join(target));
+        assert!(
+            raw_event_is_relevant(&Ok(event.clone()), root.path(), &DiscoveryPolicy::default()),
+            "{platform} rename must be admitted even when an endpoint is missing"
+        );
+        let mut pending = BTreeSet::new();
+        let mut rename_from = HashMap::new();
+        let mut rename_to = HashMap::new();
+        let mut reconcile = false;
+        process_raw_event(
+            Ok(event),
+            root.path(),
+            &DiscoveryPolicy::default(),
+            &mut pending,
+            &mut rename_from,
+            &mut rename_to,
+            &mut reconcile,
+        );
+        assert!(reconcile, "{platform} rename must request reconciliation");
+        assert!(
+            pending.is_empty(),
+            "{platform} rename must not queue stale paths"
+        );
+    }
+}
+
+#[test]
+fn generated_directory_rename_cannot_bypass_process_reconciliation() {
+    let root = tempfile::tempdir().unwrap();
+    let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
+        .add_path(root.path().join("node_modules/pkg/new.js"));
+    let mut pending = BTreeSet::new();
+    let mut rename_from = HashMap::new();
+    let mut rename_to = HashMap::new();
+    let mut reconcile = false;
+
+    process_raw_event(
+        Ok(event),
+        root.path(),
+        &DiscoveryPolicy::default(),
+        &mut pending,
+        &mut rename_from,
+        &mut rename_to,
+        &mut reconcile,
+    );
+
+    assert!(reconcile);
+    assert!(pending.is_empty());
+    assert!(rename_from.is_empty());
+    assert!(rename_to.is_empty());
 }
 
 #[test]

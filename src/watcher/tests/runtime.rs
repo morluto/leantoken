@@ -80,7 +80,7 @@ async fn coalesces_and_normalizes_paths() {
             root.path(),
             &root.path().join("nested/b.txt"),
             &DiscoveryPolicy::default(),
-            false,
+            DirectoryHint::No,
         )
         .expect("UTF-8 relative path")
         .as_deref(),
