@@ -276,7 +276,7 @@ fn request(target: Target, expected_hash: Option<String>, delta: bool) -> ReadRe
         expected_hash,
         delta,
         receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
+        policy: leantoken::model::ReadPolicy::default(),
     }
 }
 
