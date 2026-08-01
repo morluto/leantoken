@@ -309,14 +309,17 @@ pub struct RuntimePruneReport {
     pub total_bytes_before: u64,
     /// Bytes retained after completed removals, or projected for a dry-run.
     pub total_bytes_after: u64,
-    /// Complete decision for every recognized runtime.
+    /// Completed decisions, in inventory order, before any transaction-wide stop.
     pub results: Vec<RuntimePruneResult>,
+    /// Transaction-wide failure that stopped pruning before the next deletion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_error: Option<String>,
 }
 
 impl RuntimePruneReport {
     /// Return true when one or more selected runtimes could not be removed.
     #[must_use]
     pub fn has_failures(&self) -> bool {
-        self.results.iter().any(|result| result.error.is_some())
+        self.apply_error.is_some() || self.results.iter().any(|result| result.error.is_some())
     }
 }

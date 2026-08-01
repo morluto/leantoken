@@ -159,6 +159,18 @@ pub fn list_runtimes() -> Result<RuntimeListReport> {
 
 /// Plan or apply reference-safe pruning of application-owned private runtimes.
 pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport> {
+    let home = home_directory()
+        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
+    let runtime_root = setup_runtime_root(&home);
+    prune_runtimes_at(request, &home, runtime_root, || {})
+}
+
+pub(super) fn prune_runtimes_at(
+    request: RuntimePruneRequest,
+    home: &Path,
+    runtime_root: PathBuf,
+    mut after_removal: impl FnMut(),
+) -> Result<RuntimePruneReport> {
     if request.keep_latest > MAX_RUNTIME_RETENTION {
         return Err(Error::InvalidRequest(format!(
             "runtime keep-latest must not exceed {MAX_RUNTIME_RETENTION}"
@@ -169,9 +181,6 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
             "runtime prune requires --yes or --dry-run".into(),
         ));
     }
-    let home = home_directory()
-        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
-    let runtime_root = setup_runtime_root(&home);
     validate_runtime_root(&runtime_root)?;
     let _setup_lock = (!request.dry_run)
         .then(|| acquire_setup_lock(&runtime_root))
@@ -185,7 +194,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
             transaction_path(&runtime_root).display()
         )));
     }
-    let inventory = runtime_inventory(&home)?;
+    let inventory = runtime_inventory_at(home, &runtime_root)?;
     let RuntimeInventory {
         entries,
         total_bytes,
@@ -195,6 +204,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     let mut unreferenced_retained = 0_usize;
     let mut total_bytes_after = total_bytes;
     let mut results = Vec::with_capacity(entries.len());
+    let mut apply_error = None;
     for entry in entries {
         let protected_reason = if !entry.report.referenced_by.is_empty() {
             Some("referenced_by_client")
@@ -231,8 +241,14 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
             });
             continue;
         }
-        preflight_configuration_snapshots(&configuration_snapshots)?;
-        validate_runtime_root(&runtime_root)?;
+        if let Err(error) = preflight_configuration_snapshots(&configuration_snapshots) {
+            apply_error = Some(error.to_string());
+            break;
+        }
+        if let Err(error) = validate_runtime_root(&runtime_root) {
+            apply_error = Some(error.to_string());
+            break;
+        }
         let runtime_root_handle = runtime_root_handle
             .as_ref()
             .expect("applied pruning opened the runtime root");
@@ -263,16 +279,17 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
         };
         match remove_runtime_directory(directory) {
             RuntimeRemoval::Removed => {
-                sync_parent_directory(&entry.directory)?;
                 total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
+                let sync_error = sync_parent_directory(&entry.directory).err();
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
                     action: "removed".into(),
                     reason: "outside_retention".into(),
-                    error: None,
+                    error: sync_error.map(|error| format!("directory sync failed: {error}")),
                 });
+                after_removal();
             }
             RuntimeRemoval::PartiallyRemoved(error) => {
                 total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
@@ -288,6 +305,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
                     reason: "executable_removed_directory_retained".into(),
                     error: Some(error),
                 });
+                after_removal();
             }
             RuntimeRemoval::Failed(error) => results.push(RuntimePruneResult {
                 version: entry.report.version,
@@ -305,6 +323,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
         total_bytes_before: total_bytes,
         total_bytes_after,
         results,
+        apply_error,
     })
 }
 
@@ -327,7 +346,11 @@ struct RuntimeInventory {
 
 fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
     let runtime_root = setup_runtime_root(home);
-    if !validate_runtime_root(&runtime_root)? {
+    runtime_inventory_at(home, &runtime_root)
+}
+
+fn runtime_inventory_at(home: &Path, runtime_root: &Path) -> Result<RuntimeInventory> {
+    if !validate_runtime_root(runtime_root)? {
         return Ok(RuntimeInventory {
             entries: Vec::new(),
             total_bytes: 0,
@@ -335,7 +358,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             configuration_snapshots: Vec::new(),
         });
     }
-    let directory = match fs::read_dir(&runtime_root) {
+    let directory = match fs::read_dir(runtime_root) {
         Ok(directory) => directory,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(RuntimeInventory {
@@ -366,7 +389,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             ignored_entries += 1;
             continue;
         };
-        if version_name == "setup.lock" || item.path() == transaction_path(&runtime_root) {
+        if version_name == "setup.lock" || item.path() == transaction_path(runtime_root) {
             continue;
         }
         let Ok(parsed_version) = semver::Version::parse(&version_name) else {
@@ -662,6 +685,9 @@ pub fn print_runtime_prune(report: &RuntimePruneReport, json_output: bool) -> Re
                 .as_deref()
                 .map_or_else(String::new, |error| format!("  {error}"))
         )?;
+    }
+    if let Some(error) = &report.apply_error {
+        writeln!(output, "stopped  apply_error  {error}")?;
     }
     Ok(())
 }

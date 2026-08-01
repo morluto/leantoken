@@ -1082,6 +1082,61 @@ fn runtime_removal_stays_bound_to_the_opened_directory_after_a_path_swap() {
 }
 
 #[test]
+fn runtime_prune_preserves_partial_results_when_a_config_snapshot_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    fs::create_dir_all(&home).unwrap();
+    for (version, contents) in [
+        ("2.0.0", b"newer".as_slice()),
+        ("1.0.0", b"older".as_slice()),
+    ] {
+        let directory = runtime_root.join(version);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join(runtime_executable_name(cfg!(windows))),
+            contents,
+        )
+        .unwrap();
+    }
+    let changed_config = home.join(".claude.json");
+    let mut removals = 0_usize;
+
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {
+            removals += 1;
+            if removals == 1 {
+                fs::write(&changed_config, "{}\n").unwrap();
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(removals, 1);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].version, "2.0.0");
+    assert_eq!(report.results[0].action, "removed");
+    assert_eq!(report.total_bytes_before, 10);
+    assert_eq!(report.total_bytes_after, 5);
+    assert!(
+        report
+            .apply_error
+            .as_deref()
+            .is_some_and(|error| error.contains("changed after preflight"))
+    );
+    assert!(report.has_failures());
+    assert!(!runtime_root.join("2.0.0").exists());
+    assert!(runtime_root.join("1.0.0").exists());
+}
+
+#[test]
 fn setup_transaction_rolls_back_earlier_client_edits() {
     let temp = tempfile::tempdir().unwrap();
     let first_path = temp.path().join("first/config.json");

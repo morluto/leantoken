@@ -588,7 +588,10 @@ individually bounded client originals plus both legacy discovery originals
 after JSON escaping. Listing reads at most six configured host registrations
 once to attach canonicalized references. Applied pruning retains the same six
 bounded configuration snapshots and revalidates them immediately before every
-deletion. Pruning defaults to a non-mutating plan, rejects a symlinked or
+deletion. If a snapshot changes after an earlier deletion, the partial report
+retains every completed decision and the exact remaining-byte count, exposes a
+transaction-wide apply error, and stops before the next deletion. Pruning
+defaults to a non-mutating plan, rejects a symlinked or
 non-directory runtime root before locking, inventory, and each applied
 deletion, serializes applied deletion with setup, retains the active executable
 and every referenced runtime, and deletes only a version directory whose exact
