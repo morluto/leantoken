@@ -13,7 +13,8 @@ pub(in crate::ranking) fn build_context_plan(
             .focus_paths
             .iter()
             .map(|pattern| {
-                let matcher = PathMatcher::new_lossy(std::slice::from_ref(pattern));
+                let matcher = PathMatcher::new(std::slice::from_ref(pattern))
+                    .expect("focus paths are validated at request admission");
                 let candidate_fragments = selected
                     .iter()
                     .filter(|candidate| matcher.is_match(&candidate.candidate.path))

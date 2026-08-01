@@ -28,6 +28,7 @@ pub(in crate::mcp) struct SearchMcpRequest {
     #[schemars(length(min = 1, max = 65536))]
     pub(in crate::mcp) query: String,
     /// Candidate source to search (default `auto`).
+    /// `symbol` is ranked and structural; exhaustive occurrences require `text` or `regex`.
     #[serde(default)]
     pub(in crate::mcp) mode: SearchMode,
     /// Include only matching repository paths.
@@ -65,7 +66,7 @@ pub(in crate::mcp) struct SearchMcpRequest {
     #[serde(default)]
     pub(in crate::mcp) case_sensitive: bool,
     /// Return every text or regex occurrence with exact coordinates and counts;
-    /// requires `mode=text` or `mode=regex`.
+    /// requires `mode=text` or `mode=regex` and cannot broaden `symbol` search.
     #[serde(default)]
     pub(in crate::mcp) all_occurrences: bool,
     /// Omit excerpts and hashes from an exhaustive occurrence response.
@@ -109,10 +110,14 @@ impl SearchMcpRequest {
             limits.max_context_lines,
         )?;
         if self.all_occurrences && !self.mode.supports_all_occurrences() {
-            return Err(crate::Error::InvalidInput {
-                field: "all_occurrences",
-                reason: "requires text or regex mode",
-            });
+            let mut conflicts = vec!["all_occurrences=true".into()];
+            if self.projection == SearchMcpProjection::Occurrences {
+                conflicts.push("projection=occurrences".into());
+            }
+            if self.coordinates_only {
+                conflicts.push("coordinates_only=true".into());
+            }
+            return Err(crate::incompatible_occurrence_options(self.mode, conflicts));
         }
         if self.coordinates_only && !self.all_occurrences {
             return Err(crate::Error::InvalidInput {

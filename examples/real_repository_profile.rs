@@ -952,6 +952,7 @@ async fn profile_reads(
                     expected_hash: None,
                     delta: false,
                     receipt_id: None,
+                    policy: leantoken::model::ReadPolicy::default(),
                 })
                 .await?,
         ),
@@ -1028,6 +1029,7 @@ fn read_request(
         expected_hash: None,
         delta: false,
         receipt_id: None,
+        policy: leantoken::model::ReadPolicy::default(),
     }
 }
 

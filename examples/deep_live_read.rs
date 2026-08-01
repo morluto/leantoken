@@ -204,6 +204,7 @@ fn request(range: (usize, usize), max_tokens: usize) -> ReadRequest {
         expected_hash: None,
         delta: false,
         receipt_id: None,
+        policy: leantoken::model::ReadPolicy::default(),
     }
 }
 

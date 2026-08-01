@@ -17,8 +17,10 @@ pub(crate) fn scoped_regex_path_has_glob_meta(pattern: &str) -> bool {
 }
 
 pub(crate) fn expressible_scoped_regex_path(pattern: &str) -> Option<ScopedRegexPathAtom> {
-    let pattern = pattern.replace('\\', "/");
-    let pattern = pattern.trim_matches('/');
+    // SQL planning accepts the same wire values as the compiled matcher, so
+    // canonicalize again rather than assuming its caller retained the parsed value.
+    let canonical = crate::repository::RepositoryPattern::parse(pattern).ok()?;
+    let pattern = canonical.as_str();
     if pattern.is_empty() {
         return None;
     }
@@ -122,6 +124,10 @@ mod scoped_regex_path_sql_tests {
         assert!(matches!(
             expressible_scoped_regex_path("included/**"),
             Some(ScopedRegexPathAtom::Children(value)) if value == "included"
+        ));
+        assert!(matches!(
+            expressible_scoped_regex_path(r"windows\\path\\**"),
+            Some(ScopedRegexPathAtom::Children(value)) if value == "windows/path"
         ));
         assert!(expressible_scoped_regex_path("**/*.rs").is_none());
         assert!(expressible_scoped_regex_path("src/{a,b}").is_none());

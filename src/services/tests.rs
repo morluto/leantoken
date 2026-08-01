@@ -844,6 +844,7 @@ async fn index_search_read_and_hash_delta() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read");
@@ -860,6 +861,7 @@ async fn index_search_read_and_hash_delta() {
             expected_hash: Some(first.content_hash),
             delta: false,
             receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read delta");

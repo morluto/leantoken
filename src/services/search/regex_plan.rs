@@ -378,6 +378,7 @@ impl Services {
             }
         }
         let mut hits = Vec::new();
+        let mut work = RegexWorkBudget::default();
         let mut phases = SearchPhaseCounters {
             regex_candidate_strategy: RegexCandidateStrategy::FullScan,
             regex_plan_fallback_reason: Some(fallback.fallback_reason),
@@ -392,9 +393,10 @@ impl Services {
             if !path_filter.allows(&file.path) {
                 continue;
             }
+            work.charge_file(cancellation)?;
             let chunks = session.get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE)?;
             for chunk in chunks {
-                check_cancelled(cancellation)?;
+                work.charge_chunk(chunk.content.len(), cancellation)?;
                 phases.regex_chunks_loaded = phases.regex_chunks_loaded.saturating_add(1);
                 phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                 if regex.is_match(&chunk.content) {
@@ -451,6 +453,8 @@ impl Services {
             ..SearchPhaseCounters::default()
         };
         let query = plan.expression.fts_query();
+        let mut work = RegexWorkBudget::default();
+        let mut charged_files = HashSet::new();
         if has_path_filters {
             let candidate_ids = session.select_scoped_regex_candidate_ids(
                 &query,
@@ -465,7 +469,10 @@ impl Services {
             for candidate_batch in candidate_ids.chunks(REGEX_CANDIDATE_PAGE_SIZE) {
                 check_cancelled(cancellation)?;
                 for hit in session.regex_candidates_by_ids(candidate_batch)? {
-                    check_cancelled(cancellation)?;
+                    if charged_files.insert(hit.file_id) {
+                        work.charge_file(cancellation)?;
+                    }
+                    work.charge_chunk(hit.content.len(), cancellation)?;
                     phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                     if regex.is_match(&hit.content) {
                         if max_candidates.is_some_and(|limit| hits.len() == limit) {
@@ -504,10 +511,13 @@ impl Services {
                 break;
             }
             for hit in page {
-                check_cancelled(cancellation)?;
                 if !path_filter.allows(&hit.path) {
                     continue;
                 }
+                if charged_files.insert(hit.file_id) {
+                    work.charge_file(cancellation)?;
+                }
+                work.charge_chunk(hit.content.len(), cancellation)?;
                 phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                 if regex.is_match(&hit.content) {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {

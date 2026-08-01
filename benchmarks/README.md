@@ -356,7 +356,7 @@ or scalability claim.
 
 ```bash
 cargo run --release -p leantoken-benchmarks --bin handoff_manifest_benchmark -- \
-  benchmarks/reports/handoff-manifest-v1.json
+  target/handoff-manifest-v1.json
 ```
 
 ## Ranked-region evaluator
@@ -1186,10 +1186,10 @@ cargo run --release -p leantoken-benchmarks --bin compact_projection_benchmark -
   --output target/compact-projection-report.json
 ```
 
-The checked machine-readable and decision reports live under
-`benchmarks/reports/mcp-response-ablation-compact-projections-v1-*`. The retry
-proxy only proves that labeled path/symbol routing and verification data remain
-available; it is not a model task-success measurement.
+The generated machine-readable report belongs under `target/`; it is a local
+diagnostic rather than a checked-in historical artifact. The retry proxy only
+proves that labeled path/symbol routing and verification data remain available;
+it is not a model task-success measurement.
 
 The separate
 [`multi_agent_context_pilot.json`](multi_agent_context_pilot.json) manifest and

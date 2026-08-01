@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use globset::Glob;
 use toml_edit::DocumentMut;
 
 use crate::coordination::{
@@ -472,13 +471,11 @@ fn validate_context_exclude_paths(patterns: &[String]) -> Result<()> {
                 "context exclusion patterns must not exceed {MAX_CONTEXT_PATH_PATTERN_BYTES} bytes"
             )));
         }
-        if pattern.contains(['*', '?', '[', ']', '{', '}']) {
-            Glob::new(&pattern.replace('\\', "/")).map_err(|error| {
-                Error::InvalidConfiguration(format!(
-                    "invalid context exclusion pattern `{pattern}`: {error}"
-                ))
-            })?;
-        }
+        crate::repository::RepositoryPattern::parse(pattern).map_err(|error| {
+            Error::InvalidConfiguration(format!(
+                "invalid context exclusion pattern `{pattern}`: {error}"
+            ))
+        })?;
     }
     Ok(())
 }

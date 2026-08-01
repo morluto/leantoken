@@ -1,4 +1,5 @@
 /target/
+/.diagnostics/
 /.leantoken/
 *.sqlite
 *.sqlite-shm

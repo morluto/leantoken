@@ -762,6 +762,7 @@ mod tests {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: crate::model::ReadPolicy::Full,
         };
         let response = ReadResponse {
             path: request.path.clone(),
@@ -780,6 +781,8 @@ mod tests {
             content_hash,
             indexed_hash: Some("indexed".into()),
             index_stale: false,
+            index_state: crate::model::ReadIndexState::Current,
+            live_bytes_read: content.len(),
             meta: ResponseMeta {
                 repository_id: "repository".into(),
                 repository_generation: 1,

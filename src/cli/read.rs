@@ -135,6 +135,7 @@ impl From<ReadArgs> for ReadRequest {
             expected_hash: args.expected_hash,
             delta: false,
             receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
         }
     }
 }

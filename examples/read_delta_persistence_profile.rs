@@ -206,6 +206,7 @@ fn request(expected_hash: Option<String>) -> ReadRequest {
         expected_hash,
         delta: true,
         receipt_id: None,
+        policy: leantoken::model::ReadPolicy::Full,
     }
 }
 

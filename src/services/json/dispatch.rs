@@ -224,7 +224,8 @@ impl Services {
             }
             JsonProjection::Schema => {
                 let page = project_schema_page(self, &value, limits.max_items, limits.max_tokens)?;
-                let (value, total, returned, remaining, reason, tokens) = page.into_parts();
+                let (value, total, returned, remaining, reason, tokens, _counters) =
+                    page.into_parts();
                 let completeness = (remaining > 0).then_some((total, returned, remaining, reason));
                 (
                     query_response(

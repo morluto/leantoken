@@ -792,6 +792,7 @@ fn line_read_request(path: &str, receipt_id: Option<String>) -> ReadRequest {
         max_tokens: Some(100),
         expected_hash: None,
         delta: false,
+        policy: leantoken::ReadPolicy::default(),
         receipt_id,
     }
 }

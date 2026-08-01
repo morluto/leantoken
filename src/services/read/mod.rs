@@ -10,8 +10,7 @@ use super::execution_options::RetrievalExecution;
 use super::read_delta::ReadDeltaInput;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, is_lower_hex, validate_input,
-    validate_optional_input,
+    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -102,6 +101,12 @@ pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
         return Err(Error::InvalidInput {
             field: "delta",
             reason: "is supported only for a new line, symbol, or heading target",
+        });
+    }
+    if request.delta && !matches!(request.policy, ReadPolicy::Full) {
+        return Err(Error::InvalidInput {
+            field: "policy",
+            reason: "delta reads require full verification",
         });
     }
     if request.symbol.is_none()
@@ -399,9 +404,6 @@ impl Services {
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
         let target = resolve_read_target(session, indexed.id, request, generation)?;
 
-        // Hash the complete live file and extract the bounded target during
-        // the same stream. Truncated responses retain one verification pass
-        // before issuing a continuation cursor.
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
             &file,
@@ -410,21 +412,36 @@ impl Services {
             target.page_start_byte,
             max_tokens,
             self.config.tokenizer,
+            target.cursor_full,
         )?;
         let snapshot = observation.snapshot;
         let range = observation.range;
-        if target
-            .expected_full_hash
-            .as_deref()
-            .is_some_and(|expected| expected != snapshot.content_hash)
+        let live_bytes_read = snapshot.bytes_read;
+        let full = target.cursor_full;
+        if let (Some(expected), Some(actual)) = (
+            target.expected_full_hash.as_deref(),
+            snapshot.content_hash.as_deref(),
+        ) && expected != actual
         {
             return Err(Error::StaleCursor);
         }
-        let target_end_line = target
+        if let Some(expected_size) = target.expected_file_size
+            && expected_size != snapshot.file_size
+        {
+            return Err(Error::StaleCursor);
+        }
+        if let Some(expected_ns) = target.expected_modified_ns
+            && Some(expected_ns) != snapshot.modified_ns
+        {
+            return Err(Error::StaleCursor);
+        }
+        let observed_target_end_line = target
             .target_end_line
             .unwrap_or(snapshot.end_line)
             .min(snapshot.end_line);
-        if target.target_start_line > target_end_line || target.page_start_line > target_end_line {
+        if target.target_start_line > observed_target_end_line
+            || target.page_start_line > observed_target_end_line
+        {
             return Err(invalid_line_range());
         }
         if range.page_start_line != target.page_start_line {
@@ -443,7 +460,11 @@ impl Services {
                 returned_end_line
             }
         });
-        if truncated {
+        // Truncated full-policy reads re-read the complete file to verify no
+        // concurrent modification occurred between the first pass and cursor
+        // issuance. Bounded reads skip this check because they do not hash the
+        // complete file.
+        if truncated && full {
             let after_read = stream_snapshot(&file)?;
             if after_read.content_hash != snapshot.content_hash
                 || after_read.end_line != snapshot.end_line
@@ -457,17 +478,33 @@ impl Services {
             ReadCursor {
                 generation,
                 target_start_line: target.target_start_line,
-                target_end_line,
+                target_end_line: target.target_end_line,
                 next_start_line,
                 next_byte,
                 full_hash: snapshot.content_hash.clone(),
+                full,
+                file_size: snapshot.file_size,
+                modified_ns: snapshot.modified_ns,
                 path_hash: read_path_hash(&request.path),
             }
             .encode()
         });
         let content_hash = hash(content);
-        let index_stale = indexed.content_hash != snapshot.content_hash;
-        let indexed_hash = Some(indexed.content_hash);
+        let (index_stale, indexed_hash, index_state) = if full {
+            let live_hash = snapshot.content_hash.as_deref().unwrap_or("");
+            let stale = indexed.content_hash != live_hash;
+            (
+                stale,
+                Some(indexed.content_hash),
+                if stale {
+                    ReadIndexState::Stale
+                } else {
+                    ReadIndexState::Current
+                },
+            )
+        } else {
+            (false, None, ReadIndexState::Unknown)
+        };
         let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
         let status = if truncated {
             ReadStatus::Truncated
@@ -482,7 +519,7 @@ impl Services {
                 path: request.path.clone(),
                 status,
                 target_start_line: target.target_start_line,
-                target_end_line,
+                target_end_line: observed_target_end_line,
                 returned_start_line,
                 returned_end_line,
                 truncated,
@@ -495,6 +532,8 @@ impl Services {
                 content_hash,
                 indexed_hash,
                 index_stale,
+                index_state,
+                live_bytes_read,
                 meta: self.meta(
                     generation,
                     if not_modified { 0 } else { emitted_tokens },
@@ -569,7 +608,10 @@ mod tests {
 
         let snapshot = stream_snapshot(&file).expect("snapshot");
 
-        assert_eq!(snapshot.content_hash, hash("first\nsecond\n"));
+        assert_eq!(
+            snapshot.content_hash.as_deref(),
+            Some(hash("first\nsecond\n").as_str())
+        );
         assert_eq!(snapshot.end_line, 2);
     }
 }

@@ -26,12 +26,18 @@ pub(super) fn resolve_read_target(
 ) -> Result<ResolvedReadTarget> {
     if let Some(cursor) = request.continuation_cursor.as_deref() {
         let cursor = parse_read_cursor(cursor, generation, &request.path)?;
+        if cursor.full != matches!(request.policy, ReadPolicy::Full) {
+            return Err(Error::StaleCursor);
+        }
         return Ok(ResolvedReadTarget {
             target_start_line: cursor.target_start_line,
-            target_end_line: Some(cursor.target_end_line),
+            target_end_line: cursor.target_end_line,
             page_start_line: cursor.next_start_line,
             page_start_byte: cursor.next_byte,
-            expected_full_hash: Some(cursor.full_hash),
+            expected_full_hash: cursor.full_hash,
+            expected_file_size: Some(cursor.file_size),
+            expected_modified_ns: cursor.modified_ns,
+            cursor_full: cursor.full,
         });
     }
 
@@ -77,12 +83,26 @@ pub(super) fn resolve_read_target(
         page_start_line: target_start_line,
         page_start_byte: 0,
         expected_full_hash: None,
+        expected_file_size: None,
+        expected_modified_ns: None,
+        cursor_full: matches!(request.policy, ReadPolicy::Full),
     })
+}
+
+fn modified_ns(file: &File) -> Result<Option<u128>> {
+    Ok(file
+        .metadata()?
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos()))
 }
 
 /// Stream a file without loading it into memory and capture its live identity.
 pub(super) fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
     let mut file = file.try_clone()?;
+    let file_size = file.metadata()?.len().try_into().unwrap_or(usize::MAX);
+    let file_modified_ns = modified_ns(&file)?;
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
     let mut hasher = blake3::Hasher::new();
@@ -107,13 +127,22 @@ pub(super) fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
         newline_count.saturating_add(usize::from(!last_byte_was_newline))
     };
     Ok(LiveFileSnapshot {
-        content_hash: hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN]
-            .to_string(),
+        content_hash: Some(
+            hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string(),
+        ),
         end_line,
+        bytes_read: bytes_seen,
+        file_size,
+        modified_ns: file_modified_ns,
     })
 }
 
 /// Hash the live file and read a resolved range in one forward stream.
+///
+/// When `full` is true the complete file is hashed and `content_hash` is
+/// populated. When `full` is false the stream stops as soon as the target
+/// range is satisfied or the token bound is reached, `content_hash` is `None`,
+/// and `bytes_read` reflects only the bytes consumed before early termination.
 pub(super) fn observe_live_range(
     file: &File,
     target_start_line: usize,
@@ -121,8 +150,11 @@ pub(super) fn observe_live_range(
     page_start_byte: usize,
     max_tokens: usize,
     tokenizer: crate::tokens::Tokenizer,
+    full: bool,
 ) -> Result<LiveReadObservation> {
     let mut file = file.try_clone()?;
+    let file_size = file.metadata()?.len().try_into().unwrap_or(usize::MAX);
+    let file_modified_ns = modified_ns(&file)?;
     file.seek(SeekFrom::Start(0))?;
     let mut reader = BufReader::new(file);
     let mut hasher = blake3::Hasher::new();
@@ -145,15 +177,11 @@ pub(super) fn observe_live_range(
         if buffer.is_empty() {
             break;
         }
-        hasher.update(buffer);
-        bytes_seen = bytes_seen.saturating_add(buffer.len());
-        newline_count =
-            newline_count.saturating_add(buffer.iter().filter(|byte| **byte == b'\n').count());
-        last_byte_was_newline = buffer.last() == Some(&b'\n');
-
         let mut validation_chunk = Vec::new();
+        let mut consumed = 0usize;
         if !target_finished {
             for &byte in buffer {
+                consumed = consumed.saturating_add(1);
                 let in_target =
                     current_line >= target_start_line && current_line <= requested_end_line;
                 if in_target {
@@ -176,13 +204,30 @@ pub(super) fn observe_live_range(
                 }
             }
         }
-        let consumed = buffer.len();
+        // For full reads, always consume the entire buffer so the complete file
+        // is hashed. For bounded reads, consume only what the target scan used.
+        if full && consumed < buffer.len() {
+            consumed = buffer.len();
+        }
+        if consumed == 0 {
+            consumed = buffer.len();
+        }
+        let partial_buffer = consumed < buffer.len();
+        let consumed_buffer = &buffer[..consumed];
+        if full {
+            hasher.update(consumed_buffer);
+        }
+        bytes_seen = bytes_seen.saturating_add(consumed);
+        newline_count = newline_count.saturating_add(
+            consumed_buffer
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
+        );
+        last_byte_was_newline = consumed_buffer.last() == Some(&b'\n');
+        let final_chunk = target_finished || consumed == 0 || partial_buffer;
         reader.consume(consumed);
-        validate_utf8_chunk(
-            &mut utf8_pending,
-            &validation_chunk,
-            target_finished || consumed == 0,
-        )?;
+        validate_utf8_chunk(&mut utf8_pending, &validation_chunk, final_chunk)?;
 
         if !token_bound_reached
             && ((target_finished && !final_target_checked)
@@ -217,6 +262,12 @@ pub(super) fn observe_live_range(
                 }
             }
         }
+        // Bounded reads stop as soon as the target is finished or the token
+        // bound is reached. Full reads continue to EOF to hash the complete
+        // file.
+        if !full && (target_finished || token_bound_reached) {
+            break;
+        }
     }
 
     validate_utf8_chunk(&mut utf8_pending, &[], true)?;
@@ -241,9 +292,13 @@ pub(super) fn observe_live_range(
     };
     Ok(LiveReadObservation {
         snapshot: LiveFileSnapshot {
-            content_hash: hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN]
-                .to_string(),
+            content_hash: full.then(|| {
+                hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string()
+            }),
             end_line,
+            bytes_read: bytes_seen,
+            file_size,
+            modified_ns: file_modified_ns,
         },
         range: LiveReadRange {
             content,

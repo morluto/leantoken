@@ -896,6 +896,8 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         }))
     );
 
+    assert_search_option_error_mapping();
+
     let selector = into_mcp_error(crate::Error::InvalidJsonSelector {
         stage: "evaluate",
         offset: 6,
@@ -960,6 +962,55 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
             rmcp::model::ErrorCode::INTERNAL_ERROR
         );
     }
+}
+
+fn assert_search_option_error_mapping() {
+    let search_options = into_mcp_error(crate::incompatible_occurrence_options(
+        crate::SearchMode::Symbol,
+        vec![
+            "all_occurrences=true".into(),
+            "projection=occurrences".into(),
+        ],
+    ));
+    assert_eq!(search_options.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        search_options.data,
+        Some(serde_json::json!({
+            "category": "invalid_input",
+            "field": "all_occurrences",
+            "allowed_modes": ["text", "regex"],
+            "conflicting_options": [
+                "mode=symbol",
+                "all_occurrences=true",
+                "projection=occurrences",
+            ],
+            "examples": {
+                "ranked_symbol": "{\"query\":\"Services\",\"mode\":\"symbol\"}",
+                "exhaustive_text": "{\"query\":\"Services\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}",
+            },
+        }))
+    );
+
+    let exhausted = into_mcp_error(crate::Error::RegexWorkBudgetExceeded {
+        dimension: crate::RegexWorkDimension::CandidateChunks,
+        candidate_files: 10,
+        candidate_chunks: 20_511,
+        candidate_bytes: 1_024,
+        limit: 20_510,
+    });
+    assert_eq!(exhausted.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        exhausted.data,
+        Some(serde_json::json!({
+            "category": "incomplete_work",
+            "complete": false,
+            "limiting_dimension": "candidate_chunks",
+            "candidate_files": 10,
+            "candidate_chunks": 20_511,
+            "candidate_bytes": 1_024,
+            "limit": 20_510,
+        }))
+    );
 }
 
 #[test]
@@ -1950,9 +2001,9 @@ fn compact_projections_map_to_service_requests() {
         .expect("structurally valid exhaustive search request");
         assert!(matches!(
             invalid.validate_limits(McpLimitPolicy::DEFAULT),
-            Err(crate::Error::InvalidInput {
+            Err(crate::Error::InvalidSearchOptions {
                 field: "all_occurrences",
-                reason: "requires text or regex mode"
+                ..
             })
         ));
     }
@@ -1963,9 +2014,9 @@ fn compact_projections_map_to_service_requests() {
     .expect("structurally valid exhaustive search request with default mode");
     assert!(matches!(
         invalid.validate_limits(McpLimitPolicy::DEFAULT),
-        Err(crate::Error::InvalidInput {
+        Err(crate::Error::InvalidSearchOptions {
             field: "all_occurrences",
-            reason: "requires text or regex mode"
+            ..
         })
     ));
 

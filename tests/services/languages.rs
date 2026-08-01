@@ -212,6 +212,7 @@ public sealed class Worker {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified C# symbol read");
@@ -356,6 +357,7 @@ function helper() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("symbol read");
@@ -523,6 +525,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("repeated selector requires an exact outline range");
@@ -544,6 +547,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact top-level selector range");
@@ -567,6 +571,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("structural symbol read");
@@ -676,6 +681,7 @@ Setext
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("Markdown heading read");
@@ -699,6 +705,7 @@ Setext
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("missing duplicate occurrence");
@@ -724,6 +731,7 @@ Setext
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("zero heading occurrence");
@@ -857,6 +865,7 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("LaTeX structured read");

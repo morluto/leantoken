@@ -232,6 +232,7 @@ async fn compare_context_representations() {
                     expected_hash: None,
                     delta: false,
                     receipt_id: None,
+                    policy: leantoken::ReadPolicy::default(),
                 })
                 .await
                 .expect("read context paths");
@@ -335,6 +336,7 @@ async fn compare_context_representations() {
                     expected_hash: None,
                     delta: false,
                     receipt_id: None,
+                    policy: leantoken::ReadPolicy::default(),
                 })
                 .await
                 .expect("read");

@@ -188,7 +188,10 @@ impl Storage {
                 replacements: 0,
                 deletions: HashSet::new(),
             };
-            let output = write(&mut writer)?;
+            let (output, relational_write_ms, relational_write_bytes) =
+                measured_storage_phase(profile, || write(&mut writer))?;
+            diagnostics.relational_write_ms = relational_write_ms;
+            diagnostics.relational_write_bytes = relational_write_bytes;
             let changed = rebuild
                 || writer.replacements > 0
                 || !writer.deletions.is_empty()
@@ -403,4 +406,5 @@ impl Storage {
         Ok(())
     }
 }
+
 use super::*;

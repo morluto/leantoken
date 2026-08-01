@@ -25,7 +25,7 @@ use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
 };
-use crate::{Error, Result, RetrievalLimitKind};
+use crate::{Error, RegexWorkDimension, Result, RetrievalLimitKind};
 
 mod hits;
 mod projection;

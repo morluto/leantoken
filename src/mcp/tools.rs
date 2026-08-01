@@ -57,7 +57,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Search indexed source for symbols, references, identifiers, text, or regex. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true}."
+        description = "Search indexed source for symbols, references, identifiers, text, or regex. mode=symbol is ranked and structural; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: ranked symbol {\"query\":\"InternalFailure\",\"mode\":\"symbol\"}; exhaustive text {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}."
     )]
     async fn leantoken_search(
         &self,

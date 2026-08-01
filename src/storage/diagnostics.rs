@@ -136,10 +136,18 @@ pub struct FtsStorageFootprint {
 /// Storage phases and footprint captured only by profiled reconciliation.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PublicationDiagnostics {
-    /// Import resolution and relational insertion time supplied by the indexer.
+    /// Relational deletes, replacements, and projection writes in the main
+    /// database transaction.
     pub relational_write_ms: f64,
-    /// Linux process write bytes observed during relational insertion.
+    /// Linux process write bytes observed during the main relational writes.
     pub relational_write_bytes: Option<u64>,
+    /// Time spent committing normalized records to the disposable stage
+    /// database outside the production publication transaction.
+    pub stage_write_ms: f64,
+    /// Linux process write bytes observed during stage writes.
+    pub stage_write_bytes: Option<u64>,
+    /// Final file size of the disposable normalized stage database.
+    pub stage_database_bytes: u64,
     /// Chunk word-index rebuild time.
     pub chunk_word_fts_rebuild_ms: f64,
     /// Linux process write bytes observed during the chunk word-index rebuild.

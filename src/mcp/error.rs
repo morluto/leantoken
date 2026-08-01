@@ -61,6 +61,27 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
                 "limit": limit,
             })),
         ),
+        crate::Error::RegexWorkBudgetExceeded {
+            dimension,
+            candidate_files,
+            candidate_chunks,
+            candidate_bytes,
+            limit,
+        } => ErrorData::invalid_params(
+            format!(
+                "regex search stopped after exhausting its bounded candidate-work budget; {}",
+                dimension.guidance()
+            ),
+            Some(serde_json::json!({
+                "category": cause.public_category(),
+                "complete": false,
+                "limiting_dimension": dimension,
+                "candidate_files": candidate_files,
+                "candidate_chunks": candidate_chunks,
+                "candidate_bytes": candidate_bytes,
+                "limit": limit,
+            })),
+        ),
         crate::Error::ResponseBudgetExceeded {
             provided_max_response_tokens,
             minimum_required_response_tokens,
@@ -137,6 +158,27 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             Some(serde_json::json!({
                 "category": cause.public_category(),
                 "field": field,
+            })),
+        ),
+        crate::Error::InvalidSearchOptions {
+            field,
+            allowed_modes,
+            conflicting_options,
+            ranked_symbol_example,
+            exhaustive_text_example,
+        } => ErrorData::invalid_params(
+            format!(
+                "invalid {field}: exhaustive occurrences require text or regex mode; use ranked symbol search or exhaustive text search"
+            ),
+            Some(serde_json::json!({
+                "category": cause.public_category(),
+                "field": field,
+                "allowed_modes": allowed_modes,
+                "conflicting_options": conflicting_options,
+                "examples": {
+                    "ranked_symbol": ranked_symbol_example,
+                    "exhaustive_text": exhaustive_text_example,
+                },
             })),
         ),
         crate::Error::InvalidInputConstraints(violations) => ErrorData::invalid_params(

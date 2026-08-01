@@ -191,12 +191,12 @@ fn glob_entries(
             field: "pattern",
             reason: "is required for glob",
         })?;
-    let normalized_pattern = pattern.replace('\\', "/");
+    let normalized_pattern = crate::repository::RepositoryPattern::parse(pattern)?;
     // Validate with globset even when SQL owns matching, so invalid patterns fail
     // the same way as before.
-    let matcher = Glob::new(&normalized_pattern)?.compile_matcher();
+    let matcher = Glob::new(normalized_pattern.as_str())?.compile_matcher();
     let after = cursor_path(cursor)?;
-    if let Some((primary, alternate)) = sql_glob_patterns(&normalized_pattern) {
+    if let Some((primary, alternate)) = sql_glob_patterns(normalized_pattern.as_str()) {
         check_cancelled(cancellation)?;
         let projected = session.list_glob_paths(
             &primary,
@@ -319,7 +319,7 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
                     field: "pattern",
                     reason: "is required for glob",
                 })?;
-            Glob::new(&pattern.replace('\\', "/"))?;
+            crate::repository::RepositoryPattern::parse(pattern)?;
         }
     }
     validate_files_cursor(request.cursor.as_deref(), &request.operation)?;

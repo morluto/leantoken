@@ -286,11 +286,30 @@ One repository-scoped operation lock serializes reconciliation across processes.
 Discovery, hashing, and membership planning happen before publication. An
 immediate write transaction then verifies that the generation and config used
 to build the plan are still current. A stale plan is discarded and recomputed.
-Each file- and byte-bounded Rayon batch is prepared, resolved, and inserted into
-that one uncommitted transaction before its memory is released. A later parse,
-storage, or cancellation error rolls back every earlier batch. Replacements,
-deletions, and generation advancement become visible together at the final
-commit.
+Preparation — filesystem reads, hashing, parsing, tokenization, import
+resolution, and batch formation — executes **outside** the `BEGIN IMMEDIATE`
+writer transaction. Each bounded preparation batch is written to a
+storage-owned, normalized SQLite database under a temporary directory; Rust
+retains only the active batch and fixed-size counters. The writer transaction
+then opens for the fast publication phase: it streams staged removals and
+complete file records, applies set-based deletions/replacements, rebuilds FTS,
+and advances the generation. This keeps source, chunk, symbol, reference, and
+import payloads out of the publication heap while preserving one atomic
+generation in the production database. A later parse, stage-write, storage, or
+cancellation error removes the temporary stage without affecting the live
+database. A stale baseline detected inside the transaction rolls back all
+publication writes. Replacements, deletions, and generation advancement become
+visible together at the final commit.
+
+The stage uses ordinary rollback-journal SQLite rather than a custom spool
+format. Its schema is versioned and records baseline generation, configuration
+hash, rebuild mode, and source tokenizer alongside normalized child tables.
+Stage-write milliseconds, process write bytes, and temporary database bytes are
+reported separately from the production relational-write phase. These fields
+make the file-backed design a measured memory-and-lock experiment: it is
+retained only when representative profiles show the required transaction-hold
+improvement without a material total-time, RSS, database-size, or
+write-amplification regression.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
@@ -301,11 +320,16 @@ its cancellation token changes afterward. A post-commit cancellation can stop
 later work, but cannot retroactively turn a visible generation into a failed
 reconciliation outcome.
 
-Profiled reconciliation can additionally attribute relational insertion, each
+Profiled reconciliation can additionally attribute normalized stage insertion,
+relational insertion, each
 of the four FTS rebuilds, commit, checkpoint, Linux process write bytes, and
 `dbstat` FTS footprints. It also sums per-file worker durations for reads, text
 preparation, hashing, parsing, whole-file token counting, chunk token counting,
 and record projection. Worker durations overlap and are not wall-clock phases.
+After the phase decomposition, `publication_ms` measures only the `BEGIN
+IMMEDIATE` transaction lifetime (fast writes + FTS rebuilds + commit), not the
+full preparation workload. `preparation_ms` measures the out-of-transaction
+preparation phase. Their sum is bounded by `total_ms`.
 This diagnostic path uses a disposable serialized writer connection with
 automatic checkpointing disabled and performs an explicit post-commit
 `TRUNCATE` checkpoint; the ordinary writer retains normal WAL behavior.
@@ -743,6 +767,9 @@ claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
+| Regex request candidate chunks | 20,510, calibrated at twice the 10,255-chunk boundary-profile maximum |
+| Regex request candidate bytes | 1 GiB, twice the largest representative indexed corpus rounded below the 2 GiB index ceiling |
+| Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
 | Regex candidate-plan aggregate term bytes | 256 |
@@ -880,8 +907,12 @@ Path-scoped plans apply include/exclude filters to lightweight chunk ID/path
 rows before the 10,000-candidate bound, hydrate only admitted IDs, and fail
 explicitly if more than 100,000 FTS rows would need inspection. Both paths
 retain the matching-chunk limit, while the fallback retains its file and
-per-file chunk limits. Compiled regex size and DFA cache are also limited so
-pathological patterns fail closed.
+per-file chunk limits. One request-owned work budget also counts admitted
+candidate files, chunks, and content bytes across either path. Exhaustion
+returns `incomplete_work` with `complete=false`, the limiting dimension, and
+bounded aggregate counters; it never returns an exact occurrence total.
+Compiled regex size and DFA cache are also limited so pathological patterns
+fail closed.
 
 Occurrence grouping is a response projection over the already ranked and
 paginated exhaustive page; it performs no additional repository or SQLite
@@ -1111,8 +1142,11 @@ selects the newest compatible base for the same repository and exact target by
 reverse-scanning at most its existing 128 insertion-order keys. This adds no
 unbounded index, storage, fan-out, or concurrency. An unchanged target returns
 `not_modified`; any coordinate change fails safe to full current content.
-Ordinary reads never consult or populate the registry. Search and outline never
-invent empty successful results at generation zero.
+Ordinary reads never consult or populate the registry. Continuation cursors use
+the version-three shape: their target endpoint is optional, so a bounded
+open-ended page preserves an open target instead of storing the last partially
+scanned line as an artificial EOF. Older cursor versions fail closed. Search
+and outline never invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 
@@ -1322,8 +1356,16 @@ instead of adding a guessed fixed overhead.
 
 ## Path and data safety
 
-All repository-facing paths are relative. Absolute paths, parent traversal,
-NUL bytes, and canonical paths outside the repository root are rejected.
+`RepositoryPath` and `RepositoryPattern` own repository-relative identity.
+They preserve a transparent JSON string representation, normalize both host
+separator styles to `/`, remove redundant `.` and empty components, and reject
+absolute or drive-qualified paths, parent traversal, NUL bytes, empty non-root
+patterns, and configured size/count violations. `RepositoryPatternSet`
+compiles case-sensitive glob syntax once with `globset`; a literal denotes the
+exact path and all descendants. Import resolution uses the path type's
+repository-relative join rather than glob parsing. Query-receipt and index-scope
+identity use the v2 canonicalization domain and therefore fail closed on older
+opaque evidence. Canonical paths outside the repository root are rejected.
 Symlink escapes are rejected when live content is opened. `leantoken.read`
 requires an indexed path, so ignore rules also govern which files can be read
 through the tool.

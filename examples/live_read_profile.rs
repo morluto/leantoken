@@ -440,6 +440,8 @@ fn read_request(target: &ReadTarget, max_tokens: usize) -> ReadRequest {
         expected_hash: None,
         delta: false,
         receipt_id: None,
+        // This profile measures the historical exact freshness contract.
+        policy: leantoken::model::ReadPolicy::Full,
     }
 }
 

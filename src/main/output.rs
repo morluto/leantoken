@@ -21,6 +21,9 @@ pub(super) fn cli_error_message(error: &leantoken::Error) -> String {
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
             format!("{error}; {}", kind.guidance())
         }
+        leantoken::Error::RegexWorkBudgetExceeded { dimension, .. } => {
+            format!("{error}; {}", dimension.guidance())
+        }
         _ => error.to_string(),
     }
 }
@@ -42,9 +45,25 @@ pub(super) struct CliErrorResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     field: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    allowed_modes: Option<&'static [&'static str]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflicting_options: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ranked_symbol_example: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exhaustive_text_example: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     requested: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    complete: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_files: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_chunks: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provided_max_response_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,8 +113,16 @@ pub(super) fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse 
         category,
         stage: None,
         field: None,
+        allowed_modes: None,
+        conflicting_options: None,
+        ranked_symbol_example: None,
+        exhaustive_text_example: None,
         requested: None,
         limit: None,
+        complete: None,
+        candidate_files: None,
+        candidate_chunks: None,
+        candidate_bytes: None,
         provided_max_response_tokens: None,
         minimum_required_response_tokens: None,
         retry_with_at_least: None,
@@ -116,6 +143,7 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
     let (stage, field, requested, limit) = match error {
         leantoken::Error::DoctorFailure { stage, .. } => (Some(*stage), None, None, None),
         leantoken::Error::InvalidInput { field, .. } => (None, Some(*field), None, None),
+        leantoken::Error::InvalidSearchOptions { field, .. } => (None, Some(*field), None, None),
         leantoken::Error::InvalidJson { .. } => (None, Some("path"), None, None),
         leantoken::Error::InvalidJsonSelector { stage, .. } => {
             (Some(*stage), Some("JMESPath expression"), None, None)
@@ -131,6 +159,7 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::RetrievalLimitExceeded {
             observed, limit, ..
         } => (None, None, Some(*observed), Some(*limit)),
+        leantoken::Error::RegexWorkBudgetExceeded { limit, .. } => (None, None, None, Some(*limit)),
         leantoken::Error::ResponseBudgetExceeded {
             provided_max_response_tokens,
             minimum_required_response_tokens,
@@ -176,6 +205,14 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
             (Some(kind.as_str().to_owned()), None, None, None, None, None)
         }
+        leantoken::Error::RegexWorkBudgetExceeded { dimension, .. } => (
+            Some(dimension.as_str().to_owned()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
         _ => (None, None, None, None, None, None),
     };
     let violations = match error {
@@ -184,6 +221,22 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         }
         _ => None,
     };
+    let (allowed_modes, conflicting_options, ranked_symbol_example, exhaustive_text_example) =
+        match error {
+            leantoken::Error::InvalidSearchOptions {
+                allowed_modes,
+                conflicting_options,
+                ranked_symbol_example,
+                exhaustive_text_example,
+                ..
+            } => (
+                Some(*allowed_modes),
+                Some(conflicting_options.clone()),
+                Some(*ranked_symbol_example),
+                Some(*exhaustive_text_example),
+            ),
+            _ => (None, None, None, None),
+        };
     let (
         provided_max_response_tokens,
         minimum_required_response_tokens,
@@ -203,14 +256,36 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         ),
         _ => (None, None, None, None),
     };
+    let (complete, candidate_files, candidate_chunks, candidate_bytes) = match error {
+        leantoken::Error::RegexWorkBudgetExceeded {
+            candidate_files,
+            candidate_chunks,
+            candidate_bytes,
+            ..
+        } => (
+            Some(false),
+            Some(*candidate_files),
+            Some(*candidate_chunks),
+            Some(*candidate_bytes),
+        ),
+        _ => (None, None, None, None),
+    };
 
     CliErrorResponse {
         error: cli_error_message(error),
         category,
         stage,
         field,
+        allowed_modes,
+        conflicting_options,
+        ranked_symbol_example,
+        exhaustive_text_example,
         requested,
         limit,
+        complete,
+        candidate_files,
+        candidate_chunks,
+        candidate_bytes,
         provided_max_response_tokens,
         minimum_required_response_tokens,
         retry_with_at_least,
