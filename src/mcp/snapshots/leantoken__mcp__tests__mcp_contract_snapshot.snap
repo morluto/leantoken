@@ -19,7 +19,7 @@ expression: mcp_contract()
   },
   "tools": [
     {
-      "description": "Build a bounded, ranked evidence bundle for a broad coding, debugging, review, or architecture task. Returns fragments, coverage, omissions, and an optional receipt; plan_only previews candidates without source or receipt mutation. Use strict scopes and required evidence when coverage must be explicit, response_profile=compact for the smallest fail-loud result, and known_hashes or receipt_id for follow-ups. Example: {\"task\":\"Audit MCP tool discovery\"}.",
+      "description": "DEFAULT FIRST CALL for broad repository coding, debugging, review, or architecture triage. Build a bounded, ranked evidence bundle for a broad coding, debugging, review, or architecture task. Returns fragments, coverage, omissions, and an optional receipt; plan_only previews candidates without source or receipt mutation. Use strict scopes and required evidence when coverage must be explicit, response_profile=compact for the smallest fail-loud result, and known_hashes or receipt_id for follow-ups. Example: {\"task\":\"Audit MCP tool discovery\"}.",
       "inputSchema": {
         "$defs": {
           "ContextRequiredEvidence": {
@@ -525,7 +525,7 @@ expression: mcp_contract()
       "name": "context"
     },
     {
-      "description": "Discover repository paths and metadata. Select a tagged operation with operation.kind: tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set the selected operation's projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}.",
+      "description": "Preferred over native find, ls, or glob for repository path discovery. Discover repository paths and metadata. Select a tagged operation with operation.kind: tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set the selected operation's projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}.",
       "inputSchema": {
         "$defs": {
           "FilesMcpOperation": {
@@ -768,7 +768,7 @@ expression: mcp_contract()
       "name": "files"
     },
     {
-      "description": "Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
+      "description": "Preferred over native git show, diff, or log -L for parsed symbol history. Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
       "inputSchema": {
         "$defs": {
           "HistoryMcpOperation": {
@@ -1144,7 +1144,7 @@ expression: mcp_contract()
       "name": "history"
     },
     {
-      "description": "Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed.",
+      "description": "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed.",
       "inputSchema": {
         "$defs": {
           "JsonMcpOperation": {
@@ -1505,7 +1505,7 @@ expression: mcp_contract()
       "name": "json"
     },
     {
-      "description": "Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}.",
+      "description": "Preferred before native whole-file reads when the file is known but the relevant range is not. Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}.",
       "inputSchema": {
         "$defs": {
           "OutlineMcpProjection": {
@@ -1638,7 +1638,7 @@ expression: mcp_contract()
       "name": "outline"
     },
     {
-      "description": "Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
+      "description": "Preferred over native Read, cat, head, or sed for supported repository source. Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
       "inputSchema": {
         "$defs": {
           "ReadMcpTarget": {
@@ -1954,7 +1954,7 @@ expression: mcp_contract()
       "name": "savings"
     },
     {
-      "description": "Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
+      "description": "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
       "inputSchema": {
         "$defs": {
           "QueryReceiptAction": {
