@@ -4,10 +4,22 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
   schedule:
     - cron: "0 3 * * *"
     - cron: "0 4 * * 1"
   workflow_dispatch:
+    inputs:
+      full_run:
+        description: "Select every validation lane"
+        required: false
+        default: false
+        type: boolean
+      diagnostic:
+        description: "Select diagnostic lanes and preserve fallback detail"
+        required: false
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,69 +34,120 @@ concurrency:
 
 jobs:
   changes:
-    name: Detect relevant changes
+    name: Plan CI evidence
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
+      selected_lanes: ${{ steps.plan.outputs.selected_lanes }}
+      unselected_lanes: ${{ steps.plan.outputs.unselected_lanes }}
+      fallback_reason: ${{ steps.plan.outputs.fallback_reason }}
       manifests: ${{ steps.filter.outputs.manifests }}
       npm: ${{ steps.filter.outputs.npm }}
       release: ${{ steps.filter.outputs.release }}
       rust: ${{ steps.filter.outputs.rust }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: Classify changed paths
-        id: filter
-        if: github.event_name != 'schedule'
-        uses: dorny/paths-filter@v4
         with:
-          filters: |
-            manifests:
-              - '**/Cargo.toml'
-              - 'Cargo.lock'
-            rust:
-              - 'src/**'
-              - 'crates/**'
-              - 'xtask/**'
-              - 'tests/**'
-              - 'examples/**'
-              - 'fixtures/**'
-              - 'benchmarks/**/*.json'
-              - 'benchmarks/**/*.jsonl'
-              - 'benchmarks/run_paired_performance.sh'
-              - 'scripts/paired_performance.py'
-              - 'scripts/test_agent_walltime_ab.py'
-              - 'scripts/test_paired_performance.py'
-              - 'README.md'
-              - 'docs/usage.md'
-              - '**/Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              - '.cargo/**'
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/paired-performance.yml'
-            npm:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'npm/**'
-              - 'scripts/build-npm-packages.mjs'
-              - '.github/workflows/ci.yml'
-            release:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'dist-workspace.toml'
-              - '.github/workflows/release.yml'
-              - '.github/workflows/build-npm-packages.yml'
-              - 'npm/**'
-              - 'scripts/build-npm-packages.mjs'
+          fetch-depth: 0
+
+      - name: Install planner Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Resolve event revisions and changed paths
+        id: context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+          MERGE_HEAD: ${{ github.event.merge_group.head_sha }}
+          SOURCE_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          case "$EVENT_NAME" in
+            pull_request) event=pull_request; base="$PR_BASE"; head="$PR_HEAD" ;;
+            merge_group) event=merge_group; base="$MERGE_BASE"; head="$MERGE_HEAD" ;;
+            push) event=push; base="$PUSH_BASE"; head="$SOURCE_HEAD" ;;
+            schedule) event=schedule; base=""; head="$SOURCE_HEAD" ;;
+            workflow_dispatch) event=manual; base=""; head="$SOURCE_HEAD" ;;
+            *) echo "Unsupported event $EVENT_NAME" >&2; exit 1 ;;
+          esac
+          paths="$RUNNER_TEMP/leantoken-changed-paths.txt"
+          : > "$paths"
+          if [[ -n "$base" && "$base" != "0000000000000000000000000000000000000000" ]] && \
+             git cat-file -e "$base^{commit}" 2>/dev/null && git cat-file -e "$head^{commit}" 2>/dev/null; then
+            git diff --name-only -z "$base...$head" > "$paths"
+          elif [[ "$event" == "pull_request" || "$event" == "merge_group" ]]; then
+            echo "::warning::base or head revision is unavailable; planner will use conservative fallback"
+          fi
+          {
+            echo "event=$event"
+            echo "schedule=$EVENT_SCHEDULE"
+            echo "base=$base"
+            echo "head=$head"
+            echo "paths=$paths"
+            if [[ "$event" == "pull_request" && "$PR_FORK" == "true" ]]; then echo "fork=true"; else echo "fork=false"; fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate and validate provider-neutral CI plan
+        id: plan
+        env:
+          EVENT: ${{ steps.context.outputs.event }}
+          BASE: ${{ steps.context.outputs.base }}
+          HEAD: ${{ steps.context.outputs.head }}
+          SCHEDULE: ${{ steps.context.outputs.schedule }}
+          PATHS: ${{ steps.context.outputs.paths }}
+          FORK: ${{ steps.context.outputs.fork }}
+          FULL_RUN: ${{ github.event.inputs.full_run }}
+          DIAGNOSTIC: ${{ github.event.inputs.diagnostic }}
+        shell: bash
+        run: |
+          plan="$RUNNER_TEMP/leantoken-ci-plan.json"
+          overrides=()
+          [[ "$FULL_RUN" == "true" ]] && overrides+=(--full-run)
+          [[ "$DIAGNOSTIC" == "true" ]] && overrides+=(--diagnostic)
+          [[ "$FORK" == "true" ]] && overrides+=(--fork)
+          [[ -n "$SCHEDULE" ]] && overrides+=(--schedule "$SCHEDULE")
+          cargo xtask ci plan \
+            --event "$EVENT" \
+            --base "$BASE" \
+            --head "$HEAD" \
+            --changed-paths-file "$PATHS" \
+            "${overrides[@]}" \
+            --output "$plan"
+          cargo xtask ci validate-plan --input "$plan"
+          echo "selected_lanes=$(jq -c '[.selected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
+          echo "unselected_lanes=$(jq -c '[.unselected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
+          echo "fallback_reason=$(jq -r '.fallback_reason // ""' "$plan")" >> "$GITHUB_OUTPUT"
+          jq '{schema_version, event, schedule, source_revision, topology_digest, selected_lanes, unselected_lanes, fallback_reason}' "$plan" >> "$GITHUB_STEP_SUMMARY"
+          selected=$(jq -r '[.selected_lanes[].lane] | join(",")' "$plan")
+          echo "::notice::Selected CI lanes: $selected"
+
+      - name: Export compatibility selectors
+        id: filter
+        env:
+          SELECTED: ${{ steps.plan.outputs.selected_lanes }}
+        shell: bash
+        run: |
+          has() { jq -e --arg lane "$1" 'index($lane) != null' <<< "$SELECTED" >/dev/null; }
+          echo "manifests=$(has dependency-audit && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "npm=$(has npm && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "release=$(has release-plan && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if has product-linux || has product-macos || has product-windows || has contract || has examples || has coverage; then rust=true; else rust=false; fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
 
   quality:
     name: Code quality checks
     needs: changes
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -158,7 +221,7 @@ jobs:
 
   secret-scan:
     name: Secret scan
-    if: github.event_name != 'schedule'
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -249,7 +312,7 @@ jobs:
   ci:
     name: ${{ matrix.os }}
     needs: changes
-    if: github.event_name != 'schedule' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.npm == 'true')
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.npm == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -278,10 +341,15 @@ jobs:
 
       - name: Cache Rust dependencies
         if: needs.changes.outputs.rust == 'true'
+        id: rust-cache
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci-${{ matrix.os }}
           cache-workspace-crates: true
+
+      - name: Install nextest
+        if: needs.changes.outputs.rust == 'true'
+        uses: taiki-e/install-action@nextest
 
       - name: Test npm installation
         if: needs.changes.outputs.npm == 'true'
@@ -291,7 +359,11 @@ jobs:
       - name: Test product behavior
         if: needs.changes.outputs.rust == 'true'
         timeout-minutes: 15
-        run: cargo xtask test product --parallel
+        run: |
+          started=$(date +%s)
+          cargo xtask test product --parallel
+          elapsed=$(( $(date +%s) - started ))
+          echo "Product nextest lane (${elapsed}s; cache-hit=${{ steps.rust-cache.outputs.cache-hit || 'unknown' }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Test token-economy contract
         if: needs.changes.outputs.rust == 'true'
@@ -309,7 +381,7 @@ jobs:
 
   scheduled-stress:
     name: Nightly stress (${{ matrix.os }})
-    if: github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.full_run || inputs.diagnostic))
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -334,6 +406,9 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -411,7 +486,7 @@ jobs:
 
   required:
     name: Required checks
-    if: always() && github.event_name == 'pull_request'
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     needs:
       - changes
       - quality
@@ -438,6 +513,9 @@ jobs:
       RELEASE_CHANGED: ${{ needs.changes.outputs.release }}
       RUST_CHANGED: ${{ needs.changes.outputs.rust }}
       NPM_CHANGED: ${{ needs.changes.outputs.npm }}
+      SELECTED_LANES: ${{ needs.changes.outputs.selected_lanes }}
+      UNSELECTED_LANES: ${{ needs.changes.outputs.unselected_lanes }}
+      FALLBACK_REASON: ${{ needs.changes.outputs.fallback_reason }}
     steps:
       - name: Verify relevant jobs passed
         run: |
@@ -452,6 +530,19 @@ jobs:
             fi
           }
 
+          result_for_lane() {
+            case "$1" in
+              quality) echo "$QUALITY_RESULT" ;;
+              secret-scan) echo "$SECRET_SCAN_RESULT" ;;
+              product-linux|product-macos|product-windows|contract|npm) echo "$PRODUCT_RESULT" ;;
+              examples) echo "$EXAMPLE_TESTS_RESULT" ;;
+              coverage) echo "$COVERAGE_RESULT" ;;
+              dependency-audit) echo "$DEPENDENCY_AUDIT_RESULT" ;;
+              release-plan) echo "$RELEASE_PLAN_RESULT" ;;
+              *) echo invalid-plan ;;
+            esac
+          }
+
           require_when() {
             local condition="$1"
             local name="$2"
@@ -464,7 +555,26 @@ jobs:
             fi
           }
 
-          require_success "change classification" "$CHANGES_RESULT"
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "::error::invalid-plan: planner finished with result '$CHANGES_RESULT'"
+            exit 1
+          fi
+          if [[ -n "$FALLBACK_REASON" ]]; then
+            echo "::warning::planner fallback: $FALLBACK_REASON"
+          fi
+          echo 'Selected lane decisions:'
+          while IFS= read -r lane; do
+            result=$(result_for_lane "$lane")
+            case "$result" in
+              success) echo "- $lane: passed" ;;
+              skipped) echo "- $lane: unexpectedly skipped"; failed=1 ;;
+              cancelled|failure|timed_out) echo "- $lane: failed/cancelled ($result)"; failed=1 ;;
+              *) echo "- $lane: invalid-plan ($result)"; failed=1 ;;
+            esac
+          done < <(jq -r '.[]' <<< "$SELECTED_LANES")
+          while IFS= read -r lane; do
+            echo "- $lane: intentionally unselected"
+          done < <(jq -r '.[]' <<< "$UNSELECTED_LANES")
           require_success "code quality" "$QUALITY_RESULT"
           require_success "secret scan" "$SECRET_SCAN_RESULT"
           require_when "$MANIFESTS_CHANGED" "dependency audit" "$DEPENDENCY_AUDIT_RESULT"

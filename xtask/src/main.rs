@@ -1,3 +1,4 @@
+mod ci;
 #[allow(
     dead_code,
     reason = "the shared fixture type exposes paths used by the test harness"
@@ -22,6 +23,7 @@ const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
 const PRODUCT_PARALLEL_LANES: usize = 2;
+const PARALLEL_NEXTTEST_JOBS: &str = "2";
 const PRODUCT_PHASE_NAMES: [&str; 4] = [
     "library and binary units",
     "ordinary integration",
@@ -44,6 +46,7 @@ fn run() -> Result<(), XtaskError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("check-test-architecture") => check_architecture(&root),
+        Some("ci") => ci::run(&root, args.collect()).map_err(XtaskError::Architecture),
         Some("test") => run_test_command(&root, args.collect()),
         Some("test-focused") => focused_test_command(&root, args.collect()),
         Some(command) => Err(XtaskError::Usage(format!("unknown command `{command}`"))),
@@ -323,8 +326,7 @@ fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
 }
 
 fn fixture_test_command() -> Vec<String> {
-    cargo_command([
-        "test",
+    nextest_command([
         "--locked",
         "--workspace",
         "--exclude",
@@ -476,8 +478,7 @@ struct TestPlan {
 impl TestPlan {
     fn for_workspace(root: &Path) -> Result<Self, XtaskError> {
         let mut commands = vec![
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--workspace",
                 "--exclude",
@@ -485,24 +486,26 @@ impl TestPlan {
                 "--all-features",
                 "--lib",
                 "--bins",
+                "-j",
+                PARALLEL_NEXTTEST_JOBS,
                 "--",
                 "--skip",
                 "tests::checked_in_fixture_cases_match",
             ]),
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
                 "--all-features",
                 "--test",
                 "integration",
+                "-j",
+                PARALLEL_NEXTTEST_JOBS,
                 "--",
                 "--skip",
                 "process::",
             ]),
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
@@ -510,8 +513,8 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "process::",
-                "--",
-                "--test-threads=2",
+                "-j",
+                process_test_jobs(),
             ]),
         ];
         if has_checked_in_fixtures(root)? {
@@ -537,8 +540,7 @@ impl TestPlan {
             ));
         }
         Ok(Self {
-            commands: vec![cargo_command([
-                "test",
+            commands: vec![nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
@@ -546,17 +548,15 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "process::",
-                "--",
-                "--test-threads=2",
+                "-j",
+                process_test_jobs(),
             ])],
             repetitions,
         })
     }
     fn profile() -> Self {
         Self {
-            commands: vec![cargo_command([
-                "nextest",
-                "run",
+            commands: vec![nextest_command([
                 "--locked",
                 "--workspace",
                 "--exclude",
@@ -583,6 +583,25 @@ fn cargo_command<const N: usize>(args: [&str; N]) -> Vec<String> {
     std::iter::once("cargo".to_owned())
         .chain(args.into_iter().map(str::to_owned))
         .collect()
+}
+
+fn nextest_command<const N: usize>(args: [&str; N]) -> Vec<String> {
+    std::iter::once("cargo".to_owned())
+        .chain(["nextest".to_owned(), "run".to_owned()])
+        .chain(args.into_iter().map(str::to_owned))
+        .collect()
+}
+
+fn process_test_jobs() -> &'static str {
+    process_test_jobs_for_os(std::env::consts::OS)
+}
+
+fn process_test_jobs_for_os(os: &str) -> &'static str {
+    match os {
+        "macos" => "3",
+        "linux" | "windows" => "4",
+        _ => "2",
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -612,6 +631,7 @@ struct Target {
 }
 
 fn check_architecture(root: &Path) -> Result<(), XtaskError> {
+    ci::check_topology(root).map_err(XtaskError::Architecture)?;
     let output = Command::new("cargo")
         .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
         .current_dir(root)
@@ -1009,8 +1029,9 @@ impl From<FixtureError> for XtaskError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BENCHMARKS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError, listed_test_count,
-        run_parallel_product_plan, valid_fixture_identity, workspace_root,
+        BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
+        listed_test_count, process_test_jobs_for_os, run_parallel_product_plan,
+        valid_fixture_identity, workspace_root,
     };
     use std::fs;
 
@@ -1042,7 +1063,18 @@ mod tests {
         );
         assert!(!plan.commands[0].contains(&"process::".to_owned()));
         assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"process::".to_owned()));
-        assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"--test-threads=2".to_owned()));
+        assert!(
+            plan.commands[PRODUCT_PARALLEL_LANES]
+                .windows(2)
+                .any(|args| args == ["-j", process_test_jobs_for_os(std::env::consts::OS)])
+        );
+        for command in &plan.commands[..PRODUCT_PARALLEL_LANES] {
+            assert!(
+                command
+                    .windows(2)
+                    .any(|args| args == ["-j", PARALLEL_NEXTTEST_JOBS])
+            );
+        }
         assert!(
             plan.commands
                 .iter()
@@ -1059,6 +1091,14 @@ mod tests {
                 && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
                 && command.contains(&"--exact".to_owned())
         }));
+    }
+
+    #[test]
+    fn process_worker_bound_matches_supported_runner_capacity() {
+        assert_eq!(process_test_jobs_for_os("macos"), "3");
+        assert_eq!(process_test_jobs_for_os("linux"), "4");
+        assert_eq!(process_test_jobs_for_os("windows"), "4");
+        assert_eq!(process_test_jobs_for_os("freebsd"), "2");
     }
 
     #[test]

@@ -1506,9 +1506,10 @@ use the same workspace feature graph so the exact phase reuses the compiled
 harness; the development-profile fixture binary remains available only for
 targeted run and bless operations.
 The product test orchestrator may overlap exactly two Cargo children: the
-library/binary unit lane and ordinary integration lane. It waits for both
-before starting executable/MCP process behavior, whose libtest concurrency
-remains capped at two, and then runs the fixture aggregate serially. Any
+library/binary unit lane and ordinary integration lane, each with two nextest
+workers. It waits for both before starting executable/MCP process behavior,
+whose nextest concurrency uses three workers on macOS and four on Linux or
+Windows, and then runs the fixture aggregate serially. Any
 parallel-lane failure prevents later phases and is reported with its original
 child exit code.
 

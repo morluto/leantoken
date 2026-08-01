@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "max_matrix_entries": 32,
+  "known_paths": [
+    "src/",
+    "crates/",
+    "xtask/",
+    "tests/",
+    "examples/",
+    "fixtures/",
+    "benchmarks/",
+    "scripts/",
+    "docs/",
+    ".github/",
+    ".cargo/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "README.md",
+    "AGENTS.md",
+    "dist-workspace.toml",
+    "package.json",
+    "package-lock.json"
+  ],
+  "lanes": [
+    {
+      "id": "quality",
+      "owner": "repository static validation",
+      "required_events": ["pull_request", "merge_group", "push", "schedule", "manual"],
+      "paths": [],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": []
+    },
+    {
+      "id": "secret-scan",
+      "owner": "repository contents",
+      "required_events": ["pull_request", "merge_group", "push", "schedule", "manual"],
+      "paths": [],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": []
+    },
+    {
+      "id": "product-linux",
+      "owner": "product and process behavior on Linux",
+      "required_events": ["merge_group", "push", "schedule", "manual"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "product-macos",
+      "owner": "product and process behavior on macOS",
+      "required_events": ["merge_group", "push", "schedule", "manual"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "matrix": [{"name": "macos-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "product-windows",
+      "owner": "product and process behavior on Windows",
+      "required_events": ["merge_group", "push", "schedule", "manual"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "matrix": [{"name": "windows-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "contract",
+      "owner": "token-economy and executable contracts",
+      "required_events": ["merge_group", "push", "schedule", "manual"],
+      "paths": ["src/", "crates/", "tests/", "fixtures/", "Cargo.toml", "Cargo.lock"],
+      "matrix": [{"name": "ubuntu-latest"}, {"name": "macos-latest"}, {"name": "windows-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "examples",
+      "owner": "benchmark and example contracts",
+      "required_events": ["merge_group", "push", "schedule", "manual"],
+      "paths": ["examples/", "crates/benchmarks/", "benchmarks/", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "coverage",
+      "owner": "instrumented Rust behavior",
+      "required_events": ["schedule", "manual"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "fixtures/", "Cargo.toml", "Cargo.lock"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "dependency-audit",
+      "owner": "locked dependency graph",
+      "required_events": ["schedule", "manual"],
+      "paths": ["Cargo.toml", "Cargo.lock", "**/Cargo.toml"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": []
+    },
+    {
+      "id": "release-plan",
+      "owner": "release packaging inputs",
+      "required_events": ["manual"],
+      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "dist-workspace.toml", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": []
+    },
+    {
+      "id": "npm",
+      "owner": "npm packaging and installation",
+      "required_events": ["merge_group", "push", "manual"],
+      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": ["quality"]
+    },
+    {
+      "id": "scheduled-stress",
+      "owner": "repeated process lifecycle variation",
+      "required_events": ["schedule"],
+      "paths": [],
+      "schedule": "0 3 * * *",
+      "matrix": [{"name": "ubuntu-latest"}, {"name": "macos-latest"}, {"name": "windows-latest"}],
+      "depends_on": []
+    },
+    {
+      "id": "scheduled-profile",
+      "owner": "timing and slow-test diagnostics",
+      "required_events": ["schedule", "manual"],
+      "paths": [],
+      "schedule": "0 4 * * 1",
+      "matrix": [{"name": "ubuntu-latest"}],
+      "depends_on": []
+    }
+  ]
+}

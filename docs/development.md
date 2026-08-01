@@ -18,6 +18,13 @@ Local hooks deliberately do not compile the project or run tests. The full
 lint and test gates run in GitHub Actions, where they do not block commits or
 the first push.
 
+Install `cargo-nextest` when running the complete local product suite; CI
+installs the repository's nextest release automatically:
+
+```bash
+cargo install cargo-nextest --locked
+```
+
 An older checkout may still have the retired push-hook wrapper installed. It
 can be removed once with:
 
@@ -89,10 +96,12 @@ concatenation pattern cannot return.
 
 The runner sequences units, ordinary domain integration, and process-heavy
 tests. CI uses `cargo xtask test product --parallel` to overlap only the
-library/binary unit lane and ordinary integration lane. At most two Cargo child
-processes run concurrently; process-heavy executable/MCP behavior and the exact
-fixture aggregate remain serial after both lanes succeed. The runner prints
-per-lane elapsed time and preserves child exit codes. It also owns exact
+library/binary unit lane and ordinary integration lane; those phases use
+`cargo-nextest` with two workers each (a maximum of four across the overlap),
+while process-heavy executable/MCP behavior uses three nextest workers on macOS
+and four on Linux or Windows; the exact fixture aggregate remains serial after
+both lanes succeed. Doctests stay on their explicit Cargo command. The runner
+prints per-lane elapsed time and preserves child exit codes. It also owns exact
 fixture selection and the opt-in profile/stress commands.
 
 Checked-in fixtures run as one aggregate in the existing test profile. The unit
@@ -118,9 +127,10 @@ its fixture. CI runs it on every supported OS for every Rust change:
 cargo test-contract
 ```
 
-This full local command uses two test workers so process-heavy MCP tests do not
-multiply child-process load on smaller machines. Focused tests retain Cargo's
-normal host parallelism.
+This full local command uses a platform-aware process-test bound: three workers
+on macOS and four on Linux or Windows. That keeps child-process load bounded
+while using the standard runner capacity. Focused tests retain Cargo's normal
+host parallelism.
 
 Benchmark and example tests are a separate target group because Cargo executes
 test binaries serially. Run them when changing `examples/`, benchmark fixtures,
@@ -238,9 +248,10 @@ cargo test-contract
 CI also runs benchmark, example, and documentation tests once on Linux. On
 Linux, macOS, and Windows it runs library and binary unit tests, ordinary
 integration behavior, and executable/MCP process behavior with per-lane elapsed
-summaries from xtask. The process-heavy phase uses two test workers because
-each test can start several child processes; ordinary tests retain the runner's
-default parallelism. Rust changes also run the instrumented coverage gate in
+summaries from xtask. The process-heavy phase uses three workers on macOS and
+four on Linux or Windows because each test can start several child processes;
+ordinary tests retain the runner's default parallelism. Rust changes also run
+the instrumented coverage gate in
 parallel (50% line floor; the opt-in `concurrency_profile` harness is excluded).
 The token-economy contract runs separately on all three operating systems.
 A pull request is not ready to merge until its required CI checks pass.

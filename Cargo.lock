@@ -1085,11 +1085,15 @@ dependencies = [
 [[package]]
 name = "leantoken-test-support"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "leantoken-xtask"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "serde",
  "serde_json",
 ]
