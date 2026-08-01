@@ -10,11 +10,11 @@
 <a href=#10 id=10 data-nosnippet>10</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) expected_repository_id: <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Repository-relative UTF-8 source file.
 <a href=#12 id=12 data-nosnippet>12</a>    </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#13 id=13 data-nosnippet>13</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) path: String,
+<a href=#13 id=13 data-nosnippet>13</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) path: RepositoryPath,
 <a href=#14 id=14 data-nosnippet>14</a>    <span class="doccomment">/// Exact symbol, document heading, line range, or continuation to read.
 <a href=#15 id=15 data-nosnippet>15</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) target: ReadMcpTarget,
 <a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Maximum source tokens to return (default 8000, maximum 32000).
-<a href=#17 id=17 data-nosnippet>17</a>    </span><span class="attr">#[serde(default, deserialize_with = <span class="string">"deserialize_optional_limit"</span>)]
+<a href=#17 id=17 data-nosnippet>17</a>    </span><span class="attr">#[serde(default)]
 <a href=#18 id=18 data-nosnippet>18</a>    #[schemars(schema_with = <span class="string">"token_limit_schema"</span>, default = <span class="string">"default_token_option"</span>)]
 <a href=#19 id=19 data-nosnippet>19</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) max_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Maximum tokens in the final serialized service response.
@@ -50,94 +50,100 @@
 <a href=#50 id=50 data-nosnippet>50</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">enum </span>ReadMcpTarget {
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="doccomment">/// Read one indexed symbol definition.
 <a href=#52 id=52 data-nosnippet>52</a>    </span>Symbol {
-<a href=#53 id=53 data-nosnippet>53</a>        <span class="doccomment">/// Exact indexed symbol name.
-<a href=#54 id=54 data-nosnippet>54</a>        </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#55 id=55 data-nosnippet>55</a>        </span>name: String,
-<a href=#56 id=56 data-nosnippet>56</a>    },
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// Read one indexed Markdown or LaTeX section by exact title or outline signature.
-<a href=#58 id=58 data-nosnippet>58</a>    </span>Heading {
-<a href=#59 id=59 data-nosnippet>59</a>        <span class="doccomment">/// Exact title or outline signature such as `## Performance` or `\section{Method}`.
-<a href=#60 id=60 data-nosnippet>60</a>        </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#61 id=61 data-nosnippet>61</a>        </span>name: String,
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="doccomment">/// One-based occurrence when the heading text is duplicated.
-<a href=#63 id=63 data-nosnippet>63</a>        </span><span class="attr">#[serde(default = <span class="string">"default_heading_occurrence"</span>)]
-<a href=#64 id=64 data-nosnippet>64</a>        #[schemars(default = <span class="string">"default_heading_occurrence"</span>, range(min = <span class="number">1</span>))]
-<a href=#65 id=65 data-nosnippet>65</a>        </span>occurrence: usize,
-<a href=#66 id=66 data-nosnippet>66</a>    },
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Read one inclusive one-based line range.
-<a href=#68 id=68 data-nosnippet>68</a>    </span>Lines {
-<a href=#69 id=69 data-nosnippet>69</a>        <span class="doccomment">/// First one-based line.
-<a href=#70 id=70 data-nosnippet>70</a>        </span><span class="attr">#[schemars(range(min = <span class="number">1</span>))]
-<a href=#71 id=71 data-nosnippet>71</a>        </span>start: usize,
-<a href=#72 id=72 data-nosnippet>72</a>        <span class="doccomment">/// Last one-based line; must be at least `start`.
-<a href=#73 id=73 data-nosnippet>73</a>        </span><span class="attr">#[schemars(range(min = <span class="number">1</span>))]
-<a href=#74 id=74 data-nosnippet>74</a>        </span>end: usize,
-<a href=#75 id=75 data-nosnippet>75</a>    },
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Continue a truncated read without losing a partial final line.
-<a href=#77 id=77 data-nosnippet>77</a>    </span>Continuation {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="doccomment">/// Opaque cursor from the preceding truncated response.
-<a href=#79 id=79 data-nosnippet>79</a>        </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">256</span>))]
-<a href=#80 id=80 data-nosnippet>80</a>        </span>cursor: String,
-<a href=#81 id=81 data-nosnippet>81</a>    },
-<a href=#82 id=82 data-nosnippet>82</a>}
-<a href=#83 id=83 data-nosnippet>83</a>
-<a href=#84 id=84 data-nosnippet>84</a><span class="kw">impl </span>ReadMcpRequest {
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>validate_limits(<span class="kw-2">&amp;</span><span class="self">self</span>, limits: McpLimitPolicy) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
-<a href=#86 id=86 data-nosnippet>86</a>        validate_optional_positive_limit(<span class="string">"max_tokens"</span>, <span class="self">self</span>.max_tokens, limits.max_output_tokens)<span class="question-mark">?</span>;
-<a href=#87 id=87 data-nosnippet>87</a>        validate_optional_positive_limit(
-<a href=#88 id=88 data-nosnippet>88</a>            <span class="string">"max_response_tokens"</span>,
-<a href=#89 id=89 data-nosnippet>89</a>            <span class="self">self</span>.max_response_tokens,
-<a href=#90 id=90 data-nosnippet>90</a>            limits.max_response_tokens,
-<a href=#91 id=91 data-nosnippet>91</a>        )<span class="question-mark">?</span>;
-<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.target, ReadMcpTarget::Heading { occurrence: <span class="number">0</span>, .. }) {
-<a href=#93 id=93 data-nosnippet>93</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">crate</span>::Error::InvalidInput {
-<a href=#94 id=94 data-nosnippet>94</a>                field: <span class="string">"heading occurrence"</span>,
-<a href=#95 id=95 data-nosnippet>95</a>                reason: <span class="string">"must be one-based"</span>,
-<a href=#96 id=96 data-nosnippet>96</a>            });
-<a href=#97 id=97 data-nosnippet>97</a>        }
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="prelude-val">Ok</span>(())
-<a href=#99 id=99 data-nosnippet>99</a>    }
-<a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>into_parts(
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="self">self</span>,
-<a href=#103 id=103 data-nosnippet>103</a>    ) -&gt; (
-<a href=#104 id=104 data-nosnippet>104</a>        ReadRequest,
-<a href=#105 id=105 data-nosnippet>105</a>        IndexConsistency,
-<a href=#106 id=106 data-nosnippet>106</a>        ServiceCallOptions,
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#108 id=108 data-nosnippet>108</a>    ) {
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span>(start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
-<a href=#110 id=110 data-nosnippet>110</a>            <span class="kw">match </span><span class="self">self</span>.target {
-<a href=#111 id=111 data-nosnippet>111</a>                ReadMcpTarget::Symbol { name } =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(name), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
-<a href=#112 id=112 data-nosnippet>112</a>                ReadMcpTarget::Heading { name, occurrence } =&gt; {
-<a href=#113 id=113 data-nosnippet>113</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(name), <span class="prelude-val">Some</span>(occurrence), <span class="prelude-val">None</span>)
-<a href=#114 id=114 data-nosnippet>114</a>                }
-<a href=#115 id=115 data-nosnippet>115</a>                ReadMcpTarget::Lines { start, end } =&gt; {
-<a href=#116 id=116 data-nosnippet>116</a>                    (<span class="prelude-val">Some</span>(start), <span class="prelude-val">Some</span>(end), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
-<a href=#117 id=117 data-nosnippet>117</a>                }
-<a href=#118 id=118 data-nosnippet>118</a>                ReadMcpTarget::Continuation { cursor } =&gt; {
-<a href=#119 id=119 data-nosnippet>119</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(cursor))
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="doccomment">/// Structured indexed symbol identity.
+<a href=#54 id=54 data-nosnippet>54</a>        </span>identity: SymbolIdentity,
+<a href=#55 id=55 data-nosnippet>55</a>    },
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// Read one indexed Markdown or LaTeX section by exact title or outline signature.
+<a href=#57 id=57 data-nosnippet>57</a>    </span>Heading {
+<a href=#58 id=58 data-nosnippet>58</a>        <span class="doccomment">/// Exact title or outline signature such as `## Performance` or `\section{Method}`.
+<a href=#59 id=59 data-nosnippet>59</a>        </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
+<a href=#60 id=60 data-nosnippet>60</a>        </span>name: String,
+<a href=#61 id=61 data-nosnippet>61</a>        <span class="doccomment">/// One-based occurrence when the heading text is duplicated.
+<a href=#62 id=62 data-nosnippet>62</a>        </span><span class="attr">#[serde(default = <span class="string">"default_heading_occurrence"</span>)]
+<a href=#63 id=63 data-nosnippet>63</a>        #[schemars(default = <span class="string">"default_heading_occurrence"</span>, range(min = <span class="number">1</span>))]
+<a href=#64 id=64 data-nosnippet>64</a>        </span>occurrence: usize,
+<a href=#65 id=65 data-nosnippet>65</a>    },
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Read one inclusive one-based line range.
+<a href=#67 id=67 data-nosnippet>67</a>    </span>Lines {
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="doccomment">/// First one-based line.
+<a href=#69 id=69 data-nosnippet>69</a>        </span><span class="attr">#[schemars(range(min = <span class="number">1</span>))]
+<a href=#70 id=70 data-nosnippet>70</a>        </span>start: usize,
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="doccomment">/// Last one-based line; must be at least `start`.
+<a href=#72 id=72 data-nosnippet>72</a>        </span><span class="attr">#[schemars(range(min = <span class="number">1</span>))]
+<a href=#73 id=73 data-nosnippet>73</a>        </span>end: usize,
+<a href=#74 id=74 data-nosnippet>74</a>    },
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Continue a truncated read without losing a partial final line.
+<a href=#76 id=76 data-nosnippet>76</a>    </span>Continuation {
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="doccomment">/// Opaque cursor from the preceding truncated response.
+<a href=#78 id=78 data-nosnippet>78</a>        </span><span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">256</span>))]
+<a href=#79 id=79 data-nosnippet>79</a>        </span>cursor: String,
+<a href=#80 id=80 data-nosnippet>80</a>    },
+<a href=#81 id=81 data-nosnippet>81</a>}
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">impl </span>ReadMcpRequest {
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>validate_limits(<span class="kw-2">&amp;</span><span class="self">self</span>, limits: McpLimitPolicy) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>        validate_optional_positive_limit(<span class="string">"max_tokens"</span>, <span class="self">self</span>.max_tokens, limits.max_output_tokens)<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>        validate_optional_positive_limit(
+<a href=#87 id=87 data-nosnippet>87</a>            <span class="string">"max_response_tokens"</span>,
+<a href=#88 id=88 data-nosnippet>88</a>            <span class="self">self</span>.max_response_tokens,
+<a href=#89 id=89 data-nosnippet>89</a>            limits.max_response_tokens,
+<a href=#90 id=90 data-nosnippet>90</a>        )<span class="question-mark">?</span>;
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="kw">if </span><span class="macro">matches!</span>(<span class="self">self</span>.target, ReadMcpTarget::Heading { occurrence: <span class="number">0</span>, .. }) {
+<a href=#92 id=92 data-nosnippet>92</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">crate</span>::Error::InvalidInput {
+<a href=#93 id=93 data-nosnippet>93</a>                field: <span class="string">"heading occurrence"</span>,
+<a href=#94 id=94 data-nosnippet>94</a>                reason: <span class="string">"must be one-based"</span>,
+<a href=#95 id=95 data-nosnippet>95</a>            });
+<a href=#96 id=96 data-nosnippet>96</a>        }
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="prelude-val">Ok</span>(())
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>into_parts(
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="self">self</span>,
+<a href=#102 id=102 data-nosnippet>102</a>    ) -&gt; (
+<a href=#103 id=103 data-nosnippet>103</a>        ReadRequest,
+<a href=#104 id=104 data-nosnippet>104</a>        IndexConsistency,
+<a href=#105 id=105 data-nosnippet>105</a>        ServiceCallOptions,
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#107 id=107 data-nosnippet>107</a>    ) {
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>(start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
+<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">match </span><span class="self">self</span>.target {
+<a href=#110 id=110 data-nosnippet>110</a>                ReadMcpTarget::Symbol { identity } =&gt; (
+<a href=#111 id=111 data-nosnippet>111</a>                    <span class="prelude-val">None</span>,
+<a href=#112 id=112 data-nosnippet>112</a>                    <span class="prelude-val">None</span>,
+<a href=#113 id=113 data-nosnippet>113</a>                    <span class="prelude-val">Some</span>(identity.qualified_name()),
+<a href=#114 id=114 data-nosnippet>114</a>                    <span class="prelude-val">None</span>,
+<a href=#115 id=115 data-nosnippet>115</a>                    <span class="prelude-val">None</span>,
+<a href=#116 id=116 data-nosnippet>116</a>                    <span class="prelude-val">None</span>,
+<a href=#117 id=117 data-nosnippet>117</a>                ),
+<a href=#118 id=118 data-nosnippet>118</a>                ReadMcpTarget::Heading { name, occurrence } =&gt; {
+<a href=#119 id=119 data-nosnippet>119</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(name), <span class="prelude-val">Some</span>(occurrence), <span class="prelude-val">None</span>)
 <a href=#120 id=120 data-nosnippet>120</a>                }
-<a href=#121 id=121 data-nosnippet>121</a>            };
-<a href=#122 id=122 data-nosnippet>122</a>        (
-<a href=#123 id=123 data-nosnippet>123</a>            ReadRequest {
-<a href=#124 id=124 data-nosnippet>124</a>                path: <span class="self">self</span>.path,
-<a href=#125 id=125 data-nosnippet>125</a>                start_line,
-<a href=#126 id=126 data-nosnippet>126</a>                end_line,
-<a href=#127 id=127 data-nosnippet>127</a>                symbol,
-<a href=#128 id=128 data-nosnippet>128</a>                heading,
-<a href=#129 id=129 data-nosnippet>129</a>                heading_occurrence,
-<a href=#130 id=130 data-nosnippet>130</a>                continuation_cursor,
-<a href=#131 id=131 data-nosnippet>131</a>                max_tokens: <span class="self">self</span>.max_tokens,
-<a href=#132 id=132 data-nosnippet>132</a>                expected_hash: <span class="self">self</span>.expected_hash,
-<a href=#133 id=133 data-nosnippet>133</a>                delta: <span class="self">self</span>.delta,
-<a href=#134 id=134 data-nosnippet>134</a>                receipt_id: <span class="self">self</span>.receipt_id,
-<a href=#135 id=135 data-nosnippet>135</a>                policy: <span class="self">self</span>.policy,
-<a href=#136 id=136 data-nosnippet>136</a>            },
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="self">self</span>.consistency,
-<a href=#138 id=138 data-nosnippet>138</a>            service_call_options(<span class="self">self</span>.max_response_tokens),
-<a href=#139 id=139 data-nosnippet>139</a>            <span class="self">self</span>.expected_repository_id,
-<a href=#140 id=140 data-nosnippet>140</a>        )
-<a href=#141 id=141 data-nosnippet>141</a>    }
-<a href=#142 id=142 data-nosnippet>142</a>}
+<a href=#121 id=121 data-nosnippet>121</a>                ReadMcpTarget::Lines { start, end } =&gt; {
+<a href=#122 id=122 data-nosnippet>122</a>                    (<span class="prelude-val">Some</span>(start), <span class="prelude-val">Some</span>(end), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+<a href=#123 id=123 data-nosnippet>123</a>                }
+<a href=#124 id=124 data-nosnippet>124</a>                ReadMcpTarget::Continuation { cursor } =&gt; {
+<a href=#125 id=125 data-nosnippet>125</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(cursor))
+<a href=#126 id=126 data-nosnippet>126</a>                }
+<a href=#127 id=127 data-nosnippet>127</a>            };
+<a href=#128 id=128 data-nosnippet>128</a>        (
+<a href=#129 id=129 data-nosnippet>129</a>            ReadRequest {
+<a href=#130 id=130 data-nosnippet>130</a>                path: <span class="self">self</span>.path.into_string(),
+<a href=#131 id=131 data-nosnippet>131</a>                start_line,
+<a href=#132 id=132 data-nosnippet>132</a>                end_line,
+<a href=#133 id=133 data-nosnippet>133</a>                symbol,
+<a href=#134 id=134 data-nosnippet>134</a>                heading,
+<a href=#135 id=135 data-nosnippet>135</a>                heading_occurrence,
+<a href=#136 id=136 data-nosnippet>136</a>                continuation_cursor,
+<a href=#137 id=137 data-nosnippet>137</a>                max_tokens: <span class="self">self</span>.max_tokens,
+<a href=#138 id=138 data-nosnippet>138</a>                expected_hash: <span class="self">self</span>.expected_hash,
+<a href=#139 id=139 data-nosnippet>139</a>                delta: <span class="self">self</span>.delta,
+<a href=#140 id=140 data-nosnippet>140</a>                receipt_id: <span class="self">self</span>.receipt_id,
+<a href=#141 id=141 data-nosnippet>141</a>                policy: <span class="self">self</span>.policy,
+<a href=#142 id=142 data-nosnippet>142</a>            },
+<a href=#143 id=143 data-nosnippet>143</a>            <span class="self">self</span>.consistency,
+<a href=#144 id=144 data-nosnippet>144</a>            service_call_options(<span class="self">self</span>.max_response_tokens),
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="self">self</span>.expected_repository_id,
+<a href=#146 id=146 data-nosnippet>146</a>        )
+<a href=#147 id=147 data-nosnippet>147</a>    }
+<a href=#148 id=148 data-nosnippet>148</a>}
 </code></pre></div></section></main></body></html>

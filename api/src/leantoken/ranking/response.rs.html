@@ -160,14 +160,15 @@
 <a href=#160 id=160 data-nosnippet>160</a>        coverage,
 <a href=#161 id=161 data-nosnippet>161</a>        routing: <span class="prelude-val">None</span>,
 <a href=#162 id=162 data-nosnippet>162</a>        handoff_manifest: <span class="prelude-val">None</span>,
-<a href=#163 id=163 data-nosnippet>163</a>        warnings,
-<a href=#164 id=164 data-nosnippet>164</a>        meta,
-<a href=#165 id=165 data-nosnippet>165</a>    };
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
-<a href=#167 id=167 data-nosnippet>167</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
-<a href=#168 id=168 data-nosnippet>168</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
-<a href=#169 id=169 data-nosnippet>169</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-<a href=#170 id=170 data-nosnippet>170</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
-<a href=#171 id=171 data-nosnippet>171</a>    response
-<a href=#172 id=172 data-nosnippet>172</a>}
+<a href=#163 id=163 data-nosnippet>163</a>        provenance: <span class="prelude-val">None</span>,
+<a href=#164 id=164 data-nosnippet>164</a>        warnings,
+<a href=#165 id=165 data-nosnippet>165</a>        meta,
+<a href=#166 id=166 data-nosnippet>166</a>    };
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>accounting = tokens::response_token_accounting(<span class="kw-2">&amp;</span>response, emitted_tokens, <span class="kw-2">&amp;</span>tokenizer)
+<a href=#168 id=168 data-nosnippet>168</a>        .expect(<span class="string">"context response metadata is serializable"</span>);
+<a href=#169 id=169 data-nosnippet>169</a>    response.meta.protocol_tokens = accounting.protocol_tokens;
+<a href=#170 id=170 data-nosnippet>170</a>    response.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+<a href=#171 id=171 data-nosnippet>171</a>    response.meta.total_response_tokens = accounting.total_response_tokens;
+<a href=#172 id=172 data-nosnippet>172</a>    response
+<a href=#173 id=173 data-nosnippet>173</a>}
 </code></pre></div></section></main></body></html>

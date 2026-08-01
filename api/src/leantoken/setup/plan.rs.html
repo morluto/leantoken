@@ -71,7 +71,7 @@
 <a href=#71 id=71 data-nosnippet>71</a>        args: launcher.args.clone(),
 <a href=#72 id=72 data-nosnippet>72</a>        version: launcher.version().into(),
 <a href=#73 id=73 data-nosnippet>73</a>        package: launcher.npm_package().map(str::to_owned),
-<a href=#74 id=74 data-nosnippet>74</a>        may_contact_network: launcher.uses_npx(),
+<a href=#74 id=74 data-nosnippet>74</a>        may_contact_network: launcher.is_ephemeral(),
 <a href=#75 id=75 data-nosnippet>75</a>        runtime_path: runtime.map(|runtime| runtime.destination.clone()),
 <a href=#76 id=76 data-nosnippet>76</a>        runtime_digest: runtime.map(|runtime| runtime.digest.clone()),
 <a href=#77 id=77 data-nosnippet>77</a>    })
@@ -126,50 +126,43 @@
 <a href=#126 id=126 data-nosnippet>126</a>}
 <a href=#127 id=127 data-nosnippet>127</a>
 <a href=#128 id=128 data-nosnippet>128</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>discovery_skill(launcher: <span class="kw-2">&amp;</span>McpLauncher) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span>doctor = <span class="kw">if </span>launcher.uses_npx() {
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="macro">format!</span>(
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="string">"npx --yes {} doctor --json"</span>,
-<a href=#132 id=132 data-nosnippet>132</a>            launcher.npm_package().unwrap_or(<span class="string">"leantoken"</span>)
-<a href=#133 id=133 data-nosnippet>133</a>        )
-<a href=#134 id=134 data-nosnippet>134</a>    } <span class="kw">else </span>{
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="string">"leantoken doctor --json"</span>.into()
-<a href=#136 id=136 data-nosnippet>136</a>    };
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="prelude-val">Ok</span>(<span class="macro">format!</span>(
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, exact source reads, symbol history, and structural JSON queries.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and choose the narrowest applicable lane:\n\n1. For autonomous broad triage, call `leantoken.context` once with `plan_only=false` and use the materialized evidence directly. Make at most one focused follow-up only when coverage identifies a concrete gap.\n2. For known scope, `leantoken.files` finds paths, `leantoken.outline` maps definitions and imports, and `leantoken.search` locates symbols, references, identifiers, text, or regex matches. `leantoken.read` returns the exact current symbol or narrow line range; `leantoken.history` reads, diffs, or traces symbols across immutable Git revisions; `leantoken.json` queries, summarizes, or compares exact JSON artifacts without whole-file output.\n3. For human review or control-plane inspection before expensive or high-risk materialization, call `leantoken.context` with `plan_only=true`, inspect the bounded metadata and coverage, then materialize after approval.\n\nPass `BASE..HEAD` as `base_revision` with `strict_changed_paths` for immutable range context. Use `leantoken.savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, unsupported files, or evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
-<a href=#139 id=139 data-nosnippet>139</a>    </span>))
-<a href=#140 id=140 data-nosnippet>140</a>}
-<a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_client_edit(
-<a href=#143 id=143 data-nosnippet>143</a>    operation: SetupOperation,
-<a href=#144 id=144 data-nosnippet>144</a>    client: SetupClient,
-<a href=#145 id=145 data-nosnippet>145</a>    detected: <span class="kw-2">&amp;</span>[SetupClient],
-<a href=#146 id=146 data-nosnippet>146</a>    home: <span class="kw-2">&amp;</span>Path,
-<a href=#147 id=147 data-nosnippet>147</a>    launcher: <span class="kw-2">&amp;</span>McpLauncher,
-<a href=#148 id=148 data-nosnippet>148</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlannedClientEdit&gt; {
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span>definition = client.definition(home);
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>(status, original, updated) = <span class="kw">match </span>definition.format {
-<a href=#151 id=151 data-nosnippet>151</a>        ConfigFormat::Json { section, shape } =&gt; {
-<a href=#152 id=152 data-nosnippet>152</a>            resolve_json_edit(operation, <span class="kw-2">&amp;</span>definition.path, section, shape, launcher)<span class="question-mark">?
-<a href=#153 id=153 data-nosnippet>153</a>        </span>}
-<a href=#154 id=154 data-nosnippet>154</a>        ConfigFormat::Toml =&gt; resolve_toml_edit(operation, <span class="kw-2">&amp;</span>definition.path, launcher)<span class="question-mark">?</span>,
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">let </span>doctor = launcher.doctor_command();
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="prelude-val">Ok</span>(<span class="macro">format!</span>(
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="string">"---\nname: leantoken\ndescription: Use LeanToken for token-bounded repository exploration, audits, codebase investigations, architecture reviews, source archaeology, code search, symbol outlines, exact source reads, symbol history, and structural JSON queries.\n---\n\n{DISCOVERY_SKILL_MARKER}\n\nBefore retrieving repository source, including for audits and code archaeology, discover the deferred `leantoken` MCP server and choose the narrowest applicable lane:\n\n1. For autonomous broad triage, call `leantoken.context` once with `plan_only=false` and use the materialized evidence directly. Make at most one focused follow-up only when coverage identifies a concrete gap.\n2. For known scope, `leantoken.files` finds paths, `leantoken.outline` maps definitions and imports, and `leantoken.search` locates symbols, references, identifiers, text, or regex matches. `leantoken.read` returns the exact current symbol or narrow line range; `leantoken.history` reads, diffs, or traces symbols across immutable Git revisions; `leantoken.json` queries, summarizes, or compares exact JSON artifacts without whole-file output.\n3. For human review or control-plane inspection before expensive or high-risk materialization, call `leantoken.context` with `plan_only=true`, inspect the bounded metadata and coverage, then materialize after approval.\n\nPass `BASE..HEAD` as `base_revision` with `strict_changed_paths` for immutable range context. Use `leantoken.savings` for repository-local savings. Use native workspace tools for edits, commands, tests, runtime probes, unsupported files, or evidence that is not source retrieval. If the server or tools cannot be discovered, run `{doctor}` and report its structured registration, launch, handshake, and catalog status instead of silently claiming LeanToken was used.\n"
+<a href=#132 id=132 data-nosnippet>132</a>    </span>))
+<a href=#133 id=133 data-nosnippet>133</a>}
+<a href=#134 id=134 data-nosnippet>134</a>
+<a href=#135 id=135 data-nosnippet>135</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_client_edit(
+<a href=#136 id=136 data-nosnippet>136</a>    operation: SetupOperation,
+<a href=#137 id=137 data-nosnippet>137</a>    client: SetupClient,
+<a href=#138 id=138 data-nosnippet>138</a>    detected: <span class="kw-2">&amp;</span>[SetupClient],
+<a href=#139 id=139 data-nosnippet>139</a>    home: <span class="kw-2">&amp;</span>Path,
+<a href=#140 id=140 data-nosnippet>140</a>    launcher: <span class="kw-2">&amp;</span>McpLauncher,
+<a href=#141 id=141 data-nosnippet>141</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlannedClientEdit&gt; {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>definition = client.definition(home);
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>(status, original, updated) = <span class="kw">match </span>definition.format {
+<a href=#144 id=144 data-nosnippet>144</a>        ConfigFormat::Json { section, shape } =&gt; {
+<a href=#145 id=145 data-nosnippet>145</a>            resolve_json_edit(operation, <span class="kw-2">&amp;</span>definition.path, section, shape, launcher)<span class="question-mark">?
+<a href=#146 id=146 data-nosnippet>146</a>        </span>}
+<a href=#147 id=147 data-nosnippet>147</a>        ConfigFormat::Toml =&gt; resolve_toml_edit(operation, <span class="kw-2">&amp;</span>definition.path, launcher)<span class="question-mark">?</span>,
+<a href=#148 id=148 data-nosnippet>148</a>    };
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span>action = <span class="kw">match </span>status {
+<a href=#150 id=150 data-nosnippet>150</a>        EditStatus::Configured <span class="kw">if </span>original.is_none() =&gt; ClientPlanAction::Create,
+<a href=#151 id=151 data-nosnippet>151</a>        EditStatus::Configured | EditStatus::Updated =&gt; ClientPlanAction::Update,
+<a href=#152 id=152 data-nosnippet>152</a>        EditStatus::AlreadyConfigured =&gt; ClientPlanAction::AlreadyCurrent,
+<a href=#153 id=153 data-nosnippet>153</a>        EditStatus::Removed =&gt; ClientPlanAction::Remove,
+<a href=#154 id=154 data-nosnippet>154</a>        EditStatus::NotConfigured =&gt; ClientPlanAction::NotConfigured,
 <a href=#155 id=155 data-nosnippet>155</a>    };
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">let </span>action = <span class="kw">match </span>status {
-<a href=#157 id=157 data-nosnippet>157</a>        EditStatus::Configured <span class="kw">if </span>original.is_none() =&gt; ClientPlanAction::Create,
-<a href=#158 id=158 data-nosnippet>158</a>        EditStatus::Configured | EditStatus::Updated =&gt; ClientPlanAction::Update,
-<a href=#159 id=159 data-nosnippet>159</a>        EditStatus::AlreadyConfigured =&gt; ClientPlanAction::AlreadyCurrent,
-<a href=#160 id=160 data-nosnippet>160</a>        EditStatus::Removed =&gt; ClientPlanAction::Remove,
-<a href=#161 id=161 data-nosnippet>161</a>        EditStatus::NotConfigured =&gt; ClientPlanAction::NotConfigured,
-<a href=#162 id=162 data-nosnippet>162</a>    };
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="prelude-val">Ok</span>(PlannedClientEdit {
-<a href=#164 id=164 data-nosnippet>164</a>        public: ClientSetupPlan {
-<a href=#165 id=165 data-nosnippet>165</a>            client,
-<a href=#166 id=166 data-nosnippet>166</a>            path: definition.path,
-<a href=#167 id=167 data-nosnippet>167</a>            action,
-<a href=#168 id=168 data-nosnippet>168</a>            detected: detected.contains(<span class="kw-2">&amp;</span>client),
-<a href=#169 id=169 data-nosnippet>169</a>        },
-<a href=#170 id=170 data-nosnippet>170</a>        status,
-<a href=#171 id=171 data-nosnippet>171</a>        original,
-<a href=#172 id=172 data-nosnippet>172</a>        updated,
-<a href=#173 id=173 data-nosnippet>173</a>    })
-<a href=#174 id=174 data-nosnippet>174</a>}
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="prelude-val">Ok</span>(PlannedClientEdit {
+<a href=#157 id=157 data-nosnippet>157</a>        public: ClientSetupPlan {
+<a href=#158 id=158 data-nosnippet>158</a>            client,
+<a href=#159 id=159 data-nosnippet>159</a>            path: definition.path,
+<a href=#160 id=160 data-nosnippet>160</a>            action,
+<a href=#161 id=161 data-nosnippet>161</a>            detected: detected.contains(<span class="kw-2">&amp;</span>client),
+<a href=#162 id=162 data-nosnippet>162</a>        },
+<a href=#163 id=163 data-nosnippet>163</a>        status,
+<a href=#164 id=164 data-nosnippet>164</a>        original,
+<a href=#165 id=165 data-nosnippet>165</a>        updated,
+<a href=#166 id=166 data-nosnippet>166</a>    })
+<a href=#167 id=167 data-nosnippet>167</a>}
 </code></pre></div></section></main></body></html>

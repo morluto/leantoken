@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">impl </span>LeanTokenMcp {
 <a href=#5 id=5 data-nosnippet>5</a>    <span class="attr">#[tool(
 <a href=#6 id=6 data-nosnippet>6</a>        name = <span class="string">"files"</span>,
-<a href=#7 id=7 data-nosnippet>7</a>        description = <span class="string">"Discover repository paths and metadata. Use tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
+<a href=#7 id=7 data-nosnippet>7</a>        description = <span class="string">"Discover repository paths and metadata. Select a tagged operation with operation.kind: tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set the selected operation's projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}."
 <a href=#8 id=8 data-nosnippet>8</a>    </span>)]
 <a href=#9 id=9 data-nosnippet>9</a>    </span><span class="kw">async fn </span>leantoken_files(
 <a href=#10 id=10 data-nosnippet>10</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>            RetrievalPreparation::Ready(prepared) =&gt; prepared,
 <a href=#19 id=19 data-nosnippet>19</a>            RetrievalPreparation::Unavailable(result) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(result),
 <a href=#20 id=20 data-nosnippet>20</a>        };
-<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens;
+<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens();
 <a href=#22 id=22 data-nosnippet>22</a>        <span class="kw">let </span>(request, projection, consistency, options, expected_repository_id) = req.into_parts();
 <a href=#23 id=23 data-nosnippet>23</a>        <span class="self">self</span>.run_prepared(
 <a href=#24 id=24 data-nosnippet>24</a>            <span class="string">"files"</span>,
@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>
 <a href=#58 id=58 data-nosnippet>58</a>    <span class="attr">#[tool(
 <a href=#59 id=59 data-nosnippet>59</a>        name = <span class="string">"search"</span>,
-<a href=#60 id=60 data-nosnippet>60</a>        description = <span class="string">"Search indexed source for symbols, references, identifiers, text, or regex. mode=symbol is ranked and structural; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: ranked symbol {\"query\":\"InternalFailure\",\"mode\":\"symbol\"}; exhaustive text {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}."
+<a href=#60 id=60 data-nosnippet>60</a>        description = <span class="string">"Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
 <a href=#61 id=61 data-nosnippet>61</a>    </span>)]
 <a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">async fn </span>leantoken_search(
 <a href=#63 id=63 data-nosnippet>63</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -71,7 +71,7 @@
 <a href=#71 id=71 data-nosnippet>71</a>            RetrievalPreparation::Ready(prepared) =&gt; prepared,
 <a href=#72 id=72 data-nosnippet>72</a>            RetrievalPreparation::Unavailable(result) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(result),
 <a href=#73 id=73 data-nosnippet>73</a>        };
-<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens;
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens();
 <a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">let </span>(request, projection, coordinates_only, consistency, options, expected_repository_id) =
 <a href=#76 id=76 data-nosnippet>76</a>            req.into_parts();
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="self">self</span>.run_prepared(
@@ -232,7 +232,7 @@
 <a href=#232 id=232 data-nosnippet>232</a>            RetrievalPreparation::Ready(prepared) =&gt; prepared,
 <a href=#233 id=233 data-nosnippet>233</a>            RetrievalPreparation::Unavailable(result) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(result),
 <a href=#234 id=234 data-nosnippet>234</a>        };
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens;
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens();
 <a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>(call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)<span class="question-mark">?</span>;
 <a href=#237 id=237 data-nosnippet>237</a>        <span class="self">self</span>.run_prepared(
 <a href=#238 id=238 data-nosnippet>238</a>            <span class="string">"history"</span>,
@@ -278,7 +278,7 @@
 <a href=#278 id=278 data-nosnippet>278</a>            RetrievalPreparation::Ready(prepared) =&gt; prepared,
 <a href=#279 id=279 data-nosnippet>279</a>            RetrievalPreparation::Unavailable(result) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(result),
 <a href=#280 id=280 data-nosnippet>280</a>        };
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens;
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>max_response_tokens = req.max_response_tokens();
 <a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>(request, options, execution, expected_repository_id) = req.into_parts();
 <a href=#283 id=283 data-nosnippet>283</a>        <span class="self">self</span>.run_prepared(
 <a href=#284 id=284 data-nosnippet>284</a>            <span class="string">"json"</span>,
@@ -449,45 +449,26 @@
 <a href=#449 id=449 data-nosnippet>449</a>        <span class="self">self</span>.read_receipt_resource(request.uri, context.protocol_version())
 <a href=#450 id=450 data-nosnippet>450</a>    }
 <a href=#451 id=451 data-nosnippet>451</a>
-<a href=#452 id=452 data-nosnippet>452</a>    <span class="kw">fn </span>initialize(
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#454 id=454 data-nosnippet>454</a>        request: rmcp::model::InitializeRequestParams,
-<a href=#455 id=455 data-nosnippet>455</a>        context: RequestContext&lt;RoleServer&gt;,
-<a href=#456 id=456 data-nosnippet>456</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;rmcp::model::InitializeResult, ErrorData&gt;&gt; + Send + <span class="lifetime">'_ </span>{
-<a href=#457 id=457 data-nosnippet>457</a>        context.peer.set_peer_info(request.clone());
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">let </span><span class="kw-2">mut </span>info = <span class="self">self</span>.get_info();
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="kw">if </span>rmcp::model::ProtocolVersion::KNOWN_VERSIONS.contains(<span class="kw-2">&amp;</span>request.protocol_version) {
-<a href=#460 id=460 data-nosnippet>460</a>            info.protocol_version = request.protocol_version.clone();
-<a href=#461 id=461 data-nosnippet>461</a>        } <span class="kw">else </span>{
-<a href=#462 id=462 data-nosnippet>462</a>            <span class="macro">tracing::warn!</span>(
-<a href=#463 id=463 data-nosnippet>463</a>                client_requested = %request.protocol_version,
-<a href=#464 id=464 data-nosnippet>464</a>                server_fallback = %info.protocol_version,
-<a href=#465 id=465 data-nosnippet>465</a>                <span class="string">"client requested unsupported protocol version; falling back to server default"
-<a href=#466 id=466 data-nosnippet>466</a>            </span>);
-<a href=#467 id=467 data-nosnippet>467</a>        }
-<a href=#468 id=468 data-nosnippet>468</a>        std::future::ready(<span class="prelude-val">Ok</span>(info))
-<a href=#469 id=469 data-nosnippet>469</a>    }
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">fn </span>get_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; rmcp::model::ServerInfo {
-<a href=#472 id=472 data-nosnippet>472</a>        rmcp::model::ServerInfo::new(
-<a href=#473 id=473 data-nosnippet>473</a>            rmcp::model::ServerCapabilities::builder()
-<a href=#474 id=474 data-nosnippet>474</a>                .enable_tools()
-<a href=#475 id=475 data-nosnippet>475</a>                .enable_resources()
-<a href=#476 id=476 data-nosnippet>476</a>                .build(),
-<a href=#477 id=477 data-nosnippet>477</a>        )
-<a href=#478 id=478 data-nosnippet>478</a>        .with_server_info(rmcp::model::Implementation::new(
-<a href=#479 id=479 data-nosnippet>479</a>            <span class="string">"leantoken"</span>,
-<a href=#480 id=480 data-nosnippet>480</a>            mcp_runtime_version(),
-<a href=#481 id=481 data-nosnippet>481</a>        ))
-<a href=#482 id=482 data-nosnippet>482</a>        .with_instructions(MCP_INSTRUCTIONS.to_string())
-<a href=#483 id=483 data-nosnippet>483</a>    }
-<a href=#484 id=484 data-nosnippet>484</a>
-<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">fn </span>on_initialized(
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#487 id=487 data-nosnippet>487</a>        _context: NotificationContext&lt;RoleServer&gt;,
-<a href=#488 id=488 data-nosnippet>488</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">'_ </span>{
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="self">self</span>.services.mark_protocol_initialized();
-<a href=#490 id=490 data-nosnippet>490</a>        std::future::ready(())
-<a href=#491 id=491 data-nosnippet>491</a>    }
-<a href=#492 id=492 data-nosnippet>492</a>}
+<a href=#452 id=452 data-nosnippet>452</a>    <span class="kw">fn </span>get_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; rmcp::model::ServerInfo {
+<a href=#453 id=453 data-nosnippet>453</a>        rmcp::model::ServerInfo::new(
+<a href=#454 id=454 data-nosnippet>454</a>            rmcp::model::ServerCapabilities::builder()
+<a href=#455 id=455 data-nosnippet>455</a>                .enable_tools()
+<a href=#456 id=456 data-nosnippet>456</a>                .enable_resources()
+<a href=#457 id=457 data-nosnippet>457</a>                .build(),
+<a href=#458 id=458 data-nosnippet>458</a>        )
+<a href=#459 id=459 data-nosnippet>459</a>        .with_server_info(rmcp::model::Implementation::new(
+<a href=#460 id=460 data-nosnippet>460</a>            <span class="string">"leantoken"</span>,
+<a href=#461 id=461 data-nosnippet>461</a>            mcp_runtime_version(),
+<a href=#462 id=462 data-nosnippet>462</a>        ))
+<a href=#463 id=463 data-nosnippet>463</a>        .with_instructions(MCP_INSTRUCTIONS.to_string())
+<a href=#464 id=464 data-nosnippet>464</a>    }
+<a href=#465 id=465 data-nosnippet>465</a>
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">fn </span>on_initialized(
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#468 id=468 data-nosnippet>468</a>        _context: NotificationContext&lt;RoleServer&gt;,
+<a href=#469 id=469 data-nosnippet>469</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">'_ </span>{
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="self">self</span>.services.mark_protocol_initialized();
+<a href=#471 id=471 data-nosnippet>471</a>        std::future::ready(())
+<a href=#472 id=472 data-nosnippet>472</a>    }
+<a href=#473 id=473 data-nosnippet>473</a>}
 </code></pre></div></section></main></body></html>
