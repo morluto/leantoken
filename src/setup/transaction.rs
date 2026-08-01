@@ -33,18 +33,20 @@ pub(super) struct SetupTransaction {
 
 pub(super) struct SetupLock {
     _file: fs::File,
+    _runtime_root: cap_std::fs::Dir,
 }
 
 pub(super) fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
     fs::create_dir_all(runtime_root)?;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(runtime_root.join("setup.lock"))?;
+    let runtime_root = open_runtime_root(runtime_root)?;
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    let file = runtime_root.open_with("setup.lock", &options)?.into_std();
     file.lock()?;
-    Ok(SetupLock { _file: file })
+    Ok(SetupLock {
+        _file: file,
+        _runtime_root: runtime_root,
+    })
 }
 
 impl SetupTransaction {

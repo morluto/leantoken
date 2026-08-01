@@ -204,21 +204,29 @@ pub(super) fn run_with(
     )?;
 
     if request.dry_run {
-        return Ok(report_from_plan(&plan, false, true, Vec::new(), None));
+        return Ok(report_from_plan(&plan, false, true, Vec::new(), None, None));
     }
 
     if !request.yes && !prompt.confirm(operation, &plan)? {
-        return Ok(report_from_plan(&plan, true, false, Vec::new(), None));
+        return Ok(report_from_plan(&plan, true, false, Vec::new(), None, None));
     }
 
-    let results = apply_plan(&plan);
-    let verification = verify_applied_setup(&plan, &results);
-    Ok(report_from_plan(&plan, false, false, results, verification))
+    let outcome = apply_plan(&plan);
+    let verification = verify_applied_setup(&plan, &outcome.results, outcome.error.as_deref());
+    Ok(report_from_plan(
+        &plan,
+        false,
+        false,
+        outcome.results,
+        outcome.error,
+        verification,
+    ))
 }
 
 fn verify_applied_setup(
     plan: &ResolvedSetupPlan,
     results: &[ClientSetupResult],
+    apply_error: Option<&str>,
 ) -> Option<SetupVerification> {
     let launcher = plan.launcher.as_ref()?;
     let client_argument = plan
@@ -236,11 +244,11 @@ fn verify_applied_setup(
             launcher.version
         )
     };
-    if results.iter().any(|result| result.error.is_some()) {
+    if apply_error.is_some() || results.iter().any(|result| result.error.is_some()) {
         return Some(SetupVerification {
             status: SetupVerificationStatus::Skipped,
             stage: None,
-            message: Some("one or more selected client configurations failed".into()),
+            message: Some("setup transaction did not complete".into()),
             repair_command: Some(repair_command),
         });
     }
@@ -290,6 +298,7 @@ pub(super) fn report_from_plan(
     cancelled: bool,
     dry_run: bool,
     results: Vec<ClientSetupResult>,
+    apply_error: Option<String>,
     verification: Option<SetupVerification>,
 ) -> SetupReport {
     let discovery_skill_tokens = plan.discovery_edits.first().and_then(|edit| {
@@ -313,6 +322,7 @@ pub(super) fn report_from_plan(
             .collect(),
         discovery_skill_tokens,
         results,
+        apply_error,
         verification,
     }
 }
@@ -329,6 +339,7 @@ pub(super) fn empty_report(operation: SetupOperation, persistent_cli: bool) -> S
         discovery_plan: Vec::new(),
         discovery_skill_tokens: None,
         results: Vec::new(),
+        apply_error: None,
         verification: None,
     }
 }

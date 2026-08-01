@@ -568,15 +568,23 @@ configuration or discovery file before parsing, and generated replacements are
 validated against that same bound before a plan can apply. Planning retains at
 most one bounded snapshot for each of the six client configurations (48 MiB in
 total) and revalidates every snapshot that informed discovery cleanup before
-mutation. The recovery journal has a separate 256 MiB aggregate read and write
-cap so it can retain up to six individually bounded client originals plus both
-legacy discovery originals after JSON escaping. Listing reads at most six
-configured host registrations once to attach canonicalized references. Pruning
-defaults to a non-mutating plan, rejects a symlinked or non-directory runtime
-root before locking,
-inventory, and each applied deletion, serializes applied deletion with setup,
-retains the active executable and every referenced runtime, and deletes only a
-version directory whose exact contents are its one expected native executable.
+mutation. Transaction-wide apply errors remain explicit even when a plan has
+only discovery cleanup and no client-result rows. The recovery journal has a
+separate 256 MiB aggregate read and write cap so it can retain up to six
+individually bounded client originals plus both legacy discovery originals
+after JSON escaping. Listing reads at most six configured host registrations
+once to attach canonicalized references. Applied pruning retains the same six
+bounded configuration snapshots and revalidates them immediately before every
+deletion. Pruning defaults to a non-mutating plan, rejects a symlinked or
+non-directory runtime root before locking, inventory, and each applied
+deletion, serializes applied deletion with setup, retains the active executable
+and every referenced runtime, and deletes only a version directory whose exact
+contents are its one expected native executable. Private installation applies
+the same runtime-root validation. Applied deletion snapshot-matches opened root
+and version directory handles, then unlinks the executable relative to the
+pinned version handle so a concurrent path swap cannot redirect deletion. One
+root handle spans the applied prune and at most one version handle is open at a
+time.
 If unlinking succeeds but a concurrent directory change prevents the final
 directory removal, the report uses a distinct partial-removal action, subtracts
 the removed executable bytes, and returns the cleanup error. Unknown root

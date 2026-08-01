@@ -91,14 +91,22 @@ pub(super) fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
     let report = setup::run(operation, request, json)?;
     setup::print_report(&report, json)?;
     if report.has_failures() {
-        let message = match (
-            report.has_client_failures(),
-            report.has_verification_failure(),
-        ) {
-            (true, true) => "MCP client configuration and launcher verification failed",
-            (true, false) => "one or more MCP client configurations failed",
-            (false, true) => "MCP launcher verification failed",
-            (false, false) => unreachable!("failure predicate already checked"),
+        let message = if report.has_apply_failure() {
+            if report.has_verification_failure() {
+                "setup transaction and launcher verification failed"
+            } else {
+                "setup transaction failed"
+            }
+        } else {
+            match (
+                report.has_client_failures(),
+                report.has_verification_failure(),
+            ) {
+                (true, true) => "MCP client configuration and launcher verification failed",
+                (true, false) => "one or more MCP client configurations failed",
+                (false, true) => "MCP launcher verification failed",
+                (false, false) => unreachable!("failure predicate already checked"),
+            }
         };
         return Err(leantoken::Error::SetupFailure(message.into()));
     }

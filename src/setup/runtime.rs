@@ -8,6 +8,7 @@ const MAX_RUNTIME_ROOT_ENTRIES: usize = 512;
 const MAX_RUNTIME_DIRECTORY_ENTRIES: usize = 8;
 
 pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstallPlan> {
+    validate_runtime_root(&environment.runtime_root)?;
     let digest = file_digest(&environment.native_executable)?;
     let executable_name = runtime_executable_name(cfg!(windows));
     let destination = environment
@@ -27,6 +28,7 @@ pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<Run
         true
     };
     Ok(RuntimeInstallPlan {
+        runtime_root: environment.runtime_root.clone(),
         source: environment.native_executable.clone(),
         destination,
         digest,
@@ -60,11 +62,18 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
     if !plan.install_required {
         return Ok(false);
     }
+    if !validate_runtime_root(&plan.runtime_root)? {
+        return Err(Error::SetupFailure(format!(
+            "private runtime root disappeared before installation: {}",
+            plan.runtime_root.display()
+        )));
+    }
     let parent = plan
         .destination
         .parent()
         .ok_or_else(|| Error::SetupFailure("private runtime destination has no parent".into()))?;
     fs::create_dir_all(parent)?;
+    validate_runtime_root(&plan.runtime_root)?;
     let mut staged = NamedTempFile::new_in(parent)?;
     let mut source = fs::File::open(&plan.source)?;
     std::io::copy(&mut source, staged.as_file_mut())?;
@@ -95,6 +104,7 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
 
 #[derive(Debug)]
 pub(super) struct RuntimeInstallPlan {
+    pub(super) runtime_root: PathBuf,
     pub(super) source: PathBuf,
     pub(super) destination: PathBuf,
     pub(super) digest: String,
@@ -106,6 +116,21 @@ struct RuntimeInventoryEntry {
     report: RuntimeEntryReport,
     parsed_version: semver::Version,
     directory: PathBuf,
+    directory_identity: RuntimeDirectoryIdentity,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeDirectoryIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeDirectoryIdentity {
+    creation_time: u64,
+    last_write_time: u64,
 }
 
 #[derive(Debug)]
@@ -151,6 +176,9 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     let _setup_lock = (!request.dry_run)
         .then(|| acquire_setup_lock(&runtime_root))
         .transpose()?;
+    let runtime_root_handle = (!request.dry_run)
+        .then(|| open_runtime_root(&runtime_root))
+        .transpose()?;
     if transaction_path(&runtime_root).exists() {
         return Err(Error::SetupFailure(format!(
             "interrupted setup requires recovery before runtime pruning: {}",
@@ -158,10 +186,16 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
         )));
     }
     let inventory = runtime_inventory(&home)?;
+    let RuntimeInventory {
+        entries,
+        total_bytes,
+        ignored_entries: _,
+        configuration_snapshots,
+    } = inventory;
     let mut unreferenced_retained = 0_usize;
-    let mut total_bytes_after = inventory.total_bytes;
-    let mut results = Vec::with_capacity(inventory.entries.len());
-    for entry in inventory.entries {
+    let mut total_bytes_after = total_bytes;
+    let mut results = Vec::with_capacity(entries.len());
+    for entry in entries {
         let protected_reason = if !entry.report.referenced_by.is_empty() {
             Some("referenced_by_client")
         } else if entry.report.active {
@@ -197,10 +231,14 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
             });
             continue;
         }
+        preflight_configuration_snapshots(&configuration_snapshots)?;
         validate_runtime_root(&runtime_root)?;
-        match managed_runtime_directory_is_exact(&entry.directory, &entry.report.path) {
-            Ok(true) => {}
-            Ok(false) => {
+        let runtime_root_handle = runtime_root_handle
+            .as_ref()
+            .expect("applied pruning opened the runtime root");
+        let directory = match open_managed_runtime_directory(runtime_root_handle, &entry) {
+            Ok(Some(directory)) => directory,
+            Ok(None) => {
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
                     path: entry.report.path,
@@ -222,8 +260,8 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
                 });
                 continue;
             }
-        }
-        match remove_runtime_directory(&entry.directory, &entry.report.path) {
+        };
+        match remove_runtime_directory(directory) {
             RuntimeRemoval::Removed => {
                 sync_parent_directory(&entry.directory)?;
                 total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
@@ -264,17 +302,17 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     Ok(RuntimePruneReport {
         runtime_root,
         dry_run: request.dry_run,
-        total_bytes_before: inventory.total_bytes,
+        total_bytes_before: total_bytes,
         total_bytes_after,
         results,
     })
 }
 
-pub(super) fn remove_runtime_directory(directory: &Path, executable: &Path) -> RuntimeRemoval {
-    if let Err(error) = fs::remove_file(executable) {
+pub(super) fn remove_runtime_directory(directory: cap_std::fs::Dir) -> RuntimeRemoval {
+    if let Err(error) = directory.remove_file(runtime_executable_name(cfg!(windows))) {
         return RuntimeRemoval::Failed(error);
     }
-    match fs::remove_dir(directory) {
+    match directory.remove_open_dir() {
         Ok(()) => RuntimeRemoval::Removed,
         Err(error) => RuntimeRemoval::PartiallyRemoved(error),
     }
@@ -284,6 +322,7 @@ struct RuntimeInventory {
     entries: Vec<RuntimeInventoryEntry>,
     total_bytes: u64,
     ignored_entries: usize,
+    configuration_snapshots: Vec<PlannedConfigurationSnapshot>,
 }
 
 fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
@@ -293,6 +332,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             entries: Vec::new(),
             total_bytes: 0,
             ignored_entries: 0,
+            configuration_snapshots: Vec::new(),
         });
     }
     let directory = match fs::read_dir(&runtime_root) {
@@ -302,12 +342,14 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
                 entries: Vec::new(),
                 total_bytes: 0,
                 ignored_entries: 0,
+                configuration_snapshots: Vec::new(),
             });
         }
         Err(error) => return Err(error.into()),
     };
     let launcher = McpLauncher::current()?;
-    let registrations = configured_registrations(home, &launcher)?;
+    let (registrations, configuration_snapshots) =
+        configured_registrations_with_snapshots(home, &launcher, &SetupClient::ALL)?;
     let current_executable = std::env::current_exe()?.canonicalize()?;
     let mut entries = Vec::new();
     let mut ignored_entries = 0_usize;
@@ -319,7 +361,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             )));
         }
         let item = item?;
-        let file_type = item.file_type()?;
+        let directory_metadata = fs::symlink_metadata(item.path())?;
         let Some(version_name) = item.file_name().to_str().map(str::to_owned) else {
             ignored_entries += 1;
             continue;
@@ -331,7 +373,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             ignored_entries += 1;
             continue;
         };
-        if !file_type.is_dir() || file_type.is_symlink() {
+        if !directory_metadata.file_type().is_dir() || directory_metadata.file_type().is_symlink() {
             ignored_entries += 1;
             continue;
         }
@@ -370,6 +412,7 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             },
             parsed_version,
             directory: item.path(),
+            directory_identity: runtime_directory_identity(&directory_metadata),
         });
     }
     entries.sort_by(|left, right| {
@@ -386,7 +429,124 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
         entries,
         total_bytes,
         ignored_entries,
+        configuration_snapshots,
     })
+}
+
+#[cfg(unix)]
+fn runtime_directory_identity(metadata: &fs::Metadata) -> RuntimeDirectoryIdentity {
+    use std::os::unix::fs::MetadataExt;
+
+    RuntimeDirectoryIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
+#[cfg(unix)]
+fn capability_directory_identity(metadata: &cap_std::fs::Metadata) -> RuntimeDirectoryIdentity {
+    use cap_std::fs::MetadataExt;
+
+    RuntimeDirectoryIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
+#[cfg(windows)]
+fn runtime_directory_identity(metadata: &fs::Metadata) -> RuntimeDirectoryIdentity {
+    use std::os::windows::fs::MetadataExt;
+
+    RuntimeDirectoryIdentity {
+        creation_time: metadata.creation_time(),
+        last_write_time: metadata.last_write_time(),
+    }
+}
+
+#[cfg(windows)]
+fn capability_directory_identity(metadata: &cap_std::fs::Metadata) -> RuntimeDirectoryIdentity {
+    use cap_std::fs::MetadataExt;
+
+    RuntimeDirectoryIdentity {
+        creation_time: metadata.creation_time(),
+        last_write_time: metadata.last_write_time(),
+    }
+}
+
+pub(super) fn open_runtime_root(runtime_root: &Path) -> Result<cap_std::fs::Dir> {
+    let metadata = fs::symlink_metadata(runtime_root)?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(Error::SetupFailure(format!(
+            "private runtime root must be a non-symlink directory: {}",
+            runtime_root.display()
+        )));
+    }
+    let expected_identity = runtime_directory_identity(&metadata);
+    let directory = cap_std::fs::Dir::open_ambient_dir(runtime_root, cap_std::ambient_authority())?;
+    if capability_directory_identity(&directory.dir_metadata()?) != expected_identity {
+        return Err(Error::SetupFailure(format!(
+            "private runtime root changed while it was opened: {}",
+            runtime_root.display()
+        )));
+    }
+    let current = fs::symlink_metadata(runtime_root)?;
+    if !current.file_type().is_dir()
+        || current.file_type().is_symlink()
+        || runtime_directory_identity(&current) != expected_identity
+    {
+        return Err(Error::SetupFailure(format!(
+            "private runtime root changed while it was opened: {}",
+            runtime_root.display()
+        )));
+    }
+    Ok(directory)
+}
+
+fn open_managed_runtime_directory(
+    runtime_root: &cap_std::fs::Dir,
+    entry: &RuntimeInventoryEntry,
+) -> Result<Option<cap_std::fs::Dir>> {
+    let version = Path::new(&entry.report.version);
+    let before = runtime_root.symlink_metadata(version)?;
+    if !before.file_type().is_dir()
+        || before.file_type().is_symlink()
+        || capability_directory_identity(&before) != entry.directory_identity
+    {
+        return Ok(None);
+    }
+    let directory = runtime_root.open_dir(version)?;
+    if capability_directory_identity(&directory.dir_metadata()?) != entry.directory_identity {
+        return Ok(None);
+    }
+    let current = runtime_root.symlink_metadata(version)?;
+    if !current.file_type().is_dir()
+        || current.file_type().is_symlink()
+        || capability_directory_identity(&current) != entry.directory_identity
+        || !managed_runtime_directory_handle_is_exact(&directory)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(directory))
+}
+
+fn managed_runtime_directory_handle_is_exact(directory: &cap_std::fs::Dir) -> Result<bool> {
+    let executable_name = std::ffi::OsStr::new(runtime_executable_name(cfg!(windows)));
+    let executable_metadata = directory.symlink_metadata(executable_name)?;
+    if !executable_metadata.file_type().is_file() || executable_metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let mut matching = false;
+    for (index, entry) in directory.entries()?.enumerate() {
+        if index >= MAX_RUNTIME_DIRECTORY_ENTRIES {
+            return Ok(false);
+        }
+        let entry = entry?;
+        if entry.file_name() != executable_name || matching {
+            return Ok(false);
+        }
+        matching = true;
+    }
+    Ok(matching)
 }
 
 fn validate_runtime_root(runtime_root: &Path) -> Result<bool> {

@@ -283,14 +283,20 @@ setup, and a durable journal restores pre-transaction contents on the next
 setup invocation after an interruption; recovery refuses to overwrite a file
 changed independently after the interruption. The registered command launches
 that native executable directly. Removal deletes registrations but retains
-versioned runtimes for explicit rollback; it never selects `latest`.
+versioned runtimes for explicit rollback; it never selects `latest`. Private
+installation rejects a runtime root that is a symlink or is not a directory.
+JSON reports a transaction-wide `apply_error` even when an orphan discovery
+skill was the only planned mutation and no client result rows exist.
 
 `runtime list` reports installed versions, executable bytes, active state, and
 client references. `runtime prune` is a dry-run unless `--yes` is present; it
 always retains referenced and active runtimes, keeps the newest two
 unreferenced versions by default, and refuses directories containing anything
-other than the expected native executable. Change the bounded retention window
-with `--keep-latest` (0 through 64):
+other than the expected native executable. Applied pruning rechecks every
+supported client configuration immediately before deletion and removes through
+snapshot-matched open directory handles, so a concurrent registration or path
+swap fails closed. Change the bounded retention window with `--keep-latest` (0
+through 64):
 
 ```bash
 leantoken runtime list

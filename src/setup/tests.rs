@@ -546,6 +546,42 @@ fn registered_version_recognizes_direct_package_manager_pins() {
 }
 
 #[test]
+fn runtime_reference_snapshots_detect_configuration_changes_before_prune() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let (_, snapshots) = configured_registrations_with_snapshots(
+        &environment.home,
+        &environment.launcher,
+        &SetupClient::ALL,
+    )
+    .unwrap();
+    let config_path = SetupClient::Claude.definition(&environment.home).path;
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(
+        &config_path,
+        serde_json::to_vec(&json!({
+            "mcpServers": {
+                "leantoken": {
+                    "command": environment.runtime_root.join("1.2.3/leantoken"),
+                    "args": ["mcp"]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = preflight_configuration_snapshots(&snapshots)
+        .expect_err("new runtime reference must stop pruning");
+    assert!(error.to_string().contains("changed after preflight"));
+    assert!(
+        error
+            .to_string()
+            .contains(config_path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn diagnostic_preserves_unknown_discovery_state_after_config_parse_failure() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
@@ -568,6 +604,29 @@ fn diagnostic_preserves_unknown_discovery_state_after_config_parse_failure() {
     assert_eq!(diagnostic.registration_status, "unknown");
     assert_eq!(diagnostic.discovery_status, "unknown");
     assert_eq!(diagnostic.discovery_paths, vec![skill]);
+}
+
+#[test]
+fn diagnostic_preserves_unknown_discovery_state_after_skill_read_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let skill = environment.home.join(".agents/skills/leantoken/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let file = fs::File::create(&skill).unwrap();
+    file.set_len(MAX_SETUP_FILE_BYTES + 1).unwrap();
+
+    let diagnostic = diagnostic_state_at(
+        &environment.home,
+        Some((
+            environment.launcher.command().unwrap(),
+            &environment.launcher.args,
+            environment.launcher.version(),
+        )),
+    );
+
+    assert_eq!(diagnostic.registration_status, "not_registered");
+    assert_eq!(diagnostic.discovery_status, "unknown");
+    assert!(diagnostic.discovery_paths.is_empty());
 }
 
 #[test]
@@ -985,12 +1044,41 @@ fn runtime_removal_reports_when_the_executable_was_removed_but_directory_remains
     let sibling = directory.join("appeared-after-revalidation");
     fs::write(&sibling, "retain").unwrap();
 
-    let removal = remove_runtime_directory(&directory, &executable);
+    let runtime_root =
+        cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+    let directory_handle = runtime_root.open_dir("1.2.3").unwrap();
+    let removal = remove_runtime_directory(directory_handle);
 
     assert!(matches!(removal, RuntimeRemoval::PartiallyRemoved(_)));
     assert!(!executable.exists());
     assert!(sibling.exists());
     assert!(directory.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_removal_stays_bound_to_the_opened_directory_after_a_path_swap() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("1.2.3");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("leantoken"), "managed").unwrap();
+    let external = temp.path().join("external");
+    fs::create_dir(&external).unwrap();
+    let external_executable = external.join("leantoken");
+    fs::write(&external_executable, "external").unwrap();
+    let root =
+        cap_std::fs::Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+    let opened = root.open_dir("1.2.3").unwrap();
+    let moved = temp.path().join("moved-runtime");
+    fs::rename(&directory, &moved).unwrap();
+    std::os::unix::fs::symlink(&external, &directory).unwrap();
+
+    let removal = remove_runtime_directory(opened);
+
+    assert!(matches!(removal, RuntimeRemoval::Removed));
+    assert_eq!(fs::read(&external_executable).unwrap(), b"external");
+    assert!(!moved.exists());
+    assert!(directory.is_symlink());
 }
 
 #[test]
@@ -1035,9 +1123,10 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
         transaction_root: temp.path().join("runtime"),
     };
 
-    let results = apply_plan(&plan);
+    let outcome = apply_plan(&plan);
 
-    assert!(results.iter().all(|result| result.error.is_some()));
+    assert!(outcome.results.iter().all(|result| result.error.is_some()));
+    assert!(outcome.error.is_some());
     assert!(!first_path.exists(), "first edit must be rolled back");
     assert_eq!(
         fs::read_to_string(blocked_parent).unwrap(),
@@ -1437,6 +1526,53 @@ fn discovery_cleanup_revalidates_unselected_configuration_snapshots() {
             .path
             .exists()
     );
+}
+
+#[test]
+fn discovery_only_cleanup_failure_is_reported() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let discovery_path = SetupClient::Codex.discovery_path(&environment.home);
+    fs::create_dir_all(discovery_path.parent().unwrap()).unwrap();
+    fs::write(
+        &discovery_path,
+        format!("{DISCOVERY_SKILL_MARKER}\norphan discovery\n"),
+    )
+    .unwrap();
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: false,
+            yes: false,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &ConfigMutatingPrompt {
+            path: discovery_path.clone(),
+            content: format!("{DISCOVERY_SKILL_MARKER}\nchanged after planning\n"),
+        },
+    )
+    .unwrap();
+
+    assert!(report.results.is_empty());
+    assert!(
+        report
+            .apply_error
+            .as_deref()
+            .is_some_and(|error| error.contains("discovery skill changed after preflight"))
+    );
+    assert!(report.has_failures());
+    assert_eq!(
+        report.verification.as_ref().map(|result| result.status),
+        Some(SetupVerificationStatus::Skipped)
+    );
+    assert!(discovery_path.exists());
 }
 
 #[test]

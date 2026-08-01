@@ -114,23 +114,26 @@ pub(super) fn diagnostic_state_at(
         .filter(|registration| registration.managed)
         .map(|registration| registration.client.discovery_path(home))
         .collect::<std::collections::BTreeSet<_>>();
+    let mut discovery_inspection_failed = false;
     let discovery_paths = [
         home.join(".agents/skills/leantoken/SKILL.md"),
         home.join(".claude/skills/leantoken/SKILL.md"),
     ]
     .into_iter()
-    .filter(|path| {
-        read_optional(path)
-            .ok()
-            .flatten()
-            .is_some_and(|content| content.contains(DISCOVERY_SKILL_MARKER))
+    .filter_map(|path| match read_optional(&path) {
+        Ok(Some(content)) if content.contains(DISCOVERY_SKILL_MARKER) => Some(path),
+        Ok(_) => None,
+        Err(_) => {
+            discovery_inspection_failed = true;
+            None
+        }
     })
     .collect::<Vec<_>>();
     SetupDiagnostic {
         registration_status,
         configured_clients,
         registrations,
-        discovery_status: if inspection_failed {
+        discovery_status: if inspection_failed || discovery_inspection_failed {
             "unknown"
         } else if expected_discovery_paths.is_empty()
             || expected_discovery_paths

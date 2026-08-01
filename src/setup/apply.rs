@@ -1,9 +1,14 @@
 use super::*;
 
-pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
+pub(super) struct SetupApplyOutcome {
+    pub(super) results: Vec<ClientSetupResult>,
+    pub(super) error: Option<String>,
+}
+
+pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
     let runtime_installed = match plan.runtime.as_ref().map(install_runtime).transpose() {
         Ok(installed) => installed.unwrap_or(false),
-        Err(error) => return failed_results(&plan.edits, error.to_string()),
+        Err(error) => return failed_outcome(plan, error.to_string()),
     };
     if let Err(error) = preflight_configuration_snapshots(&plan.configuration_snapshots)
         .and_then(|()| preflight_edits(&plan.edits))
@@ -12,7 +17,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
         if runtime_installed && let Some(runtime) = &plan.runtime {
             let _ = fs::remove_file(&runtime.destination);
         }
-        return failed_results(&plan.edits, error.to_string());
+        return failed_outcome(plan, error.to_string());
     }
     let transaction = match begin_setup_transaction(plan) {
         Ok(transaction) => transaction,
@@ -20,7 +25,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
             if runtime_installed && let Some(runtime) = &plan.runtime {
                 let _ = fs::remove_file(&runtime.destination);
             }
-            return failed_results(&plan.edits, error.to_string());
+            return failed_outcome(plan, error.to_string());
         }
     };
 
@@ -35,7 +40,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
                 &applied_discovery,
                 transaction,
             );
-            return failed_results(&plan.edits, rollback_message(error, rollback));
+            return failed_outcome(plan, rollback_message(error, rollback));
         }
         applied.push(edit);
     }
@@ -48,24 +53,35 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
                 &applied_discovery,
                 transaction,
             );
-            return failed_results(&plan.edits, rollback_message(error, rollback));
+            return failed_outcome(plan, rollback_message(error, rollback));
         }
         applied_discovery.push(edit);
     }
     if let Some(transaction) = transaction
         && let Err(error) = transaction.commit()
     {
-        return failed_results(&plan.edits, error.to_string());
+        return failed_outcome(plan, error.to_string());
     }
-    plan.edits
-        .iter()
-        .map(|edit| ClientSetupResult {
-            client: edit.public.client,
-            path: edit.public.path.clone(),
-            status: edit.status.to_string(),
-            error: None,
-        })
-        .collect()
+    SetupApplyOutcome {
+        results: plan
+            .edits
+            .iter()
+            .map(|edit| ClientSetupResult {
+                client: edit.public.client,
+                path: edit.public.path.clone(),
+                status: edit.status.to_string(),
+                error: None,
+            })
+            .collect(),
+        error: None,
+    }
+}
+
+fn failed_outcome(plan: &ResolvedSetupPlan, error: String) -> SetupApplyOutcome {
+    SetupApplyOutcome {
+        results: failed_results(&plan.edits, error.clone()),
+        error: Some(error),
+    }
 }
 
 pub(super) fn rollback_setup(

@@ -188,6 +188,9 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             )?;
         }
     }
+    if let Some(error) = &report.apply_error {
+        writeln!(output, "  ✗ Setup transaction: {error}")?;
+    }
     if let Some(verification) = &report.verification {
         match verification.status {
             SetupVerificationStatus::Passed => writeln!(
@@ -229,7 +232,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
             "LeanToken is configured for {configured} client{}.",
             if configured == 1 { "" } else { "s" }
         )?;
-        if report.has_client_failures() {
+        if report.has_apply_failure() {
+            writeln!(
+                output,
+                "The setup transaction did not complete; planned discovery cleanup may remain."
+            )?;
+        } else if report.has_client_failures() {
             writeln!(
                 output,
                 "Some selected clients failed; successful changes were not rolled back."

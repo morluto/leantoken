@@ -2109,8 +2109,20 @@ fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation() {
         .expect("prune symlinked runtime root");
     assert!(!prune.status.success());
     assert!(String::from_utf8_lossy(&prune.stderr).contains("non-symlink directory"));
+    let setup = command()
+        .args([
+            "setup",
+            "--codex",
+            "--private-runtime",
+            "--yes",
+        ])
+        .output()
+        .expect("setup through symlinked runtime root");
+    assert!(!setup.status.success());
+    assert!(String::from_utf8_lossy(&setup.stderr).contains("non-symlink directory"));
     assert!(executable.exists());
     assert!(!external.join("setup.lock").exists());
+    assert!(!temp.path().join(".codex/config.toml").exists());
 }
 
 #[cfg(not(windows))]

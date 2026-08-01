@@ -201,6 +201,9 @@ pub struct SetupReport {
     pub discovery_skill_tokens: Option<usize>,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
+    /// Transaction-wide apply failure, including discovery-only cleanup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_error: Option<String>,
     /// Exact-launcher MCP verification after a setup mutation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<SetupVerification>,
@@ -213,6 +216,12 @@ impl SetupReport {
         self.results.iter().any(|result| result.error.is_some())
     }
 
+    /// Return true when the setup transaction itself did not complete.
+    #[must_use]
+    pub fn has_apply_failure(&self) -> bool {
+        self.apply_error.is_some()
+    }
+
     /// Return true when post-setup launcher verification failed.
     #[must_use]
     pub fn has_verification_failure(&self) -> bool {
@@ -221,10 +230,10 @@ impl SetupReport {
             .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
     }
 
-    /// Return true when a client edit or launcher verification failed.
+    /// Return true when apply, a client edit, or launcher verification failed.
     #[must_use]
     pub fn has_failures(&self) -> bool {
-        self.has_client_failures() || self.has_verification_failure()
+        self.has_apply_failure() || self.has_client_failures() || self.has_verification_failure()
     }
 }
 
