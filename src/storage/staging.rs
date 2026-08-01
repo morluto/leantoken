@@ -1,7 +1,7 @@
 use super::*;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use tempfile::TempDir;
@@ -127,17 +127,16 @@ pub(crate) struct PreparedReconciliation {
 
 impl PreparedReconciliation {
     pub(crate) fn new(
-        storage: &Storage,
+        _storage: &Storage,
         tokenizer: &str,
         baseline: &MetaRecord,
         config_hash: &str,
         rebuild: bool,
         profile: bool,
     ) -> Result<Self> {
-        let parent = storage.path.parent().unwrap_or_else(|| Path::new("."));
         let directory = tempfile::Builder::new()
             .prefix(".leantoken-stage-")
-            .tempdir_in(parent)?;
+            .tempdir()?;
         let path = directory.path().join("stage.sqlite");
         let connection = Connection::open(&path)?;
         connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
