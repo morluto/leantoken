@@ -194,10 +194,13 @@ the authoritative closing discussion and linked pull-request evidence.
 
 - Publication preparation is corrected in this tree: filesystem reads,
   hashing, parsing, tokenization, and import resolution run before the
-  immediate writer transaction and are held in a bounded in-memory staging
-  buffer. Ephemeral SQLite staging remains a deferred optimization until the
+  immediate writer transaction and are written in bounded batches to a
+  normalized, file-backed SQLite stage. The stage keeps only the active batch
+  in Rust and is removed after success, rollback, cancellation, or process
+  error. Its write, size, and publication-lock metrics are now explicit; the
   paired transaction-hold, total-time, RSS, database-size, and
-  write-amplification gates are measured.
+  write-amplification measurements remain the adoption evidence for this
+  experiment.
 - Exact full reconciliation continues to hash same-metadata files. Bounded live
   reads must not claim full-file freshness.
 - Regex verification now has one request-wide files/chunks/bytes budget and a

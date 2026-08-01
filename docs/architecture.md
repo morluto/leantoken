@@ -288,16 +288,28 @@ immediate write transaction then verifies that the generation and config used
 to build the plan are still current. A stale plan is discarded and recomputed.
 Preparation — filesystem reads, hashing, parsing, tokenization, import
 resolution, and batch formation — executes **outside** the `BEGIN IMMEDIATE`
-writer transaction, staging prepared `IndexedFile` records in a bounded
-in-memory `PreparedReconciliation` buffer. The writer transaction is then
-opened only for the fast set-based publication phase: deletions, replacements,
-FTS rebuilds, and generation advancement. This decomposition ensures the
-SQLite writer lock is held for the minimum duration required for atomicity,
-not for the full preparation workload. A later parse, storage, or cancellation
-error during preparation discards the staged buffer without affecting the live
+writer transaction. Each bounded preparation batch is written to a
+storage-owned, normalized SQLite database under a temporary directory; Rust
+retains only the active batch and fixed-size counters. The writer transaction
+then opens for the fast publication phase: it streams staged removals and
+complete file records, applies set-based deletions/replacements, rebuilds FTS,
+and advances the generation. This keeps source, chunk, symbol, reference, and
+import payloads out of the publication heap while preserving one atomic
+generation in the production database. A later parse, stage-write, storage, or
+cancellation error removes the temporary stage without affecting the live
 database. A stale baseline detected inside the transaction rolls back all
-staged writes. Replacements, deletions, and generation advancement become
+publication writes. Replacements, deletions, and generation advancement become
 visible together at the final commit.
+
+The stage uses ordinary rollback-journal SQLite rather than a custom spool
+format. Its schema is versioned and records baseline generation, configuration
+hash, rebuild mode, and source tokenizer alongside normalized child tables.
+Stage-write milliseconds, process write bytes, and temporary database bytes are
+reported separately from the production relational-write phase. These fields
+make the file-backed design a measured memory-and-lock experiment: it is
+retained only when representative profiles show the required transaction-hold
+improvement without a material total-time, RSS, database-size, or
+write-amplification regression.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
@@ -308,7 +320,8 @@ its cancellation token changes afterward. A post-commit cancellation can stop
 later work, but cannot retroactively turn a visible generation into a failed
 reconciliation outcome.
 
-Profiled reconciliation can additionally attribute relational insertion, each
+Profiled reconciliation can additionally attribute normalized stage insertion,
+relational insertion, each
 of the four FTS rebuilds, commit, checkpoint, Linux process write bytes, and
 `dbstat` FTS footprints. It also sums per-file worker durations for reads, text
 preparation, hashing, parsing, whole-file token counting, chunk token counting,
