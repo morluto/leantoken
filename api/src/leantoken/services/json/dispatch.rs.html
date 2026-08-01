@@ -332,193 +332,214 @@
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = ProjectionState::new(limits.max_items, limits.array_sample_size);
 <a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span><span class="kw-2">mut </span>differences = Vec::with_capacity(selectors.len());
 <a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span><span class="kw-2">mut </span>total_items = <span class="number">0usize</span>;
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span><span class="kw-2">mut </span>projected_tokens = <span class="number">0usize</span>;
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">for </span>selector <span class="kw">in </span>selectors {
-<a href=#337 id=337 data-nosnippet>337</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#338 id=338 data-nosnippet>338</a>            <span class="kw">let </span>before_selected = select_json(before.value(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>selector))<span class="question-mark">?</span>;
-<a href=#339 id=339 data-nosnippet>339</a>            <span class="kw">let </span>after_selected = select_json(after.value(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>selector))<span class="question-mark">?</span>;
-<a href=#340 id=340 data-nosnippet>340</a>            <span class="kw">let </span>changed = before_selected.is_present() != after_selected.is_present()
-<a href=#341 id=341 data-nosnippet>341</a>                || before_selected.value() != after_selected.value();
-<a href=#342 id=342 data-nosnippet>342</a>            <span class="kw">for </span>selected <span class="kw">in </span>[<span class="kw-2">&amp;</span>before_selected, <span class="kw-2">&amp;</span>after_selected] {
-<a href=#343 id=343 data-nosnippet>343</a>                total_items = total_items.saturating_add(
-<a href=#344 id=344 data-nosnippet>344</a>                    selected
-<a href=#345 id=345 data-nosnippet>345</a>                        .value()
-<a href=#346 id=346 data-nosnippet>346</a>                        .map(|value| {
-<a href=#347 id=347 data-nosnippet>347</a>                            projection_item_count(value, projection, limits.array_sample_size)
-<a href=#348 id=348 data-nosnippet>348</a>                        })
-<a href=#349 id=349 data-nosnippet>349</a>                        .unwrap_or_default(),
-<a href=#350 id=350 data-nosnippet>350</a>                );
-<a href=#351 id=351 data-nosnippet>351</a>            }
-<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">let </span>before_value = before_selected
-<a href=#353 id=353 data-nosnippet>353</a>                .value()
-<a href=#354 id=354 data-nosnippet>354</a>                .map(|value| project_json(value, projection, <span class="kw-2">&amp;mut </span>state))
-<a href=#355 id=355 data-nosnippet>355</a>                .transpose()<span class="question-mark">?</span>;
-<a href=#356 id=356 data-nosnippet>356</a>            <span class="kw">let </span>after_value = after_selected
-<a href=#357 id=357 data-nosnippet>357</a>                .value()
-<a href=#358 id=358 data-nosnippet>358</a>                .map(|value| project_json(value, projection, <span class="kw-2">&amp;mut </span>state))
-<a href=#359 id=359 data-nosnippet>359</a>                .transpose()<span class="question-mark">?</span>;
-<a href=#360 id=360 data-nosnippet>360</a>            <span class="kw">for </span>value <span class="kw">in </span>[<span class="kw-2">&amp;</span>before_value, <span class="kw-2">&amp;</span>after_value].into_iter().flatten() {
-<a href=#361 id=361 data-nosnippet>361</a>                projected_tokens = projected_tokens.saturating_add(json_tokens(<span class="self">self</span>, value)<span class="question-mark">?</span>);
-<a href=#362 id=362 data-nosnippet>362</a>            }
-<a href=#363 id=363 data-nosnippet>363</a>            differences.push(JsonFieldDiff {
-<a href=#364 id=364 data-nosnippet>364</a>                selector,
-<a href=#365 id=365 data-nosnippet>365</a>                before_present: before_selected.is_present(),
-<a href=#366 id=366 data-nosnippet>366</a>                before: before_value,
-<a href=#367 id=367 data-nosnippet>367</a>                after_present: after_selected.is_present(),
-<a href=#368 id=368 data-nosnippet>368</a>                after: after_value,
-<a href=#369 id=369 data-nosnippet>369</a>                changed,
-<a href=#370 id=370 data-nosnippet>370</a>            });
-<a href=#371 id=371 data-nosnippet>371</a>        }
-<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>returned = total_items.min(limits.max_items);
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">let </span>remaining = total_items.saturating_sub(returned);
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span>incomplete = !state.is_complete();
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="prelude-val">Ok</span>(JsonOperationResult {
-<a href=#376 id=376 data-nosnippet>376</a>            response: JsonResponse {
-<a href=#377 id=377 data-nosnippet>377</a>                kind: <span class="string">"diff_fields"</span>.into(),
-<a href=#378 id=378 data-nosnippet>378</a>                value: <span class="prelude-val">None</span>,
-<a href=#379 id=379 data-nosnippet>379</a>                numeric_summary: <span class="prelude-val">None</span>,
-<a href=#380 id=380 data-nosnippet>380</a>                differences,
-<a href=#381 id=381 data-nosnippet>381</a>                sources: <span class="macro">vec!</span>[before.into_source(), after.into_source()],
-<a href=#382 id=382 data-nosnippet>382</a>                result_complete: !incomplete,
-<a href=#383 id=383 data-nosnippet>383</a>                total_items: incomplete.then_some(total_items),
-<a href=#384 id=384 data-nosnippet>384</a>                returned_items: incomplete.then_some(returned),
-<a href=#385 id=385 data-nosnippet>385</a>                remaining_items: incomplete.then_some(remaining),
-<a href=#386 id=386 data-nosnippet>386</a>                incomplete_reason: incomplete.then_some(JsonIncompleteReason::MaxItems),
-<a href=#387 id=387 data-nosnippet>387</a>                meta: <span class="self">self</span>.meta(generation, <span class="number">0</span>, <span class="prelude-val">None</span>),
-<a href=#388 id=388 data-nosnippet>388</a>            },
-<a href=#389 id=389 data-nosnippet>389</a>            baseline_source_tokens,
-<a href=#390 id=390 data-nosnippet>390</a>            projected_tokens,
-<a href=#391 id=391 data-nosnippet>391</a>            key_response_fit: <span class="prelude-val">None</span>,
-<a href=#392 id=392 data-nosnippet>392</a>        })
-<a href=#393 id=393 data-nosnippet>393</a>    }
-<a href=#394 id=394 data-nosnippet>394</a>
-<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">fn </span>fit_json_response(
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#397 id=397 data-nosnippet>397</a>        response: <span class="kw-2">&amp;mut </span>JsonResponse,
-<a href=#398 id=398 data-nosnippet>398</a>        key_page_context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>KeyResponseFit&gt;,
-<a href=#399 id=399 data-nosnippet>399</a>        options: ServiceCallOptions,
-<a href=#400 id=400 data-nosnippet>400</a>        measurements: <span class="kw-2">&amp;mut </span>JsonMeasurementCache,
-<a href=#401 id=401 data-nosnippet>401</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">if </span><span class="self">self</span>.response_fits(response, options)<span class="question-mark">? </span>{
-<a href=#403 id=403 data-nosnippet>403</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#404 id=404 data-nosnippet>404</a>        }
-<a href=#405 id=405 data-nosnippet>405</a>
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(context), <span class="prelude-val">Some</span>(Value::Array(entries))) =
-<a href=#407 id=407 data-nosnippet>407</a>            (key_page_context, response.value.as_ref())
-<a href=#408 id=408 data-nosnippet>408</a>        {
-<a href=#409 id=409 data-nosnippet>409</a>            <span class="kw">let </span>original = response.clone();
-<a href=#410 id=410 data-nosnippet>410</a>            <span class="kw">let </span>max_response_tokens = options
-<a href=#411 id=411 data-nosnippet>411</a>                .max_response_tokens()
-<a href=#412 id=412 data-nosnippet>412</a>                .expect(<span class="string">"fitting only runs with a response limit"</span>);
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">let </span>keep = budget.largest_fitting_prefix(entries.len(), |keep| {
-<a href=#415 id=415 data-nosnippet>415</a>                <span class="kw">let </span><span class="kw-2">mut </span>candidate = original.clone();
-<a href=#416 id=416 data-nosnippet>416</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
-<a href=#417 id=417 data-nosnippet>417</a>                value.truncate(keep);
-<a href=#418 id=418 data-nosnippet>418</a>                candidate.value = <span class="prelude-val">Some</span>(Value::Array(value));
-<a href=#419 id=419 data-nosnippet>419</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(keep);
-<a href=#420 id=420 data-nosnippet>420</a>                <span class="kw">let </span>total = candidate.total_items.unwrap_or(consumed);
-<a href=#421 id=421 data-nosnippet>421</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
-<a href=#422 id=422 data-nosnippet>422</a>                candidate.returned_items = <span class="prelude-val">Some</span>(keep);
-<a href=#423 id=423 data-nosnippet>423</a>                candidate.remaining_items = <span class="prelude-val">Some</span>(remaining);
-<a href=#424 id=424 data-nosnippet>424</a>                candidate.result_complete = remaining == <span class="number">0</span>;
-<a href=#425 id=425 data-nosnippet>425</a>                candidate.incomplete_reason =
-<a href=#426 id=426 data-nosnippet>426</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
-<a href=#427 id=427 data-nosnippet>427</a>                candidate.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
-<a href=#428 id=428 data-nosnippet>428</a>                    make_json_cursor(
-<a href=#429 id=429 data-nosnippet>429</a>                        context.cursor_version,
-<a href=#430 id=430 data-nosnippet>430</a>                        <span class="kw-2">&amp;</span>context.source_hash,
-<a href=#431 id=431 data-nosnippet>431</a>                        <span class="kw-2">&amp;</span>context.query_hash,
-<a href=#432 id=432 data-nosnippet>432</a>                        consumed,
-<a href=#433 id=433 data-nosnippet>433</a>                    )
-<a href=#434 id=434 data-nosnippet>434</a>                });
-<a href=#435 id=435 data-nosnippet>435</a>                <span class="kw">let </span>source_tokens = measurements.measure(
-<a href=#436 id=436 data-nosnippet>436</a>                    <span class="self">self</span>,
-<a href=#437 id=437 data-nosnippet>437</a>                    JsonMeasurementKey::KeysPrefix(keep),
-<a href=#438 id=438 data-nosnippet>438</a>                    candidate
-<a href=#439 id=439 data-nosnippet>439</a>                        .value
-<a href=#440 id=440 data-nosnippet>440</a>                        .as_ref()
-<a href=#441 id=441 data-nosnippet>441</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
-<a href=#442 id=442 data-nosnippet>442</a>                )<span class="question-mark">?</span>;
-<a href=#443 id=443 data-nosnippet>443</a>                candidate.meta.source_tokens = source_tokens;
-<a href=#444 id=444 data-nosnippet>444</a>                <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate)
-<a href=#445 id=445 data-nosnippet>445</a>            })<span class="question-mark">?</span>;
-<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep.filter(|keep| <span class="kw-2">*</span>keep &gt; <span class="number">0</span>) {
-<a href=#447 id=447 data-nosnippet>447</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
-<a href=#448 id=448 data-nosnippet>448</a>                value.truncate(keep);
-<a href=#449 id=449 data-nosnippet>449</a>                response.value = <span class="prelude-val">Some</span>(Value::Array(value));
-<a href=#450 id=450 data-nosnippet>450</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(keep);
-<a href=#451 id=451 data-nosnippet>451</a>                <span class="kw">let </span>total = response.total_items.unwrap_or(consumed);
-<a href=#452 id=452 data-nosnippet>452</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
-<a href=#453 id=453 data-nosnippet>453</a>                response.returned_items = <span class="prelude-val">Some</span>(keep);
-<a href=#454 id=454 data-nosnippet>454</a>                response.remaining_items = <span class="prelude-val">Some</span>(remaining);
-<a href=#455 id=455 data-nosnippet>455</a>                response.result_complete = remaining == <span class="number">0</span>;
-<a href=#456 id=456 data-nosnippet>456</a>                response.incomplete_reason =
-<a href=#457 id=457 data-nosnippet>457</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
-<a href=#458 id=458 data-nosnippet>458</a>                response.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
-<a href=#459 id=459 data-nosnippet>459</a>                    make_json_cursor(
-<a href=#460 id=460 data-nosnippet>460</a>                        context.cursor_version,
-<a href=#461 id=461 data-nosnippet>461</a>                        <span class="kw-2">&amp;</span>context.source_hash,
-<a href=#462 id=462 data-nosnippet>462</a>                        <span class="kw-2">&amp;</span>context.query_hash,
-<a href=#463 id=463 data-nosnippet>463</a>                        consumed,
-<a href=#464 id=464 data-nosnippet>464</a>                    )
-<a href=#465 id=465 data-nosnippet>465</a>                });
-<a href=#466 id=466 data-nosnippet>466</a>                <span class="kw">let </span>source_tokens = measurements.measure(
-<a href=#467 id=467 data-nosnippet>467</a>                    <span class="self">self</span>,
-<a href=#468 id=468 data-nosnippet>468</a>                    JsonMeasurementKey::KeysPrefix(keep),
-<a href=#469 id=469 data-nosnippet>469</a>                    response
-<a href=#470 id=470 data-nosnippet>470</a>                        .value
-<a href=#471 id=471 data-nosnippet>471</a>                        .as_ref()
-<a href=#472 id=472 data-nosnippet>472</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
-<a href=#473 id=473 data-nosnippet>473</a>                )<span class="question-mark">?</span>;
-<a href=#474 id=474 data-nosnippet>474</a>                response.meta.source_tokens = source_tokens;
-<a href=#475 id=475 data-nosnippet>475</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#476 id=476 data-nosnippet>476</a>            }
-<a href=#477 id=477 data-nosnippet>477</a>            <span class="kw">if </span>!entries.is_empty() {
-<a href=#478 id=478 data-nosnippet>478</a>                <span class="kw">let </span><span class="kw-2">mut </span>minimum = original;
-<a href=#479 id=479 data-nosnippet>479</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
-<a href=#480 id=480 data-nosnippet>480</a>                value.truncate(<span class="number">1</span>);
-<a href=#481 id=481 data-nosnippet>481</a>                minimum.value = <span class="prelude-val">Some</span>(Value::Array(value));
-<a href=#482 id=482 data-nosnippet>482</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(<span class="number">1</span>);
-<a href=#483 id=483 data-nosnippet>483</a>                <span class="kw">let </span>total = minimum.total_items.unwrap_or(consumed);
-<a href=#484 id=484 data-nosnippet>484</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
-<a href=#485 id=485 data-nosnippet>485</a>                minimum.returned_items = <span class="prelude-val">Some</span>(<span class="number">1</span>);
-<a href=#486 id=486 data-nosnippet>486</a>                minimum.remaining_items = <span class="prelude-val">Some</span>(remaining);
-<a href=#487 id=487 data-nosnippet>487</a>                minimum.result_complete = remaining == <span class="number">0</span>;
-<a href=#488 id=488 data-nosnippet>488</a>                minimum.incomplete_reason =
-<a href=#489 id=489 data-nosnippet>489</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
-<a href=#490 id=490 data-nosnippet>490</a>                minimum.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
-<a href=#491 id=491 data-nosnippet>491</a>                    make_json_cursor(
-<a href=#492 id=492 data-nosnippet>492</a>                        context.cursor_version,
-<a href=#493 id=493 data-nosnippet>493</a>                        <span class="kw-2">&amp;</span>context.source_hash,
-<a href=#494 id=494 data-nosnippet>494</a>                        <span class="kw-2">&amp;</span>context.query_hash,
-<a href=#495 id=495 data-nosnippet>495</a>                        consumed,
-<a href=#496 id=496 data-nosnippet>496</a>                    )
-<a href=#497 id=497 data-nosnippet>497</a>                });
-<a href=#498 id=498 data-nosnippet>498</a>                <span class="kw">let </span>source_tokens = measurements.measure(
-<a href=#499 id=499 data-nosnippet>499</a>                    <span class="self">self</span>,
-<a href=#500 id=500 data-nosnippet>500</a>                    JsonMeasurementKey::KeysPrefix(<span class="number">1</span>),
-<a href=#501 id=501 data-nosnippet>501</a>                    minimum
-<a href=#502 id=502 data-nosnippet>502</a>                        .value
-<a href=#503 id=503 data-nosnippet>503</a>                        .as_ref()
-<a href=#504 id=504 data-nosnippet>504</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
-<a href=#505 id=505 data-nosnippet>505</a>                )<span class="question-mark">?</span>;
-<a href=#506 id=506 data-nosnippet>506</a>                minimum.meta.source_tokens = source_tokens;
-<a href=#507 id=507 data-nosnippet>507</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(
-<a href=#508 id=508 data-nosnippet>508</a>                    <span class="kw-2">&amp;</span>minimum,
-<a href=#509 id=509 data-nosnippet>509</a>                    options
-<a href=#510 id=510 data-nosnippet>510</a>                        .max_response_tokens()
-<a href=#511 id=511 data-nosnippet>511</a>                        .expect(<span class="string">"fitting only runs with a response limit"</span>),
-<a href=#512 id=512 data-nosnippet>512</a>                )<span class="question-mark">?</span>);
-<a href=#513 id=513 data-nosnippet>513</a>            }
-<a href=#514 id=514 data-nosnippet>514</a>        }
-<a href=#515 id=515 data-nosnippet>515</a>
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(
-<a href=#517 id=517 data-nosnippet>517</a>            response,
-<a href=#518 id=518 data-nosnippet>518</a>            options
-<a href=#519 id=519 data-nosnippet>519</a>                .max_response_tokens()
-<a href=#520 id=520 data-nosnippet>520</a>                .expect(<span class="string">"fitting only runs with a response limit"</span>),
-<a href=#521 id=521 data-nosnippet>521</a>        )<span class="question-mark">?</span>)
-<a href=#522 id=522 data-nosnippet>522</a>    }
-<a href=#523 id=523 data-nosnippet>523</a>}
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span><span class="kw-2">mut </span>returned_items = <span class="number">0usize</span>;
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span><span class="kw-2">mut </span>remaining_items = <span class="number">0usize</span>;
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span><span class="kw-2">mut </span>projected_tokens = <span class="number">0usize</span>;
+<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span><span class="kw-2">mut </span>incomplete = <span class="bool-val">false</span>;
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">for </span>selector <span class="kw">in </span>selectors {
+<a href=#340 id=340 data-nosnippet>340</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#341 id=341 data-nosnippet>341</a>            <span class="kw">let </span>before_selected = select_json(before.value(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>selector))<span class="question-mark">?</span>;
+<a href=#342 id=342 data-nosnippet>342</a>            <span class="kw">let </span>after_selected = select_json(after.value(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>selector))<span class="question-mark">?</span>;
+<a href=#343 id=343 data-nosnippet>343</a>            <span class="kw">let </span>changed = before_selected.is_present() != after_selected.is_present()
+<a href=#344 id=344 data-nosnippet>344</a>                || before_selected.value() != after_selected.value();
+<a href=#345 id=345 data-nosnippet>345</a>            <span class="kw">for </span>selected <span class="kw">in </span>[<span class="kw-2">&amp;</span>before_selected, <span class="kw-2">&amp;</span>after_selected] {
+<a href=#346 id=346 data-nosnippet>346</a>                total_items = total_items.saturating_add(
+<a href=#347 id=347 data-nosnippet>347</a>                    selected
+<a href=#348 id=348 data-nosnippet>348</a>                        .value()
+<a href=#349 id=349 data-nosnippet>349</a>                        .map(|value| {
+<a href=#350 id=350 data-nosnippet>350</a>                            projection_item_count(value, projection, limits.array_sample_size)
+<a href=#351 id=351 data-nosnippet>351</a>                        })
+<a href=#352 id=352 data-nosnippet>352</a>                        .unwrap_or_default(),
+<a href=#353 id=353 data-nosnippet>353</a>                );
+<a href=#354 id=354 data-nosnippet>354</a>            }
+<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw">let </span><span class="kw-2">mut </span>project = |value: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Value&gt;| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Value&gt;&gt; {
+<a href=#356 id=356 data-nosnippet>356</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(value) = value <span class="kw">else </span>{ <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) };
+<a href=#357 id=357 data-nosnippet>357</a>                <span class="kw">if </span>projection == JsonProjection::Schema {
+<a href=#358 id=358 data-nosnippet>358</a>                    <span class="kw">let </span>page = project_schema_page(
+<a href=#359 id=359 data-nosnippet>359</a>                        <span class="self">self</span>,
+<a href=#360 id=360 data-nosnippet>360</a>                        value,
+<a href=#361 id=361 data-nosnippet>361</a>                        limits.max_items.saturating_sub(returned_items).max(<span class="number">1</span>),
+<a href=#362 id=362 data-nosnippet>362</a>                        limits.max_tokens.saturating_sub(projected_tokens).max(<span class="number">1</span>),
+<a href=#363 id=363 data-nosnippet>363</a>                    )<span class="question-mark">?</span>;
+<a href=#364 id=364 data-nosnippet>364</a>                    <span class="kw">let </span>(projected, _total, returned, remaining, reason, tokens, _counters) =
+<a href=#365 id=365 data-nosnippet>365</a>                        page.into_parts();
+<a href=#366 id=366 data-nosnippet>366</a>                    returned_items = returned_items.saturating_add(returned);
+<a href=#367 id=367 data-nosnippet>367</a>                    remaining_items = remaining_items.saturating_add(remaining);
+<a href=#368 id=368 data-nosnippet>368</a>                    incomplete |= reason.is_some();
+<a href=#369 id=369 data-nosnippet>369</a>                    projected_tokens = projected_tokens.saturating_add(tokens);
+<a href=#370 id=370 data-nosnippet>370</a>                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(projected))
+<a href=#371 id=371 data-nosnippet>371</a>                } <span class="kw">else </span>{
+<a href=#372 id=372 data-nosnippet>372</a>                    project_json(value, projection, <span class="kw-2">&amp;mut </span>state).map(<span class="prelude-val">Some</span>)
+<a href=#373 id=373 data-nosnippet>373</a>                }
+<a href=#374 id=374 data-nosnippet>374</a>            };
+<a href=#375 id=375 data-nosnippet>375</a>            <span class="kw">let </span>before_value = project(before_selected.value())<span class="question-mark">?</span>;
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="kw">let </span>after_value = project(after_selected.value())<span class="question-mark">?</span>;
+<a href=#377 id=377 data-nosnippet>377</a>            <span class="kw">for </span>value <span class="kw">in </span>[<span class="kw-2">&amp;</span>before_value, <span class="kw-2">&amp;</span>after_value].into_iter().flatten() {
+<a href=#378 id=378 data-nosnippet>378</a>                <span class="kw">if </span>projection != JsonProjection::Schema {
+<a href=#379 id=379 data-nosnippet>379</a>                    projected_tokens = projected_tokens.saturating_add(json_tokens(<span class="self">self</span>, value)<span class="question-mark">?</span>);
+<a href=#380 id=380 data-nosnippet>380</a>                }
+<a href=#381 id=381 data-nosnippet>381</a>            }
+<a href=#382 id=382 data-nosnippet>382</a>            differences.push(JsonFieldDiff {
+<a href=#383 id=383 data-nosnippet>383</a>                selector,
+<a href=#384 id=384 data-nosnippet>384</a>                before_present: before_selected.is_present(),
+<a href=#385 id=385 data-nosnippet>385</a>                before: before_value,
+<a href=#386 id=386 data-nosnippet>386</a>                after_present: after_selected.is_present(),
+<a href=#387 id=387 data-nosnippet>387</a>                after: after_value,
+<a href=#388 id=388 data-nosnippet>388</a>                changed,
+<a href=#389 id=389 data-nosnippet>389</a>            });
+<a href=#390 id=390 data-nosnippet>390</a>        }
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">if </span>projection != JsonProjection::Schema {
+<a href=#392 id=392 data-nosnippet>392</a>            returned_items = total_items.min(limits.max_items);
+<a href=#393 id=393 data-nosnippet>393</a>            remaining_items = total_items.saturating_sub(returned_items);
+<a href=#394 id=394 data-nosnippet>394</a>            incomplete = !state.is_complete();
+<a href=#395 id=395 data-nosnippet>395</a>        }
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="prelude-val">Ok</span>(JsonOperationResult {
+<a href=#397 id=397 data-nosnippet>397</a>            response: JsonResponse {
+<a href=#398 id=398 data-nosnippet>398</a>                kind: <span class="string">"diff_fields"</span>.into(),
+<a href=#399 id=399 data-nosnippet>399</a>                value: <span class="prelude-val">None</span>,
+<a href=#400 id=400 data-nosnippet>400</a>                numeric_summary: <span class="prelude-val">None</span>,
+<a href=#401 id=401 data-nosnippet>401</a>                differences,
+<a href=#402 id=402 data-nosnippet>402</a>                sources: <span class="macro">vec!</span>[before.into_source(), after.into_source()],
+<a href=#403 id=403 data-nosnippet>403</a>                result_complete: !incomplete,
+<a href=#404 id=404 data-nosnippet>404</a>                total_items: incomplete.then_some(total_items),
+<a href=#405 id=405 data-nosnippet>405</a>                returned_items: incomplete.then_some(returned_items),
+<a href=#406 id=406 data-nosnippet>406</a>                remaining_items: incomplete.then_some(remaining_items),
+<a href=#407 id=407 data-nosnippet>407</a>                incomplete_reason: incomplete.then_some(JsonIncompleteReason::MaxItems),
+<a href=#408 id=408 data-nosnippet>408</a>                meta: <span class="self">self</span>.meta(generation, <span class="number">0</span>, <span class="prelude-val">None</span>),
+<a href=#409 id=409 data-nosnippet>409</a>            },
+<a href=#410 id=410 data-nosnippet>410</a>            baseline_source_tokens,
+<a href=#411 id=411 data-nosnippet>411</a>            projected_tokens,
+<a href=#412 id=412 data-nosnippet>412</a>            key_response_fit: <span class="prelude-val">None</span>,
+<a href=#413 id=413 data-nosnippet>413</a>        })
+<a href=#414 id=414 data-nosnippet>414</a>    }
+<a href=#415 id=415 data-nosnippet>415</a>
+<a href=#416 id=416 data-nosnippet>416</a>    <span class="kw">fn </span>fit_json_response(
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#418 id=418 data-nosnippet>418</a>        response: <span class="kw-2">&amp;mut </span>JsonResponse,
+<a href=#419 id=419 data-nosnippet>419</a>        key_page_context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>KeyResponseFit&gt;,
+<a href=#420 id=420 data-nosnippet>420</a>        options: ServiceCallOptions,
+<a href=#421 id=421 data-nosnippet>421</a>        measurements: <span class="kw-2">&amp;mut </span>JsonMeasurementCache,
+<a href=#422 id=422 data-nosnippet>422</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">if </span><span class="self">self</span>.response_fits(response, options)<span class="question-mark">? </span>{
+<a href=#424 id=424 data-nosnippet>424</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#425 id=425 data-nosnippet>425</a>        }
+<a href=#426 id=426 data-nosnippet>426</a>
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(context), <span class="prelude-val">Some</span>(Value::Array(entries))) =
+<a href=#428 id=428 data-nosnippet>428</a>            (key_page_context, response.value.as_ref())
+<a href=#429 id=429 data-nosnippet>429</a>        {
+<a href=#430 id=430 data-nosnippet>430</a>            <span class="kw">let </span>original = response.clone();
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="kw">let </span>max_response_tokens = options
+<a href=#432 id=432 data-nosnippet>432</a>                .max_response_tokens()
+<a href=#433 id=433 data-nosnippet>433</a>                .expect(<span class="string">"fitting only runs with a response limit"</span>);
+<a href=#434 id=434 data-nosnippet>434</a>            <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
+<a href=#435 id=435 data-nosnippet>435</a>            <span class="kw">let </span>keep = budget.largest_fitting_prefix(entries.len(), |keep| {
+<a href=#436 id=436 data-nosnippet>436</a>                <span class="kw">let </span><span class="kw-2">mut </span>candidate = original.clone();
+<a href=#437 id=437 data-nosnippet>437</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
+<a href=#438 id=438 data-nosnippet>438</a>                value.truncate(keep);
+<a href=#439 id=439 data-nosnippet>439</a>                candidate.value = <span class="prelude-val">Some</span>(Value::Array(value));
+<a href=#440 id=440 data-nosnippet>440</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(keep);
+<a href=#441 id=441 data-nosnippet>441</a>                <span class="kw">let </span>total = candidate.total_items.unwrap_or(consumed);
+<a href=#442 id=442 data-nosnippet>442</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
+<a href=#443 id=443 data-nosnippet>443</a>                candidate.returned_items = <span class="prelude-val">Some</span>(keep);
+<a href=#444 id=444 data-nosnippet>444</a>                candidate.remaining_items = <span class="prelude-val">Some</span>(remaining);
+<a href=#445 id=445 data-nosnippet>445</a>                candidate.result_complete = remaining == <span class="number">0</span>;
+<a href=#446 id=446 data-nosnippet>446</a>                candidate.incomplete_reason =
+<a href=#447 id=447 data-nosnippet>447</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
+<a href=#448 id=448 data-nosnippet>448</a>                candidate.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
+<a href=#449 id=449 data-nosnippet>449</a>                    make_json_cursor(
+<a href=#450 id=450 data-nosnippet>450</a>                        context.cursor_version,
+<a href=#451 id=451 data-nosnippet>451</a>                        <span class="kw-2">&amp;</span>context.source_hash,
+<a href=#452 id=452 data-nosnippet>452</a>                        <span class="kw-2">&amp;</span>context.query_hash,
+<a href=#453 id=453 data-nosnippet>453</a>                        consumed,
+<a href=#454 id=454 data-nosnippet>454</a>                    )
+<a href=#455 id=455 data-nosnippet>455</a>                });
+<a href=#456 id=456 data-nosnippet>456</a>                <span class="kw">let </span>source_tokens = measurements.measure(
+<a href=#457 id=457 data-nosnippet>457</a>                    <span class="self">self</span>,
+<a href=#458 id=458 data-nosnippet>458</a>                    JsonMeasurementKey::KeysPrefix(keep),
+<a href=#459 id=459 data-nosnippet>459</a>                    candidate
+<a href=#460 id=460 data-nosnippet>460</a>                        .value
+<a href=#461 id=461 data-nosnippet>461</a>                        .as_ref()
+<a href=#462 id=462 data-nosnippet>462</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
+<a href=#463 id=463 data-nosnippet>463</a>                )<span class="question-mark">?</span>;
+<a href=#464 id=464 data-nosnippet>464</a>                candidate.meta.source_tokens = source_tokens;
+<a href=#465 id=465 data-nosnippet>465</a>                <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate)
+<a href=#466 id=466 data-nosnippet>466</a>            })<span class="question-mark">?</span>;
+<a href=#467 id=467 data-nosnippet>467</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep.filter(|keep| <span class="kw-2">*</span>keep &gt; <span class="number">0</span>) {
+<a href=#468 id=468 data-nosnippet>468</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
+<a href=#469 id=469 data-nosnippet>469</a>                value.truncate(keep);
+<a href=#470 id=470 data-nosnippet>470</a>                response.value = <span class="prelude-val">Some</span>(Value::Array(value));
+<a href=#471 id=471 data-nosnippet>471</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(keep);
+<a href=#472 id=472 data-nosnippet>472</a>                <span class="kw">let </span>total = response.total_items.unwrap_or(consumed);
+<a href=#473 id=473 data-nosnippet>473</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
+<a href=#474 id=474 data-nosnippet>474</a>                response.returned_items = <span class="prelude-val">Some</span>(keep);
+<a href=#475 id=475 data-nosnippet>475</a>                response.remaining_items = <span class="prelude-val">Some</span>(remaining);
+<a href=#476 id=476 data-nosnippet>476</a>                response.result_complete = remaining == <span class="number">0</span>;
+<a href=#477 id=477 data-nosnippet>477</a>                response.incomplete_reason =
+<a href=#478 id=478 data-nosnippet>478</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
+<a href=#479 id=479 data-nosnippet>479</a>                response.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
+<a href=#480 id=480 data-nosnippet>480</a>                    make_json_cursor(
+<a href=#481 id=481 data-nosnippet>481</a>                        context.cursor_version,
+<a href=#482 id=482 data-nosnippet>482</a>                        <span class="kw-2">&amp;</span>context.source_hash,
+<a href=#483 id=483 data-nosnippet>483</a>                        <span class="kw-2">&amp;</span>context.query_hash,
+<a href=#484 id=484 data-nosnippet>484</a>                        consumed,
+<a href=#485 id=485 data-nosnippet>485</a>                    )
+<a href=#486 id=486 data-nosnippet>486</a>                });
+<a href=#487 id=487 data-nosnippet>487</a>                <span class="kw">let </span>source_tokens = measurements.measure(
+<a href=#488 id=488 data-nosnippet>488</a>                    <span class="self">self</span>,
+<a href=#489 id=489 data-nosnippet>489</a>                    JsonMeasurementKey::KeysPrefix(keep),
+<a href=#490 id=490 data-nosnippet>490</a>                    response
+<a href=#491 id=491 data-nosnippet>491</a>                        .value
+<a href=#492 id=492 data-nosnippet>492</a>                        .as_ref()
+<a href=#493 id=493 data-nosnippet>493</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
+<a href=#494 id=494 data-nosnippet>494</a>                )<span class="question-mark">?</span>;
+<a href=#495 id=495 data-nosnippet>495</a>                response.meta.source_tokens = source_tokens;
+<a href=#496 id=496 data-nosnippet>496</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#497 id=497 data-nosnippet>497</a>            }
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">if </span>!entries.is_empty() {
+<a href=#499 id=499 data-nosnippet>499</a>                <span class="kw">let </span><span class="kw-2">mut </span>minimum = original;
+<a href=#500 id=500 data-nosnippet>500</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();
+<a href=#501 id=501 data-nosnippet>501</a>                value.truncate(<span class="number">1</span>);
+<a href=#502 id=502 data-nosnippet>502</a>                minimum.value = <span class="prelude-val">Some</span>(Value::Array(value));
+<a href=#503 id=503 data-nosnippet>503</a>                <span class="kw">let </span>consumed = context.offset.saturating_add(<span class="number">1</span>);
+<a href=#504 id=504 data-nosnippet>504</a>                <span class="kw">let </span>total = minimum.total_items.unwrap_or(consumed);
+<a href=#505 id=505 data-nosnippet>505</a>                <span class="kw">let </span>remaining = total.saturating_sub(consumed);
+<a href=#506 id=506 data-nosnippet>506</a>                minimum.returned_items = <span class="prelude-val">Some</span>(<span class="number">1</span>);
+<a href=#507 id=507 data-nosnippet>507</a>                minimum.remaining_items = <span class="prelude-val">Some</span>(remaining);
+<a href=#508 id=508 data-nosnippet>508</a>                minimum.result_complete = remaining == <span class="number">0</span>;
+<a href=#509 id=509 data-nosnippet>509</a>                minimum.incomplete_reason =
+<a href=#510 id=510 data-nosnippet>510</a>                    (remaining &gt; <span class="number">0</span>).then_some(JsonIncompleteReason::MaxTokens);
+<a href=#511 id=511 data-nosnippet>511</a>                minimum.meta.next_cursor = (remaining &gt; <span class="number">0</span>).then(|| {
+<a href=#512 id=512 data-nosnippet>512</a>                    make_json_cursor(
+<a href=#513 id=513 data-nosnippet>513</a>                        context.cursor_version,
+<a href=#514 id=514 data-nosnippet>514</a>                        <span class="kw-2">&amp;</span>context.source_hash,
+<a href=#515 id=515 data-nosnippet>515</a>                        <span class="kw-2">&amp;</span>context.query_hash,
+<a href=#516 id=516 data-nosnippet>516</a>                        consumed,
+<a href=#517 id=517 data-nosnippet>517</a>                    )
+<a href=#518 id=518 data-nosnippet>518</a>                });
+<a href=#519 id=519 data-nosnippet>519</a>                <span class="kw">let </span>source_tokens = measurements.measure(
+<a href=#520 id=520 data-nosnippet>520</a>                    <span class="self">self</span>,
+<a href=#521 id=521 data-nosnippet>521</a>                    JsonMeasurementKey::KeysPrefix(<span class="number">1</span>),
+<a href=#522 id=522 data-nosnippet>522</a>                    minimum
+<a href=#523 id=523 data-nosnippet>523</a>                        .value
+<a href=#524 id=524 data-nosnippet>524</a>                        .as_ref()
+<a href=#525 id=525 data-nosnippet>525</a>                        .expect(<span class="string">"keys projection keeps a value"</span>),
+<a href=#526 id=526 data-nosnippet>526</a>                )<span class="question-mark">?</span>;
+<a href=#527 id=527 data-nosnippet>527</a>                minimum.meta.source_tokens = source_tokens;
+<a href=#528 id=528 data-nosnippet>528</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(
+<a href=#529 id=529 data-nosnippet>529</a>                    <span class="kw-2">&amp;</span>minimum,
+<a href=#530 id=530 data-nosnippet>530</a>                    options
+<a href=#531 id=531 data-nosnippet>531</a>                        .max_response_tokens()
+<a href=#532 id=532 data-nosnippet>532</a>                        .expect(<span class="string">"fitting only runs with a response limit"</span>),
+<a href=#533 id=533 data-nosnippet>533</a>                )<span class="question-mark">?</span>);
+<a href=#534 id=534 data-nosnippet>534</a>            }
+<a href=#535 id=535 data-nosnippet>535</a>        }
+<a href=#536 id=536 data-nosnippet>536</a>
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(
+<a href=#538 id=538 data-nosnippet>538</a>            response,
+<a href=#539 id=539 data-nosnippet>539</a>            options
+<a href=#540 id=540 data-nosnippet>540</a>                .max_response_tokens()
+<a href=#541 id=541 data-nosnippet>541</a>                .expect(<span class="string">"fitting only runs with a response limit"</span>),
+<a href=#542 id=542 data-nosnippet>542</a>        )<span class="question-mark">?</span>)
+<a href=#543 id=543 data-nosnippet>543</a>    }
+<a href=#544 id=544 data-nosnippet>544</a>}
 </code></pre></div></section></main></body></html>

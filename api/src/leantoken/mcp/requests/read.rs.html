@@ -105,45 +105,46 @@
 <a href=#105 id=105 data-nosnippet>105</a>        ServiceCallOptions,
 <a href=#106 id=106 data-nosnippet>106</a>        <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#107 id=107 data-nosnippet>107</a>    ) {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>(start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
-<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">match </span><span class="self">self</span>.target {
-<a href=#110 id=110 data-nosnippet>110</a>                ReadMcpTarget::Symbol { identity } =&gt; (
-<a href=#111 id=111 data-nosnippet>111</a>                    <span class="prelude-val">None</span>,
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>receipt_resource = <span class="self">self</span>.receipt_id.is_some();
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span>(start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
+<a href=#110 id=110 data-nosnippet>110</a>            <span class="kw">match </span><span class="self">self</span>.target {
+<a href=#111 id=111 data-nosnippet>111</a>                ReadMcpTarget::Symbol { identity } =&gt; (
 <a href=#112 id=112 data-nosnippet>112</a>                    <span class="prelude-val">None</span>,
-<a href=#113 id=113 data-nosnippet>113</a>                    <span class="prelude-val">Some</span>(identity.qualified_name()),
-<a href=#114 id=114 data-nosnippet>114</a>                    <span class="prelude-val">None</span>,
+<a href=#113 id=113 data-nosnippet>113</a>                    <span class="prelude-val">None</span>,
+<a href=#114 id=114 data-nosnippet>114</a>                    <span class="prelude-val">Some</span>(identity.qualified_name()),
 <a href=#115 id=115 data-nosnippet>115</a>                    <span class="prelude-val">None</span>,
 <a href=#116 id=116 data-nosnippet>116</a>                    <span class="prelude-val">None</span>,
-<a href=#117 id=117 data-nosnippet>117</a>                ),
-<a href=#118 id=118 data-nosnippet>118</a>                ReadMcpTarget::Heading { name, occurrence } =&gt; {
-<a href=#119 id=119 data-nosnippet>119</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(name), <span class="prelude-val">Some</span>(occurrence), <span class="prelude-val">None</span>)
-<a href=#120 id=120 data-nosnippet>120</a>                }
-<a href=#121 id=121 data-nosnippet>121</a>                ReadMcpTarget::Lines { start, end } =&gt; {
-<a href=#122 id=122 data-nosnippet>122</a>                    (<span class="prelude-val">Some</span>(start), <span class="prelude-val">Some</span>(end), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
-<a href=#123 id=123 data-nosnippet>123</a>                }
-<a href=#124 id=124 data-nosnippet>124</a>                ReadMcpTarget::Continuation { cursor } =&gt; {
-<a href=#125 id=125 data-nosnippet>125</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(cursor))
-<a href=#126 id=126 data-nosnippet>126</a>                }
-<a href=#127 id=127 data-nosnippet>127</a>            };
-<a href=#128 id=128 data-nosnippet>128</a>        (
-<a href=#129 id=129 data-nosnippet>129</a>            ReadRequest {
-<a href=#130 id=130 data-nosnippet>130</a>                path: <span class="self">self</span>.path.into_string(),
-<a href=#131 id=131 data-nosnippet>131</a>                start_line,
-<a href=#132 id=132 data-nosnippet>132</a>                end_line,
-<a href=#133 id=133 data-nosnippet>133</a>                symbol,
-<a href=#134 id=134 data-nosnippet>134</a>                heading,
-<a href=#135 id=135 data-nosnippet>135</a>                heading_occurrence,
-<a href=#136 id=136 data-nosnippet>136</a>                continuation_cursor,
-<a href=#137 id=137 data-nosnippet>137</a>                max_tokens: <span class="self">self</span>.max_tokens,
-<a href=#138 id=138 data-nosnippet>138</a>                expected_hash: <span class="self">self</span>.expected_hash,
-<a href=#139 id=139 data-nosnippet>139</a>                delta: <span class="self">self</span>.delta,
-<a href=#140 id=140 data-nosnippet>140</a>                receipt_id: <span class="self">self</span>.receipt_id,
-<a href=#141 id=141 data-nosnippet>141</a>                policy: <span class="self">self</span>.policy,
-<a href=#142 id=142 data-nosnippet>142</a>            },
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="self">self</span>.consistency,
-<a href=#144 id=144 data-nosnippet>144</a>            service_call_options(<span class="self">self</span>.max_response_tokens),
-<a href=#145 id=145 data-nosnippet>145</a>            <span class="self">self</span>.expected_repository_id,
-<a href=#146 id=146 data-nosnippet>146</a>        )
-<a href=#147 id=147 data-nosnippet>147</a>    }
-<a href=#148 id=148 data-nosnippet>148</a>}
+<a href=#117 id=117 data-nosnippet>117</a>                    <span class="prelude-val">None</span>,
+<a href=#118 id=118 data-nosnippet>118</a>                ),
+<a href=#119 id=119 data-nosnippet>119</a>                ReadMcpTarget::Heading { name, occurrence } =&gt; {
+<a href=#120 id=120 data-nosnippet>120</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(name), <span class="prelude-val">Some</span>(occurrence), <span class="prelude-val">None</span>)
+<a href=#121 id=121 data-nosnippet>121</a>                }
+<a href=#122 id=122 data-nosnippet>122</a>                ReadMcpTarget::Lines { start, end } =&gt; {
+<a href=#123 id=123 data-nosnippet>123</a>                    (<span class="prelude-val">Some</span>(start), <span class="prelude-val">Some</span>(end), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
+<a href=#124 id=124 data-nosnippet>124</a>                }
+<a href=#125 id=125 data-nosnippet>125</a>                ReadMcpTarget::Continuation { cursor } =&gt; {
+<a href=#126 id=126 data-nosnippet>126</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(cursor))
+<a href=#127 id=127 data-nosnippet>127</a>                }
+<a href=#128 id=128 data-nosnippet>128</a>            };
+<a href=#129 id=129 data-nosnippet>129</a>        (
+<a href=#130 id=130 data-nosnippet>130</a>            ReadRequest {
+<a href=#131 id=131 data-nosnippet>131</a>                path: <span class="self">self</span>.path.into_string(),
+<a href=#132 id=132 data-nosnippet>132</a>                start_line,
+<a href=#133 id=133 data-nosnippet>133</a>                end_line,
+<a href=#134 id=134 data-nosnippet>134</a>                symbol,
+<a href=#135 id=135 data-nosnippet>135</a>                heading,
+<a href=#136 id=136 data-nosnippet>136</a>                heading_occurrence,
+<a href=#137 id=137 data-nosnippet>137</a>                continuation_cursor,
+<a href=#138 id=138 data-nosnippet>138</a>                max_tokens: <span class="self">self</span>.max_tokens,
+<a href=#139 id=139 data-nosnippet>139</a>                expected_hash: <span class="self">self</span>.expected_hash,
+<a href=#140 id=140 data-nosnippet>140</a>                delta: <span class="self">self</span>.delta,
+<a href=#141 id=141 data-nosnippet>141</a>                receipt_id: <span class="self">self</span>.receipt_id,
+<a href=#142 id=142 data-nosnippet>142</a>                policy: <span class="self">self</span>.policy,
+<a href=#143 id=143 data-nosnippet>143</a>            },
+<a href=#144 id=144 data-nosnippet>144</a>            <span class="self">self</span>.consistency,
+<a href=#145 id=145 data-nosnippet>145</a>            service_call_options_with_receipt(<span class="self">self</span>.max_response_tokens, receipt_resource),
+<a href=#146 id=146 data-nosnippet>146</a>            <span class="self">self</span>.expected_repository_id,
+<a href=#147 id=147 data-nosnippet>147</a>        )
+<a href=#148 id=148 data-nosnippet>148</a>    }
+<a href=#149 id=149 data-nosnippet>149</a>}
 </code></pre></div></section></main></body></html>

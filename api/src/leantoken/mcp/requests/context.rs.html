@@ -147,7 +147,7 @@
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#148 id=148 data-nosnippet>148</a>        <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt;,
 <a href=#149 id=149 data-nosnippet>149</a>    ) {
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>options = service_call_options(<span class="self">self</span>.max_response_tokens);
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>options = service_call_options_with_receipt(<span class="self">self</span>.max_response_tokens, !<span class="self">self</span>.plan_only);
 <a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>options = <span class="self">self</span>.response_profile.map_or(options, |profile| {
 <a href=#152 id=152 data-nosnippet>152</a>            options.with_context_response_profile(profile)
 <a href=#153 id=153 data-nosnippet>153</a>        });

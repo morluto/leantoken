@@ -223,7 +223,7 @@
 <a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) symbol: SymbolIdentity,
 <a href=#224 id=224 data-nosnippet>224</a>    <span class="attr">#[serde(default)]
 <a href=#225 id=225 data-nosnippet>225</a>    #[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) head_path: <span class="prelude-ty">Option</span>&lt;NonEmptyText&gt;,
+<a href=#226 id=226 data-nosnippet>226</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) head_path: <span class="prelude-ty">Option</span>&lt;RepositoryPath&gt;,
 <a href=#227 id=227 data-nosnippet>227</a>    <span class="attr">#[serde(default)]
 <a href=#228 id=228 data-nosnippet>228</a>    #[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
 <a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) head_symbol: <span class="prelude-ty">Option</span>&lt;SymbolIdentity&gt;,
@@ -319,7 +319,7 @@
 <a href=#319 id=319 data-nosnippet>319</a>                        .map(|target| DiffSymbolsTarget {
 <a href=#320 id=320 data-nosnippet>320</a>                            path: target.path.into_string(),
 <a href=#321 id=321 data-nosnippet>321</a>                            symbol: target.symbol.qualified_name(),
-<a href=#322 id=322 data-nosnippet>322</a>                            head_path: target.head_path.map(NonEmptyText::into_string),
+<a href=#322 id=322 data-nosnippet>322</a>                            head_path: target.head_path.map(RepositoryPath::into_string),
 <a href=#323 id=323 data-nosnippet>323</a>                            head_symbol: target.head_symbol.map(|symbol| symbol.qualified_name()),
 <a href=#324 id=324 data-nosnippet>324</a>                        })
 <a href=#325 id=325 data-nosnippet>325</a>                        .collect(),

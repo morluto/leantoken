@@ -63,7 +63,7 @@
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// Select and project one JSON value.
 <a href=#64 id=64 data-nosnippet>64</a>    </span>Query {
 <a href=#65 id=65 data-nosnippet>65</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#66 id=66 data-nosnippet>66</a>        </span>path: NonEmptyText,
+<a href=#66 id=66 data-nosnippet>66</a>        </span>path: RepositoryPath,
 <a href=#67 id=67 data-nosnippet>67</a>        <span class="attr">#[serde(default)]
 <a href=#68 id=68 data-nosnippet>68</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;JsonMcpSelector&gt;,
 <a href=#69 id=69 data-nosnippet>69</a>        <span class="attr">#[serde(default)]
@@ -82,7 +82,7 @@
 <a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Summarize numeric leaves below one JSON selection.
 <a href=#83 id=83 data-nosnippet>83</a>    </span>NumericSummary {
 <a href=#84 id=84 data-nosnippet>84</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#85 id=85 data-nosnippet>85</a>        </span>path: NonEmptyText,
+<a href=#85 id=85 data-nosnippet>85</a>        </span>path: RepositoryPath,
 <a href=#86 id=86 data-nosnippet>86</a>        <span class="attr">#[serde(default)]
 <a href=#87 id=87 data-nosnippet>87</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;JsonMcpSelector&gt;,
 <a href=#88 id=88 data-nosnippet>88</a>        <span class="attr">#[serde(flatten)]
@@ -91,9 +91,9 @@
 <a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// Compare selected fields between two JSON files.
 <a href=#92 id=92 data-nosnippet>92</a>    </span>DiffFields {
 <a href=#93 id=93 data-nosnippet>93</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#94 id=94 data-nosnippet>94</a>        </span>base_path: NonEmptyText,
+<a href=#94 id=94 data-nosnippet>94</a>        </span>base_path: RepositoryPath,
 <a href=#95 id=95 data-nosnippet>95</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">4096</span>))]
-<a href=#96 id=96 data-nosnippet>96</a>        </span>head_path: NonEmptyText,
+<a href=#96 id=96 data-nosnippet>96</a>        </span>head_path: RepositoryPath,
 <a href=#97 id=97 data-nosnippet>97</a>        <span class="attr">#[schemars(length(min = <span class="number">1</span>, max = <span class="number">100</span>))]
 <a href=#98 id=98 data-nosnippet>98</a>        </span>selectors: Vec&lt;JsonMcpSelector&gt;,
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="attr">#[serde(default)]
@@ -107,7 +107,7 @@
 <a href=#107 id=107 data-nosnippet>107</a>#[serde(tag = <span class="string">"kind"</span>, rename_all = <span class="string">"snake_case"</span>, deny_unknown_fields)]
 <a href=#108 id=108 data-nosnippet>108</a></span><span class="kw">enum </span>JsonMcpOperationWire {
 <a href=#109 id=109 data-nosnippet>109</a>    Query {
-<a href=#110 id=110 data-nosnippet>110</a>        path: NonEmptyText,
+<a href=#110 id=110 data-nosnippet>110</a>        path: RepositoryPath,
 <a href=#111 id=111 data-nosnippet>111</a>        <span class="attr">#[serde(default)]
 <a href=#112 id=112 data-nosnippet>112</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;JsonMcpSelector&gt;,
 <a href=#113 id=113 data-nosnippet>113</a>        <span class="attr">#[serde(default)]
@@ -126,7 +126,7 @@
 <a href=#126 id=126 data-nosnippet>126</a>        </span>cursor: <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#127 id=127 data-nosnippet>127</a>    },
 <a href=#128 id=128 data-nosnippet>128</a>    NumericSummary {
-<a href=#129 id=129 data-nosnippet>129</a>        path: NonEmptyText,
+<a href=#129 id=129 data-nosnippet>129</a>        path: RepositoryPath,
 <a href=#130 id=130 data-nosnippet>130</a>        <span class="attr">#[serde(default)]
 <a href=#131 id=131 data-nosnippet>131</a>        </span>selector: <span class="prelude-ty">Option</span>&lt;JsonMcpSelector&gt;,
 <a href=#132 id=132 data-nosnippet>132</a>        <span class="attr">#[serde(default)]
@@ -139,8 +139,8 @@
 <a href=#139 id=139 data-nosnippet>139</a>        </span>array_sample_size: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#140 id=140 data-nosnippet>140</a>    },
 <a href=#141 id=141 data-nosnippet>141</a>    DiffFields {
-<a href=#142 id=142 data-nosnippet>142</a>        base_path: NonEmptyText,
-<a href=#143 id=143 data-nosnippet>143</a>        head_path: NonEmptyText,
+<a href=#142 id=142 data-nosnippet>142</a>        base_path: RepositoryPath,
+<a href=#143 id=143 data-nosnippet>143</a>        head_path: RepositoryPath,
 <a href=#144 id=144 data-nosnippet>144</a>        selectors: Vec&lt;JsonMcpSelector&gt;,
 <a href=#145 id=145 data-nosnippet>145</a>        <span class="attr">#[serde(default)]
 <a href=#146 id=146 data-nosnippet>146</a>        </span>projection: JsonProjection,

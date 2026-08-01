@@ -261,34 +261,36 @@
 <a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">pub </span>unsupported: u64,
 <a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// Successful exact `expected_hash` suppression.
 <a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">pub </span>hash_suppressed: u64,
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// Observed errors other than typed unsupported-language outcomes.
-<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">pub </span>failed: u64,
-<a href=#266 id=266 data-nosnippet>266</a>}
-<a href=#267 id=267 data-nosnippet>267</a>
-<a href=#268 id=268 data-nosnippet>268</a><span class="attr">#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#269 id=269 data-nosnippet>269</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
-<a href=#270 id=270 data-nosnippet>270</a></span><span class="doccomment">/// Time window represented by a savings snapshot response.
-<a href=#271 id=271 data-nosnippet>271</a></span><span class="kw">pub enum </span>TokenSavingsWindow {
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="doccomment">/// All persisted aggregate records.
-<a href=#273 id=273 data-nosnippet>273</a>    </span>Lifetime,
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// Aggregate counters added after the supplied opaque snapshot.
-<a href=#275 id=275 data-nosnippet>275</a>    </span>Delta,
-<a href=#276 id=276 data-nosnippet>276</a>}
-<a href=#277 id=277 data-nosnippet>277</a>
-<a href=#278 id=278 data-nosnippet>278</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#279 id=279 data-nosnippet>279</a></span><span class="doccomment">/// Observed accounting plus a caller-carried opaque aggregate snapshot.
-<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">pub struct </span>TokenSavingsSnapshotReport {
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="attr">#[serde(flatten)]
-<a href=#282 id=282 data-nosnippet>282</a>    </span><span class="kw">pub </span>observed: ObservedTokenSavingsReport,
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="doccomment">/// Opaque state that can be supplied to a later savings request.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>snapshot: String,
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Whether the report covers lifetime totals or a snapshot delta.
-<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">pub </span>window: TokenSavingsWindow,
-<a href=#287 id=287 data-nosnippet>287</a>}
-<a href=#288 id=288 data-nosnippet>288</a>
-<a href=#289 id=289 data-nosnippet>289</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-<a href=#290 id=290 data-nosnippet>290</a></span><span class="kw">pub struct </span>LanguageCount {
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">pub </span>language: String,
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">pub </span>files: usize,
-<a href=#293 id=293 data-nosnippet>293</a>}
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// Successful response records from legacy or otherwise unclassified rows.
+<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">pub </span>unclassified: u64,
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Observed errors other than typed unsupported-language outcomes.
+<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">pub </span>failed: u64,
+<a href=#268 id=268 data-nosnippet>268</a>}
+<a href=#269 id=269 data-nosnippet>269</a>
+<a href=#270 id=270 data-nosnippet>270</a><span class="attr">#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#271 id=271 data-nosnippet>271</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="doccomment">/// Time window represented by a savings snapshot response.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">pub enum </span>TokenSavingsWindow {
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// All persisted aggregate records.
+<a href=#275 id=275 data-nosnippet>275</a>    </span>Lifetime,
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="doccomment">/// Aggregate counters added after the supplied opaque snapshot.
+<a href=#277 id=277 data-nosnippet>277</a>    </span>Delta,
+<a href=#278 id=278 data-nosnippet>278</a>}
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#281 id=281 data-nosnippet>281</a></span><span class="doccomment">/// Observed accounting plus a caller-carried opaque aggregate snapshot.
+<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">pub struct </span>TokenSavingsSnapshotReport {
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="attr">#[serde(flatten)]
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>observed: ObservedTokenSavingsReport,
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Opaque state that can be supplied to a later savings request.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">pub </span>snapshot: String,
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Whether the report covers lifetime totals or a snapshot delta.
+<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">pub </span>window: TokenSavingsWindow,
+<a href=#289 id=289 data-nosnippet>289</a>}
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub struct </span>LanguageCount {
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">pub </span>language: String,
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">pub </span>files: usize,
+<a href=#295 id=295 data-nosnippet>295</a>}
 </code></pre></div></section></main></body></html>
