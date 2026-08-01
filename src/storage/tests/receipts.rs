@@ -1,4 +1,7 @@
-use std::sync::{Arc, Barrier};
+use std::{
+    sync::{Arc, Barrier, mpsc},
+    time::Duration,
+};
 
 use super::*;
 use crate::error::RetryableOperation;
@@ -224,6 +227,41 @@ fn concurrent_duplicate_append_returns_source_once_without_lost_update() {
         vec![ReceiptDecision::Return, ReceiptDecision::SuppressExact]
     );
     assert_eq!(usage(&storage).2, 1);
+}
+
+#[test]
+fn live_receipt_clock_is_sampled_after_writer_serialization() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let receipt_id = storage
+        .evaluate_receipt_at(None, 1, &[], true, 1_000)
+        .expect("create receipt")
+        .receipt_id;
+    let blocked = storage.clone();
+    let writer = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (clock_sampled, sample_observed) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        blocked.evaluate_receipt_with_clock(Some(&receipt_id), 1, &[], true, || {
+            clock_sampled.send(()).expect("report clock sample");
+            1_001
+        })
+    });
+
+    assert!(matches!(
+        sample_observed.recv_timeout(Duration::from_millis(250)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(writer);
+    sample_observed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("clock sampled after writer lock");
+    thread
+        .join()
+        .expect("join")
+        .expect("evaluate serialized receipt");
 }
 
 #[test]

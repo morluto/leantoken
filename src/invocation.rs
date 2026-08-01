@@ -171,29 +171,33 @@ mod tests {
     fn metadata<'a>(
         npm_command: Option<&'a str>,
         lifecycle: Option<&'a str>,
-        execpath: Option<&'a str>,
-        node: Option<&'a str>,
+        execpath: Option<&'a Path>,
+        node: Option<&'a Path>,
     ) -> InvocationMetadata<'a> {
         InvocationMetadata {
             npm_command,
             npm_lifecycle_event: lifecycle,
-            npm_execpath: execpath.map(Path::new),
-            npm_node_execpath: node.map(Path::new),
+            npm_execpath: execpath,
+            npm_node_execpath: node,
             ..InvocationMetadata::default()
         }
     }
 
+    fn absolute_path(relative: &str) -> PathBuf {
+        std::env::current_dir()
+            .expect("current directory")
+            .join(relative)
+    }
+
     #[test]
     fn genuine_npx_requires_metadata_and_package_layout() {
+        let executable = absolute_path("home/.npm/_npx/123/node_modules/leantoken/bin/leantoken");
+        let execpath = absolute_path("usr/lib/npm/npx-cli.js");
+        let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
-            Path::new("/home/.npm/_npx/123/node_modules/leantoken/bin/leantoken"),
+            &executable,
             &["npx".into(), "leantoken".into()],
-            metadata(
-                Some("exec"),
-                Some("npx"),
-                Some("/usr/lib/npm/npx-cli.js"),
-                Some("/usr/bin/node"),
-            ),
+            metadata(Some("exec"), Some("npx"), Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.kind, InvocationKind::Ephemeral);
         assert_eq!(identity.package_manager, Some(PackageManager::Npx));
@@ -201,30 +205,26 @@ mod tests {
 
     #[test]
     fn npm_exec_keeps_its_distinct_launcher_identity() {
+        let executable = absolute_path("home/.npm/_npx/123/node_modules/leantoken/bin/leantoken");
+        let execpath = absolute_path("usr/lib/node_modules/npm/bin/npm-cli.js");
+        let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
-            Path::new("/home/.npm/_npx/123/node_modules/leantoken/bin/leantoken"),
+            &executable,
             &["leantoken".into(), "setup".into()],
-            metadata(
-                Some("exec"),
-                None,
-                Some("/usr/lib/node_modules/npm/bin/npm-cli.js"),
-                Some("/usr/bin/node"),
-            ),
+            metadata(Some("exec"), None, Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.package_manager, Some(PackageManager::Npm));
     }
 
     #[test]
     fn npm_metadata_does_not_reclassify_a_local_package_binary() {
+        let executable = absolute_path("workspace/node_modules/leantoken/bin/leantoken");
+        let execpath = absolute_path("usr/lib/node_modules/npm/bin/npm-cli.js");
+        let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
-            Path::new("/workspace/node_modules/leantoken/bin/leantoken"),
+            &executable,
             &["leantoken".into(), "setup".into()],
-            metadata(
-                Some("exec"),
-                None,
-                Some("/usr/lib/node_modules/npm/bin/npm-cli.js"),
-                Some("/usr/bin/node"),
-            ),
+            metadata(Some("exec"), None, Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.kind, InvocationKind::Persistent);
         assert_eq!(identity.package_manager, None);
@@ -242,50 +242,56 @@ mod tests {
 
     #[test]
     fn pnpm_and_yarn_layouts_need_their_own_evidence() {
+        let pnpm_executable = absolute_path(
+            "workspace/node_modules/.pnpm/leantoken@1/node_modules/leantoken/bin/leantoken",
+        );
+        let pnpm_dlx = absolute_path("tmp/pnpm/dlx-123");
         let pnpm = InvocationIdentity::detect(
-            Path::new(
-                "/workspace/node_modules/.pnpm/leantoken@1/node_modules/leantoken/bin/leantoken",
-            ),
+            &pnpm_executable,
             &["pnpm".into(), "dlx".into(), "leantoken".into()],
             InvocationMetadata {
-                pnpm_script_src_dir: Some(Path::new("/tmp/pnpm/dlx-123")),
+                pnpm_script_src_dir: Some(&pnpm_dlx),
                 ..InvocationMetadata::default()
             },
         );
         assert_eq!(pnpm.package_manager, Some(PackageManager::Pnpm));
 
+        let local_pnpm_src = absolute_path("workspace/node_modules/.pnpm");
         let local_pnpm = InvocationIdentity::detect(
-            Path::new(
-                "/workspace/node_modules/.pnpm/leantoken@1/node_modules/leantoken/bin/leantoken",
-            ),
+            &pnpm_executable,
             &["leantoken".into(), "setup".into()],
             InvocationMetadata {
-                pnpm_script_src_dir: Some(Path::new("/workspace/node_modules/.pnpm")),
+                pnpm_script_src_dir: Some(&local_pnpm_src),
                 ..InvocationMetadata::default()
             },
         );
         assert_eq!(local_pnpm.kind, InvocationKind::Persistent);
         assert_eq!(local_pnpm.package_manager, None);
 
+        let pnpm_dlx_executable =
+            absolute_path("tmp/pnpm/dlx-123/node_modules/leantoken/bin/leantoken");
         let pnpm_dlx_temp = InvocationIdentity::detect(
-            Path::new("/tmp/pnpm/dlx-123/node_modules/leantoken/bin/leantoken"),
+            &pnpm_dlx_executable,
             &["leantoken".into(), "setup".into()],
             InvocationMetadata {
-                pnpm_script_src_dir: Some(Path::new("/tmp/pnpm/dlx-123")),
+                pnpm_script_src_dir: Some(&pnpm_dlx),
                 ..InvocationMetadata::default()
             },
         );
         assert_eq!(pnpm_dlx_temp.package_manager, Some(PackageManager::Pnpm));
 
+        let yarn_executable = absolute_path(
+            "workspace/.yarn/dlx/leantoken-npm-1/node_modules/leantoken/bin/leantoken",
+        );
+        let yarn_execpath = absolute_path("usr/bin/yarn");
+        let yarn_package_json = absolute_path("workspace/.yarn/dlx/leantoken-npm-1/package.json");
         let yarn = InvocationIdentity::detect(
-            Path::new("/workspace/.yarn/dlx/leantoken-npm-1/node_modules/leantoken/bin/leantoken"),
+            &yarn_executable,
             &["leantoken".into(), "setup".into()],
             InvocationMetadata {
                 yarn_version: Some("4.0.0"),
-                npm_execpath: Some(Path::new("/usr/bin/yarn")),
-                yarn_package_json: Some(Path::new(
-                    "/workspace/.yarn/dlx/leantoken-npm-1/package.json",
-                )),
+                npm_execpath: Some(&yarn_execpath),
+                yarn_package_json: Some(&yarn_package_json),
                 ..InvocationMetadata::default()
             },
         );
@@ -294,30 +300,26 @@ mod tests {
 
     #[test]
     fn genuine_npx_child_argv_does_not_need_to_repeat_the_wrapper() {
+        let executable = absolute_path("home/.npm/_npx/123/node_modules/leantoken/bin/leantoken");
+        let execpath = absolute_path("usr/lib/node_modules/npm/bin/npx-cli.js");
+        let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
-            Path::new("/home/.npm/_npx/123/node_modules/leantoken/bin/leantoken"),
+            &executable,
             &["leantoken".into(), "setup".into()],
-            metadata(
-                Some("exec"),
-                None,
-                Some("/usr/lib/node_modules/npm/bin/npx-cli.js"),
-                Some("/usr/bin/node"),
-            ),
+            metadata(Some("exec"), None, Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.package_manager, Some(PackageManager::Npx));
     }
 
     #[test]
     fn ambient_npm_metadata_cannot_reclassify_a_persistent_project_binary() {
+        let executable = absolute_path("work/leantoken-project/target/debug/leantoken");
+        let execpath = absolute_path("usr/lib/npm/npx-cli.js");
+        let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
-            Path::new("/work/leantoken-project/target/debug/leantoken"),
+            &executable,
             &["leantoken".into(), "setup".into()],
-            metadata(
-                Some("exec"),
-                Some("npx"),
-                Some("/usr/lib/npm/npx-cli.js"),
-                Some("/usr/bin/node"),
-            ),
+            metadata(Some("exec"), Some("npx"), Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.kind, InvocationKind::Persistent);
         assert_eq!(identity.package_manager, None);
@@ -325,14 +327,16 @@ mod tests {
 
     #[test]
     fn local_yarn_pnp_dependency_stays_persistent() {
+        let executable = absolute_path(
+            "workspace/.yarn/unplugged/leantoken-npm-1/node_modules/leantoken/bin/leantoken",
+        );
+        let yarn_execpath = absolute_path("usr/bin/yarn");
         let identity = InvocationIdentity::detect(
-            Path::new(
-                "/workspace/.yarn/unplugged/leantoken-npm-1/node_modules/leantoken/bin/leantoken",
-            ),
+            &executable,
             &["leantoken".into(), "setup".into()],
             InvocationMetadata {
                 yarn_version: Some("4.0.0"),
-                npm_execpath: Some(Path::new("/usr/bin/yarn")),
+                npm_execpath: Some(&yarn_execpath),
                 ..InvocationMetadata::default()
             },
         );

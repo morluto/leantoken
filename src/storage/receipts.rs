@@ -97,15 +97,16 @@ impl Storage {
         candidates: &[ReceiptEvidence],
         suppress_overlap: bool,
     ) -> Result<ReceiptEvaluation> {
-        self.evaluate_receipt_at(
+        self.evaluate_receipt_with_clock(
             requested_id,
             generation,
             candidates,
             suppress_overlap,
-            unix_millis(SystemTime::now()),
+            || unix_millis(SystemTime::now()),
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn evaluate_receipt_at(
         &self,
         requested_id: Option<&str>,
@@ -114,16 +115,31 @@ impl Storage {
         suppress_overlap: bool,
         now_unix_millis: i64,
     ) -> Result<ReceiptEvaluation> {
+        self.evaluate_receipt_with_clock(
+            requested_id,
+            generation,
+            candidates,
+            suppress_overlap,
+            || now_unix_millis,
+        )
+    }
+
+    pub(crate) fn evaluate_receipt_with_clock<F>(
+        &self,
+        requested_id: Option<&str>,
+        generation: u64,
+        candidates: &[ReceiptEvidence],
+        suppress_overlap: bool,
+        now_unix_millis: F,
+    ) -> Result<ReceiptEvaluation>
+    where
+        F: FnOnce() -> i64,
+    {
         if requested_id.is_some_and(|id| id.len() > MAX_RECEIPT_ID_BYTES) {
             return Err(Error::InputTooLong {
                 field: "receipt_id",
                 max_bytes: MAX_RECEIPT_ID_BYTES,
             });
-        }
-        if now_unix_millis < 0 {
-            return Err(Error::OperationFailure(
-                "system clock precedes the Unix epoch".into(),
-            ));
         }
         if candidates
             .iter()
@@ -134,14 +150,24 @@ impl Storage {
                 max_bytes: MAX_EVIDENCE_BYTES_PER_RECEIPT,
             });
         }
-        let expires_unix_millis = now_unix_millis
-            .checked_add(RECEIPT_TTL_MILLIS)
-            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
         let mut conn = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Independent `Storage` instances have independent process-local
+        // mutexes. Sample live time only after SQLite has serialized writers,
+        // otherwise an earlier sample can commit after a later one and look
+        // like a clock rollback.
+        let now_unix_millis = now_unix_millis();
+        if now_unix_millis < 0 {
+            return Err(Error::OperationFailure(
+                "system clock precedes the Unix epoch".into(),
+            ));
+        }
+        let expires_unix_millis = now_unix_millis
+            .checked_add(RECEIPT_TTL_MILLIS)
+            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
         prune_expired_receipts(&tx, now_unix_millis)?;
         let mut usage = receipt_usage(&tx)?;
         let requested_existing = requested_id.is_some();

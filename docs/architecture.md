@@ -122,7 +122,10 @@ clock validation, decisions, append, counters, expiry, and quota eviction.
 The process-local writer mutex and SQLite's database writer lock therefore make
 two processes using one receipt observe a serial order: a duplicate concurrent
 call is returned once and suppressed by the follower, and distinct appends
-cannot lose one another. A receipt remains bound to the generation of the read
+cannot lose one another. Live wall-clock time is sampled only after the
+`IMMEDIATE` transaction acquires that writer order, preventing an older queued
+sample from looking like clock rollback after a newer request commits. A
+receipt remains bound to the generation of the read
 snapshot that produced it even if a newer generation publishes before the
 receipt transaction. A later request on the new generation fails with
 `StaleReceipt`; it never silently creates a new session.
