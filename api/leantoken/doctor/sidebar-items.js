@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["print_progress","print_report","run"],"struct":["DoctorReport","FirstCallReport","IntegrationReport","RegistrationReport"]};
+window.SIDEBAR_ITEMS = {"fn":["print_progress","print_report","run","run_configured_client"],"struct":["DoctorReport","FirstCallReport","IntegrationReport","RegistrationReport"]};
