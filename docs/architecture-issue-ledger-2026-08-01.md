@@ -192,11 +192,12 @@ the authoritative closing discussion and linked pull-request evidence.
 
 ## Active root-cause decisions
 
-- Publication preparation remains an active correction: filesystem reads,
-  hashing, parsing, tokenization, and import resolution currently execute
-  inside the immediate writer transaction. Staging is not adopted without the
-  paired transaction-hold, total-time, RSS, database-size, and write-amplification
-  gates.
+- Publication preparation is corrected in this tree: filesystem reads,
+  hashing, parsing, tokenization, and import resolution run before the
+  immediate writer transaction and are held in a bounded in-memory staging
+  buffer. Ephemeral SQLite staging remains a deferred optimization until the
+  paired transaction-hold, total-time, RSS, database-size, and
+  write-amplification gates are measured.
 - Exact full reconciliation continues to hash same-metadata files. Bounded live
   reads must not claim full-file freshness.
 - Regex verification now has one request-wide files/chunks/bytes budget and a
