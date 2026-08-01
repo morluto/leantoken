@@ -724,7 +724,7 @@ fn mcp_survives_malformed_and_invalid_messages() {
         "method": "tools/call",
         "params": {
             "name": "files",
-            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            "arguments": { "operation": {"kind": "tree", "max_results": 1} }
         }
     }));
     let response = process.response(Duration::from_secs(10));
@@ -767,8 +767,7 @@ fn mcp_result_modes_project_exact_wire_shapes() {
             "params": {
                 "name": "files",
                 "arguments": {
-                    "operation": {"kind": "tree"},
-                    "max_results": 1
+                    "operation": {"kind": "tree", "max_results": 1}
                 }
             }
         }));
@@ -811,10 +810,12 @@ fn mcp_receipt_created_by_one_process_is_reused_by_another() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "persistent_receipt_answer",
-                "mode": "identifier",
-                "max_results": 5,
-                "max_tokens": 1_000
+                "operation": {
+                    "kind": "identifier",
+                    "query": "persistent_receipt_answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000
+                }
             }
         }
     }));
@@ -843,11 +844,13 @@ fn mcp_receipt_created_by_one_process_is_reused_by_another() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "persistent_receipt_answer",
-                "mode": "identifier",
-                "max_results": 5,
-                "max_tokens": 1_000,
-                "receipt_id": receipt_id
+                "operation": {
+                    "kind": "identifier",
+                    "query": "persistent_receipt_answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000,
+                    "receipt_id": receipt_id
+                }
             }
         }
     }));
@@ -893,13 +896,15 @@ fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "persistent_query_receipt_answer",
-                "mode": "text",
-                "all_occurrences": true,
-                "coordinates_only": true,
-                "max_results": 100,
-                "max_tokens": 10_000,
-                "query_receipt": {"kind": "record"}
+                "operation": {
+                    "kind": "text",
+                    "query": "persistent_query_receipt_answer",
+                    "all_occurrences": true,
+                    "coordinates_only": true,
+                    "max_results": 100,
+                    "max_tokens": 10_000,
+                    "query_receipt": {"kind": "record"}
+                }
             }
         }
     }));
@@ -926,15 +931,17 @@ fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "persistent_query_receipt_answer",
-                "mode": "text",
-                "all_occurrences": true,
-                "coordinates_only": true,
-                "max_results": 100,
-                "max_tokens": 10_000,
-                "query_receipt": {
-                    "kind": "reuse",
-                    "receipt_id": receipt_id
+                "operation": {
+                    "kind": "text",
+                    "query": "persistent_query_receipt_answer",
+                    "all_occurrences": true,
+                    "coordinates_only": true,
+                    "max_results": 100,
+                    "max_tokens": 10_000,
+                    "query_receipt": {
+                        "kind": "reuse",
+                        "receipt_id": receipt_id
+                    }
                 }
             }
         }
@@ -971,10 +978,12 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "cross_process_rebase_answer",
-                "mode": "identifier",
-                "max_results": 5,
-                "max_tokens": 1_000
+                "operation": {
+                    "kind": "identifier",
+                    "query": "cross_process_rebase_answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000
+                }
             }
         }
     }));
@@ -1035,11 +1044,13 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
         "params": {
             "name": "search",
             "arguments": {
-                "query": "cross_process_rebase_answer",
-                "mode": "identifier",
-                "max_results": 5,
-                "max_tokens": 1_000,
-                "receipt_id": rebased_receipt
+                "operation": {
+                    "kind": "identifier",
+                    "query": "cross_process_rebase_answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000,
+                    "receipt_id": rebased_receipt
+                }
             }
         }
     }));
@@ -1338,7 +1349,7 @@ fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
             "method": "tools/call",
             "params": {
                 "name": "files",
-                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                "arguments": { "operation": {"kind": "tree", "max_results": 1} }
             }
         }));
         let response = process.response(deadline.saturating_duration_since(Instant::now()));
@@ -1391,7 +1402,7 @@ fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
             "method": "tools/call",
             "params": {
                 "name": "files",
-                "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                "arguments": { "operation": {"kind": "tree", "max_results": 1} }
             }
         }));
         let response = process.response(deadline.saturating_duration_since(Instant::now()));
@@ -1417,7 +1428,7 @@ fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
         "method": "tools/call",
         "params": {
             "name": "files",
-            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            "arguments": { "operation": {"kind": "tree", "max_results": 1} }
         }
     }));
     let response = process.response(Duration::from_secs(5));
@@ -1551,7 +1562,7 @@ fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
         "method": "tools/call",
         "params": {
             "name": "files",
-            "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+            "arguments": { "operation": {"kind": "tree", "max_results": 1} }
         }
     }));
     // Process scheduling can delay the follower's first response when unit
@@ -2015,37 +2026,29 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
         .output()
         .expect("run npx setup");
     assert!(
-        !setup.status.success(),
-        "the nonexistent npx launcher must fail verification"
+        setup.status.success(),
+        "ambient lifecycle metadata must not break a persistent executable"
     );
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
-    assert_eq!(report["verification"]["status"], "failed");
-    let package = format!("leantoken@{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(report["verification"]["status"], "passed");
+    let executable = assert_cmd::cargo::cargo_bin!("leantoken");
     assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(report["launcher"]["package"], package);
-    assert_eq!(report["launcher"]["may_contact_network"], true);
-    assert!(!report.to_string().contains("@latest"));
+    assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
+    assert_eq!(report["launcher"]["may_contact_network"], false);
+    assert_eq!(report["launcher"]["command"], executable.to_str().unwrap());
+    assert_eq!(report["launcher"]["args"], serde_json::json!(["mcp"]));
 
     let config: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(temp.path().join(".claude.json"))
             .expect("Claude configuration"),
     )
     .expect("Claude JSON");
-    assert_eq!(config["mcpServers"]["leantoken"]["command"], node.to_str().unwrap());
     assert_eq!(
-        config["mcpServers"]["leantoken"]["args"],
-        serde_json::json!([
-            npx.to_str().unwrap(),
-            "--yes",
-            "--prefer-offline",
-            format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
-            "--",
-            "leantoken",
-            "mcp"
-        ])
+        config["mcpServers"]["leantoken"]["command"],
+        executable.to_str().unwrap()
     );
-    assert!(!config.to_string().contains("@latest"));
+    assert_eq!(config["mcpServers"]["leantoken"]["args"], serde_json::json!(["mcp"]));
 }
 
 #[test]
@@ -2068,12 +2071,12 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
         .output()
         .expect("run initial setup");
     assert!(
-        !setup.status.success(),
-        "the nonexistent npx launcher must fail verification"
+        setup.status.success(),
+        "ambient lifecycle metadata must not break a persistent executable"
     );
     let setup_report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
-    assert_eq!(setup_report["verification"]["status"], "failed");
+    assert_eq!(setup_report["verification"]["status"], "passed");
     std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor directory");
     std::fs::write(
         temp.path().join(".cursor/mcp.json"),
@@ -2085,13 +2088,10 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
         .args(["--json", "setup", "--refresh", "--yes"])
         .output()
         .expect("run setup refresh");
-    assert!(
-        !refresh.status.success(),
-        "the nonexistent npx launcher must fail verification"
-    );
+    assert!(refresh.status.success());
     let report: serde_json::Value =
         serde_json::from_slice(&refresh.stdout).expect("refresh JSON output");
-    assert_eq!(report["verification"]["status"], "failed");
+    assert_eq!(report["verification"]["status"], "passed");
     assert_eq!(report["plan"].as_array().unwrap().len(), 1);
     assert_eq!(report["plan"][0]["client"], "claude");
     assert_eq!(report["plan"][0]["action"], "already_current");
@@ -2216,32 +2216,17 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
         .expect("run npx setup");
 
     assert!(
-        !output.status.success(),
-        "the nonexistent npx launcher must fail verification"
+        output.status.success(),
+        "ambient lifecycle metadata must not break a persistent executable"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
-    assert!(stdout.contains(&format!(
-        "npx leantoken@{} doctor",
-        env!("CARGO_PKG_VERSION")
-    )));
-    assert!(stdout.contains("no global `leantoken` command was installed"));
-    assert!(stdout.contains("npx --yes leantoken@latest setup --refresh --yes"));
-    assert!(stdout.contains(&format!(
-        "pinned to LeanToken v{}",
-        env!("CARGO_PKG_VERSION")
-    )));
-    assert!(stdout.contains("npm install --global leantoken@latest"));
-    assert!(stdout.contains("Launcher verification failed"));
-    assert!(stdout.contains(
-        "Client configuration succeeded, but launcher verification failed."
-    ));
+    assert!(stdout.contains("✓ Launcher verification: MCP ready"));
+    assert!(stdout.contains("Verify from a repository: leantoken doctor"));
+    assert!(stdout.contains("Update later with: leantoken upgrade"));
     assert!(!stdout.contains("Some selected clients failed"));
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("MCP launcher verification failed")
-    );
+    assert!(!stdout.contains("Launcher verification failed"));
 }
 
 fn run(
@@ -2475,7 +2460,7 @@ impl McpProcess {
                 "method": "tools/call",
                 "params": {
                     "name": "files",
-                    "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                    "arguments": { "operation": {"kind": "tree", "max_results": 1} }
                 }
             }));
             let response = self.response(deadline.saturating_duration_since(Instant::now()));
@@ -2500,7 +2485,7 @@ impl McpProcess {
                 "method": "tools/call",
                 "params": {
                     "name": "files",
-                    "arguments": { "operation": {"kind": "tree"}, "max_results": 1 }
+                    "arguments": { "operation": {"kind": "tree", "max_results": 1} }
                 }
             }));
             let response = self.response(deadline.saturating_duration_since(Instant::now()));
