@@ -30,7 +30,8 @@ pub(in crate::ranking) fn generated_focus_facts(
         .focus_paths
         .iter()
         .map(|pattern| {
-            let matcher = PathMatcher::new_lossy(std::slice::from_ref(pattern));
+            let matcher = PathMatcher::new(std::slice::from_ref(pattern))
+                .expect("focus paths are validated at request admission");
             let mut generated = HashSet::new();
             let mut symbols = HashSet::new();
             for candidate in candidates
@@ -182,7 +183,8 @@ pub(in crate::ranking) fn build_focus_path_coverage(
         .iter()
         .zip(generated)
         .map(|(pattern, generated)| {
-            let matcher = PathMatcher::new_lossy(std::slice::from_ref(pattern));
+            let matcher = PathMatcher::new(std::slice::from_ref(pattern))
+                .expect("focus paths are validated at request admission");
             let path_omitted = unique_focus_candidates(path_omitted, &matcher).len();
             let known_omitted = unique_focus_candidates(known_omitted, &matcher).len();
             let selected_ranges = unique_focus_candidates(selected, &matcher);

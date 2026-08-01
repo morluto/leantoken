@@ -100,10 +100,14 @@ pub(in crate::ranking) struct SelectionScope<'request> {
 impl<'request> SelectionScope<'request> {
     fn new(request: &'request ContextRequest, context_exclude_paths: &[String]) -> Self {
         Self {
-            focus_paths: PathMatcher::new_lossy(&request.focus_paths),
-            include_paths: PathMatcher::new_lossy(&request.include_paths),
-            exclude_paths: PathMatcher::new_lossy(&request.exclude_paths),
-            context_exclude_paths: PathMatcher::new_lossy(context_exclude_paths),
+            focus_paths: PathMatcher::new(&request.focus_paths)
+                .expect("focus paths are validated at request admission"),
+            include_paths: PathMatcher::new(&request.include_paths)
+                .expect("include paths are validated at request admission"),
+            exclude_paths: PathMatcher::new(&request.exclude_paths)
+                .expect("exclude paths are validated at request admission"),
+            context_exclude_paths: PathMatcher::new(context_exclude_paths)
+                .expect("configured context exclusions are validated at startup"),
             changed_paths: request.changed_paths.iter().map(String::as_str).collect(),
         }
     }

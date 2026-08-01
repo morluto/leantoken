@@ -220,8 +220,8 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
         .expect_err("ranked identifier cannot issue coverage");
     assert!(matches!(
         error,
-        Error::InvalidInput {
-            field: "all occurrences",
+        Error::InvalidSearchOptions {
+            field: "all_occurrences",
             ..
         } | Error::InvalidInput {
             field: "query_receipt",
@@ -271,7 +271,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
         .search_occurrences(
             exact_request(
                 "definitely_absent",
-                vec!["/src/".into()],
+                vec!["./src/".into()],
                 Vec::new(),
                 QueryReceiptAction::Reuse {
                     receipt_id: absence_receipt,
@@ -347,7 +347,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
         .search_occurrences(
             exact_request(
                 "definitely_absent",
-                vec!["/src/".into()],
+                vec!["./src/".into()],
                 Vec::new(),
                 QueryReceiptAction::Reuse {
                     receipt_id: receipt_id.clone(),

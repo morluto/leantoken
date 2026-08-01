@@ -31,7 +31,7 @@ pub(super) fn resolve_import(
 
 pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     let source = std::path::Path::new(source_path);
-    let parent = source.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let repository_source = crate::repository::RepositoryPath::parse(source_path).ok();
     let mut bases = Vec::new();
 
     if matches!(
@@ -40,14 +40,24 @@ pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<Stri
     ) {
         bases.extend(python_module_paths(source, raw_target));
     } else if raw_target.starts_with('.') {
-        bases.push(parent.join(raw_target));
+        if let Some(joined) = repository_source
+            .as_ref()
+            .and_then(|source| source.join_relative(raw_target).ok())
+        {
+            bases.push(std::path::PathBuf::from(joined.as_str()));
+        }
     } else if source.extension().and_then(|ext| ext.to_str()) == Some("rs") {
         bases.extend(rust_module_paths(source, raw_target));
     } else if matches!(
         source.extension().and_then(|ext| ext.to_str()),
         Some("tex" | "ltx")
     ) {
-        bases.push(parent.join(raw_target));
+        if let Some(joined) = repository_source
+            .as_ref()
+            .and_then(|source| source.join_relative(raw_target).ok())
+        {
+            bases.push(std::path::PathBuf::from(joined.as_str()));
+        }
     } else {
         return Vec::new();
     }

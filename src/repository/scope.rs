@@ -7,25 +7,17 @@ pub(crate) const INDEX_SCOPE_DIGEST_HEX_CHARS: usize = 16;
 
 #[derive(Debug)]
 pub(crate) struct ScopeMatcher {
-    pub(crate) literals: Vec<String>,
-    pub(crate) globs: globset::GlobSet,
+    pub(crate) matcher: crate::repository::RepositoryPatternSet,
     pub(crate) static_prefixes: Vec<String>,
     pub(crate) excluded_subtree_roots: Vec<String>,
 }
 
 impl ScopeMatcher {
     pub(crate) fn compile(patterns: &[String], exclusions: bool) -> Result<Self> {
-        let mut literals = Vec::new();
-        let mut globs = globset::GlobSetBuilder::new();
         let mut static_prefixes = Vec::with_capacity(patterns.len());
         let mut excluded_subtree_roots = Vec::new();
         for pattern in patterns {
             let has_meta = pattern.contains(['*', '?', '[', ']', '{', '}']);
-            if has_meta {
-                globs.add(globset::Glob::new(pattern)?);
-            } else {
-                literals.push(pattern.clone());
-            }
             let prefix = pattern
                 .split('/')
                 .take_while(|component| !component.contains(['*', '?', '[', ']', '{', '}']))
@@ -45,18 +37,14 @@ impl ScopeMatcher {
         excluded_subtree_roots.sort_unstable();
         excluded_subtree_roots.dedup();
         Ok(Self {
-            literals,
-            globs: globs.build()?,
+            matcher: crate::repository::RepositoryPatternSet::new(patterns)?,
             static_prefixes,
             excluded_subtree_roots,
         })
     }
 
     pub(crate) fn matches(&self, path: &str) -> bool {
-        self.literals
-            .iter()
-            .any(|literal| path_is_within(path, literal))
-            || self.globs.is_match(path)
+        self.matcher.is_match(path)
     }
 
     pub(crate) fn excludes_directory(&self, path: &str) -> bool {
@@ -86,35 +74,9 @@ pub(crate) fn normalize_scope_pattern(pattern: String) -> Result<String> {
             "index scope pattern exceeds {MAX_INDEX_SCOPE_PATTERN_BYTES} bytes"
         )));
     }
-    if pattern.contains('\0') {
-        return Err(Error::InvalidConfiguration(
-            "index scope patterns must not contain NUL bytes".into(),
-        ));
-    }
-    let pattern = pattern.replace('\\', "/");
-    if pattern.starts_with('/') || pattern.as_bytes().get(1).is_some_and(|byte| *byte == b':') {
-        return Err(Error::InvalidConfiguration(
-            "index scope patterns must be repository-relative".into(),
-        ));
-    }
-    let mut components = Vec::new();
-    for component in pattern.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => {
-                return Err(Error::InvalidConfiguration(
-                    "index scope patterns must not contain parent traversal".into(),
-                ));
-            }
-            component => components.push(component),
-        }
-    }
-    if components.is_empty() {
-        return Err(Error::InvalidConfiguration(
-            "index scope patterns must not be empty".into(),
-        ));
-    }
-    Ok(components.join("/"))
+    crate::repository::RepositoryPattern::parse(pattern)
+        .map(|pattern| pattern.as_str().to_owned())
+        .map_err(|error| Error::InvalidConfiguration(error.to_string()))
 }
 
 /// Immutable, normalized repository-relative indexing boundary.
@@ -175,7 +137,7 @@ impl IndexScope {
             None
         } else {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(b"leantoken-index-scope-v1\0");
+            hasher.update(b"leantoken-index-scope-v2\0");
             for pattern in &includes {
                 hasher.update(b"include\0");
                 hasher.update(pattern.as_bytes());

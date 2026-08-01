@@ -285,5 +285,5 @@ fn downgrade_query_receipt_schema(database: &Path, conflicting_table: bool) {
 
 #[test]
 fn stored_semantics_version_matches_the_code_contract() {
-    assert_eq!(QUERY_RECEIPT_SEMANTICS_VERSION, 1);
+    assert_eq!(QUERY_RECEIPT_SEMANTICS_VERSION, 2);
 }

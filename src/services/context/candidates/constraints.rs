@@ -42,7 +42,8 @@ impl Services {
             .map(|requirement| PathMatcher::new(std::slice::from_ref(&requirement.path)))
             .collect::<Result<Vec<_>>>()?;
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-        let context_exclude_paths = PathMatcher::new_lossy(&self.config.context_exclude_paths);
+        let context_exclude_paths = PathMatcher::new(&self.config.context_exclude_paths)
+            .expect("configured context exclusions are validated at startup");
         let strict_changed_paths = request.strict_changed_paths.then(|| {
             request
                 .changed_paths

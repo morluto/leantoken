@@ -11,7 +11,7 @@ pub(crate) const MAX_QUERY_PREDICATE_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_TOTAL_QUERY_RECEIPT_BYTES: usize = 1024 * 1024;
 pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
-pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 1;
+pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
 pub(crate) const QUERY_RECEIPT_FIXED_LOGICAL_BYTES: usize = 16 * size_of::<u64>();
 const QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
 const QUERY_RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
@@ -59,8 +59,8 @@ impl ExactQueryPredicate {
             mode: ExactQueryMode::from_search_mode(request.mode)?,
             query_blake3: blake3::hash(request.query.as_bytes()).to_hex().to_string(),
             case_sensitive: request.case_sensitive,
-            include_paths: normalize_patterns(&request.include_paths),
-            exclude_paths: normalize_patterns(&request.exclude_paths),
+            include_paths: normalize_patterns(&request.include_paths)?,
+            exclude_paths: normalize_patterns(&request.exclude_paths)?,
         };
         predicate.serialized()?;
         Ok(predicate)
@@ -121,21 +121,12 @@ impl ExactQueryPredicate {
     }
 }
 
-fn normalize_patterns(patterns: &[String]) -> Vec<String> {
-    let mut normalized = patterns
-        .iter()
-        .map(|pattern| {
-            let pattern = pattern.replace('\\', "/");
-            if pattern.contains(['*', '?', '[', ']', '{', '}']) {
-                pattern
-            } else {
-                pattern.trim_matches('/').to_owned()
-            }
-        })
-        .collect::<Vec<_>>();
+fn normalize_patterns(patterns: &[String]) -> Result<Vec<String>> {
+    let mut normalized =
+        crate::repository::RepositoryPatternSet::new(patterns)?.canonical_strings();
     normalized.sort();
     normalized.dedup();
-    normalized
+    Ok(normalized)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,8 +254,8 @@ mod tests {
         ))
         .expect("recorded predicate");
         let equivalent = ExactQueryPredicate::from_request(&request(
-            &["tests/**/*.rs", "/src", "src"],
-            &["/src/generated/"],
+            &["tests/**/*.rs", "./src", "src"],
+            &["./src/generated/"],
         ))
         .expect("equivalent predicate");
         assert_eq!(recorded, equivalent);

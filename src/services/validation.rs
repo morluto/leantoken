@@ -1,8 +1,8 @@
 //! Input validation, cancellation probes, and shared path filters.
 
-use globset::{Candidate, Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use tokio_util::sync::CancellationToken;
 
+pub(crate) use crate::repository::RepositoryPatternSet as PathMatcher;
 use crate::{Error, Result};
 
 pub(super) const MAX_QUERY_BYTES: usize = 64 * 1024;
@@ -19,70 +19,6 @@ pub(super) fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 }
 pub(crate) fn path_matches(path: &str, pattern: &str) -> Result<bool> {
     Ok(PathMatcher::new(std::slice::from_ref(&pattern.to_owned()))?.is_match(path))
-}
-
-pub(crate) struct PathMatcher {
-    literals: Vec<String>,
-    globs: GlobSet,
-    fallback_globs: Vec<GlobMatcher>,
-}
-
-impl PathMatcher {
-    pub(crate) fn new(patterns: &[String]) -> Result<Self> {
-        let mut literals = Vec::new();
-        let mut globs = GlobSetBuilder::new();
-        for pattern in patterns {
-            let pattern = pattern.replace('\\', "/");
-            if pattern.contains(['*', '?', '[', ']', '{', '}']) {
-                globs.add(Glob::new(&pattern)?);
-            } else {
-                literals.push(pattern.trim_matches('/').to_owned());
-            }
-        }
-        Ok(Self {
-            literals,
-            globs: globs.build()?,
-            fallback_globs: Vec::new(),
-        })
-    }
-
-    pub(crate) fn new_lossy(patterns: &[String]) -> Self {
-        let mut literals = Vec::new();
-        let mut globs = GlobSetBuilder::new();
-        let mut fallback_globs = Vec::new();
-        for pattern in patterns {
-            let pattern = pattern.replace('\\', "/");
-            if pattern.contains(['*', '?', '[', ']', '{', '}']) {
-                if let Ok(glob) = Glob::new(&pattern) {
-                    fallback_globs.push(glob.compile_matcher());
-                    globs.add(glob);
-                }
-            } else {
-                literals.push(pattern.trim_matches('/').to_owned());
-            }
-        }
-        let (globs, fallback_globs) = match globs.build() {
-            Ok(globs) => (globs, Vec::new()),
-            Err(_) => (GlobSet::empty(), fallback_globs),
-        };
-        Self {
-            literals,
-            globs,
-            fallback_globs,
-        }
-    }
-
-    pub(crate) fn is_match(&self, path: &str) -> bool {
-        let candidate = Candidate::new(path);
-        self.literals.iter().any(|literal| {
-            path.strip_prefix(literal)
-                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
-        }) || self.globs.is_match_candidate(&candidate)
-            || self
-                .fallback_globs
-                .iter()
-                .any(|glob| glob.is_match_candidate(&candidate))
-    }
 }
 
 pub(super) struct PathFilter {
@@ -117,12 +53,7 @@ pub(super) fn validate_patterns(patterns: &[String]) -> Result<()> {
 
 pub(super) fn validate_glob_patterns(patterns: &[String]) -> Result<()> {
     validate_patterns(patterns)?;
-    for pattern in patterns {
-        let pattern = pattern.replace('\\', "/");
-        if pattern.contains(['*', '?', '[', ']', '{', '}']) {
-            Glob::new(&pattern)?;
-        }
-    }
+    PathMatcher::new(patterns)?;
     Ok(())
 }
 
@@ -216,10 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn lossy_path_matcher_keeps_valid_patterns_beside_an_invalid_glob() {
-        let matcher = PathMatcher::new_lossy(&["[".into(), "src".into()]);
-
-        assert!(matcher.is_match("src/lib.rs"));
-        assert!(!matcher.is_match("tests/lib.rs"));
+    fn malformed_path_matcher_fails_loudly() {
+        assert!(PathMatcher::new(&["[".into(), "src".into()]).is_err());
     }
 }

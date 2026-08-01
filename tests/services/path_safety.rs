@@ -41,6 +41,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .is_err()
@@ -96,6 +97,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .is_err()

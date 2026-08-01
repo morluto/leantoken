@@ -50,7 +50,10 @@ pub use git_diff::{
 };
 pub use git_models::{GitDiffResult, GitHunkRange};
 pub use git_status::git_changed_paths;
-pub use path::{normalize_relative, resolve_existing, slash_path, validate_relative};
+pub use path::{
+    RepositoryPath, RepositoryPattern, RepositoryPatternSet, normalize_relative, resolve_existing,
+    slash_path, validate_relative,
+};
 pub use scope::IndexScope;
 
 #[cfg(all(test, unix))]

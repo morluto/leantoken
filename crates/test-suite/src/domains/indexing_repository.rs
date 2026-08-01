@@ -2029,7 +2029,14 @@ fn profiled_reconcile_reports_bounded_batch_high_water_and_phases() {
         profiled.diagnostics.preparation_detail.files_profiled
     );
     assert!(profiled.diagnostics.total_ms >= profiled.diagnostics.discovery_ms);
-    assert!(profiled.diagnostics.publication_ms >= profiled.diagnostics.preparation_ms);
+    // After the phase decomposition, preparation runs outside BEGIN IMMEDIATE.
+    // publication_ms measures only the transaction lifetime (fast writes + FTS
+    // rebuilds + commit), so it is no longer expected to dominate
+    // preparation_ms.  The total must still cover both phases.
+    assert!(
+        profiled.diagnostics.total_ms
+            >= profiled.diagnostics.preparation_ms + profiled.diagnostics.publication_ms
+    );
     let publication = &profiled.diagnostics.publication_detail;
     assert!(publication.post_commit_diagnostics_complete);
     assert!(publication.database_bytes > 0);
