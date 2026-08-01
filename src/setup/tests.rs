@@ -272,6 +272,7 @@ fn interactive_selection_can_cancel_without_writes() {
             yes: false,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment(&temp),
         &FixedPrompt {
@@ -299,6 +300,7 @@ fn yes_requires_explicit_clients_even_when_a_client_is_detected() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -323,6 +325,7 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
         yes: true,
         dry_run: false,
         allow_outdated: false,
+        force_unmanaged: false,
     };
     let first = run_with(
         SetupOperation::Setup,
@@ -397,6 +400,7 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -428,6 +432,7 @@ fn diagnostic_reports_configured_command_and_stale_release() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &original,
         &FixedPrompt {
@@ -467,6 +472,7 @@ fn malformed_client_blocks_the_entire_plan_before_writes() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -502,6 +508,7 @@ fn non_interactive_explicit_selection_requires_yes() {
             yes: false,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -529,6 +536,7 @@ fn dry_run_resolves_exact_plan_without_writes_or_yes() {
             yes: false,
             dry_run: true,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -557,6 +565,7 @@ fn explicit_interactive_selection_still_requires_confirmation() {
             yes: false,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -589,6 +598,7 @@ fn refresh_updates_only_existing_entries_and_supports_rollback() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &original,
         &FixedPrompt {
@@ -607,6 +617,7 @@ fn refresh_updates_only_existing_entries_and_supports_rollback() {
         yes: true,
         dry_run: false,
         allow_outdated: false,
+        force_unmanaged: false,
     };
     let report = run_with(
         SetupOperation::Setup,
@@ -676,6 +687,7 @@ fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache()
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &FixedPrompt {
@@ -716,6 +728,7 @@ fn refresh_rejects_ambiguous_selection_and_remove_usage() {
         yes: true,
         dry_run: false,
         allow_outdated: false,
+        force_unmanaged: false,
     };
     assert!(
         run_with(SetupOperation::Setup, ambiguous, &environment, &prompt)
@@ -731,6 +744,7 @@ fn refresh_rejects_ambiguous_selection_and_remove_usage() {
         yes: true,
         dry_run: false,
         allow_outdated: false,
+        force_unmanaged: false,
     };
     assert!(
         run_with(SetupOperation::Remove, remove, &environment, &prompt)
@@ -758,6 +772,7 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
         yes: true,
         dry_run: true,
         allow_outdated: false,
+        force_unmanaged: false,
     };
     let prompt = FixedPrompt {
         selected: None,
@@ -825,6 +840,7 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
             yes: true,
             dry_run: false,
             allow_outdated: false,
+            force_unmanaged: false,
         },
         &environment,
         &prompt,
@@ -882,6 +898,7 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
         runtime: None,
         edits,
         discovery_edits: Vec::new(),
+        ownership_override: false,
         transaction_root: temp.path().join("runtime"),
     };
 
@@ -921,6 +938,7 @@ fn failed_rollback_retains_recovery_journal() {
         runtime: None,
         edits: vec![edit],
         discovery_edits: Vec::new(),
+        ownership_override: false,
         transaction_root: runtime_root.clone(),
     };
     let transaction = begin_setup_transaction(&plan)
@@ -953,6 +971,7 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
         yes: true,
         dry_run: false,
         allow_outdated: false,
+        force_unmanaged: false,
     };
 
     let report = run_with(
@@ -962,13 +981,17 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
         &prompt,
     )
     .unwrap();
-    assert_eq!(report.discovery_plan.len(), 2);
+    assert_eq!(report.discovery_plan.len(), 1);
     assert!(
         report
             .discovery_skill_tokens
             .is_some_and(|tokens| tokens > 0)
     );
     for effect in &report.discovery_plan {
+        assert_eq!(
+            effect.path,
+            environment.home.join(".agents/skills/leantoken/SKILL.md")
+        );
         let skill = fs::read_to_string(&effect.path).unwrap();
         assert!(skill.contains(DISCOVERY_SKILL_MARKER));
         assert!(skill.contains("leantoken.context"));
@@ -998,6 +1021,135 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
         fs::read_to_string(shared_skill).unwrap(),
         "user-owned skill"
     );
+}
+
+#[test]
+fn codex_setup_does_not_touch_an_unselected_claude_skill() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
+    fs::write(&claude_skill, "user-owned Claude skill").unwrap();
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(report.discovery_plan.len(), 1);
+    assert_eq!(
+        fs::read_to_string(claude_skill).unwrap(),
+        "user-owned Claude skill"
+    );
+    assert!(
+        environment
+            .home
+            .join(".agents/skills/leantoken/SKILL.md")
+            .exists()
+    );
+}
+
+#[test]
+fn unmanaged_registration_requires_an_explicit_override() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let path = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let manual = "[mcp_servers.leantoken]\ncommand = \"/opt/leantoken\"\nargs = [\"mcp\"]\n";
+    fs::write(&path, manual).unwrap();
+    let mut request = SetupRequest {
+        clients: vec![SetupClient::Codex],
+        all: false,
+        refresh: false,
+        private_runtime: false,
+        yes: true,
+        dry_run: false,
+        allow_outdated: false,
+        force_unmanaged: false,
+    };
+    let prompt = FixedPrompt {
+        selected: None,
+        confirmed: true,
+    };
+
+    let error = run_with(
+        SetupOperation::Setup,
+        request.clone(),
+        &environment,
+        &prompt,
+    )
+    .expect_err("manual entry must be protected");
+    assert!(error.to_string().contains("--force-unmanaged"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), manual);
+
+    request.force_unmanaged = true;
+    let report = run_with(SetupOperation::Setup, request, &environment, &prompt).unwrap();
+    assert_eq!(report.plan[0].action, ClientPlanAction::Update);
+    let configured = fs::read_to_string(path).unwrap();
+    assert!(configured.contains("--managed-by-setup"));
+    assert!(!configured.contains("/opt/leantoken"));
+}
+
+#[test]
+fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
+    let runtime_root = Path::new("/data/leantoken/runtimes");
+    let managed_runtime = runtime_root
+        .join("1.2.3")
+        .join(runtime_executable_name(cfg!(windows)))
+        .to_string_lossy()
+        .into_owned();
+    let invalid_runtime = runtime_root
+        .join("manual")
+        .join(runtime_executable_name(cfg!(windows)))
+        .to_string_lossy()
+        .into_owned();
+    assert!(is_managed_registration(
+        "/opt/custom-wrapper",
+        &["--managed-by-setup".into(), "mcp".into()],
+        runtime_root
+    ));
+    assert!(is_managed_registration(
+        "/usr/bin/node",
+        &[
+            "/usr/lib/node_modules/npm/bin/npx-cli.js".into(),
+            "--yes".into(),
+            "--prefer-offline".into(),
+            "--package=leantoken@1.2.3".into(),
+            "--".into(),
+            "leantoken".into(),
+            "mcp".into(),
+        ],
+        runtime_root
+    ));
+    assert!(is_managed_registration(
+        &managed_runtime,
+        &["mcp".into()],
+        runtime_root
+    ));
+    assert!(!is_managed_registration(
+        "/opt/custom-wrapper",
+        &["--package=leantoken@1.2.3".into(), "mcp".into()],
+        runtime_root
+    ));
+    assert!(!is_managed_registration(
+        &invalid_runtime,
+        &["mcp".into()],
+        runtime_root
+    ));
 }
 
 #[test]

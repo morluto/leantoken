@@ -35,7 +35,7 @@ impl McpLauncher {
     pub(super) fn from_executable_with_version(executable: &Path, version: &str) -> Self {
         Self {
             command: executable.into(),
-            args: vec!["mcp".into()],
+            args: vec!["--managed-by-setup".into(), "mcp".into()],
             version: version.into(),
             npm_package: None,
         }
@@ -89,6 +89,7 @@ impl McpLauncher {
                 format!("--package={package}"),
                 "--".into(),
                 "leantoken".into(),
+                "--managed-by-setup".into(),
                 "mcp".into(),
             ],
             version: version.into(),
@@ -124,6 +125,7 @@ mod tests {
                     "--package=leantoken@1.2.3".into(),
                     "--".into(),
                     "leantoken".into(),
+                    "--managed-by-setup".into(),
                     "mcp".into(),
                 ],
                 version: version.into(),
@@ -149,5 +151,6 @@ mod tests {
         assert_eq!(launcher.command, root.join("node"));
         assert_eq!(launcher.args[0], root.join("npx cli.js").to_string_lossy());
         assert_eq!(launcher.args[3], "--package=leantoken@1.2.3");
+        assert_eq!(launcher.args[6], "--managed-by-setup");
     }
 }

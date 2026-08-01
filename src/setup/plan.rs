@@ -21,7 +21,8 @@ pub(super) struct PlanEnvironment<'a> {
     pub(super) launcher: &'a McpLauncher,
     pub(super) persistent_cli: bool,
     pub(super) runtime: Option<RuntimeInstallPlan>,
-    pub(super) manage_discovery: bool,
+    pub(super) discovery_paths: Vec<PathBuf>,
+    pub(super) force_unmanaged: bool,
     pub(super) transaction_root: &'a Path,
 }
 
@@ -30,6 +31,19 @@ pub(super) fn resolve_plan(
     clients: &[SetupClient],
     environment: PlanEnvironment<'_>,
 ) -> Result<ResolvedSetupPlan> {
+    for client in clients {
+        if let Some(registration) =
+            read_configured_registration(*client, environment.home, environment.launcher)?
+            && !registration.managed
+            && !environment.force_unmanaged
+        {
+            return Err(Error::SetupFailure(format!(
+                "refusing to {} unmanaged LeanToken entry in {}; review it, then preview the override with --force-unmanaged --dry-run",
+                operation.action(),
+                registration.path.display()
+            )));
+        }
+    }
     let edits = clients
         .iter()
         .copied()
@@ -43,11 +57,11 @@ pub(super) fn resolve_plan(
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let discovery_edits = if environment.manage_discovery {
-        resolve_discovery_edits(operation, environment.home, Some(environment.launcher))?
-    } else {
-        Vec::new()
-    };
+    let discovery_edits = resolve_discovery_edits(
+        operation,
+        &environment.discovery_paths,
+        Some(environment.launcher),
+    )?;
     let launcher = (operation == SetupOperation::Setup)
         .then(|| launcher_plan(environment.launcher, environment.runtime.as_ref()))
         .transpose()?;
@@ -58,6 +72,7 @@ pub(super) fn resolve_plan(
         runtime: environment.runtime,
         edits,
         discovery_edits,
+        ownership_override: environment.force_unmanaged,
         transaction_root: environment.transaction_root.to_path_buf(),
     })
 }
@@ -79,50 +94,48 @@ pub(super) fn launcher_plan(
 
 pub(super) fn resolve_discovery_edits(
     operation: SetupOperation,
-    home: &Path,
+    paths: &[PathBuf],
     launcher: Option<&McpLauncher>,
 ) -> Result<Vec<PlannedDiscoveryEdit>> {
     let content = launcher.map(discovery_skill).transpose()?;
-    [
-        home.join(".agents/skills/leantoken/SKILL.md"),
-        home.join(".claude/skills/leantoken/SKILL.md"),
-    ]
-    .into_iter()
-    .map(|path| {
-        let original = read_optional(&path)?;
-        let owned = original
-            .as_deref()
-            .is_some_and(|value| value.contains(DISCOVERY_SKILL_MARKER));
-        let (action, updated) = match operation {
-            SetupOperation::Setup => {
-                if original.as_deref() == content.as_deref() {
-                    (ClientPlanAction::AlreadyCurrent, None)
-                } else if original.is_none() || owned {
-                    (
-                        if original.is_none() {
-                            ClientPlanAction::Create
-                        } else {
-                            ClientPlanAction::Update
-                        },
-                        content.clone(),
-                    )
-                } else {
-                    return Err(Error::SetupFailure(format!(
-                        "refusing to overwrite unowned discovery skill {}",
-                        path.display()
-                    )));
+    paths
+        .iter()
+        .cloned()
+        .map(|path| {
+            let original = read_optional(&path)?;
+            let owned = original
+                .as_deref()
+                .is_some_and(|value| value.contains(DISCOVERY_SKILL_MARKER));
+            let (action, updated) = match operation {
+                SetupOperation::Setup => {
+                    if original.as_deref() == content.as_deref() {
+                        (ClientPlanAction::AlreadyCurrent, None)
+                    } else if original.is_none() || owned {
+                        (
+                            if original.is_none() {
+                                ClientPlanAction::Create
+                            } else {
+                                ClientPlanAction::Update
+                            },
+                            content.clone(),
+                        )
+                    } else {
+                        return Err(Error::SetupFailure(format!(
+                            "refusing to overwrite unowned discovery skill {}",
+                            path.display()
+                        )));
+                    }
                 }
-            }
-            SetupOperation::Remove if owned => (ClientPlanAction::Remove, Some(String::new())),
-            SetupOperation::Remove => (ClientPlanAction::NotConfigured, None),
-        };
-        Ok(PlannedDiscoveryEdit {
-            public: DiscoverySetupPlan { path, action },
-            original,
-            updated,
+                SetupOperation::Remove if owned => (ClientPlanAction::Remove, Some(String::new())),
+                SetupOperation::Remove => (ClientPlanAction::NotConfigured, None),
+            };
+            Ok(PlannedDiscoveryEdit {
+                public: DiscoverySetupPlan { path, action },
+                original,
+                updated,
+            })
         })
-    })
-    .collect()
+        .collect()
 }
 
 pub(super) fn discovery_skill(launcher: &McpLauncher) -> Result<String> {

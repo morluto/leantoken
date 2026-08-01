@@ -560,6 +560,17 @@ at 30 seconds; fixed per-response doctor deadlines remain 10 seconds. Dropping
 the transport closes stdin and reaps or kills the child, and dropping the
 temporary directory removes its database and source. Setup never fans this
 verification out per configured client.
+
+Private-runtime inventory is repository-free and bounded to 512 entries below
+the application runtime root and eight entries within any recognized semantic
+version directory. Listing reads configured host registrations once to attach
+references. Pruning defaults to a non-mutating plan, serializes applied deletion
+with setup, retains the active executable and every referenced runtime, and
+deletes only a version directory whose exact contents are its one expected
+native executable. Unknown root entries, malformed client configuration,
+unexpected directory contents, and interrupted setup journals fail closed or
+remain untouched. The retention request is capped at 64 versions.
+
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable
 without periodic retries. A restart with a narrower root or adjusted limits is

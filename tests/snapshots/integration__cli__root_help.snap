@@ -24,6 +24,7 @@ Commands:
   setup     Configure LeanToken as a global MCP server for coding clients
   remove    Remove LeanToken's global MCP server entries
   cache     Inspect or prune centrally managed repository caches
+  runtime   Inspect or prune application-owned private runtimes
   episode   Audit existing redacted model/tool episode artifacts
   update    Update LeanToken to the latest release
   upgrade   Update LeanToken to the latest release

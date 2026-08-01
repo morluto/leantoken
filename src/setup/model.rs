@@ -57,6 +57,8 @@ pub struct SetupRequest {
     pub dry_run: bool,
     /// Permit an intentionally selected older npx release.
     pub allow_outdated: bool,
+    /// Permit replacing or removing a registration not recognized as setup-managed.
+    pub force_unmanaged: bool,
 }
 
 /// Planned action for one client configuration.
@@ -183,6 +185,8 @@ pub struct SetupReport {
     pub cancelled: bool,
     /// Whether this report describes a dry-run without mutation.
     pub dry_run: bool,
+    /// Whether the caller explicitly allowed effects on an unmanaged registration.
+    pub ownership_override: bool,
     /// Whether setup ran from a persistent CLI installation.
     pub persistent_cli: bool,
     /// Exact launcher considered for setup, omitted for removal.
@@ -221,5 +225,89 @@ impl SetupReport {
     #[must_use]
     pub fn has_failures(&self) -> bool {
         self.has_client_failures() || self.has_verification_failure()
+    }
+}
+
+/// One versioned private runtime managed by LeanToken setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeEntryReport {
+    /// Semantic LeanToken release stored in this directory.
+    pub version: String,
+    /// Exact native executable path.
+    pub path: PathBuf,
+    /// Native executable size in bytes.
+    pub size_bytes: u64,
+    /// Configured clients whose launcher references this runtime.
+    pub referenced_by: Vec<SetupClient>,
+    /// Whether this executable is running the current command.
+    pub active: bool,
+    /// Whether the directory has the exact safe managed layout required for pruning.
+    pub safely_prunable: bool,
+}
+
+/// Bounded inventory of application-owned private runtimes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeListReport {
+    /// Versioned runtime root inspected by the command.
+    pub runtime_root: PathBuf,
+    /// Recognized runtime directories.
+    pub total_entries: usize,
+    /// Aggregate bytes of recognized runtime executables.
+    pub total_bytes: u64,
+    /// Unrecognized root entries retained without inspection or mutation.
+    pub ignored_entries: usize,
+    /// Runtime entries in descending semantic-version order.
+    pub entries: Vec<RuntimeEntryReport>,
+}
+
+/// Selection and consent for private-runtime pruning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimePruneRequest {
+    /// Newest unreferenced runtimes to retain in addition to every referenced runtime.
+    pub keep_latest: usize,
+    /// Resolve the exact deletion plan without mutation.
+    pub dry_run: bool,
+    /// Apply the deletion plan without prompting.
+    pub yes: bool,
+}
+
+/// One private-runtime prune decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePruneResult {
+    /// Runtime release considered.
+    pub version: String,
+    /// Exact executable path.
+    pub path: PathBuf,
+    /// Bytes represented by this decision.
+    pub size_bytes: u64,
+    /// `retained`, `would_remove`, `removed`, or `failed`.
+    pub action: String,
+    /// Stable explanation for retaining or selecting the runtime.
+    pub reason: String,
+    /// Bounded failure detail when deletion did not complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Outcome of a bounded private-runtime prune operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePruneReport {
+    /// Versioned runtime root inspected by the command.
+    pub runtime_root: PathBuf,
+    /// Whether this report is a non-mutating plan.
+    pub dry_run: bool,
+    /// Bytes present before pruning.
+    pub total_bytes_before: u64,
+    /// Bytes retained after completed removals, or projected for a dry-run.
+    pub total_bytes_after: u64,
+    /// Complete decision for every recognized runtime.
+    pub results: Vec<RuntimePruneResult>,
+}
+
+impl RuntimePruneReport {
+    /// Return true when one or more selected runtimes could not be removed.
+    #[must_use]
+    pub fn has_failures(&self) -> bool {
+        self.results.iter().any(|result| result.error.is_some())
     }
 }

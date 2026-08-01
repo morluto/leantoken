@@ -62,6 +62,9 @@ pub struct DoctorReport {
 /// Structured host-integration status independent of repository readiness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IntegrationReport {
+    /// Configured client whose exact launcher was exercised, when requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_client: Option<SetupClient>,
     /// `registered`, `not_registered`, or `unknown`.
     pub registration_status: &'static str,
     /// Clients with an existing LeanToken MCP registration.
@@ -102,6 +105,8 @@ pub struct RegistrationReport {
     pub expected_version: String,
     /// Whether command and arguments match the current launcher exactly.
     pub matches_current: bool,
+    /// Whether setup ownership was explicit or recognized from a legacy launcher.
+    pub managed: bool,
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -134,7 +139,27 @@ pub fn print_progress() -> Result<()> {
 /// first-run contract against the configured repository.
 pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
-    run_with_transport(config, ready_timeout, &mut transport)
+    run_with_transport(config, ready_timeout, &mut transport, None)
+}
+
+/// Verify the exact launcher currently stored for one configured MCP client.
+pub fn run_configured_client(
+    config: &Config,
+    ready_timeout: Duration,
+    client: SetupClient,
+) -> Result<DoctorReport> {
+    let registration = setup::configured_registration(client)?.ok_or_else(|| {
+        doctor_error(
+            "registration",
+            format!(
+                "{} has no LeanToken MCP registration",
+                client.display_name()
+            ),
+        )
+    })?;
+    let mut transport =
+        DoctorTransport::spawn_launcher(config, &registration.command, &registration.args)?;
+    run_with_transport(config, ready_timeout, &mut transport, Some(client))
 }
 
 /// Verify an exact setup launcher through the same MCP contract used by
@@ -147,13 +172,14 @@ pub(crate) fn run_launcher(
     ready_timeout: Duration,
 ) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn_launcher(config, command, args)?;
-    run_with_transport(config, ready_timeout, &mut transport)
+    run_with_transport(config, ready_timeout, &mut transport, None)
 }
 
 fn run_with_transport(
     config: &Config,
     ready_timeout: Duration,
     transport: &mut DoctorTransport,
+    verified_client: Option<SetupClient>,
 ) -> Result<DoctorReport> {
     transport.send(
         json!({
@@ -342,6 +368,7 @@ fn run_with_transport(
             configured_version: registration.version.clone(),
             expected_version: registration.expected_version.clone(),
             matches_current: registration.matches_current,
+            managed: registration.managed,
         })
         .collect::<Vec<_>>();
     let registration_health = if registrations.is_empty() {
@@ -365,6 +392,7 @@ fn run_with_transport(
         tools,
         result_mode,
         integration: IntegrationReport {
+            verified_client,
             registration_status: setup.registration_status,
             configured_clients: setup.configured_clients,
             registrations,
@@ -424,6 +452,13 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
     writeln!(output, "  ✓ Result mode: {:?}", report.result_mode)?;
+    if let Some(client) = report.integration.verified_client {
+        writeln!(
+            output,
+            "  ✓ Verified configured launcher: {}",
+            client.display_name()
+        )?;
+    }
     writeln!(
         output,
         "  {} Host registration: {}",

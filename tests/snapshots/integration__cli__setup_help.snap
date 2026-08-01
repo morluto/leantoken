@@ -37,7 +37,7 @@ Options:
           Refresh existing LeanToken MCP entries without selecting new clients
 
       --private-runtime
-          Copy the verified native executable into LeanToken's private runtime directory and register it directly instead of retaining an npx chain
+          Recommended: register a verified private native runtime instead of retaining an npx/Node process chain
 
   -y, --yes
           Apply without prompting; requires explicit clients, --all, or --refresh
@@ -47,6 +47,9 @@ Options:
 
       --allow-outdated
           Permit setup from an older npx release for an intentional rollback
+
+      --force-unmanaged
+          Replace or remove a `leantoken` entry not recognized as setup-managed
 
       --database <PATH>
           SQLite database path

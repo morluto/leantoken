@@ -21,10 +21,11 @@ pub(crate) struct ConfiguredRegistration {
     pub(crate) version: Option<String>,
     pub(crate) expected_version: String,
     pub(crate) matches_current: bool,
+    pub(crate) managed: bool,
 }
 
 /// Coding clients supported by the global setup wizard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum SetupClient {
     /// Claude Code.
@@ -32,6 +33,7 @@ pub enum SetupClient {
     /// Cursor.
     Cursor,
     /// OpenCode.
+    #[value(name = "opencode")]
     OpenCode,
     /// Codex CLI, desktop, and IDE integrations.
     Codex,
@@ -52,7 +54,7 @@ impl SetupClient {
         Self::Antigravity,
     ];
 
-    pub(super) fn display_name(self) -> &'static str {
+    pub(crate) fn display_name(self) -> &'static str {
         match self {
             Self::Claude => "Claude Code",
             Self::Cursor => "Cursor",
@@ -60,6 +62,17 @@ impl SetupClient {
             Self::Codex => "Codex",
             Self::Gemini => "Gemini CLI",
             Self::Antigravity => "Antigravity",
+        }
+    }
+
+    pub(crate) fn cli_name(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Cursor => "cursor",
+            Self::OpenCode => "opencode",
+            Self::Codex => "codex",
+            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
         }
     }
 
@@ -116,6 +129,15 @@ impl SetupClient {
             Self::Gemini => home.join(".gemini").exists(),
             Self::Antigravity => {
                 home.join(".gemini/antigravity").exists() || home.join(".agent").exists()
+            }
+        }
+    }
+
+    pub(super) fn discovery_path(self, home: &Path) -> PathBuf {
+        match self {
+            Self::Claude => home.join(".claude/skills/leantoken/SKILL.md"),
+            Self::Cursor | Self::OpenCode | Self::Codex | Self::Gemini | Self::Antigravity => {
+                home.join(".agents/skills/leantoken/SKILL.md")
             }
         }
     }

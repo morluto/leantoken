@@ -8,6 +8,7 @@ pub(super) struct ResolvedSetupPlan {
     pub(super) runtime: Option<RuntimeInstallPlan>,
     pub(super) edits: Vec<PlannedClientEdit>,
     pub(super) discovery_edits: Vec<PlannedDiscoveryEdit>,
+    pub(super) ownership_override: bool,
     pub(super) transaction_root: PathBuf,
 }
 

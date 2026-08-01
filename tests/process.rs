@@ -605,6 +605,64 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
 }
 
 #[test]
+fn doctor_can_exercise_the_exact_codex_registration() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let setup = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("npm_lifecycle_event")
+        .args(["--json", "setup", "--codex", "--yes"])
+        .output()
+        .expect("configure Codex");
+    assert!(
+        setup.status.success(),
+        "setup stderr: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("npm_lifecycle_event")
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured-client doctor");
+    assert!(
+        output.status.success(),
+        "doctor stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor report");
+    assert_eq!(report["integration"]["verified_client"], "codex");
+    let codex = report["integration"]["registrations"]
+        .as_array()
+        .and_then(|registrations| {
+            registrations
+                .iter()
+                .find(|registration| registration["client"] == "codex")
+        })
+        .expect("Codex registration");
+    assert_eq!(codex["managed"], true);
+    assert_eq!(report["first_call"]["status"], "ready");
+}
+
+#[test]
 fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
@@ -1945,6 +2003,140 @@ fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(!legacy_database.exists());
 }
 
+#[cfg(not(windows))]
+#[test]
+fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("XDG_DATA_HOME", temp.path().join("xdg-data"))
+            .env_remove("npm_lifecycle_event");
+        command
+    };
+    let initial = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("initial runtime list");
+    assert!(initial.status.success());
+    let initial: serde_json::Value =
+        serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
+    let runtime_root =
+        std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
+    let executable_name = if cfg!(windows) {
+        "leantoken.exe"
+    } else {
+        "leantoken"
+    };
+    let runtime = |version: &str, bytes: &[u8]| {
+        let directory = runtime_root.join(version);
+        std::fs::create_dir_all(&directory).expect("runtime directory");
+        let executable = directory.join(executable_name);
+        std::fs::write(&executable, bytes).expect("runtime executable");
+        executable
+    };
+    let oldest = runtime("1.0.0", b"old");
+    let referenced = runtime("1.1.0", b"referenced");
+    let newest = runtime("1.2.0", b"newest");
+    let unsafe_runtime = runtime("0.9.0", b"unsafe");
+    std::fs::write(unsafe_runtime.parent().unwrap().join("notes.txt"), b"keep")
+        .expect("unrecognized sibling");
+    let claude = serde_json::json!({
+        "mcpServers": {
+            "leantoken": {
+                "command": referenced,
+                "args": ["--managed-by-setup", "mcp"]
+            }
+        }
+    });
+    std::fs::write(
+        temp.path().join(".claude.json"),
+        serde_json::to_vec(&claude).unwrap(),
+    )
+    .expect("Claude config");
+
+    let listed = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("runtime list");
+    assert!(listed.status.success());
+    let listed: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("runtime list JSON");
+    assert_eq!(listed["total_entries"], 4);
+    let entries = listed["entries"].as_array().expect("runtime entries");
+    let referenced_entry = entries
+        .iter()
+        .find(|entry| entry["version"] == "1.1.0")
+        .expect("referenced runtime");
+    assert_eq!(referenced_entry["referenced_by"], serde_json::json!(["claude"]));
+    let unsafe_entry = entries
+        .iter()
+        .find(|entry| entry["version"] == "0.9.0")
+        .expect("unsafe runtime");
+    assert_eq!(unsafe_entry["safely_prunable"], false);
+
+    let planned = command()
+        .args([
+            "--json",
+            "runtime",
+            "prune",
+            "--keep-latest",
+            "0",
+        ])
+        .output()
+        .expect("runtime prune plan");
+    assert!(planned.status.success());
+    let planned: serde_json::Value =
+        serde_json::from_slice(&planned.stdout).expect("runtime prune JSON");
+    assert_eq!(planned["dry_run"], true);
+    assert!(oldest.exists());
+    assert!(newest.exists());
+    assert!(referenced.exists());
+    assert!(unsafe_runtime.exists());
+    let results = planned["results"].as_array().expect("prune decisions");
+    assert!(results.iter().any(|result| {
+        result["version"] == "1.1.0"
+            && result["action"] == "retained"
+            && result["reason"] == "referenced_by_client"
+    }));
+    assert!(results.iter().any(|result| {
+        result["version"] == "0.9.0"
+            && result["action"] == "retained"
+            && result["reason"] == "unrecognized_directory_contents"
+    }));
+
+    let applied = command()
+        .args([
+            "--json",
+            "runtime",
+            "prune",
+            "--keep-latest",
+            "0",
+            "--yes",
+        ])
+        .output()
+        .expect("apply runtime prune");
+    assert!(
+        applied.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(!oldest.exists());
+    assert!(!newest.exists());
+    assert!(referenced.exists());
+    assert!(unsafe_runtime.exists());
+    let final_list = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("final runtime list");
+    assert!(final_list.status.success());
+    let final_list: serde_json::Value =
+        serde_json::from_slice(&final_list.stdout).expect("final runtime JSON");
+    assert_eq!(final_list["ignored_entries"], 0);
+}
+
 #[test]
 fn setup_dry_run_reports_exact_plan_without_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
@@ -2042,6 +2234,7 @@ fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
             format!("--package=leantoken@{}", env!("CARGO_PKG_VERSION")),
             "--",
             "leantoken",
+            "--managed-by-setup",
             "mcp"
         ])
     );
@@ -2138,7 +2331,7 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     assert!(runtime_path.exists());
     assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
     assert_eq!(report["launcher"]["may_contact_network"], false);
-    assert_eq!(report["discovery_plan"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["discovery_plan"].as_array().map(Vec::len), Some(1));
 
     let version = Command::new(&runtime_path)
         .arg("--version")
@@ -2223,11 +2416,15 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
     assert!(stdout.contains(&format!(
-        "npx leantoken@{} doctor",
+        "npx --yes leantoken@{} doctor --client codex",
         env!("CARGO_PKG_VERSION")
     )));
     assert!(stdout.contains("no global `leantoken` command was installed"));
     assert!(stdout.contains("npx --yes leantoken@latest setup --refresh --yes"));
+    assert!(stdout.contains(&format!(
+        "npx --yes leantoken@{} setup --refresh --private-runtime --yes",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains(&format!(
         "pinned to LeanToken v{}",
         env!("CARGO_PKG_VERSION")
@@ -2235,8 +2432,9 @@ fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     assert!(stdout.contains("npm install --global leantoken@latest"));
     assert!(stdout.contains("Launcher verification failed"));
     assert!(stdout.contains(
-        "Client configuration succeeded, but launcher verification failed."
+        "Client configuration succeeded, but launcher verification failed. The configured entries remain in place for diagnosis."
     ));
+    assert!(stdout.contains("In-agent smoke test:"));
     assert!(!stdout.contains("Some selected clients failed"));
     assert!(
         String::from_utf8_lossy(&output.stderr)

@@ -82,7 +82,7 @@ fn usage_guide_tracks_runtime_cli_surface() {
     assert_eq!(documented_commands, runtime_commands);
 
     for argument in command.get_arguments() {
-        if matches!(argument.get_id().as_str(), "help" | "version") {
+        if argument.is_hide_set() || matches!(argument.get_id().as_str(), "help" | "version") {
             continue;
         }
         if let Some(long) = argument.get_long() {
@@ -944,6 +944,7 @@ fn cli_setup_and_remove_select_clients() {
     assert!(request.yes);
     assert!(!request.dry_run);
     assert!(!request.allow_outdated);
+    assert!(!request.force_unmanaged);
 
     let cli = parse(&["remove", "--all", "-y"]);
     let AppRequest::Remove(request) = cli.app_request() else {
@@ -975,26 +976,45 @@ fn cli_setup_and_remove_select_clients() {
         panic!("expected setup request");
     };
     assert!(request.allow_outdated);
+
+    let AppRequest::Setup(request) =
+        parse(&["setup", "--opencode", "--yes", "--force-unmanaged"]).app_request()
+    else {
+        panic!("expected setup request");
+    };
+    assert_eq!(request.clients, vec![SetupClient::OpenCode]);
+    assert!(request.force_unmanaged);
 }
 
 #[test]
 fn cli_doctor_selects_executable_readiness_diagnostic() {
     let cli = parse(&["doctor"]);
-    let AppRequest::Doctor { ready_timeout } = cli.app_request() else {
+    let AppRequest::Doctor {
+        ready_timeout,
+        client,
+    } = cli.app_request()
+    else {
         panic!("expected doctor request");
     };
     assert_eq!(ready_timeout, std::time::Duration::from_secs(120));
+    assert_eq!(client, None);
 
-    let AppRequest::Doctor { ready_timeout } = parse(&[
+    let AppRequest::Doctor {
+        ready_timeout,
+        client,
+    } = parse(&[
         "doctor",
         "--ready-timeout-seconds",
         "240",
+        "--client",
+        "codex",
     ])
     .app_request()
     else {
         panic!("expected doctor request");
     };
     assert_eq!(ready_timeout, std::time::Duration::from_secs(240));
+    assert_eq!(client, Some(SetupClient::Codex));
 }
 
 #[test]
@@ -1131,6 +1151,40 @@ fn cli_cache_prune_resolves_without_repository_configuration() {
     assert!(incompatible.incompatible_with_current);
     assert!(incompatible.dry_run);
     assert!(!incompatible.yes);
+}
+
+#[test]
+fn cli_runtime_lifecycle_is_bounded_and_dry_run_by_default() {
+    assert!(matches!(
+        parse(&["runtime", "list"]).app_request(),
+        AppRequest::RuntimeList
+    ));
+
+    let AppRequest::RuntimePrune(defaults) = parse(&["runtime", "prune"]).app_request() else {
+        panic!("expected runtime prune request");
+    };
+    assert_eq!(defaults.keep_latest, 2);
+    assert!(defaults.dry_run);
+    assert!(!defaults.yes);
+
+    let AppRequest::RuntimePrune(apply) =
+        parse(&["runtime", "prune", "--keep-latest", "0", "--yes"]).app_request()
+    else {
+        panic!("expected runtime prune request");
+    };
+    assert_eq!(apply.keep_latest, 0);
+    assert!(!apply.dry_run);
+    assert!(apply.yes);
+    assert!(
+        Cli::try_parse_from([
+            "leantoken",
+            "runtime",
+            "prune",
+            "--keep-latest",
+            "65"
+        ])
+        .is_err()
+    );
 }
 
 #[test]

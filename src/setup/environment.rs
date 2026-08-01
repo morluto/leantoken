@@ -93,6 +93,11 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         .iter()
         .map(|registration| registration.client)
         .collect();
+    let expected_discovery_paths = registrations
+        .iter()
+        .filter(|registration| registration.managed)
+        .map(|registration| registration.client.discovery_path(&home))
+        .collect::<std::collections::BTreeSet<_>>();
     let discovery_paths = [
         home.join(".agents/skills/leantoken/SKILL.md"),
         home.join(".claude/skills/leantoken/SKILL.md"),
@@ -109,10 +114,19 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         registration_status,
         configured_clients,
         registrations,
-        discovery_status: match discovery_paths.len() {
-            0 => "missing",
-            2 => "installed",
-            _ => "partial",
+        discovery_status: if expected_discovery_paths.is_empty()
+            || expected_discovery_paths
+                .iter()
+                .all(|path| !discovery_paths.contains(path))
+        {
+            "missing"
+        } else if expected_discovery_paths
+            .iter()
+            .all(|path| discovery_paths.contains(path))
+        {
+            "installed"
+        } else {
+            "partial"
         },
         discovery_paths,
     }
@@ -166,6 +180,7 @@ pub(super) fn read_configured_registration(
     };
     let expected_command = launcher.command()?.to_owned();
     let matches_current = command == expected_command && args == launcher.args;
+    let managed = is_managed_registration(&command, &args, &setup_runtime_root(home));
     Ok(Some(ConfiguredRegistration {
         client,
         path: definition.path,
@@ -174,7 +189,63 @@ pub(super) fn read_configured_registration(
         args,
         expected_version: launcher.version().to_owned(),
         matches_current,
+        managed,
     }))
+}
+
+pub(crate) fn configured_registration(
+    client: SetupClient,
+) -> Result<Option<ConfiguredRegistration>> {
+    let home = home_directory()
+        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
+    let launcher = McpLauncher::current()?;
+    read_configured_registration(client, &home, &launcher)
+}
+
+pub(super) fn is_managed_registration(command: &str, args: &[String], runtime_root: &Path) -> bool {
+    if args.iter().any(|argument| argument == "--managed-by-setup") {
+        return true;
+    }
+    is_legacy_npx_registration(command, args)
+        || is_legacy_private_runtime_registration(command, args, runtime_root)
+}
+
+fn is_legacy_npx_registration(command: &str, args: &[String]) -> bool {
+    Path::new(command)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        == Some("node")
+        && args.len() == 7
+        && Path::new(&args[0])
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("npx-cli.js")
+        && args[1] == "--yes"
+        && args[2] == "--prefer-offline"
+        && args[3].starts_with("--package=leantoken@")
+        && args[4] == "--"
+        && args[5] == "leantoken"
+        && args[6] == "mcp"
+}
+
+fn is_legacy_private_runtime_registration(
+    command: &str,
+    args: &[String],
+    runtime_root: &Path,
+) -> bool {
+    if args != ["mcp"] {
+        return false;
+    }
+    let Ok(relative) = Path::new(command).strip_prefix(runtime_root) else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    components.len() == 2
+        && components[0]
+            .as_os_str()
+            .to_str()
+            .is_some_and(|version| semver::Version::parse(version).is_ok())
+        && components[1].as_os_str() == runtime_executable_name(cfg!(windows))
 }
 
 pub(super) fn json_registration_command(
@@ -279,16 +350,12 @@ pub(super) fn registered_version(command: &str, args: &[String]) -> Option<Strin
         })
 }
 
-pub(super) fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
-    SetupClient::ALL
-        .into_iter()
-        .filter_map(|client| {
-            let resolved = resolve_client_edit(SetupOperation::Remove, client, &[], home, launcher);
-            match resolved {
-                Ok(edit) if matches!(edit.status, EditStatus::Removed) => Some(Ok(client)),
-                Ok(_) => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
-        .collect()
+pub(super) fn managed_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
+    configured_registrations(home, launcher).map(|registrations| {
+        registrations
+            .into_iter()
+            .filter(|registration| registration.managed)
+            .map(|registration| registration.client)
+            .collect()
+    })
 }
