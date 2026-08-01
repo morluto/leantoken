@@ -43,6 +43,45 @@ pub enum RetrievalLimitKind {
     ExhaustiveOccurrences,
 }
 
+/// Aggregate regex resource that exhausted the server-owned work budget.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegexWorkDimension {
+    CandidateFiles,
+    CandidateChunks,
+    CandidateBytes,
+}
+
+impl RegexWorkDimension {
+    /// Stable privacy-safe reason code used by CLI and MCP adapters.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CandidateFiles => "candidate_files",
+            Self::CandidateChunks => "candidate_chunks",
+            Self::CandidateBytes => "candidate_bytes",
+        }
+    }
+
+    /// Actionable bounded-search guidance for CLI and MCP callers.
+    #[must_use]
+    pub const fn guidance(self) -> &'static str {
+        match self {
+            Self::CandidateFiles => "narrow include_paths or index a smaller repository scope",
+            Self::CandidateChunks | Self::CandidateBytes => {
+                "add a mandatory case-sensitive literal or narrow include_paths"
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for RegexWorkDimension {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 impl RetrievalLimitKind {
     /// Stable privacy-safe reason code used by CLI and MCP adapters.
     #[must_use]
@@ -234,6 +273,22 @@ pub enum Error {
         /// Configured inclusive maximum.
         limit: usize,
     },
+    /// Regex candidate verification stopped before complete coverage.
+    #[error(
+        "regex work budget exhausted on {dimension}: files={candidate_files}, chunks={candidate_chunks}, bytes={candidate_bytes}, limit={limit}"
+    )]
+    RegexWorkBudgetExceeded {
+        /// Resource that crossed its calibrated request budget.
+        dimension: RegexWorkDimension,
+        /// Candidate files admitted before exhaustion.
+        candidate_files: usize,
+        /// Candidate chunks admitted before exhaustion.
+        candidate_chunks: usize,
+        /// Candidate content bytes admitted before exhaustion.
+        candidate_bytes: usize,
+        /// Inclusive budget for the limiting dimension.
+        limit: usize,
+    },
     /// Caller-controlled response limit crossed its configured maximum.
     #[error("{field} exceeds its configured limit: requested {requested}, limit {limit}")]
     RequestLimitExceeded {
@@ -267,6 +322,22 @@ pub enum Error {
         field: &'static str,
         /// Safe public validation rule.
         reason: &'static str,
+    },
+    /// Search options requested mutually incompatible ranked and exhaustive semantics.
+    #[error(
+        "invalid {field}: allowed modes are {allowed_modes:?}; conflicting options: {conflicting_options:?}"
+    )]
+    InvalidSearchOptions {
+        /// Rejected request field.
+        field: &'static str,
+        /// Wire mode names that support the requested behavior.
+        allowed_modes: &'static [&'static str],
+        /// Bounded, caller-supplied options that made the request contradictory.
+        conflicting_options: Vec<String>,
+        /// Valid ranked structural request using the same conceptual query.
+        ranked_symbol_example: &'static str,
+        /// Valid exhaustive lexical request using the same conceptual query.
+        exhaustive_text_example: &'static str,
     },
     /// Multiple static request-field dependencies or incompatibilities failed.
     #[error("invalid input constraints: {0}")]
@@ -455,10 +526,13 @@ impl Error {
     pub fn public_category(&self) -> &'static str {
         match self.reconciliation_cause() {
             Self::DoctorFailure { .. } => "doctor_failure",
-            Self::InvalidInput { .. } | Self::InvalidInputConstraints(_) => "invalid_input",
+            Self::InvalidInput { .. }
+            | Self::InvalidSearchOptions { .. }
+            | Self::InvalidInputConstraints(_) => "invalid_input",
             Self::InvalidJson { .. } => "invalid_json",
             Self::InvalidJsonSelector { .. } => "invalid_json_selector",
             Self::InputTooLong { .. } => "input_too_long",
+            Self::RegexWorkBudgetExceeded { .. } => "incomplete_work",
             Self::RequestLimitExceeded { .. }
             | Self::ResponseBudgetExceeded { .. }
             | Self::RetrievalLimitExceeded { .. }
@@ -528,10 +602,13 @@ impl Error {
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::LimitExceeded => "limit_exceeded",
             Self::RetrievalLimitExceeded { .. } => "request_limit_exceeded",
+            Self::RegexWorkBudgetExceeded { .. } => "incomplete_work",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
             Self::ResponseBudgetExceeded { .. } => "request_limit_exceeded",
             Self::UnsupportedLanguage(_) => "unsupported_language",
-            Self::InvalidInput { .. } | Self::InvalidInputConstraints(_) => "invalid_input",
+            Self::InvalidInput { .. }
+            | Self::InvalidSearchOptions { .. }
+            | Self::InvalidInputConstraints(_) => "invalid_input",
             Self::InvalidJson { .. } => "invalid_json",
             Self::InvalidJsonSelector { .. } => "invalid_json_selector",
             Self::InputTooLong { .. } => "input_too_long",

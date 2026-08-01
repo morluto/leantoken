@@ -279,8 +279,8 @@ async fn exhaustive_occurrence_search_requires_text_or_regex_mode() {
 
     assert!(matches!(
         error,
-        Error::InvalidInput {
-            field: "all occurrences",
+        Error::InvalidSearchOptions {
+            field: "all_occurrences",
             ..
         }
     ));

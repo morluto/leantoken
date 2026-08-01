@@ -1,5 +1,6 @@
 ---
 source: src/mcp/tests.rs
+assertion_line: 1913
 expression: tools
 ---
 [
@@ -1532,6 +1533,21 @@ expression: tools
               "type": "object"
             }
           ]
+        },
+        "ReadPolicy": {
+          "description": "I/O and verification policy for a live read.\n\n`Bounded` (default) stops reading after the requested page is satisfied,\nreports `index_state: unknown`, and emits a metadata-bound continuation\ncursor. `Full` hashes the complete live file, reports current/stale with\nlive and indexed hashes, and is required for delta requests.",
+          "oneOf": [
+            {
+              "const": "bounded",
+              "description": "Stop after the requested page; no full-file hash or index staleness.",
+              "type": "string"
+            },
+            {
+              "const": "full",
+              "description": "Hash the complete live file and report index verification metadata.",
+              "type": "string"
+            }
+          ]
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1590,6 +1606,11 @@ expression: tools
           "maxLength": 4096,
           "minLength": 1,
           "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ReadPolicy",
+          "default": "bounded",
+          "description": "I/O and verification policy. `bounded` (default) stops after the\nrequested page and reports `index_state: unknown`. `full` hashes the\ncomplete live file, reports current/stale with indexed hashes, and is\nrequired for `delta: true`."
         },
         "receipt_id": {
           "default": null,
@@ -1695,7 +1716,7 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Search indexed source for symbols, references, identifiers, text, or regex. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true}.",
+    "description": "Search indexed source for symbols, references, identifiers, text, or regex. mode=symbol is ranked and structural; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: ranked symbol {\"query\":\"InternalFailure\",\"mode\":\"symbol\"}; exhaustive text {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}.",
     "inputSchema": {
       "$defs": {
         "QueryReceiptAction": {
@@ -1852,7 +1873,7 @@ expression: tools
       "properties": {
         "all_occurrences": {
           "default": false,
-          "description": "Return every text or regex occurrence with exact coordinates and counts;\nrequires `mode=text` or `mode=regex`.",
+          "description": "Return every text or regex occurrence with exact coordinates and counts;\nrequires `mode=text` or `mode=regex` and cannot broaden `symbol` search.",
           "type": "boolean"
         },
         "case_sensitive": {
@@ -1957,7 +1978,7 @@ expression: tools
         "mode": {
           "$ref": "#/$defs/SearchMode",
           "default": "auto",
-          "description": "Candidate source to search (default `auto`)."
+          "description": "Candidate source to search (default `auto`).\n`symbol` is ranked and structural; exhaustive occurrences require `text` or `regex`."
         },
         "prefer_structural": {
           "default": false,

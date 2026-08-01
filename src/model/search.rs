@@ -39,6 +39,25 @@ impl SearchMode {
     }
 }
 
+pub(crate) const EXHAUSTIVE_SEARCH_MODES: &[&str] = &["text", "regex"];
+pub(crate) const RANKED_SYMBOL_SEARCH_EXAMPLE: &str = r#"{"query":"Services","mode":"symbol"}"#;
+pub(crate) const EXHAUSTIVE_TEXT_SEARCH_EXAMPLE: &str =
+    r#"{"query":"Services","mode":"text","all_occurrences":true,"projection":"occurrences"}"#;
+
+pub(crate) fn incompatible_occurrence_options(
+    mode: SearchMode,
+    mut conflicting_options: Vec<String>,
+) -> crate::Error {
+    conflicting_options.insert(0, format!("mode={}", mode.wire_name()));
+    crate::Error::InvalidSearchOptions {
+        field: "all_occurrences",
+        allowed_modes: EXHAUSTIVE_SEARCH_MODES,
+        conflicting_options,
+        ranked_symbol_example: RANKED_SYMBOL_SEARCH_EXAMPLE,
+        exhaustive_text_example: EXHAUSTIVE_TEXT_SEARCH_EXAMPLE,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 /// Explicit lifecycle action for one exhaustive-query coverage receipt.
