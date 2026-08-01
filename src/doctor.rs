@@ -42,7 +42,9 @@ const V0_1_19_TOOLS: [&str; 9] = [
     "savings",
     "search",
 ];
-const COMPATIBLE_REQUIRED_TOOLS: [&str; 5] = ["context", "files", "outline", "read", "search"];
+const COMPATIBLE_REQUIRED_TOOLS: [&str; 8] = [
+    "context", "files", "history", "json", "outline", "read", "savings", "search",
+];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
@@ -236,7 +238,11 @@ fn run_with_transport(
         }),
         "handshake",
     )?;
-    let initialize = transport.response(1, RESPONSE_TIMEOUT, "handshake")?;
+    let initialize = transport.response(
+        1,
+        configured_handshake_timeout(verified_registration),
+        "handshake",
+    )?;
     let result = result_object(&initialize, "initialize", "handshake")?;
     required_string(result, "/protocolVersion", "protocol version", "handshake")?;
     let server_name = required_string(result, "/serverInfo/name", "server name", "handshake")?;
@@ -619,6 +625,15 @@ fn expected_server_version(
             .filter(|version| semver::Version::parse(version).is_ok()),
         None => Some(env!("CARGO_PKG_VERSION")),
     }
+}
+
+fn configured_handshake_timeout(
+    verified_registration: Option<&setup::ConfiguredRegistration>,
+) -> Duration {
+    verified_registration
+        .and_then(|registration| registration.startup_timeout_seconds)
+        .map(Duration::from_secs)
+        .map_or(RESPONSE_TIMEOUT, |timeout| timeout.min(RESPONSE_TIMEOUT))
 }
 
 /// Print a doctor report as JSON or Context Distillery terminal output.
@@ -1321,8 +1336,14 @@ mod tests {
         let mut future = rollback;
         future.push("future_tool".into());
         assert!(catalog_matches_release(&future, "0.2.0"));
-        future.retain(|tool| tool != "context");
-        assert!(!catalog_matches_release(&future, "0.2.0"));
+        for required in COMPATIBLE_REQUIRED_TOOLS {
+            let incomplete = future
+                .iter()
+                .filter(|tool| tool.as_str() != required)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(!catalog_matches_release(&incomplete, "0.2.0"));
+        }
     }
 
     #[test]
@@ -1340,6 +1361,7 @@ mod tests {
             source_hash: [0; 32],
             command: "npx".into(),
             args: vec!["--package=leantoken@0.1.19".into()],
+            startup_timeout_seconds: Some(setup::CODEX_STARTUP_TIMEOUT_SECONDS),
             version: Some("0.1.19".into()),
             expected_version: env!("CARGO_PKG_VERSION").into(),
             matches_current: false,
@@ -1349,8 +1371,19 @@ mod tests {
 
         assert_eq!(expected_server_version(Some(&registration)), Some("0.1.19"));
         assert_eq!(
+            configured_handshake_timeout(Some(&registration)),
+            RESPONSE_TIMEOUT
+        );
+        assert_eq!(
             expected_server_version(None),
             Some(env!("CARGO_PKG_VERSION"))
+        );
+
+        let mut short_timeout = registration.clone();
+        short_timeout.startup_timeout_seconds = Some(2);
+        assert_eq!(
+            configured_handshake_timeout(Some(&short_timeout)),
+            Duration::from_secs(2)
         );
 
         let mut floating = registration;

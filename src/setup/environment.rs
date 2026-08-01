@@ -324,51 +324,63 @@ fn configured_registration_from_definition_against(
     let Some(source) = source else {
         return Ok(None);
     };
-    let (command, args, enabled) = match definition.format {
-        ConfigFormat::Json { section, shape } => {
-            let root: Value = jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())
-                .map_err(|error| invalid_config(&definition.path, error))?;
-            let Some(entry) = root
-                .get(section)
-                .and_then(Value::as_object)
-                .and_then(|section| section.get(SERVER_NAME))
-            else {
-                return Ok(None);
-            };
-            let enabled = match shape {
-                JsonEntryShape::CommandAndArgs => true,
-                JsonEntryShape::OpenCode => entry
-                    .get("enabled")
-                    .map(|enabled| {
-                        enabled.as_bool().ok_or_else(|| {
-                            invalid_config(
-                                &definition.path,
-                                "OpenCode MCP enabled flag must be a boolean",
-                            )
+    let (command, args, enabled, startup_timeout_seconds, launcher_settings_match) =
+        match definition.format {
+            ConfigFormat::Json { section, shape } => {
+                let root: Value =
+                    jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())
+                        .map_err(|error| invalid_config(&definition.path, error))?;
+                let Some(entry) = root
+                    .get(section)
+                    .and_then(Value::as_object)
+                    .and_then(|section| section.get(SERVER_NAME))
+                else {
+                    return Ok(None);
+                };
+                let enabled = match shape {
+                    JsonEntryShape::CommandAndArgs => true,
+                    JsonEntryShape::OpenCode => entry
+                        .get("enabled")
+                        .map(|enabled| {
+                            enabled.as_bool().ok_or_else(|| {
+                                invalid_config(
+                                    &definition.path,
+                                    "OpenCode MCP enabled flag must be a boolean",
+                                )
+                            })
                         })
-                    })
-                    .transpose()?
-                    .unwrap_or(true),
-            };
-            let (command, args) = json_registration_command(entry, shape, &definition.path)?;
-            (command, args, enabled)
-        }
-        ConfigFormat::Toml => {
-            let document = source
-                .parse::<DocumentMut>()
-                .map_err(|error| invalid_config(&definition.path, error))?;
-            let Some(entry) = document
-                .get("mcp_servers")
-                .and_then(Item::as_table)
-                .and_then(|servers| servers.get(SERVER_NAME))
-            else {
-                return Ok(None);
-            };
-            let (command, args) = toml_registration_command(entry, &definition.path)?;
-            (command, args, true)
-        }
-    };
-    let matches_current = command == expected_command && args == expected_args;
+                        .transpose()?
+                        .unwrap_or(true),
+                };
+                let (command, args) = json_registration_command(entry, shape, &definition.path)?;
+                (command, args, enabled, None, true)
+            }
+            ConfigFormat::Toml => {
+                let document = source
+                    .parse::<DocumentMut>()
+                    .map_err(|error| invalid_config(&definition.path, error))?;
+                let Some(entry) = document
+                    .get("mcp_servers")
+                    .and_then(Item::as_table)
+                    .and_then(|servers| servers.get(SERVER_NAME))
+                else {
+                    return Ok(None);
+                };
+                let (command, args, startup_timeout_seconds) =
+                    toml_registration_command(entry, &definition.path)?;
+                let launcher_settings_match =
+                    startup_timeout_seconds == Some(CODEX_STARTUP_TIMEOUT_SECONDS);
+                (
+                    command,
+                    args,
+                    true,
+                    startup_timeout_seconds,
+                    launcher_settings_match,
+                )
+            }
+        };
+    let matches_current =
+        command == expected_command && args == expected_args && launcher_settings_match;
     let managed = is_managed_registration(&command, &args, &setup_runtime_root(home));
     Ok(Some(ConfiguredRegistration {
         client,
@@ -377,6 +389,7 @@ fn configured_registration_from_definition_against(
         version: registered_version(&command, &args),
         command,
         args,
+        startup_timeout_seconds,
         expected_version: expected_version.to_owned(),
         matches_current,
         managed,
@@ -565,7 +578,7 @@ pub(super) fn json_string_array(
 pub(super) fn toml_registration_command(
     entry: &Item,
     path: &Path,
-) -> Result<(String, Vec<String>)> {
+) -> Result<(String, Vec<String>, Option<u64>)> {
     let table = entry
         .as_table()
         .ok_or_else(|| invalid_config(path, "LeanToken MCP entry must be a table"))?;
@@ -587,7 +600,24 @@ pub(super) fn toml_registration_command(
         })
         .transpose()?
         .unwrap_or_default();
-    Ok((command.to_owned(), args))
+    let startup_timeout_seconds = table
+        .get("startup_timeout_sec")
+        .map(|timeout| {
+            let timeout = timeout.as_integer().ok_or_else(|| {
+                invalid_config(path, "LeanToken MCP startup_timeout_sec must be an integer")
+            })?;
+            u64::try_from(timeout)
+                .ok()
+                .filter(|timeout| *timeout > 0)
+                .ok_or_else(|| {
+                    invalid_config(
+                        path,
+                        "LeanToken MCP startup_timeout_sec must be a positive integer",
+                    )
+                })
+        })
+        .transpose()?;
+    Ok((command.to_owned(), args, startup_timeout_seconds))
 }
 
 pub(super) fn registered_version(command: &str, args: &[String]) -> Option<String> {

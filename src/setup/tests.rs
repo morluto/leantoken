@@ -1406,6 +1406,7 @@ fn runtime_prune_preserves_partial_results_when_a_config_snapshot_changes() {
         },
         &home,
         runtime_root.clone(),
+        || {},
         || {
             removals += 1;
             if removals == 1 {
@@ -1458,6 +1459,7 @@ fn runtime_prune_stops_when_the_runtime_root_path_is_replaced() {
         },
         &home,
         runtime_root.clone(),
+        || {},
         || {
             removals += 1;
             if removals == 1 {
@@ -1486,6 +1488,59 @@ fn runtime_prune_stops_when_the_runtime_root_path_is_replaced() {
             .exists()
     );
     assert!(runtime_root.read_dir().unwrap().next().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_prune_never_deletes_from_a_root_separate_from_its_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    let locked_root = temp.path().join("locked-runtimes");
+    fs::create_dir_all(&home).unwrap();
+    let original = runtime_root.join("2.0.0");
+    fs::create_dir_all(&original).unwrap();
+    fs::write(original.join(runtime_executable_name(false)), "locked").unwrap();
+    let replacement_runtime = runtime_root.join("1.0.0");
+
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {
+            fs::rename(&runtime_root, &locked_root).unwrap();
+            fs::create_dir_all(&replacement_runtime).unwrap();
+            fs::write(
+                replacement_runtime.join(runtime_executable_name(false)),
+                "replacement",
+            )
+            .unwrap();
+        },
+        || {},
+    )
+    .unwrap();
+
+    assert!(
+        report
+            .apply_error
+            .as_deref()
+            .is_some_and(|error| error.contains("root changed after it was opened"))
+    );
+    assert!(report.results.is_empty());
+    assert_eq!(
+        fs::read(replacement_runtime.join(runtime_executable_name(false))).unwrap(),
+        b"replacement"
+    );
+    assert!(
+        locked_root
+            .join("2.0.0")
+            .join(runtime_executable_name(false))
+            .exists()
+    );
 }
 
 #[test]
@@ -1883,6 +1938,76 @@ fn ownership_and_edit_share_one_snapshot_before_preflight() {
 
     assert!(error.to_string().contains("changed after preflight"));
     assert_eq!(fs::read_to_string(path).unwrap(), unmanaged);
+}
+
+#[test]
+fn applied_client_edits_are_revalidated_after_launcher_verification() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.toml");
+    fs::write(&path, "updated").unwrap();
+    let edit = PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Codex,
+            path: path.clone(),
+            action: ClientPlanAction::Update,
+            detected: true,
+        },
+        status: EditStatus::Updated,
+        original: Some("original".into()),
+        updated: Some("updated".into()),
+    };
+    revalidate_applied_client_edits(std::slice::from_ref(&edit)).unwrap();
+
+    fs::write(&path, "changed during probe").unwrap();
+    let error = revalidate_applied_client_edits(&[edit])
+        .expect_err("post-probe configuration change must fail verification");
+
+    assert!(matches!(
+        error,
+        Error::DoctorFailure {
+            stage: "registration",
+            ..
+        }
+    ));
+    assert_eq!(fs::read_to_string(path).unwrap(), "changed during probe");
+}
+
+#[test]
+fn codex_registration_health_includes_the_configured_startup_timeout() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let command = serde_json::to_string(environment.launcher.command().unwrap()).unwrap();
+    let args = serde_json::to_string(&environment.launcher.args).unwrap();
+    let source = |timeout| {
+        format!(
+            "[mcp_servers.leantoken]\ncommand = {command}\nargs = {args}\nstartup_timeout_sec = {timeout}\n"
+        )
+    };
+
+    let current = configured_registration_from_source(
+        SetupClient::Codex,
+        &environment.home,
+        &environment.launcher,
+        Some(&source(CODEX_STARTUP_TIMEOUT_SECONDS)),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(current.matches_current);
+    assert_eq!(
+        current.startup_timeout_seconds,
+        Some(CODEX_STARTUP_TIMEOUT_SECONDS)
+    );
+
+    let short = configured_registration_from_source(
+        SetupClient::Codex,
+        &environment.home,
+        &environment.launcher,
+        Some(&source(1)),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(!short.matches_current);
+    assert_eq!(short.startup_timeout_seconds, Some(1));
 }
 
 #[test]

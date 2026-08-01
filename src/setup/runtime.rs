@@ -450,13 +450,14 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     let home = home_directory()
         .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
     let runtime_root = setup_runtime_root(&home);
-    prune_runtimes_at(request, &home, runtime_root, || {})
+    prune_runtimes_at(request, &home, runtime_root, || {}, || {})
 }
 
 pub(super) fn prune_runtimes_at(
     request: RuntimePruneRequest,
     home: &Path,
     runtime_root: PathBuf,
+    mut after_lock: impl FnMut(),
     mut after_removal: impl FnMut(),
 ) -> Result<RuntimePruneReport> {
     if request.keep_latest > MAX_RUNTIME_RETENTION {
@@ -470,12 +471,11 @@ pub(super) fn prune_runtimes_at(
         ));
     }
     validate_runtime_root(&runtime_root)?;
-    let _setup_lock = (!request.dry_run)
+    let setup_lock = (!request.dry_run)
         .then(|| acquire_setup_lock(&runtime_root))
         .transpose()?;
-    let runtime_root_handle = (!request.dry_run)
-        .then(|| open_runtime_root(&runtime_root))
-        .transpose()?;
+    let runtime_root_handle = setup_lock.as_ref().map(SetupLock::runtime_root);
+    after_lock();
     if transaction_path(&runtime_root).exists() {
         return Err(Error::SetupFailure(format!(
             "interrupted setup requires recovery before runtime pruning: {}",
@@ -533,9 +533,8 @@ pub(super) fn prune_runtimes_at(
             apply_error = Some(error.to_string());
             break;
         }
-        let runtime_root_handle = runtime_root_handle
-            .as_ref()
-            .expect("applied pruning opened the runtime root");
+        let runtime_root_handle =
+            runtime_root_handle.expect("applied pruning opened the runtime root");
         if let Err(error) = validate_runtime_root_handle(&runtime_root, runtime_root_handle) {
             apply_error = Some(error.to_string());
             break;

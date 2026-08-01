@@ -299,12 +299,14 @@ fn verify_applied_setup(
             repository.path(),
             Some(repository.path().join("index.sqlite")),
         )?;
-        crate::doctor::run_launcher(
+        let report = crate::doctor::run_launcher(
             &config,
             &launcher.command,
             &launcher.args,
             SETUP_VERIFICATION_TIMEOUT,
-        )
+        )?;
+        revalidate_applied_client_edits(&plan.edits)?;
+        Ok(report)
     })();
 
     Some(match result {
@@ -327,6 +329,29 @@ fn verify_applied_setup(
             repair_command: Some(repair_command),
         },
     })
+}
+
+pub(super) fn revalidate_applied_client_edits(edits: &[PlannedClientEdit]) -> Result<()> {
+    for edit in edits {
+        let expected = edit.updated.as_ref().or(edit.original.as_ref());
+        let current = read_optional(&edit.public.path).map_err(|error| Error::DoctorFailure {
+            stage: "registration",
+            message: format!(
+                "could not revalidate {} after launcher verification: {error}",
+                edit.public.path.display()
+            ),
+        })?;
+        if current.as_ref() != expected {
+            return Err(Error::DoctorFailure {
+                stage: "registration",
+                message: format!(
+                    "{} changed during launcher verification",
+                    edit.public.path.display()
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn report_from_plan(

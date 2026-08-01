@@ -562,18 +562,23 @@ read, and the bounded first-retrieval workflow. Repository readiness is capped
 at 30 seconds; fixed per-response doctor deadlines remain 10 seconds. Dropping
 the transport closes stdin and reaps or kills the child, and dropping the
 temporary directory removes its database and source. Setup never fans this
-verification out per configured client.
+verification out per configured client. Before reporting verification success,
+setup revalidates every applied client configuration against its planned
+post-transaction snapshot so a host rewrite during the probe fails closed.
 
 Configured-client doctor probes read at most one 8 MiB host configuration,
 retain only its 32-byte content digest, and require the post-probe diagnostic
 snapshot to contain the same client, path, and digest before reporting success.
+The initialize response deadline remains capped at 10 seconds and is reduced to
+the configured positive Codex `startup_timeout_sec` when that value is smaller;
+clients without an exposed startup timeout retain the 10-second bound.
 Malformed, unreadable, oversized, missing, changed, and explicitly disabled
 selected registrations fail at the registration stage. A release inferred from
 the configured launcher is matched exactly. Known rollback releases use their
 release-specific fingerprint marker, workflow guidance, and exact tool catalog;
 the complete published schema-marker era is `0.1.17` through `0.1.19`. Other
 semantic releases must carry the contract marker, expose unique tool names, and retain
-the five compatible retrieval tools used by installed discovery guidance.
+the eight retrieval and inspection tools named by installed discovery guidance.
 Launchers without an inferable pin may report any release satisfying that same
 bounded compatibility check. Doctor forwards a user-explicit SQLite path, but
 does not turn an implicit versioned managed cache into an explicit path for a
@@ -623,8 +628,9 @@ runtime permanently unprunable. Applied deletion compares the current runtime
 root path with the pinned root-handle identity before every removal,
 snapshot-matches the version directory handle, then unlinks the executable
 relative to that handle so a concurrent path swap cannot redirect deletion.
-One root handle spans the applied prune and at most one version handle is open
-at a time.
+The setup lock owns the same root handle used for every applied deletion, so
+serialization and mutation cannot be redirected to separate runtime roots. At
+most one version handle is open at a time.
 If unlinking succeeds but a concurrent directory change prevents the final
 directory removal, the report uses a distinct partial-removal action, subtracts
 the removed executable bytes, and returns the cleanup error. Unknown root

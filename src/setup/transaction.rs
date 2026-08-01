@@ -33,7 +33,7 @@ pub(super) struct SetupTransaction {
 
 pub(super) struct SetupLock {
     _file: fs::File,
-    _runtime_root: cap_std::fs::Dir,
+    runtime_root: cap_std::fs::Dir,
 }
 
 pub(super) fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
@@ -45,8 +45,14 @@ pub(super) fn acquire_setup_lock(runtime_root: &Path) -> Result<SetupLock> {
     file.lock()?;
     Ok(SetupLock {
         _file: file,
-        _runtime_root: runtime_root,
+        runtime_root,
     })
+}
+
+impl SetupLock {
+    pub(super) fn runtime_root(&self) -> &cap_std::fs::Dir {
+        &self.runtime_root
+    }
 }
 
 impl SetupTransaction {

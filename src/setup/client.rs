@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) const SERVER_NAME: &str = "leantoken";
 pub(super) const DISCOVERY_SKILL_MARKER: &str = "<!-- managed by leantoken setup -->";
+pub(crate) const CODEX_STARTUP_TIMEOUT_SECONDS: u64 = 30;
 
 #[derive(Debug)]
 pub(crate) struct SetupDiagnostic {
@@ -19,6 +20,7 @@ pub(crate) struct ConfiguredRegistration {
     pub(crate) source_hash: [u8; 32],
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
+    pub(crate) startup_timeout_seconds: Option<u64>,
     pub(crate) version: Option<String>,
     pub(crate) expected_version: String,
     pub(crate) matches_current: bool,

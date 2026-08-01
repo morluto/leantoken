@@ -65,7 +65,7 @@ pub(super) fn resolve_toml_edit_from_source(
                 .iter()
                 .for_each(|argument| args.push(argument));
             server["args"] = value(args);
-            server["startup_timeout_sec"] = value(30);
+            server["startup_timeout_sec"] = value(CODEX_STARTUP_TIMEOUT_SECONDS as i64);
             servers.insert(SERVER_NAME, Item::Table(server));
             if existed {
                 EditStatus::Updated
@@ -124,6 +124,7 @@ pub(super) fn toml_entry_matches(item: &Item, command: &str, expected_args: &[St
                 .eq(expected_args.iter().map(String::as_str))
                 && args.len() == expected_args.len()
         });
-    let timeout_matches = table.get("startup_timeout_sec").and_then(Item::as_integer) == Some(30);
+    let timeout_matches = table.get("startup_timeout_sec").and_then(Item::as_integer)
+        == i64::try_from(CODEX_STARTUP_TIMEOUT_SECONDS).ok();
     command_matches && args_match && timeout_matches
 }
