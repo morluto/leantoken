@@ -40,9 +40,9 @@ impl SearchMode {
 }
 
 pub(crate) const EXHAUSTIVE_SEARCH_MODES: &[&str] = &["text", "regex"];
-pub(crate) const RANKED_SYMBOL_SEARCH_EXAMPLE: &str = r#"{"query":"Services","mode":"symbol"}"#;
-pub(crate) const EXHAUSTIVE_TEXT_SEARCH_EXAMPLE: &str =
-    r#"{"query":"Services","mode":"text","all_occurrences":true,"projection":"occurrences"}"#;
+pub(crate) const RANKED_SYMBOL_SEARCH_EXAMPLE: &str =
+    r#"{"operation":{"kind":"symbol","query":"Services"}}"#;
+pub(crate) const EXHAUSTIVE_TEXT_SEARCH_EXAMPLE: &str = r#"{"operation":{"kind":"text","query":"Services","all_occurrences":true,"projection":"occurrences"}}"#;
 
 pub(crate) fn incompatible_occurrence_options(
     mode: SearchMode,

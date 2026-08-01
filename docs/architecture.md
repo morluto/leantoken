@@ -314,6 +314,13 @@ retained only when representative profiles show the required transaction-hold
 improvement without a material total-time, RSS, database-size, or
 write-amplification regression.
 
+Reconciliation removal staging is streamed in 256-path initial batches; the
+SQLite stage owns pending removal rows instead of retaining a second
+repository-sized path collection in Rust. CI changed-path input is capped at
+16 MiB and 100,000 paths before topology matching. Bounded live-read cursors
+also carry a fingerprint of the requested target prefix, so continuation
+cannot rely on size and timestamp metadata when a file is replaced in place.
+
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
 rolls the transaction back; an individual SQLite FTS statement remains the

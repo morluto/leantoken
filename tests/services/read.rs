@@ -1242,7 +1242,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             heading: None,
             heading_occurrence: None,
             continuation_cursor: Some(
-                "1:read:v3:1:1:1:1:b:-:0000000000000000:0:-".into(),
+                "1:read:v4:1:1:1:1:f:00000000000000000000000000000000:-:0000000000000000:0:-".into(),
             ),
             max_tokens: Some(100),
             expected_hash: None,

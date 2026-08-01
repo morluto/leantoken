@@ -56,6 +56,59 @@ impl ResponseAccountant {
         Ok(sized.meta_mut().total_response_tokens)
     }
 
+    pub(super) fn finalized_tokens_with_receipt_resource<T>(&self, response: &T) -> Result<usize>
+    where
+        T: RetrievalResponse + Clone,
+    {
+        let mut sized = response.clone();
+        self.finalize_with_receipt_resource(&mut sized)?;
+        Ok(sized.meta_mut().total_response_tokens)
+    }
+
+    pub(super) fn finalize_with_receipt_resource<T: RetrievalResponse>(
+        &self,
+        response: &mut T,
+    ) -> Result<()> {
+        let source_tokens = response.meta_mut().source_tokens;
+        let receipt_id = response.meta_mut().receipt_id.clone();
+        let Some(receipt_id) = receipt_id else {
+            return self.finalize(response);
+        };
+        {
+            let meta = response.meta_mut();
+            meta.protocol_tokens = 0;
+            meta.path_and_metadata_tokens = 0;
+            meta.total_response_tokens = 0;
+        }
+        for _ in 0..32 {
+            let mut value = serde_json::to_value(&*response)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "receipt_resource".into(),
+                    serde_json::json!({
+                        "kind": "retrieval_receipt",
+                        "id": receipt_id.clone(),
+                        "uri": format!("leantoken://receipt/v1/{receipt_id}"),
+                    }),
+                );
+            }
+            let accounting = response_token_accounting(&value, source_tokens, &self.tokenizer)?;
+            let meta = response.meta_mut();
+            if meta.protocol_tokens == accounting.protocol_tokens
+                && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
+                && meta.total_response_tokens == accounting.total_response_tokens
+            {
+                return Ok(());
+            }
+            meta.protocol_tokens = accounting.protocol_tokens;
+            meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+            meta.total_response_tokens = accounting.total_response_tokens;
+        }
+        Err(Error::ResponseAccountingInvariant(
+            "serialized response accounting did not reach a fixed point".into(),
+        ))
+    }
+
     pub(super) fn fits<T>(&self, response: &T, options: ServiceCallOptions) -> Result<bool>
     where
         T: RetrievalResponse + Clone,
@@ -99,7 +152,8 @@ impl ResponseAccountant {
             meta.receipt_suppressed_overlap = returned_items;
             meta.receipt_near_duplicates = returned_items;
         }
-        self.finalized_tokens(&sized)
+        self.finalize_with_receipt_resource(&mut sized)?;
+        Ok(sized.meta_mut().total_response_tokens)
     }
 
     pub(super) fn budget_exceeded(

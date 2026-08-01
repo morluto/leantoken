@@ -332,7 +332,10 @@ impl Services {
         let mut state = ProjectionState::new(limits.max_items, limits.array_sample_size);
         let mut differences = Vec::with_capacity(selectors.len());
         let mut total_items = 0usize;
+        let mut returned_items = 0usize;
+        let mut remaining_items = 0usize;
         let mut projected_tokens = 0usize;
+        let mut incomplete = false;
         for selector in selectors {
             check_cancelled(cancellation)?;
             let before_selected = select_json(before.value(), Some(&selector))?;
@@ -349,16 +352,32 @@ impl Services {
                         .unwrap_or_default(),
                 );
             }
-            let before_value = before_selected
-                .value()
-                .map(|value| project_json(value, projection, &mut state))
-                .transpose()?;
-            let after_value = after_selected
-                .value()
-                .map(|value| project_json(value, projection, &mut state))
-                .transpose()?;
+            let mut project = |value: Option<&Value>| -> Result<Option<Value>> {
+                let Some(value) = value else { return Ok(None) };
+                if projection == JsonProjection::Schema {
+                    let page = project_schema_page(
+                        self,
+                        value,
+                        limits.max_items.saturating_sub(returned_items).max(1),
+                        limits.max_tokens.saturating_sub(projected_tokens).max(1),
+                    )?;
+                    let (projected, _total, returned, remaining, reason, tokens, _counters) =
+                        page.into_parts();
+                    returned_items = returned_items.saturating_add(returned);
+                    remaining_items = remaining_items.saturating_add(remaining);
+                    incomplete |= reason.is_some();
+                    projected_tokens = projected_tokens.saturating_add(tokens);
+                    Ok(Some(projected))
+                } else {
+                    project_json(value, projection, &mut state).map(Some)
+                }
+            };
+            let before_value = project(before_selected.value())?;
+            let after_value = project(after_selected.value())?;
             for value in [&before_value, &after_value].into_iter().flatten() {
-                projected_tokens = projected_tokens.saturating_add(json_tokens(self, value)?);
+                if projection != JsonProjection::Schema {
+                    projected_tokens = projected_tokens.saturating_add(json_tokens(self, value)?);
+                }
             }
             differences.push(JsonFieldDiff {
                 selector,
@@ -369,9 +388,11 @@ impl Services {
                 changed,
             });
         }
-        let returned = total_items.min(limits.max_items);
-        let remaining = total_items.saturating_sub(returned);
-        let incomplete = !state.is_complete();
+        if projection != JsonProjection::Schema {
+            returned_items = total_items.min(limits.max_items);
+            remaining_items = total_items.saturating_sub(returned_items);
+            incomplete = !state.is_complete();
+        }
         Ok(JsonOperationResult {
             response: JsonResponse {
                 kind: "diff_fields".into(),
@@ -381,8 +402,8 @@ impl Services {
                 sources: vec![before.into_source(), after.into_source()],
                 result_complete: !incomplete,
                 total_items: incomplete.then_some(total_items),
-                returned_items: incomplete.then_some(returned),
-                remaining_items: incomplete.then_some(remaining),
+                returned_items: incomplete.then_some(returned_items),
+                remaining_items: incomplete.then_some(remaining_items),
                 incomplete_reason: incomplete.then_some(JsonIncompleteReason::MaxItems),
                 meta: self.meta(generation, 0, None),
             },

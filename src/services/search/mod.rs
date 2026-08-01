@@ -92,6 +92,7 @@ impl Services {
             options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
+            options,
         )?)
     }
 
@@ -195,6 +196,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.apply_search_consistency(
             &request,
@@ -270,6 +272,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.apply_search_consistency(
             &request,
@@ -376,6 +379,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.apply_search_consistency(
             &request,

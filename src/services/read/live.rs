@@ -35,6 +35,7 @@ pub(super) fn resolve_read_target(
             page_start_line: cursor.next_start_line,
             page_start_byte: cursor.next_byte,
             expected_full_hash: cursor.full_hash,
+            expected_prefix_hash: cursor.prefix_hash,
             expected_file_size: Some(cursor.file_size),
             expected_modified_ns: cursor.modified_ns,
             cursor_full: cursor.full,
@@ -83,6 +84,7 @@ pub(super) fn resolve_read_target(
         page_start_line: target_start_line,
         page_start_byte: 0,
         expected_full_hash: None,
+        expected_prefix_hash: None,
         expected_file_size: None,
         expected_modified_ns: None,
         cursor_full: matches!(request.policy, ReadPolicy::Full),
@@ -306,6 +308,56 @@ pub(super) fn observe_live_range(
             target_bytes,
         },
     })
+}
+
+/// Hash only the requested target prefix represented by a bounded cursor.
+/// The read is capped by the cursor's already-bounded byte offset and does
+/// not load or hash the rest of a large file.
+pub(super) fn hash_live_range_prefix(
+    file: &File,
+    target_start_line: usize,
+    target_end_line: Option<usize>,
+    prefix_bytes: usize,
+) -> Result<String> {
+    if prefix_bytes > MAX_LIVE_READ_BYTES {
+        return Err(Error::StaleCursor);
+    }
+    let mut file = file.try_clone()?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut reader = BufReader::new(file);
+    let mut current_line = 1usize;
+    let mut selected = Vec::with_capacity(prefix_bytes);
+    let requested_end_line = target_end_line.unwrap_or(usize::MAX);
+    let mut buffer = [0u8; 65_536];
+    while selected.len() < prefix_bytes {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        for &byte in &buffer[..read] {
+            if current_line >= target_start_line && current_line <= requested_end_line {
+                selected.push(byte);
+                if selected.len() == prefix_bytes {
+                    break;
+                }
+            }
+            if byte == b'\n' {
+                if current_line == requested_end_line {
+                    return Err(Error::StaleCursor);
+                }
+                current_line = current_line.saturating_add(1);
+            }
+        }
+    }
+    if selected.len() != prefix_bytes {
+        return Err(Error::StaleCursor);
+    }
+    Ok(hash(std::str::from_utf8(&selected).map_err(|_| {
+        Error::InvalidInput {
+            field: "path",
+            reason: "must identify UTF-8 text",
+        }
+    })?))
 }
 
 pub(super) fn validate_utf8_chunk(

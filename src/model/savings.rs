@@ -261,6 +261,8 @@ pub struct TokenSavingsRequestClassification {
     pub unsupported: u64,
     /// Successful exact `expected_hash` suppression.
     pub hash_suppressed: u64,
+    /// Successful response records from legacy or otherwise unclassified rows.
+    pub unclassified: u64,
     /// Observed errors other than typed unsupported-language outcomes.
     pub failed: u64,
 }

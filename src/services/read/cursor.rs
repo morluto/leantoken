@@ -3,12 +3,13 @@ use crate::services::validation::is_lower_hex;
 impl ReadCursor {
     pub(super) fn encode(&self) -> String {
         let full_hash = self.full_hash.as_deref().unwrap_or("-");
+        let prefix_hash = self.prefix_hash.as_deref().unwrap_or("-");
         let modified_ns = self
             .modified_ns
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string());
         format!(
-            "{}:read:v3:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:read:v4:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.generation,
             self.target_start_line,
             self.target_end_line
@@ -17,6 +18,7 @@ impl ReadCursor {
             self.next_byte,
             if self.full { "f" } else { "b" },
             full_hash,
+            prefix_hash,
             self.path_hash,
             self.file_size,
             modified_ns,
@@ -36,6 +38,7 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         next_byte,
         policy,
         full_hash,
+        prefix_hash,
         path_hash,
         file_size,
         modified_ns,
@@ -52,11 +55,15 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         .then(|| target_end.parse::<usize>().map_err(|_| Error::StaleCursor))
         .transpose()?;
     if *kind != "read"
-        || *version != "v3"
+        || *version != "v4"
         || (*full_hash != "-"
             && (full_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
                 || !full_hash.bytes().all(is_lower_hex)))
         || (full && *full_hash == "-")
+        || (*prefix_hash != "-"
+            && (prefix_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
+                || !prefix_hash.bytes().all(is_lower_hex)))
+        || (!full && *prefix_hash == "-")
         || path_hash.len() != 16
         || !path_hash.bytes().all(is_lower_hex)
         || (*modified_ns != "-" && modified_ns.parse::<u128>().is_err())
@@ -70,6 +77,7 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         next_start_line: next_start.parse().map_err(|_| Error::StaleCursor)?,
         next_byte: next_byte.parse().map_err(|_| Error::StaleCursor)?,
         full_hash: (*full_hash != "-").then(|| (*full_hash).to_string()),
+        prefix_hash: (*prefix_hash != "-").then(|| (*prefix_hash).to_string()),
         full,
         file_size: file_size.parse().map_err(|_| Error::StaleCursor)?,
         modified_ns: (*modified_ns != "-").then(|| modified_ns.parse::<u128>().unwrap_or(0)),

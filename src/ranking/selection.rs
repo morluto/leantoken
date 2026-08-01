@@ -100,14 +100,17 @@ pub(in crate::ranking) struct SelectionScope<'request> {
 impl<'request> SelectionScope<'request> {
     fn new(request: &'request ContextRequest, context_exclude_paths: &[String]) -> Self {
         Self {
+            // The public ranking API returns a response rather than `Result`.
+            // It must remain safe when called directly with a malformed
+            // request, independently of adapter admission validation.
             focus_paths: PathMatcher::new(&request.focus_paths)
-                .expect("focus paths are validated at request admission"),
+                .unwrap_or_else(|_| PathMatcher::empty()),
             include_paths: PathMatcher::new(&request.include_paths)
-                .expect("include paths are validated at request admission"),
+                .unwrap_or_else(|_| PathMatcher::empty()),
             exclude_paths: PathMatcher::new(&request.exclude_paths)
-                .expect("exclude paths are validated at request admission"),
+                .unwrap_or_else(|_| PathMatcher::empty()),
             context_exclude_paths: PathMatcher::new(context_exclude_paths)
-                .expect("configured context exclusions are validated at startup"),
+                .unwrap_or_else(|_| PathMatcher::empty()),
             changed_paths: request.changed_paths.iter().map(String::as_str).collect(),
         }
     }

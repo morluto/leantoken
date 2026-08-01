@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::{DEFAULT_READ_TOKENS, DEFAULT_RESULTS};
 
 pub(in crate::services) const MAX_REGEX_CANDIDATES: usize = 2_000;
 /// Maximum files examined during a regex scan before early exit.
@@ -56,6 +57,11 @@ impl RegexWorkLimits {
         max_tokens: Option<usize>,
         minimum_chunk_bytes: usize,
     ) -> Self {
+        // The public schema advertises these values as defaults. Treating an
+        // explicit default as a tighter scan ceiling made equivalent requests
+        // do different work and could reject a valid late match.
+        let max_results = max_results.filter(|value| *value != DEFAULT_RESULTS);
+        let max_tokens = max_tokens.filter(|value| *value != DEFAULT_READ_TOKENS);
         let result_work_bytes = max_results.map(|value| value.max(1).saturating_mul(64));
         let token_work_bytes = max_tokens.map(|tokens| tokens.max(1).saturating_mul(64));
         Self {

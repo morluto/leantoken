@@ -196,6 +196,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(operation, validate_read_input(&request))?;
@@ -274,19 +275,26 @@ impl Services {
         }
         let mut returned_items = usize::from(!response.not_modified);
         if let Some(limit) = options.max_response_tokens() {
-            let mut reserved =
-                self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+            let mut reserved = self.finalized_response_tokens_with_receipt_reserve(
+                &response,
+                returned_items,
+                options,
+            )?;
             if reserved > limit && request.delta {
                 response = direct_response;
                 returned_items = usize::from(!response.not_modified);
-                reserved =
-                    self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+                reserved = self.finalized_response_tokens_with_receipt_reserve(
+                    &response,
+                    returned_items,
+                    options,
+                )?;
             }
             if reserved > limit {
                 return Err(self.response_budget_error_with_receipt_reserve(
                     &response,
                     returned_items,
                     limit,
+                    options,
                 )?);
             }
         }
@@ -378,7 +386,11 @@ impl Services {
             let candidate =
                 self.read_at_generation(session, request, generation, candidate_limit)?;
             let returned_items = usize::from(!candidate.response.not_modified);
-            self.finalized_response_tokens_with_receipt_reserve(&candidate.response, returned_items)
+            self.finalized_response_tokens_with_receipt_reserve(
+                &candidate.response,
+                returned_items,
+                options,
+            )
         })?;
         if let Some(candidate_limit) = keep.filter(|keep| *keep > 0) {
             return self.read_at_generation(session, request, generation, candidate_limit);
@@ -389,6 +401,7 @@ impl Services {
             &minimum.response,
             usize::from(!minimum.response.not_modified),
             max_response_tokens,
+            options,
         )?)
     }
 
@@ -435,6 +448,17 @@ impl Services {
         {
             return Err(Error::StaleCursor);
         }
+        if let Some(expected) = target.expected_prefix_hash.as_deref() {
+            let actual = hash_live_range_prefix(
+                &file,
+                target.target_start_line,
+                target.target_end_line,
+                target.page_start_byte,
+            )?;
+            if expected != actual {
+                return Err(Error::StaleCursor);
+            }
+        }
         let observed_target_end_line = target
             .target_end_line
             .unwrap_or(snapshot.end_line)
@@ -474,6 +498,16 @@ impl Services {
                 ));
             }
         }
+        let prefix_hash = (truncated && !full)
+            .then(|| {
+                hash_live_range_prefix(
+                    &file,
+                    target.target_start_line,
+                    target.target_end_line,
+                    next_byte,
+                )
+            })
+            .transpose()?;
         let continuation_cursor = next_start_line.map(|next_start_line| {
             ReadCursor {
                 generation,
@@ -482,6 +516,7 @@ impl Services {
                 next_start_line,
                 next_byte,
                 full_hash: snapshot.content_hash.clone(),
+                prefix_hash: prefix_hash.clone(),
                 full,
                 file_size: snapshot.file_size,
                 modified_ns: snapshot.modified_ns,

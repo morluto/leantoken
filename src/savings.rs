@@ -143,11 +143,12 @@ fn write_human_report(
     let classification = &observations.request_classification;
     writeln!(
         output,
-        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} failed",
+        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} unclassified  |  {} failed",
         format_count(classification.useful),
         format_count(classification.incomplete),
         format_count(classification.unsupported),
         format_count(classification.hash_suppressed),
+        format_count(classification.unclassified),
         format_count(classification.failed)
     )?;
     for failure in &observations.failed_by_operation_and_category {
@@ -416,6 +417,7 @@ mod tests {
                     incomplete: 3,
                     unsupported: 1,
                     hash_suppressed: 2,
+                    unclassified: 0,
                     failed: 3,
                 },
                 failed_by_operation_and_category: vec![ServiceFailureObservation {
