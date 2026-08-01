@@ -37,7 +37,7 @@ pub struct IndexingDiagnostics {
     ///
     /// Only successfully prepared searchable files have a language owner.
     pub preparation_by_language: BTreeMap<String, PreparationDiagnostics>,
-    /// Import resolution and SQLite insertion time inside batch callbacks.
+    /// Batch-consumption time after parallel preparation, including stage writes.
     pub insertion_ms: f64,
     /// Total lifetime of the generation publication transaction.
     pub publication_ms: f64,

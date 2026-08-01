@@ -312,8 +312,16 @@ impl Indexer {
 
         // Phase 1: Preparation runs outside BEGIN IMMEDIATE so the SQLite
         // writer lock is not held during filesystem reads, hashing, parsing,
-        // tokenization, or import resolution.
-        let mut staged = PreparedReconciliation::new(self.config.tokenizer.name());
+        // tokenization, or import resolution. Prepared records are flushed
+        // from each bounded batch into a storage-owned SQLite stage.
+        let mut staged = PreparedReconciliation::new(
+            &self.storage,
+            self.config.tokenizer.name(),
+            &baseline,
+            &config_hash,
+            false,
+            false,
+        )?;
         let preparation = self.prepare_candidate_batches(
             &candidates,
             cancellation,
@@ -371,10 +379,13 @@ impl Indexer {
                         .expect("prepared file has a source token count");
                     staged.stage_indexed(file, source_token_count);
                 }
+                staged.flush()?;
                 Ok(())
             },
         )?;
         source_bytes.enforce()?;
+        staged.finish()?;
+        check_cancelled(cancellation)?;
 
         // Phase 2: Publication inside BEGIN IMMEDIATE.  Relocations and import
         // projection refresh remain inside the transaction because they

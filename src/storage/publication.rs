@@ -188,7 +188,10 @@ impl Storage {
                 replacements: 0,
                 deletions: HashSet::new(),
             };
-            let output = write(&mut writer)?;
+            let (output, relational_write_ms, relational_write_bytes) =
+                measured_storage_phase(profile, || write(&mut writer))?;
+            diagnostics.relational_write_ms = relational_write_ms;
+            diagnostics.relational_write_bytes = relational_write_bytes;
             let changed = rebuild
                 || writer.replacements > 0
                 || !writer.deletions.is_empty()
@@ -400,53 +403,6 @@ impl Storage {
                )",
             [],
         )?;
-        Ok(())
-    }
-}
-
-/// Bounded in-memory staging for prepared index records.
-///
-/// Holds prepared [`IndexedFile`] records produced by the preparation phase,
-/// which runs **outside** the `BEGIN IMMEDIATE` writer transaction.  The
-/// publication closure receives the staged records and performs only fast
-/// set-based writes inside the transaction, preserving atomic generation
-/// visibility.  Cancellation during preparation discards the buffer without
-/// affecting the live database.
-pub(crate) struct PreparedReconciliation {
-    replacements: Vec<(IndexedFile, usize)>,
-    removals: HashSet<String>,
-    tokenizer: String,
-}
-
-impl PreparedReconciliation {
-    pub(crate) fn new(tokenizer: &str) -> Self {
-        Self {
-            replacements: Vec::new(),
-            removals: HashSet::new(),
-            tokenizer: tokenizer.to_string(),
-        }
-    }
-
-    pub(crate) fn stage_indexed(&mut self, file: IndexedFile, source_token_count: usize) {
-        self.replacements.push((file, source_token_count));
-    }
-
-    pub(crate) fn stage_removal(&mut self, path: String) {
-        self.removals.insert(path);
-    }
-
-    /// Apply all staged records through a [`ReconciliationWriter`].
-    ///
-    /// Called inside the `BEGIN IMMEDIATE` transaction.  Performs only fast
-    /// `DELETE` + `INSERT` operations — no filesystem reads, hashing, parsing,
-    /// or tokenization.
-    pub(crate) fn apply(&mut self, writer: &mut ReconciliationWriter<'_, '_>) -> Result<()> {
-        for path in &self.removals.clone() {
-            writer.delete(path)?;
-        }
-        for (file, count) in self.replacements.drain(..) {
-            writer.replace_with_source_tokens(file, &self.tokenizer, count)?;
-        }
         Ok(())
     }
 }

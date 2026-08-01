@@ -258,9 +258,16 @@ impl Indexer {
 
         // Phase 1: Preparation runs outside BEGIN IMMEDIATE so the SQLite
         // writer lock is not held during filesystem reads, hashing, parsing,
-        // tokenization, or import resolution.  Prepared records are staged
-        // in a bounded in-memory buffer.
-        let mut staged = PreparedReconciliation::new(self.config.tokenizer.name());
+        // tokenization, or import resolution. Prepared records are flushed
+        // from each bounded batch into a storage-owned SQLite stage.
+        let mut staged = PreparedReconciliation::new(
+            &self.storage,
+            self.config.tokenizer.name(),
+            &baseline,
+            &config_hash,
+            rebuild,
+            profiling == StorageProfiling::Collect,
+        )?;
         for path in &removed_paths {
             staged.stage_removal(path.clone());
         }
@@ -325,10 +332,14 @@ impl Indexer {
                 if let Some(progress) = &progress {
                     progress.staged(staged_files);
                 }
+                staged.flush()?;
                 Ok(())
             },
         )?;
         source_bytes.enforce()?;
+        staged.finish()?;
+        let staging = staged.diagnostics();
+        check_cancelled(cancellation)?;
 
         // Phase 2: Publication inside BEGIN IMMEDIATE performs only fast
         // DELETE + INSERT operations via staged.apply.  The transaction
@@ -365,8 +376,9 @@ impl Indexer {
         if let Some(progress) = &mut progress {
             progress.complete(generation);
         }
-        publication_detail.relational_write_ms = duration_ms(preparation.insertion);
-        publication_detail.relational_write_bytes = preparation.insertion_write_bytes;
+        publication_detail.stage_write_ms = staging.write_ms;
+        publication_detail.stage_write_bytes = staging.write_bytes;
+        publication_detail.stage_database_bytes = staging.database_bytes;
         let publication_elapsed = publication_started.elapsed();
 
         // Storage returns only after the generation transaction commits. A

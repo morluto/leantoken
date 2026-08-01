@@ -51,17 +51,18 @@ mod runtime;
 mod schema;
 mod scoped_regex;
 mod session;
+mod staging;
 mod writer;
 
 pub(crate) use diagnostics::*;
 pub(crate) use helpers::*;
 pub(crate) use models::*;
-pub(crate) use publication::PreparedReconciliation;
 pub(crate) use receipts::*;
 pub(crate) use runtime::*;
 pub(crate) use rusqlite::params;
 pub(crate) use schema::*;
 pub(crate) use scoped_regex::*;
+pub(crate) use staging::PreparedReconciliation;
 
 pub use diagnostics::{
     DEFAULT_MAX_RESULTS, FtsStorageFootprint, HARD_MAX_RESULTS, PublicationDiagnostics,
