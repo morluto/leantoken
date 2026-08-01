@@ -1459,6 +1459,12 @@ is marked inexact. Protocol-cost benchmarks serialize the actual tool catalog,
 JSON-RPC requests and responses, result wrappers, and repeated-context handoff
 instead of adding a guessed fixed overhead.
 
+MCP retrieval tools carry concise routing cues in their individual descriptions
+as well as shared initialization instructions. This preserves a standalone
+preference signal when a host ranks tools without using those instructions. A
+catalog test caps aggregate description text at 5,000 bytes so the redundant
+signal remains bounded in recurring prompt cost.
+
 ## Path and data safety
 
 `RepositoryPath` and `RepositoryPattern` own repository-relative identity.
