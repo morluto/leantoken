@@ -172,7 +172,7 @@ musl Linux를 포함한 다른 대상은 소스에서 빌드해야 합니다. Ru
 C/C++ 툴체인을 설치한 뒤 다음 명령을 실행하세요.
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken leantoken
+cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
 ```
 
 기존 클라이언트 통합을 명시적으로 업데이트합니다.

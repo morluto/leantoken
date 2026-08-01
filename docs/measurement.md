@@ -576,11 +576,11 @@ With already prepared pinned repositories, run the bounded experiment without
 downloading a larger corpus:
 
 ```bash
-cargo build --release --bin leantoken \
-  --example model_ab \
-  --example model_ab_codex_adapter \
-  --example orientation_capsule_task_validator \
-  --example orientation_capsule_trajectory
+cargo build --release --package leantoken-benchmarks \
+  --bin model_ab \
+  --bin model_ab_codex_adapter \
+  --bin orientation_capsule_task_validator \
+  --bin orientation_capsule_trajectory
 
 target/release/model_ab \
   --manifest target/orientation-capsule/model-ab.json \
@@ -929,9 +929,9 @@ silently rerunning samples. The private directory contains prompts, answers,
 tool arguments, and tool outputs and must never be published.
 
 ```bash
-cargo build --release --bin leantoken \
-  --example codex_multi_agent_receipt \
-  --example codex_multi_agent_suite
+cargo build --release --package leantoken-benchmarks \
+  --bin codex_multi_agent_receipt \
+  --bin codex_multi_agent_suite
 source ~/clash.sh
 CODEX_SUITE_MANIFEST=benchmarks/multi_agent_context_suite_v2.json \
   benchmarks/run_multi_agent_context_suite.sh --execute \

@@ -537,7 +537,7 @@ async fn main() -> Result<(), DynError> {
         source_manifest_schema_version: source.schema_version,
         harness_revision,
         harness_source_blake3,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         tokenizer: tokenizer.name(),
         token_count_exact: tokenizer.is_exact(),
         methodology: Methodology {

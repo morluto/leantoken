@@ -1650,15 +1650,15 @@ strata never suppress or reclassify parser failures.
 Verify the repository-owned synthetic fixture:
 
 ```bash
-cargo test --locked --example typescript_parse_diagnostic
-cargo run --locked --release --example typescript_parse_diagnostic -- \
+cargo test --locked --package leantoken-benchmarks --bin typescript_parse_diagnostic
+cargo run --locked --release --package leantoken-benchmarks --bin typescript_parse_diagnostic -- \
   verify-fixture
 ```
 
 Run a pinned external corpus:
 
 ```bash
-cargo run --locked --release --example typescript_parse_diagnostic -- \
+cargo run --locked --release --package leantoken-benchmarks --bin typescript_parse_diagnostic -- \
   analyze \
   --repository /path/to/clean/checkout \
   --revision FULL_LOWERCASE_GIT_COMMIT \

@@ -120,7 +120,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .map(|status| !status.trim().is_empty());
     let report = Report {
         schema_version: 1,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         tokenizer: leantoken::tokens::Tokenizer::default().name(),
         harness_revision,
         harness_worktree_dirty,

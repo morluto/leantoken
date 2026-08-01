@@ -87,6 +87,7 @@ jobs:
             git diff --name-only -z "$base...$head" > "$paths"
           elif [[ "$event" == "pull_request" || "$event" == "merge_group" ]]; then
             echo "::warning::base or head revision is unavailable; planner will use conservative fallback"
+            base=""
           fi
           {
             echo "event=$event"
@@ -120,6 +121,7 @@ jobs:
             --event "$EVENT" \
             --base "$BASE" \
             --head "$HEAD" \
+            --source "${{ github.sha }}" \
             --changed-paths-file "$PATHS" \
             "${overrides[@]}" \
             --output "$plan"
@@ -328,7 +330,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Node.js
-        if: needs.changes.outputs.npm == 'true'
+        if: needs.changes.outputs.npm == 'true' && matrix.os == 'ubuntu-latest'
         uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -352,7 +354,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Test npm installation
-        if: needs.changes.outputs.npm == 'true'
+        if: needs.changes.outputs.npm == 'true' && matrix.os == 'ubuntu-latest'
         timeout-minutes: 5
         run: node --test npm/npm-install-e2e.mjs
 

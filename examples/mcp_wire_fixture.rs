@@ -136,7 +136,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
                 "result": {
                     "protocolVersion": "2025-11-25",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "leantoken", "version": env!("CARGO_PKG_VERSION")}
+                    "serverInfo": {"name": "leantoken", "version": env!("LEANTOKEN_PRODUCT_VERSION")}
                 }
             }),
         ),
@@ -242,7 +242,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         trace_id: Some("synthetic-mcp-wire-v2".into()),
         trace_content_blake3: None,
         host: "synthetic-fixture".into(),
-        host_version: env!("CARGO_PKG_VERSION").into(),
+        host_version: env!("LEANTOKEN_PRODUCT_VERSION").into(),
         model: Some("synthetic-model".into()),
         provider: Some("synthetic-provider".into()),
         tokenizer: "cl100k_base".into(),

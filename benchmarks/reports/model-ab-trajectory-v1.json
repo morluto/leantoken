@@ -4,7 +4,7 @@
   "status": "completed_post_hoc_no_go",
   "experiment_id": "swe-bench-multilingual-four-arm-v2",
   "source": {
-    "classifier_binary_blake3": "69a3aecc9791f469c16112222fa39bfc349aa1410922ad2e162f863b352952de",
+    "classifier_binary_blake3": "5d7c4b029f3eb5b665e3a350db8b0a6cec7891f67718100c510e0f95336dc7fc",
     "classifier_source_blake3": "37133e6e7e4fe8830291c8b35c3f03877a56834771bd019efa88648f5530fdb6",
     "classifier_manifest_blake3": "ac84547ea757417ece90e6890de37a885e4b30a37eebc6ce781b73731521441b",
     "raw_report_blake3": "ba623b8e88dc9ef58ed5e5d2d22b8af8aeb07c398f0afc886244fb4813ad810f",

@@ -43,7 +43,7 @@
       "id": "product-linux",
       "owner": "product and process behavior on Linux",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },
@@ -51,7 +51,7 @@
       "id": "product-macos",
       "owner": "product and process behavior on macOS",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
       "matrix": [{"name": "macos-latest"}],
       "depends_on": ["quality"]
     },
@@ -59,7 +59,7 @@
       "id": "product-windows",
       "owner": "product and process behavior on Windows",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".github/workflows/"],
       "matrix": [{"name": "windows-latest"}],
       "depends_on": ["quality"]
     },
@@ -75,7 +75,7 @@
       "id": "examples",
       "owner": "benchmark and example contracts",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["examples/", "crates/benchmarks/", "benchmarks/", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
+      "paths": ["examples/", "crates/benchmarks/", "benchmarks/", "scripts/", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },

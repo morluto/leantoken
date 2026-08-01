@@ -181,6 +181,10 @@ path = "../../examples/swe_bench_validator.rs"
 name = "benchmark-contract"
 path = "../../tests/benchmark_contract.rs"
 
+[[bin]]
+name = "typescript_parse_diagnostic"
+path = "../../examples/typescript_parse_diagnostic.rs"
+
 [dependencies]
 blake3 = "1.8.2"
 clap = { version = "4.5.51", features = ["derive"] }
@@ -197,5 +201,6 @@ tokio = { version = "1.49.0", features = ["fs", "macros", "rt-multi-thread", "si
 tokio-util = { version = "0.7.17", features = ["rt"] }
 tree-sitter = "0.26.11"
 tree-sitter-python = "0.25.0"
+tree-sitter-typescript = "0.23.2"
 unidiff = { version = "0.4.0", default-features = false }
 wait-timeout = "0.2.1"
