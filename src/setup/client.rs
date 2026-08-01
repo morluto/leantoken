@@ -79,54 +79,59 @@ impl SetupClient {
     }
 
     pub(super) fn definition(self, home: &Path) -> ClientDefinition {
-        match self {
-            Self::Claude => ClientDefinition::json(
-                home.join(".claude.json"),
-                "mcpServers",
-                JsonEntryShape::CommandAndArgs,
-            ),
-            Self::Cursor => ClientDefinition::json(
-                home.join(".cursor/mcp.json"),
-                "mcpServers",
-                JsonEntryShape::CommandAndArgs,
-            ),
+        let path = match self {
             Self::OpenCode => {
                 let candidates = self.configuration_paths(home);
-                let path = candidates
+                candidates
                     .iter()
                     .find(|candidate| candidate.exists())
                     .cloned()
-                    .unwrap_or_else(|| candidates[0].clone());
-                ClientDefinition::json(path, "mcp", JsonEntryShape::OpenCode)
+                    .unwrap_or_else(|| candidates[0].clone())
             }
+            _ => self.configuration_paths(home)[0].clone(),
+        };
+        self.definition_at(path)
+    }
+
+    pub(super) fn definition_at(self, path: PathBuf) -> ClientDefinition {
+        match self {
+            Self::Claude => {
+                ClientDefinition::json(path, "mcpServers", JsonEntryShape::CommandAndArgs)
+            }
+            Self::Cursor => {
+                ClientDefinition::json(path, "mcpServers", JsonEntryShape::CommandAndArgs)
+            }
+            Self::OpenCode => ClientDefinition::json(path, "mcp", JsonEntryShape::OpenCode),
             Self::Codex => ClientDefinition {
-                path: home.join(".codex/config.toml"),
+                path,
                 format: ConfigFormat::Toml,
             },
-            Self::Gemini => ClientDefinition::json(
-                home.join(".gemini/settings.json"),
-                "mcpServers",
-                JsonEntryShape::CommandAndArgs,
-            ),
-            Self::Antigravity => ClientDefinition::json(
-                home.join(".gemini/config/mcp_config.json"),
-                "mcpServers",
-                JsonEntryShape::CommandAndArgs,
-            ),
+            Self::Gemini => {
+                ClientDefinition::json(path, "mcpServers", JsonEntryShape::CommandAndArgs)
+            }
+            Self::Antigravity => {
+                ClientDefinition::json(path, "mcpServers", JsonEntryShape::CommandAndArgs)
+            }
         }
     }
 
     pub(super) fn configuration_paths(self, home: &Path) -> Vec<PathBuf> {
-        if self != Self::OpenCode {
-            return vec![self.definition(home).path];
+        match self {
+            Self::Claude => vec![home.join(".claude.json")],
+            Self::Cursor => vec![home.join(".cursor/mcp.json")],
+            Self::OpenCode => {
+                let directory = home.join(".config/opencode");
+                vec![
+                    directory.join("opencode.json"),
+                    directory.join("opencode.jsonc"),
+                    directory.join(".opencode.json"),
+                    directory.join(".opencode.jsonc"),
+                ]
+            }
+            Self::Codex => vec![home.join(".codex/config.toml")],
+            Self::Gemini => vec![home.join(".gemini/settings.json")],
+            Self::Antigravity => vec![home.join(".gemini/config/mcp_config.json")],
         }
-        let directory = home.join(".config/opencode");
-        vec![
-            directory.join("opencode.json"),
-            directory.join("opencode.jsonc"),
-            directory.join(".opencode.json"),
-            directory.join(".opencode.jsonc"),
-        ]
     }
 
     pub(super) fn is_detected(self, home: &Path) -> bool {

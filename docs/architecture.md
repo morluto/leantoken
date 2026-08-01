@@ -570,15 +570,18 @@ snapshot to contain the same client, path, and digest before reporting success.
 Malformed, unreadable, oversized, missing, changed, and explicitly disabled
 selected registrations fail at the registration stage. A release inferred from
 the configured launcher is matched exactly. Known rollback releases use their
-release-specific fingerprint marker and exact tool catalog; other semantic
-releases must carry the contract marker, expose unique tool names, and retain
+release-specific fingerprint marker, workflow guidance, and exact tool catalog;
+the complete published schema-marker era is `0.1.17` through `0.1.19`. Other
+semantic releases must carry the contract marker, expose unique tool names, and retain
 the five compatible retrieval tools used by installed discovery guidance.
 Launchers without an inferable pin may report any release satisfying that same
 bounded compatibility check. Doctor forwards a user-explicit SQLite path, but
 does not turn an implicit versioned managed cache into an explicit path for a
-differently pinned child. Each child stdout protocol record is limited to 8 MiB
-before UTF-8 or JSON parsing, and at most four parsed records are queued between
-the stdout reader and doctor consumer. A full queue backpressures the child,
+differently pinned child. The child working directory is the canonical requested
+repository root, so workspace-relative configured commands are exercised with
+the same cwd contract used by supported hosts. Each child stdout protocol record
+is limited to 8 MiB before UTF-8 or JSON parsing, and at most four parsed records
+are queued between the stdout reader and doctor consumer. A full queue backpressures the child,
 bounding queued protocol content to 32 MiB; an over-limit unterminated record
 terminates the probe without unbounded allocation.
 
@@ -588,9 +591,11 @@ version directory. Setup and inventory reads are capped at 8 MiB per client
 configuration or discovery file before parsing, and generated replacements are
 validated against that same bound before a plan can apply. Planning retains at
 most nine bounded configuration snapshots: one for five fixed-path clients and
-all four precedence-ordered OpenCode candidates (72 MiB in total), and
-revalidates every snapshot before applying discovery cleanup or pruning from a
-runtime-reference decision. Transaction-wide apply errors remain explicit even
+all four precedence-ordered OpenCode candidates (72 MiB in total). OpenCode
+precedence, registration ownership, and selected edits are derived only from
+that one complete snapshot set, and every candidate is revalidated before any
+client edit, discovery cleanup, or runtime-reference prune decision applies.
+Transaction-wide apply errors remain explicit even
 for plans containing only discovery cleanup and no client-result rows. The
 recovery journal has a
 separate 256 MiB aggregate read and write cap so it can retain up to six
@@ -606,7 +611,10 @@ non-directory runtime root before locking, inventory, and each applied
 deletion, serializes applied deletion with setup, retains the active executable
 and every referenced runtime, and deletes only a version directory whose exact
 contents are its one expected native executable. Private installation applies
-the same runtime-root validation. A retry removes only exact setup staging names
+the same runtime-root validation. A successful new install retains its pinned
+runtime-root and version-directory handles until the setup transaction commits;
+rollback revalidates both ambient identities and unlinks only through the pinned
+version handle. A retry removes only exact setup staging names
 within the existing eight-entry version-directory bound before accepting an
 already-published executable, so an interrupted staging cleanup cannot make the
 runtime permanently unprunable. Applied deletion compares the current runtime

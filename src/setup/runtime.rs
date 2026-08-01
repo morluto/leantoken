@@ -84,7 +84,7 @@ fn digest_reader(input: &mut impl Read) -> Result<String> {
     Ok(hasher.finalize().to_hex().to_string())
 }
 
-pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
+pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstallReceipt> {
     if !validate_runtime_root(&plan.runtime_root)? {
         return Err(Error::SetupFailure(format!(
             "private runtime root disappeared before installation: {}",
@@ -107,7 +107,7 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
             executable_name,
             &plan.digest,
         )? {
-            Ok(false)
+            Ok(RuntimeInstallReceipt::unchanged())
         } else {
             Err(Error::SetupFailure(format!(
                 "private runtime identity mismatch at {}",
@@ -168,7 +168,20 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
                 ))
             })?;
             sync_capability_directory(&version_directory)?;
-            Ok(installed)
+            Ok(if installed {
+                RuntimeInstallReceipt {
+                    installed: Some(InstalledRuntimeCapability {
+                        runtime_root: plan.runtime_root.clone(),
+                        version: version.to_path_buf(),
+                        executable_name: executable_name.to_path_buf(),
+                        digest: plan.digest.clone(),
+                        runtime_root_handle: runtime_root,
+                        version_directory,
+                    }),
+                }
+            } else {
+                RuntimeInstallReceipt::unchanged()
+            })
         }
         Err(error) => Err(error),
     }
@@ -176,6 +189,76 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
 
 static RUNTIME_INSTALL_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Debug)]
+pub(super) struct RuntimeInstallReceipt {
+    installed: Option<InstalledRuntimeCapability>,
+}
+
+#[derive(Debug)]
+struct InstalledRuntimeCapability {
+    runtime_root: PathBuf,
+    version: PathBuf,
+    executable_name: PathBuf,
+    digest: String,
+    runtime_root_handle: cap_std::fs::Dir,
+    version_directory: cap_std::fs::Dir,
+}
+
+impl RuntimeInstallReceipt {
+    fn unchanged() -> Self {
+        Self { installed: None }
+    }
+
+    pub(super) fn installed(&self) -> bool {
+        self.installed.is_some()
+    }
+}
+
+pub(super) fn rollback_installed_runtime(receipt: &mut RuntimeInstallReceipt) -> Result<()> {
+    let Some(installed) = receipt.installed.as_ref() else {
+        return Ok(());
+    };
+    validate_runtime_root_handle(&installed.runtime_root, &installed.runtime_root_handle)?;
+    let current = installed
+        .runtime_root_handle
+        .symlink_metadata(&installed.version)?;
+    let pinned_identity =
+        capability_directory_identity(&installed.version_directory.dir_metadata()?);
+    if !current.file_type().is_dir()
+        || current.file_type().is_symlink()
+        || capability_directory_identity(&current) != pinned_identity
+    {
+        return Err(Error::SetupFailure(format!(
+            "private runtime version changed before rollback: {}",
+            installed.runtime_root.join(&installed.version).display()
+        )));
+    }
+    if !capability_runtime_file_matches(
+        &installed.version_directory,
+        &installed.executable_name,
+        &installed.digest,
+    )? {
+        return Err(Error::SetupFailure(format!(
+            "private runtime changed before rollback: {}",
+            installed
+                .runtime_root
+                .join(&installed.version)
+                .join(&installed.executable_name)
+                .display()
+        )));
+    }
+    installed
+        .version_directory
+        .remove_file(&installed.executable_name)?;
+    sync_capability_directory(&installed.version_directory)?;
+    let installed = receipt
+        .installed
+        .take()
+        .expect("validated installed runtime capability remains available");
+    installed.version_directory.remove_open_dir()?;
+    sync_capability_directory(&installed.runtime_root_handle)
+}
 
 fn recover_runtime_staging_entries(directory: &cap_std::fs::Dir) -> Result<()> {
     let mut staging_names = Vec::new();

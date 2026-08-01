@@ -664,6 +664,67 @@ fn doctor_can_exercise_the_exact_codex_registration() {
 }
 
 #[test]
+fn configured_doctor_launches_workspace_relative_commands_from_the_workspace() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
+        .expect("write fixture");
+    let bin = root.path().join("bin");
+    std::fs::create_dir(&bin).expect("create workspace bin");
+    let executable_name = if cfg!(windows) {
+        "leantoken.exe"
+    } else {
+        "leantoken"
+    };
+    std::fs::copy(
+        assert_cmd::cargo::cargo_bin!("leantoken"),
+        bin.join(executable_name),
+    )
+    .expect("copy workspace launcher");
+    let config = home.path().join(".codex/config.toml");
+    std::fs::create_dir_all(config.parent().expect("config parent"))
+        .expect("create config parent");
+    std::fs::write(
+        &config,
+        format!(
+            "[mcp_servers.leantoken]\ncommand = \"./bin/{executable_name}\"\nargs = [\"--managed-by-setup\", \"mcp\"]\n"
+        ),
+    )
+    .expect("write relative Codex registration");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .current_dir(home.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            root.path()
+                .join("index.sqlite")
+                .to_str()
+                .expect("database UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured doctor");
+
+    assert!(
+        output.status.success(),
+        "doctor stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor report");
+    assert_eq!(report["integration"]["verified_client"], "codex");
+    assert_eq!(report["first_call"]["status"], "ready");
+}
+
+#[test]
 fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");

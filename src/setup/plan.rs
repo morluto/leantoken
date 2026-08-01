@@ -49,6 +49,7 @@ pub(super) fn resolve_plan(
                 environment.detected,
                 environment.home,
                 environment.launcher,
+                &environment.configuration_snapshots,
             )
         })
         .collect::<Result<Vec<_>>>()?;
@@ -104,10 +105,12 @@ pub(super) fn validate_client_edit_ownership(
     launcher: &McpLauncher,
     force_unmanaged: bool,
 ) -> Result<()> {
-    if let Some(registration) = configured_registration_from_source(
+    let definition = edit.public.client.definition_at(edit.public.path.clone());
+    if let Some(registration) = configured_registration_from_definition(
         edit.public.client,
         home,
         launcher,
+        &definition,
         edit.original.as_deref(),
     )? && !registration.managed
         && !force_unmanaged
@@ -195,13 +198,28 @@ pub(super) fn resolve_client_edit(
     detected: &[SetupClient],
     home: &Path,
     launcher: &McpLauncher,
+    configuration_snapshots: &[PlannedConfigurationSnapshot],
 ) -> Result<PlannedClientEdit> {
-    let definition = client.definition(home);
+    let definition = client_definition_from_snapshots(client, home, configuration_snapshots);
+    let original = match configuration_snapshots
+        .iter()
+        .find(|snapshot| snapshot.path == definition.path)
+    {
+        Some(snapshot) => snapshot.original.clone(),
+        None => read_optional(&definition.path)?,
+    };
     let (status, original, updated) = match definition.format {
-        ConfigFormat::Json { section, shape } => {
-            resolve_json_edit(operation, &definition.path, section, shape, launcher)?
+        ConfigFormat::Json { section, shape } => resolve_json_edit_from_source(
+            operation,
+            &definition.path,
+            section,
+            shape,
+            launcher,
+            original,
+        )?,
+        ConfigFormat::Toml => {
+            resolve_toml_edit_from_source(operation, &definition.path, launcher, original)?
         }
-        ConfigFormat::Toml => resolve_toml_edit(operation, &definition.path, launcher)?,
     };
     let action = match status {
         EditStatus::Configured if original.is_none() => ClientPlanAction::Create,

@@ -173,33 +173,65 @@ pub(super) fn configured_registrations_with_snapshots(
     Vec<ConfiguredRegistration>,
     Vec<PlannedConfigurationSnapshot>,
 )> {
-    let mut registrations = Vec::new();
     let mut snapshots = Vec::with_capacity(
         clients.len() + usize::from(clients.contains(&SetupClient::OpenCode)).saturating_mul(3),
     );
     for client in clients {
-        let definition = client.definition(home);
-        let mut selected_original = Some(read_optional(&definition.path)?);
-        if let Some(registration) = configured_registration_from_source(
-            *client,
-            home,
-            launcher,
-            selected_original.as_ref().and_then(Option::as_deref),
-        )? {
-            registrations.push(registration);
-        }
         for path in client.configuration_paths(home) {
-            let original = if path == definition.path {
-                selected_original
-                    .take()
-                    .expect("selected client definition is one configuration candidate")
-            } else {
-                read_optional(&path)?
-            };
+            let original = read_optional(&path)?;
             snapshots.push(PlannedConfigurationSnapshot { path, original });
         }
     }
+    let registrations =
+        configured_registrations_from_snapshots(home, launcher, clients, &snapshots)?;
     Ok((registrations, snapshots))
+}
+
+pub(super) fn configured_registrations_from_snapshots(
+    home: &Path,
+    launcher: &McpLauncher,
+    clients: &[SetupClient],
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> Result<Vec<ConfiguredRegistration>> {
+    clients
+        .iter()
+        .filter_map(|client| {
+            let definition = client_definition_from_snapshots(*client, home, snapshots);
+            let source = configuration_snapshot_source(&definition.path, snapshots);
+            configured_registration_from_definition(*client, home, launcher, &definition, source)
+                .transpose()
+        })
+        .collect()
+}
+
+pub(super) fn client_definition_from_snapshots(
+    client: SetupClient,
+    home: &Path,
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> ClientDefinition {
+    let candidates = client.configuration_paths(home);
+    if !candidates
+        .iter()
+        .any(|candidate| snapshots.iter().any(|snapshot| snapshot.path == *candidate))
+    {
+        return client.definition(home);
+    }
+    let path = candidates
+        .iter()
+        .find(|candidate| configuration_snapshot_source(candidate, snapshots).is_some())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone());
+    client.definition_at(path)
+}
+
+pub(super) fn configuration_snapshot_source<'a>(
+    path: &Path,
+    snapshots: &'a [PlannedConfigurationSnapshot],
+) -> Option<&'a str> {
+    snapshots
+        .iter()
+        .find(|snapshot| snapshot.path == path)
+        .and_then(|snapshot| snapshot.original.as_deref())
 }
 
 fn configured_registrations_against(
@@ -238,12 +270,24 @@ pub(super) fn configured_registration_from_source(
     launcher: &McpLauncher,
     source: Option<&str>,
 ) -> Result<Option<ConfiguredRegistration>> {
-    configured_registration_from_source_against(
+    let definition = client.definition(home);
+    configured_registration_from_definition(client, home, launcher, &definition, source)
+}
+
+pub(super) fn configured_registration_from_definition(
+    client: SetupClient,
+    home: &Path,
+    launcher: &McpLauncher,
+    definition: &ClientDefinition,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
+    configured_registration_from_definition_against(
         client,
         home,
         launcher.command()?,
         &launcher.args,
         launcher.version(),
+        definition,
         source,
     )
 }
@@ -257,25 +301,26 @@ fn read_configured_registration_against(
 ) -> Result<Option<ConfiguredRegistration>> {
     let definition = client.definition(home);
     let source = read_optional(&definition.path)?;
-    configured_registration_from_source_against(
+    configured_registration_from_definition_against(
         client,
         home,
         expected_command,
         expected_args,
         expected_version,
+        &definition,
         source.as_deref(),
     )
 }
 
-fn configured_registration_from_source_against(
+fn configured_registration_from_definition_against(
     client: SetupClient,
     home: &Path,
     expected_command: &str,
     expected_args: &[String],
     expected_version: &str,
+    definition: &ClientDefinition,
     source: Option<&str>,
 ) -> Result<Option<ConfiguredRegistration>> {
-    let definition = client.definition(home);
     let Some(source) = source else {
         return Ok(None);
     };
@@ -327,7 +372,7 @@ fn configured_registration_from_source_against(
     let managed = is_managed_registration(&command, &args, &setup_runtime_root(home));
     Ok(Some(ConfiguredRegistration {
         client,
-        path: definition.path,
+        path: definition.path.clone(),
         source_hash: *blake3::hash(source.as_bytes()).as_bytes(),
         version: registered_version(&command, &args),
         command,
@@ -564,12 +609,12 @@ pub(super) fn registered_version(command: &str, args: &[String]) -> Option<Strin
         })
 }
 
-pub(super) fn managed_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
-    configured_registrations(home, launcher).map(|registrations| {
-        registrations
-            .into_iter()
-            .filter(|registration| registration.managed)
-            .map(|registration| registration.client)
-            .collect()
-    })
+pub(super) fn managed_clients_from_registrations(
+    registrations: &[ConfiguredRegistration],
+) -> Vec<SetupClient> {
+    registrations
+        .iter()
+        .filter(|registration| registration.managed)
+        .map(|registration| registration.client)
+        .collect()
 }

@@ -610,6 +610,105 @@ fn runtime_reference_snapshots_cover_every_opencode_candidate() {
 }
 
 #[test]
+fn opencode_registration_precedence_is_derived_from_one_candidate_snapshot() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let directory = environment.home.join(".config/opencode");
+    fs::create_dir_all(&directory).unwrap();
+    let lower_priority = directory.join("opencode.jsonc");
+    fs::write(
+        &lower_priority,
+        serde_json::to_vec(&json!({
+            "mcp": {
+                "leantoken": {
+                    "type": "local",
+                    "command": [environment.launcher.command().unwrap(), "--managed-by-setup", "mcp"]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let (_, snapshots) = configured_registrations_with_snapshots(
+        &environment.home,
+        &environment.launcher,
+        &[SetupClient::OpenCode],
+    )
+    .unwrap();
+
+    let higher_priority = directory.join("opencode.json");
+    fs::write(
+        &higher_priority,
+        r#"{"mcp":{"leantoken":{"type":"local","command":["/opt/new-leantoken","mcp"]}}}"#,
+    )
+    .unwrap();
+    let registrations = configured_registrations_from_snapshots(
+        &environment.home,
+        &environment.launcher,
+        &[SetupClient::OpenCode],
+        &snapshots,
+    )
+    .unwrap();
+
+    assert_eq!(registrations.len(), 1);
+    assert_eq!(registrations[0].path, lower_priority);
+    let error = preflight_configuration_snapshots(&snapshots)
+        .expect_err("new higher-priority candidate must invalidate the inventory");
+    assert!(
+        error
+            .to_string()
+            .contains(higher_priority.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
+fn selected_opencode_edit_preflights_every_precedence_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let directory = environment.home.join(".config/opencode");
+    fs::create_dir_all(&directory).unwrap();
+    let lower_priority = directory.join("opencode.jsonc");
+    fs::write(&lower_priority, "{}\n").unwrap();
+    let (_, snapshots) = configured_registrations_with_snapshots(
+        &environment.home,
+        &environment.launcher,
+        &SetupClient::ALL,
+    )
+    .unwrap();
+    let edit = resolve_client_edit(
+        SetupOperation::Setup,
+        SetupClient::OpenCode,
+        &[SetupClient::OpenCode],
+        &environment.home,
+        &environment.launcher,
+        &snapshots,
+    )
+    .unwrap();
+    assert_eq!(edit.public.path, lower_priority);
+    let higher_priority = directory.join("opencode.json");
+    fs::write(&higher_priority, "{}\n").unwrap();
+    let plan = ResolvedSetupPlan {
+        operation: SetupOperation::Setup,
+        persistent_cli: true,
+        launcher: None,
+        runtime: None,
+        edits: vec![edit],
+        discovery_edits: Vec::new(),
+        configuration_snapshots: snapshots,
+        ownership_override: false,
+        transaction_root: environment.runtime_root,
+    };
+
+    let outcome = apply_plan(&plan);
+
+    assert!(outcome.error.as_deref().is_some_and(|error| {
+        error.contains("changed after preflight")
+            && error.contains(higher_priority.to_string_lossy().as_ref())
+    }));
+    assert_eq!(fs::read_to_string(lower_priority).unwrap(), "{}\n");
+}
+
+#[test]
 fn diagnostic_preserves_unknown_discovery_state_after_config_parse_failure() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
@@ -1170,7 +1269,7 @@ fn private_runtime_retry_recovers_a_published_staging_artifact() {
         install_required: false,
     };
 
-    assert!(!install_runtime(&plan).unwrap());
+    assert!(!install_runtime(&plan).unwrap().installed());
     assert!(!staging.exists());
     assert_eq!(fs::read(&destination).unwrap(), b"verified runtime");
     assert_eq!(
@@ -1179,6 +1278,55 @@ fn private_runtime_retry_recovers_a_published_staging_artifact() {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>(),
         vec![destination.file_name().unwrap().to_os_string()]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn private_runtime_rollback_rejects_a_replaced_root_without_unlinking_through_it() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtimes");
+    fs::create_dir(&runtime_root).unwrap();
+    let source = temp.path().join("source-leantoken");
+    fs::write(&source, "verified runtime").unwrap();
+    let destination = runtime_root
+        .join("1.2.3")
+        .join(runtime_executable_name(false));
+    let plan = RuntimeInstallPlan {
+        runtime_root: runtime_root.clone(),
+        source: source.clone(),
+        destination,
+        digest: file_digest(&source).unwrap(),
+        install_required: true,
+    };
+    let mut receipt = install_runtime(&plan).unwrap();
+    assert!(receipt.installed());
+
+    let pinned_root = temp.path().join("pinned-runtimes");
+    fs::rename(&runtime_root, &pinned_root).unwrap();
+    let external = temp.path().join("external");
+    let external_version = external.join("1.2.3");
+    fs::create_dir_all(&external_version).unwrap();
+    let external_runtime = external_version.join(runtime_executable_name(false));
+    fs::write(&external_runtime, "external runtime").unwrap();
+    symlink(&external, &runtime_root).unwrap();
+
+    let error = rollback_installed_runtime(&mut receipt)
+        .expect_err("root replacement must stop rollback")
+        .to_string();
+
+    assert!(
+        error.contains("root changed after it was opened"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&external_runtime).unwrap(), b"external runtime");
+    assert!(
+        pinned_root
+            .join("1.2.3")
+            .join(runtime_executable_name(false))
+            .exists()
     );
 }
 
@@ -1431,7 +1579,7 @@ fn failed_rollback_retains_recovery_journal() {
     fs::remove_dir(&parent).unwrap();
     fs::write(&parent, "blocks restoration").unwrap();
 
-    let error = rollback_setup(&plan, false, &[&plan.edits[0]], &[], Some(transaction))
+    let error = rollback_setup(None, &[&plan.edits[0]], &[], Some(transaction))
         .expect_err("rollback must fail");
     assert!(matches!(error, Error::Io(_)));
     assert!(transaction_path(&runtime_root).exists());
@@ -1715,6 +1863,7 @@ fn ownership_and_edit_share_one_snapshot_before_preflight() {
         &[SetupClient::Codex],
         &environment.home,
         &environment.launcher,
+        &[],
     )
     .unwrap();
     let unmanaged =

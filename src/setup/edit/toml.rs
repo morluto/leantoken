@@ -22,12 +22,22 @@ pub(super) fn edit_toml_config(
     Ok(status)
 }
 
+#[cfg(test)]
 pub(super) fn resolve_toml_edit(
     operation: SetupOperation,
     path: &Path,
     launcher: &McpLauncher,
 ) -> Result<(EditStatus, Option<String>, Option<String>)> {
     let original = read_optional(path)?;
+    resolve_toml_edit_from_source(operation, path, launcher, original)
+}
+
+pub(super) fn resolve_toml_edit_from_source(
+    operation: SetupOperation,
+    path: &Path,
+    launcher: &McpLauncher,
+    original: Option<String>,
+) -> Result<(EditStatus, Option<String>, Option<String>)> {
     let source = original.clone().unwrap_or_default();
     let mut document = if source.trim().is_empty() {
         DocumentMut::new()

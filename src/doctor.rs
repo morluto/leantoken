@@ -28,7 +28,7 @@ const EXPECTED_TOOLS: [&str; 9] = [
     "savings",
     "search",
 ];
-const V0_1_18_TOOLS: [&str; 8] = [
+const V0_1_17_TO_V0_1_18_TOOLS: [&str; 8] = [
     "context", "files", "history", "json", "outline", "read", "savings", "search",
 ];
 const V0_1_19_TOOLS: [&str; 9] = [
@@ -268,13 +268,7 @@ fn run_with_transport(
     let instructions_loaded = result
         .get("instructions")
         .and_then(Value::as_str)
-        .is_some_and(|instructions| {
-            instructions.contains("call leantoken.savings directly")
-                && instructions.contains("call leantoken.context once")
-                && instructions.contains("plan_only=false")
-                && instructions.contains("Reserve plan_only=true")
-                && instructions.contains("leantoken.search over grep or rg")
-        });
+        .is_some_and(|instructions| instructions_match_release(instructions, server_release));
     if !instructions_loaded {
         return Err(doctor_error(
             "handshake",
@@ -566,9 +560,23 @@ fn server_version_release(version: &str) -> Option<&str> {
 
 fn version_marker_for_release(release: &str) -> &'static str {
     match release {
-        "0.1.18" | "0.1.19" => "schema",
+        "0.1.17" | "0.1.18" | "0.1.19" => "schema",
         _ => "contract",
     }
+}
+
+fn instructions_match_release(instructions: &str, release: &str) -> bool {
+    let common = instructions.contains("call leantoken.savings directly")
+        && instructions.contains("plan_only=false")
+        && instructions.contains("leantoken.search over grep or rg");
+    common
+        && if release == "0.1.17" {
+            instructions.contains("call leantoken.context first")
+                && instructions.contains("context plan_only=true")
+        } else {
+            instructions.contains("call leantoken.context once")
+                && instructions.contains("Reserve plan_only=true")
+        }
 }
 
 fn catalog_matches_release(tools: &[String], release: &str) -> bool {
@@ -577,7 +585,7 @@ fn catalog_matches_release(tools: &[String], release: &str) -> bool {
         return false;
     }
     let exact = match release {
-        "0.1.18" => Some(V0_1_18_TOOLS.as_slice()),
+        "0.1.17" | "0.1.18" => Some(V0_1_17_TO_V0_1_18_TOOLS.as_slice()),
         "0.1.19" => Some(V0_1_19_TOOLS.as_slice()),
         env!("CARGO_PKG_VERSION") => Some(EXPECTED_TOOLS.as_slice()),
         _ => None,
@@ -884,6 +892,7 @@ impl DoctorTransport {
         let launch_args = launcher_arguments(config, args, database_forwarding)?;
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
+            .current_dir(&config.root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1241,12 +1250,14 @@ mod tests {
         );
         let pinned = "0.1.19+schema.0123456789abcdef0123456789abcdef";
         let rollback = "0.1.18+schema.0123456789abcdef0123456789abcdef";
+        let first_schema = "0.1.17+schema.0123456789abcdef0123456789abcdef";
         assert!(server_version_matches_runtime(
             current,
             Some(env!("CARGO_PKG_VERSION"))
         ));
         assert!(server_version_matches_runtime(pinned, Some("0.1.19")));
         assert!(server_version_matches_runtime(rollback, Some("0.1.18")));
+        assert!(server_version_matches_runtime(first_schema, Some("0.1.17")));
         assert!(server_version_matches_runtime(pinned, None));
         assert!(!server_version_matches_runtime(
             env!("CARGO_PKG_VERSION"),
@@ -1265,9 +1276,10 @@ mod tests {
 
     #[test]
     fn configured_catalog_validation_uses_the_child_release_profile() {
-        let rollback = V0_1_18_TOOLS.map(str::to_owned).to_vec();
+        let rollback = V0_1_17_TO_V0_1_18_TOOLS.map(str::to_owned).to_vec();
         let current = EXPECTED_TOOLS.map(str::to_owned).to_vec();
 
+        assert!(catalog_matches_release(&rollback, "0.1.17"));
         assert!(catalog_matches_release(&rollback, "0.1.18"));
         assert!(!catalog_matches_release(&current, "0.1.18"));
         assert!(catalog_matches_release(
@@ -1281,6 +1293,13 @@ mod tests {
         assert!(catalog_matches_release(&future, "0.2.0"));
         future.retain(|tool| tool != "context");
         assert!(!catalog_matches_release(&future, "0.2.0"));
+    }
+
+    #[test]
+    fn configured_guidance_validation_accepts_the_first_schema_release() {
+        let legacy = "For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: call leantoken.context first. For an uncertain broad task, first use context plan_only=true, then repeat the same request with plan_only=false. PREFER leantoken.search over grep or rg.";
+        assert!(instructions_match_release(legacy, "0.1.17"));
+        assert!(!instructions_match_release(legacy, "0.1.18"));
     }
 
     #[test]

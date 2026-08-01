@@ -77,13 +77,34 @@ pub(super) fn run_with(
         ));
     }
 
+    let inventory_required_for_selection = request.refresh
+        || (operation == SetupOperation::Remove
+            && environment.interactive
+            && !request.all
+            && request.clients.is_empty()
+            && !request.yes);
+    let selection_inventory = inventory_required_for_selection
+        .then(|| {
+            configured_registrations_with_snapshots(
+                &environment.home,
+                &environment.launcher,
+                &SetupClient::ALL,
+            )
+        })
+        .transpose()?;
+
     let detected = SetupClient::ALL
         .into_iter()
         .filter(|client| client.is_detected(&environment.home))
         .collect::<Vec<_>>();
 
     let clients = if request.refresh {
-        managed_clients(&environment.home, &environment.launcher)?
+        managed_clients_from_registrations(
+            &selection_inventory
+                .as_ref()
+                .expect("refresh captured configuration inventory")
+                .0,
+        )
     } else if request.all {
         SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
@@ -102,7 +123,12 @@ pub(super) fn run_with(
         let preferred = if operation == SetupOperation::Setup {
             detected.clone()
         } else {
-            managed_clients(&environment.home, &environment.launcher)?
+            managed_clients_from_registrations(
+                &selection_inventory
+                    .as_ref()
+                    .expect("interactive remove captured configuration inventory")
+                    .0,
+            )
         };
         let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
             return Ok(empty_report(operation, environment.persistent_cli));
@@ -133,12 +159,24 @@ pub(super) fn run_with(
         .iter()
         .map(|client| client.discovery_path(&environment.home))
         .collect::<std::collections::BTreeSet<_>>();
-    let unselected_clients = SetupClient::ALL
+    let (registrations, configuration_snapshots) = match selection_inventory {
+        Some((_registrations, snapshots)) => (
+            configured_registrations_from_snapshots(
+                &environment.home,
+                launcher,
+                &SetupClient::ALL,
+                &snapshots,
+            )?,
+            snapshots,
+        ),
+        None => {
+            configured_registrations_with_snapshots(&environment.home, launcher, &SetupClient::ALL)?
+        }
+    };
+    let unselected_registrations = registrations
         .into_iter()
-        .filter(|client| !clients.contains(client))
+        .filter(|registration| !clients.contains(&registration.client))
         .collect::<Vec<_>>();
-    let (unselected_registrations, configuration_snapshots) =
-        configured_registrations_with_snapshots(&environment.home, launcher, &unselected_clients)?;
     let (discovery_paths, discovery_cleanup_paths) = if operation == SetupOperation::Setup {
         let mut required_paths = unselected_registrations
             .into_iter()
