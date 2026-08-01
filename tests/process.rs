@@ -1953,6 +1953,14 @@ fn repository_options_are_rejected_by_repository_free_commands() {
         vec!["--json", "cache", "list", "--max-file-bytes", "1"],
         vec![
             "--json",
+            "runtime",
+            "prune",
+            "--yes",
+            "--database",
+            "ignored.sqlite",
+        ],
+        vec![
+            "--json",
             "--root",
             ".",
             "episode",

@@ -34,6 +34,7 @@ const MAX_DIAGNOSTIC_LINES: usize = 8;
 const MAX_DIAGNOSTIC_LINE_CHARS: usize = 512;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = MAX_DIAGNOSTIC_LINE_CHARS * 4;
 const MAX_PROTOCOL_LINE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PROTOCOL_QUEUED_RECORDS: usize = 4;
 
 /// Successful MCP self-diagnostic report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -679,6 +680,15 @@ struct DoctorTransport {
     diagnostics: Arc<DiagnosticBuffer>,
 }
 
+type ProtocolRecord = std::io::Result<String>;
+
+fn protocol_channel() -> (
+    mpsc::SyncSender<ProtocolRecord>,
+    mpsc::Receiver<ProtocolRecord>,
+) {
+    mpsc::sync_channel(MAX_PROTOCOL_QUEUED_RECORDS)
+}
+
 #[derive(Default)]
 struct DiagnosticBuffer {
     lines: Mutex<VecDeque<String>>,
@@ -810,7 +820,7 @@ impl DoctorTransport {
             .stderr
             .take()
             .ok_or_else(|| doctor_error("launch", "could not open MCP stderr"))?;
-        let (sender, lines) = mpsc::channel();
+        let (sender, lines) = protocol_channel();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -1196,6 +1206,21 @@ mod tests {
             .expect_err("oversized protocol line");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("MCP response line exceeds"));
+    }
+
+    #[test]
+    fn protocol_output_queue_has_an_exact_record_bound() {
+        let (sender, receiver) = protocol_channel();
+        for index in 0..MAX_PROTOCOL_QUEUED_RECORDS {
+            sender
+                .try_send(Ok(format!("record {index}")))
+                .expect("record within queue bound");
+        }
+        assert!(matches!(
+            sender.try_send(Ok("over bound".into())),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        drop(receiver);
     }
 
     #[test]

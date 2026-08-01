@@ -91,13 +91,7 @@ impl SetupClient {
                 JsonEntryShape::CommandAndArgs,
             ),
             Self::OpenCode => {
-                let directory = home.join(".config/opencode");
-                let candidates = [
-                    directory.join("opencode.json"),
-                    directory.join("opencode.jsonc"),
-                    directory.join(".opencode.json"),
-                    directory.join(".opencode.jsonc"),
-                ];
+                let candidates = self.configuration_paths(home);
                 let path = candidates
                     .iter()
                     .find(|candidate| candidate.exists())
@@ -120,6 +114,19 @@ impl SetupClient {
                 JsonEntryShape::CommandAndArgs,
             ),
         }
+    }
+
+    pub(super) fn configuration_paths(self, home: &Path) -> Vec<PathBuf> {
+        if self != Self::OpenCode {
+            return vec![self.definition(home).path];
+        }
+        let directory = home.join(".config/opencode");
+        vec![
+            directory.join("opencode.json"),
+            directory.join("opencode.jsonc"),
+            directory.join(".opencode.json"),
+            directory.join(".opencode.jsonc"),
+        ]
     }
 
     pub(super) fn is_detected(self, home: &Path) -> bool {

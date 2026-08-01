@@ -582,6 +582,34 @@ fn runtime_reference_snapshots_detect_configuration_changes_before_prune() {
 }
 
 #[test]
+fn runtime_reference_snapshots_cover_every_opencode_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let directory = environment.home.join(".config/opencode");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("opencode.jsonc"), "{}\n").unwrap();
+    let (_, snapshots) = configured_registrations_with_snapshots(
+        &environment.home,
+        &environment.launcher,
+        &SetupClient::ALL,
+    )
+    .unwrap();
+    assert_eq!(snapshots.len(), 9);
+
+    let higher_priority = directory.join("opencode.json");
+    fs::write(&higher_priority, "{}\n").unwrap();
+    let error = preflight_configuration_snapshots(&snapshots)
+        .expect_err("a newly active OpenCode candidate must stop pruning");
+
+    assert!(error.to_string().contains("changed after preflight"));
+    assert!(
+        error
+            .to_string()
+            .contains(higher_priority.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn diagnostic_preserves_unknown_discovery_state_after_config_parse_failure() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
@@ -882,6 +910,61 @@ fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache()
             .args
             .iter()
             .all(|argument| !argument.contains("@latest"))
+    );
+}
+
+#[test]
+fn empty_refresh_does_not_install_an_unreferenced_private_runtime() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+    fs::write(&environment.native_executable, "verified runtime").unwrap();
+    let config = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n",
+    )
+    .unwrap();
+    let runtime = environment
+        .runtime_root
+        .join("1.2.3")
+        .join(runtime_executable_name(cfg!(windows)));
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: true,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    assert!(report.plan.is_empty());
+    assert!(report.results.is_empty());
+    assert_eq!(
+        report
+            .launcher
+            .as_ref()
+            .and_then(|launcher| launcher.runtime_path.as_ref()),
+        None
+    );
+    assert!(!runtime.exists());
+    assert!(
+        fs::read_to_string(config)
+            .unwrap()
+            .contains("/opt/manual-leantoken")
     );
 }
 

@@ -77,25 +77,13 @@ pub(super) fn run_with(
         ));
     }
 
-    let runtime = request
-        .private_runtime
-        .then(|| runtime_install_plan(environment))
-        .transpose()?;
-    let private_launcher = runtime.as_ref().map(|runtime| {
-        McpLauncher::from_executable_with_version(
-            &runtime.destination,
-            environment.launcher.version(),
-        )
-    });
-    let launcher = private_launcher.as_ref().unwrap_or(&environment.launcher);
-
     let detected = SetupClient::ALL
         .into_iter()
         .filter(|client| client.is_detected(&environment.home))
         .collect::<Vec<_>>();
 
     let clients = if request.refresh {
-        managed_clients(&environment.home, launcher)?
+        managed_clients(&environment.home, &environment.launcher)?
     } else if request.all {
         SetupClient::ALL.to_vec()
     } else if !request.clients.is_empty() {
@@ -114,7 +102,7 @@ pub(super) fn run_with(
         let preferred = if operation == SetupOperation::Setup {
             detected.clone()
         } else {
-            managed_clients(&environment.home, launcher)?
+            managed_clients(&environment.home, &environment.launcher)?
         };
         let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
             return Ok(empty_report(operation, environment.persistent_cli));
@@ -131,6 +119,16 @@ pub(super) fn run_with(
                 .into(),
         ));
     }
+    let runtime = (request.private_runtime && !clients.is_empty())
+        .then(|| runtime_install_plan(environment))
+        .transpose()?;
+    let private_launcher = runtime.as_ref().map(|runtime| {
+        McpLauncher::from_executable_with_version(
+            &runtime.destination,
+            environment.launcher.version(),
+        )
+    });
+    let launcher = private_launcher.as_ref().unwrap_or(&environment.launcher);
     let selected_discovery_paths = clients
         .iter()
         .map(|client| client.discovery_path(&environment.home))

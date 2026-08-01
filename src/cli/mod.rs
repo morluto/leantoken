@@ -141,6 +141,11 @@ const COMMAND_SCOPE_OPTIONS: &[ScopedGlobalOption] = &[
         advanced: true,
     },
     ScopedGlobalOption {
+        id: "database",
+        long: "--database",
+        advanced: false,
+    },
+    ScopedGlobalOption {
         id: "tokenizer",
         long: "--tokenizer",
         advanced: false,

@@ -574,7 +574,9 @@ may report any valid semantic release carrying the 32-hex-character MCP contract
 fingerprint. Doctor forwards a user-explicit SQLite path, but does not turn an
 implicit versioned managed cache into an explicit path for a differently pinned
 child. Each child stdout protocol record is limited to 8 MiB before UTF-8 or JSON
-parsing, and an over-limit unterminated record terminates the probe without
+parsing, and at most four parsed records are queued between the stdout reader and
+doctor consumer. A full queue backpressures the child, bounding queued protocol
+content to 32 MiB; an over-limit unterminated record terminates the probe without
 unbounded allocation.
 
 Private-runtime inventory is repository-free and bounded to 512 entries below
@@ -582,10 +584,12 @@ the application runtime root and eight entries within any recognized semantic
 version directory. Setup and inventory reads are capped at 8 MiB per client
 configuration or discovery file before parsing, and generated replacements are
 validated against that same bound before a plan can apply. Planning retains at
-most one bounded snapshot for each of the six client configurations (48 MiB in
-total) and revalidates every snapshot that informed discovery cleanup before
-mutation. Transaction-wide apply errors remain explicit even when a plan has
-only discovery cleanup and no client-result rows. The recovery journal has a
+most nine bounded configuration snapshots: one for five fixed-path clients and
+all four precedence-ordered OpenCode candidates (72 MiB in total), and
+revalidates every snapshot before applying discovery cleanup or pruning from a
+runtime-reference decision. Transaction-wide apply errors remain explicit even
+for plans containing only discovery cleanup and no client-result rows. The
+recovery journal has a
 separate 256 MiB aggregate read and write cap so it can retain up to six
 individually bounded client originals plus both legacy discovery originals
 after JSON escaping. Listing reads at most six configured host registrations

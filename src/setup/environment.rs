@@ -174,19 +174,30 @@ pub(super) fn configured_registrations_with_snapshots(
     Vec<PlannedConfigurationSnapshot>,
 )> {
     let mut registrations = Vec::new();
-    let mut snapshots = Vec::with_capacity(clients.len());
+    let mut snapshots = Vec::with_capacity(
+        clients.len() + usize::from(clients.contains(&SetupClient::OpenCode)).saturating_mul(3),
+    );
     for client in clients {
         let definition = client.definition(home);
-        let original = read_optional(&definition.path)?;
-        if let Some(registration) =
-            configured_registration_from_source(*client, home, launcher, original.as_deref())?
-        {
+        let mut selected_original = Some(read_optional(&definition.path)?);
+        if let Some(registration) = configured_registration_from_source(
+            *client,
+            home,
+            launcher,
+            selected_original.as_ref().and_then(Option::as_deref),
+        )? {
             registrations.push(registration);
         }
-        snapshots.push(PlannedConfigurationSnapshot {
-            path: definition.path,
-            original,
-        });
+        for path in client.configuration_paths(home) {
+            let original = if path == definition.path {
+                selected_original
+                    .take()
+                    .expect("selected client definition is one configuration candidate")
+            } else {
+                read_optional(&path)?
+            };
+            snapshots.push(PlannedConfigurationSnapshot { path, original });
+        }
     }
     Ok((registrations, snapshots))
 }
