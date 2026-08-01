@@ -28,6 +28,21 @@ const EXPECTED_TOOLS: [&str; 9] = [
     "savings",
     "search",
 ];
+const V0_1_18_TOOLS: [&str; 8] = [
+    "context", "files", "history", "json", "outline", "read", "savings", "search",
+];
+const V0_1_19_TOOLS: [&str; 9] = [
+    "context",
+    "files",
+    "history",
+    "json",
+    "outline",
+    "read",
+    "receipt_rebase",
+    "savings",
+    "search",
+];
+const COMPATIBLE_REQUIRED_TOOLS: [&str; 5] = ["context", "files", "outline", "read", "search"];
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAGNOSTIC_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_DIAGNOSTIC_LINES: usize = 8;
@@ -75,7 +90,8 @@ pub struct IntegrationReport {
     pub configured_clients: Vec<SetupClient>,
     /// Configured executable and version details for each LeanToken entry.
     pub registrations: Vec<RegistrationReport>,
-    /// `current`, `stale`, `unmanaged_stale`, `not_registered`, or `unknown`.
+    /// `current`, `disabled`, `stale`, `unmanaged_stale`, `not_registered`, or
+    /// `unknown`.
     pub registration_health: &'static str,
     /// `installed`, `partial`, `missing`, or `unknown`.
     pub discovery_status: &'static str,
@@ -111,6 +127,8 @@ pub struct RegistrationReport {
     pub matches_current: bool,
     /// Whether setup ownership was explicit or recognized from a legacy launcher.
     pub managed: bool,
+    /// Whether the host client will launch this registration.
+    pub enabled: bool,
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -232,8 +250,13 @@ fn run_with_transport(
     }
     if !server_version_matches_runtime(&server_version, expected_server_version) {
         let expected = expected_server_version.map_or_else(
-            || "a semantic release+contract.<32 hex characters>".to_owned(),
-            |version| format!("{version}+contract.<32 hex characters>"),
+            || "a compatible semantic release with a 32-hex contract fingerprint".to_owned(),
+            |version| {
+                format!(
+                    "{version}+{}.<32 hex characters>",
+                    version_marker_for_release(version)
+                )
+            },
         );
         return Err(doctor_error(
             "handshake",
@@ -289,9 +312,7 @@ fn run_with_transport(
                 .ok_or_else(|| doctor_error("catalog", "tools/list returned a tool without a name"))
         })
         .collect::<Result<Vec<_>>>()?;
-    let actual = tools.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    let expected = EXPECTED_TOOLS.into_iter().collect::<BTreeSet<_>>();
-    if actual != expected || tools.len() != EXPECTED_TOOLS.len() {
+    if !catalog_matches_release(&tools, server_release) {
         return Err(doctor_error(
             "catalog",
             format!("unexpected MCP tool catalog: {}", tools.join(", ")),
@@ -416,6 +437,7 @@ fn run_with_transport(
             expected_version: registration.expected_version.clone(),
             matches_current: registration.matches_current,
             managed: registration.managed,
+            enabled: registration.enabled,
         })
         .collect::<Vec<_>>();
     let registration_health = registration_health(setup.registration_status, &registrations);
@@ -469,6 +491,11 @@ fn registration_health(
         registration_status
     } else if registrations
         .iter()
+        .any(|registration| !registration.enabled)
+    {
+        "disabled"
+    } else if registrations
+        .iter()
         .all(|registration| registration.matches_current)
     {
         "current"
@@ -499,7 +526,23 @@ fn registration_repair_command(
             .join(" ");
         return format!("leantoken setup {client_flags} --force-unmanaged --dry-run");
     }
-    if registration_health == "stale" {
+    if registration_health == "disabled" {
+        let affected = registrations
+            .iter()
+            .filter(|registration| !registration.enabled || !registration.matches_current)
+            .collect::<Vec<_>>();
+        if affected.iter().any(|registration| !registration.managed) {
+            let client_flags = affected
+                .into_iter()
+                .map(|registration| format!("--{}", registration.client.cli_name()))
+                .collect::<Vec<_>>();
+            return format!(
+                "leantoken setup {} --force-unmanaged --dry-run",
+                client_flags.join(" ")
+            );
+        }
+    }
+    if matches!(registration_health, "disabled" | "stale") {
         "leantoken setup --refresh --yes".into()
     } else {
         "leantoken doctor --json".into()
@@ -507,11 +550,49 @@ fn registration_repair_command(
 }
 
 fn server_version_release(version: &str) -> Option<&str> {
-    let (release, fingerprint) = version.split_once("+contract.")?;
+    let (release, fingerprint, marker) =
+        if let Some((release, fingerprint)) = version.split_once("+contract.") {
+            (release, fingerprint, "contract")
+        } else {
+            let (release, fingerprint) = version.split_once("+schema.")?;
+            (release, fingerprint, "schema")
+        };
     (semver::Version::parse(release).is_ok()
+        && marker == version_marker_for_release(release)
         && fingerprint.len() == 32
         && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()))
     .then_some(release)
+}
+
+fn version_marker_for_release(release: &str) -> &'static str {
+    match release {
+        "0.1.18" | "0.1.19" => "schema",
+        _ => "contract",
+    }
+}
+
+fn catalog_matches_release(tools: &[String], release: &str) -> bool {
+    let actual = tools.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    if actual.len() != tools.len() {
+        return false;
+    }
+    let exact = match release {
+        "0.1.18" => Some(V0_1_18_TOOLS.as_slice()),
+        "0.1.19" => Some(V0_1_19_TOOLS.as_slice()),
+        env!("CARGO_PKG_VERSION") => Some(EXPECTED_TOOLS.as_slice()),
+        _ => None,
+    };
+    exact.map_or_else(
+        || {
+            COMPATIBLE_REQUIRED_TOOLS
+                .iter()
+                .all(|name| actual.contains(name))
+        },
+        |expected| {
+            tools.len() == expected.len()
+                && actual == expected.iter().copied().collect::<BTreeSet<_>>()
+        },
+    )
 }
 
 fn server_version_matches_runtime(version: &str, expected_version: Option<&str>) -> bool {
@@ -590,11 +671,11 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     }
     if matches!(
         report.integration.registration_health,
-        "stale" | "unmanaged_stale"
+        "disabled" | "stale" | "unmanaged_stale"
     ) {
         writeln!(
             output,
-            "    Configured host entries do not match this executable; run {}.",
+            "    Configured host entries are not launch-ready; run {}.",
             report.integration.repair_command
         )?;
     }
@@ -1119,6 +1200,7 @@ mod tests {
             expected_version: env!("CARGO_PKG_VERSION").into(),
             matches_current,
             managed,
+            enabled: true,
         };
         let registrations = vec![
             registration(SetupClient::Codex, false, false),
@@ -1138,6 +1220,17 @@ mod tests {
             registration_repair_command("registered", "stale", &managed),
             "leantoken setup --refresh --yes"
         );
+
+        let mut disabled = registration(SetupClient::OpenCode, true, true);
+        disabled.enabled = false;
+        assert_eq!(
+            registration_health("registered", std::slice::from_ref(&disabled)),
+            "disabled"
+        );
+        assert_eq!(
+            registration_repair_command("registered", "disabled", &[disabled]),
+            "leantoken setup --refresh --yes"
+        );
     }
 
     #[test]
@@ -1146,12 +1239,14 @@ mod tests {
             env!("CARGO_PKG_VERSION"),
             "+contract.0123456789abcdef0123456789abcdef"
         );
-        let pinned = "0.1.19+contract.0123456789abcdef0123456789abcdef";
+        let pinned = "0.1.19+schema.0123456789abcdef0123456789abcdef";
+        let rollback = "0.1.18+schema.0123456789abcdef0123456789abcdef";
         assert!(server_version_matches_runtime(
             current,
             Some(env!("CARGO_PKG_VERSION"))
         ));
         assert!(server_version_matches_runtime(pinned, Some("0.1.19")));
+        assert!(server_version_matches_runtime(rollback, Some("0.1.18")));
         assert!(server_version_matches_runtime(pinned, None));
         assert!(!server_version_matches_runtime(
             env!("CARGO_PKG_VERSION"),
@@ -1162,6 +1257,30 @@ mod tests {
             None
         ));
         assert!(!server_version_matches_runtime(pinned, Some("0.1.18")));
+        assert!(!server_version_matches_runtime(
+            "0.1.18+contract.0123456789abcdef0123456789abcdef",
+            Some("0.1.18")
+        ));
+    }
+
+    #[test]
+    fn configured_catalog_validation_uses_the_child_release_profile() {
+        let rollback = V0_1_18_TOOLS.map(str::to_owned).to_vec();
+        let current = EXPECTED_TOOLS.map(str::to_owned).to_vec();
+
+        assert!(catalog_matches_release(&rollback, "0.1.18"));
+        assert!(!catalog_matches_release(&current, "0.1.18"));
+        assert!(catalog_matches_release(
+            &V0_1_19_TOOLS.map(str::to_owned),
+            "0.1.19"
+        ));
+        assert!(catalog_matches_release(&current, env!("CARGO_PKG_VERSION")));
+
+        let mut future = rollback;
+        future.push("future_tool".into());
+        assert!(catalog_matches_release(&future, "0.2.0"));
+        future.retain(|tool| tool != "context");
+        assert!(!catalog_matches_release(&future, "0.2.0"));
     }
 
     #[test]

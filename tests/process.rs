@@ -751,13 +751,16 @@ fn configured_doctor_rejects_a_disabled_opencode_registration() {
     let config = home.path().join(".config/opencode/opencode.json");
     std::fs::create_dir_all(config.parent().expect("config parent"))
         .expect("create config parent");
+    let executable = assert_cmd::cargo::cargo_bin!("leantoken")
+        .canonicalize()
+        .expect("canonical executable");
     std::fs::write(
         config,
         serde_json::to_vec(&serde_json::json!({
             "mcp": {
                 "leantoken": {
                     "type": "local",
-                    "command": ["missing-leantoken", "mcp"],
+                    "command": [executable, "--managed-by-setup", "mcp"],
                     "enabled": false
                 }
             }
@@ -765,6 +768,32 @@ fn configured_doctor_rejects_a_disabled_opencode_registration() {
         .expect("serialize OpenCode config"),
     )
     .expect("write OpenCode config");
+
+    let aggregate = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .args([
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
+        ])
+        .output()
+        .expect("run aggregate doctor");
+    assert!(
+        aggregate.status.success(),
+        "doctor stderr: {}",
+        String::from_utf8_lossy(&aggregate.stderr)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&aggregate.stdout).expect("aggregate doctor report");
+    assert_eq!(report["integration"]["registration_health"], "disabled");
+    assert_eq!(report["integration"]["registrations"][0]["enabled"], false);
+    assert_eq!(
+        report["integration"]["repair_command"],
+        "leantoken setup --refresh --yes"
+    );
 
     let output = Command::cargo_bin("leantoken")
         .expect("binary")

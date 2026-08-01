@@ -100,6 +100,7 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
             Error::SetupFailure("private runtime destination has no parent".into())
         })?,
     )?;
+    recover_runtime_staging_entries(&version_directory)?;
     if !plan.install_required {
         return if capability_runtime_file_matches(
             &version_directory,
@@ -161,7 +162,11 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
     let cleanup_result = version_directory.remove_file(&temporary_name);
     match publish_result {
         Ok(installed) => {
-            cleanup_result?;
+            cleanup_result.map_err(|error| {
+                Error::SetupFailure(format!(
+                    "published private runtime but could not remove its staging file; retry setup to recover it: {error}"
+                ))
+            })?;
             sync_capability_directory(&version_directory)?;
             Ok(installed)
         }
@@ -171,6 +176,53 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<bool> {
 
 static RUNTIME_INSTALL_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+
+fn recover_runtime_staging_entries(directory: &cap_std::fs::Dir) -> Result<()> {
+    let mut staging_names = Vec::new();
+    for (index, entry) in directory.entries()?.enumerate() {
+        if index >= MAX_RUNTIME_DIRECTORY_ENTRIES {
+            return Err(Error::SetupFailure(format!(
+                "private runtime version entry limit exceeded while recovering staging files: {MAX_RUNTIME_DIRECTORY_ENTRIES}"
+            )));
+        }
+        let entry = entry?;
+        let name = entry.file_name();
+        if !is_runtime_staging_name(&name) {
+            continue;
+        }
+        let metadata = directory.symlink_metadata(&name)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(Error::SetupFailure(format!(
+                "private runtime staging entry must be a non-symlink file: {}",
+                name.to_string_lossy()
+            )));
+        }
+        staging_names.push(name);
+    }
+    for name in &staging_names {
+        directory.remove_file(name)?;
+    }
+    if !staging_names.is_empty() {
+        sync_capability_directory(directory)?;
+    }
+    Ok(())
+}
+
+fn is_runtime_staging_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let Some(components) = name
+        .strip_prefix(".leantoken-install-")
+        .and_then(|name| name.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let Some((process, sequence)) = components.split_once('-') else {
+        return false;
+    };
+    process.parse::<u32>().is_ok() && sequence.parse::<u64>().is_ok()
+}
 
 fn runtime_destination_components(plan: &RuntimeInstallPlan) -> Result<(&Path, &Path)> {
     let relative = plan
@@ -398,13 +450,13 @@ pub(super) fn prune_runtimes_at(
             apply_error = Some(error.to_string());
             break;
         }
-        if let Err(error) = validate_runtime_root(&runtime_root) {
-            apply_error = Some(error.to_string());
-            break;
-        }
         let runtime_root_handle = runtime_root_handle
             .as_ref()
             .expect("applied pruning opened the runtime root");
+        if let Err(error) = validate_runtime_root_handle(&runtime_root, runtime_root_handle) {
+            apply_error = Some(error.to_string());
+            break;
+        }
         let directory = match open_managed_runtime_directory(runtime_root_handle, &entry) {
             Ok(Some(directory)) => directory,
             Ok(None) => {
@@ -676,6 +728,26 @@ pub(super) fn open_runtime_root(runtime_root: &Path) -> Result<cap_std::fs::Dir>
         )));
     }
     Ok(directory)
+}
+
+fn validate_runtime_root_handle(runtime_root: &Path, directory: &cap_std::fs::Dir) -> Result<()> {
+    let current = fs::symlink_metadata(runtime_root).map_err(|error| {
+        Error::SetupFailure(format!(
+            "private runtime root could not be revalidated at {}: {error}",
+            runtime_root.display()
+        ))
+    })?;
+    let pinned_identity = capability_directory_identity(&directory.dir_metadata()?);
+    if !current.file_type().is_dir()
+        || current.file_type().is_symlink()
+        || runtime_directory_identity(&current) != pinned_identity
+    {
+        return Err(Error::SetupFailure(format!(
+            "private runtime root changed after it was opened: {}",
+            runtime_root.display()
+        )));
+    }
+    Ok(())
 }
 
 fn open_managed_runtime_directory(

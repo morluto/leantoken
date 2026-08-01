@@ -569,15 +569,18 @@ retain only its 32-byte content digest, and require the post-probe diagnostic
 snapshot to contain the same client, path, and digest before reporting success.
 Malformed, unreadable, oversized, missing, changed, and explicitly disabled
 selected registrations fail at the registration stage. A release inferred from
-the configured launcher is matched exactly; launchers without an inferable pin
-may report any valid semantic release carrying the 32-hex-character MCP contract
-fingerprint. Doctor forwards a user-explicit SQLite path, but does not turn an
-implicit versioned managed cache into an explicit path for a differently pinned
-child. Each child stdout protocol record is limited to 8 MiB before UTF-8 or JSON
-parsing, and at most four parsed records are queued between the stdout reader and
-doctor consumer. A full queue backpressures the child, bounding queued protocol
-content to 32 MiB; an over-limit unterminated record terminates the probe without
-unbounded allocation.
+the configured launcher is matched exactly. Known rollback releases use their
+release-specific fingerprint marker and exact tool catalog; other semantic
+releases must carry the contract marker, expose unique tool names, and retain
+the five compatible retrieval tools used by installed discovery guidance.
+Launchers without an inferable pin may report any release satisfying that same
+bounded compatibility check. Doctor forwards a user-explicit SQLite path, but
+does not turn an implicit versioned managed cache into an explicit path for a
+differently pinned child. Each child stdout protocol record is limited to 8 MiB
+before UTF-8 or JSON parsing, and at most four parsed records are queued between
+the stdout reader and doctor consumer. A full queue backpressures the child,
+bounding queued protocol content to 32 MiB; an over-limit unterminated record
+terminates the probe without unbounded allocation.
 
 Private-runtime inventory is repository-free and bounded to 512 entries below
 the application runtime root and eight entries within any recognized semantic
@@ -603,11 +606,15 @@ non-directory runtime root before locking, inventory, and each applied
 deletion, serializes applied deletion with setup, retains the active executable
 and every referenced runtime, and deletes only a version directory whose exact
 contents are its one expected native executable. Private installation applies
-the same runtime-root validation. Applied deletion snapshot-matches opened root
-and version directory handles, then unlinks the executable relative to the
-pinned version handle so a concurrent path swap cannot redirect deletion. One
-root handle spans the applied prune and at most one version handle is open at a
-time.
+the same runtime-root validation. A retry removes only exact setup staging names
+within the existing eight-entry version-directory bound before accepting an
+already-published executable, so an interrupted staging cleanup cannot make the
+runtime permanently unprunable. Applied deletion compares the current runtime
+root path with the pinned root-handle identity before every removal,
+snapshot-matches the version directory handle, then unlinks the executable
+relative to that handle so a concurrent path swap cannot redirect deletion.
+One root handle spans the applied prune and at most one version handle is open
+at a time.
 If unlinking succeeds but a concurrent directory change prevents the final
 directory removal, the report uses a distinct partial-removal action, subtracts
 the removed executable bytes, and returns the cleanup error. Unknown root

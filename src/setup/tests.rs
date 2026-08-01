@@ -1151,6 +1151,38 @@ fn private_runtime_install_rejects_a_symlinked_version_directory() {
 }
 
 #[test]
+fn private_runtime_retry_recovers_a_published_staging_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtimes");
+    let version_directory = runtime_root.join("1.2.3");
+    fs::create_dir_all(&version_directory).unwrap();
+    let source = temp.path().join("source-leantoken");
+    fs::write(&source, "verified runtime").unwrap();
+    let destination = version_directory.join(runtime_executable_name(cfg!(windows)));
+    fs::copy(&source, &destination).unwrap();
+    let staging = version_directory.join(".leantoken-install-123-456.tmp");
+    fs::copy(&source, &staging).unwrap();
+    let plan = RuntimeInstallPlan {
+        runtime_root,
+        source: source.clone(),
+        destination: destination.clone(),
+        digest: file_digest(&source).unwrap(),
+        install_required: false,
+    };
+
+    assert!(!install_runtime(&plan).unwrap());
+    assert!(!staging.exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"verified runtime");
+    assert_eq!(
+        fs::read_dir(&version_directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        vec![destination.file_name().unwrap().to_os_string()]
+    );
+}
+
+#[test]
 fn runtime_removal_reports_when_the_executable_was_removed_but_directory_remains() {
     let temp = tempfile::tempdir().unwrap();
     let directory = temp.path().join("1.2.3");
@@ -1250,6 +1282,62 @@ fn runtime_prune_preserves_partial_results_when_a_config_snapshot_changes() {
     assert!(report.has_failures());
     assert!(!runtime_root.join("2.0.0").exists());
     assert!(runtime_root.join("1.0.0").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn runtime_prune_stops_when_the_runtime_root_path_is_replaced() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    let moved_root = temp.path().join("moved-runtimes");
+    fs::create_dir_all(&home).unwrap();
+    for (version, contents) in [
+        ("2.0.0", b"newer".as_slice()),
+        ("1.0.0", b"older".as_slice()),
+    ] {
+        let directory = runtime_root.join(version);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join(runtime_executable_name(false)), contents).unwrap();
+    }
+    let mut removals = 0_usize;
+
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {
+            removals += 1;
+            if removals == 1 {
+                fs::rename(&runtime_root, &moved_root).unwrap();
+                fs::create_dir(&runtime_root).unwrap();
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(removals, 1);
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].version, "2.0.0");
+    assert_eq!(report.results[0].action, "removed");
+    assert!(
+        report
+            .apply_error
+            .as_deref()
+            .is_some_and(|error| error.contains("root changed after it was opened"))
+    );
+    assert!(report.has_failures());
+    assert!(
+        moved_root
+            .join("1.0.0")
+            .join(runtime_executable_name(false))
+            .exists()
+    );
+    assert!(runtime_root.read_dir().unwrap().next().is_none());
 }
 
 #[test]
