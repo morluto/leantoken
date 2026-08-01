@@ -1,4 +1,9 @@
+use std::borrow::Cow;
+
+use schemars::{Schema, SchemaGenerator};
+
 use super::*;
+use crate::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +62,116 @@ pub enum ContextWorkflow {
     Review,
     /// Diagnostic evidence for tracing behavior and root causes.
     Investigation,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolIdentity {
+    #[schemars(length(min = 1, max = 4096))]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 4096))]
+    pub parent: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for SymbolIdentity {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct RawSymbolIdentity {
+            name: String,
+            #[serde(default)]
+            parent: Option<String>,
+        }
+
+        let raw = RawSymbolIdentity::deserialize(deserializer)?;
+        Self::new(raw.name, raw.parent).map_err(|error| serde::de::Error::custom(error.to_string()))
+    }
+}
+
+impl SymbolIdentity {
+    pub fn new(name: impl Into<String>, parent: Option<impl Into<String>>) -> Result<Self> {
+        let name = name.into().trim().to_owned();
+        if name.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "symbol.name",
+                reason: "must not be empty",
+            });
+        }
+        let parent = parent
+            .map(Into::into)
+            .map(|value: String| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        Ok(Self { name, parent })
+    }
+
+    pub fn from_qualified(value: &str) -> Result<Self> {
+        let value = value.trim();
+        let (parent, name) = value
+            .rsplit_once('.')
+            .map_or((None, value), |(parent, name)| (Some(parent), name));
+        Self::new(name, parent)
+    }
+
+    #[must_use]
+    pub fn qualified_name(&self) -> String {
+        self.parent.as_ref().map_or_else(
+            || self.name.clone(),
+            |parent| format!("{parent}.{}", self.name),
+        )
+    }
+}
+
+/// Trimmed, non-empty text accepted at a serialized service boundary.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+#[serde(transparent)]
+pub struct NonEmptyText(String);
+
+impl JsonSchema for NonEmptyText {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        "NonEmptyText".into()
+    }
+
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        schemars::json_schema!({
+            "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for NonEmptyText {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let value = value.trim();
+        (!value.is_empty())
+            .then(|| Self(value.to_owned()))
+            .ok_or_else(|| serde::de::Error::custom("must not be empty or whitespace-only"))
+    }
+}
+
+impl NonEmptyText {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
 }
 
 /// Caller-observed workflow signals kept separate from the natural-language task.

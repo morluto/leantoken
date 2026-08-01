@@ -4,7 +4,7 @@ use super::*;
 impl LeanTokenMcp {
     #[tool(
         name = "files",
-        description = "Discover repository paths and metadata. Use tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":\"find\",\"query\":\"mcp\"}."
+        description = "Discover repository paths and metadata. Select a tagged operation with operation.kind: tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set the selected operation's projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}."
     )]
     async fn leantoken_files(
         &self,
@@ -18,7 +18,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
-        let max_response_tokens = req.max_response_tokens;
+        let max_response_tokens = req.max_response_tokens();
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "files",
@@ -57,7 +57,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Search indexed source for symbols, references, identifiers, text, or regex. mode=symbol is ranked and structural; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: ranked symbol {\"query\":\"InternalFailure\",\"mode\":\"symbol\"}; exhaustive text {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}."
+        description = "Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
     )]
     async fn leantoken_search(
         &self,
@@ -71,7 +71,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
-        let max_response_tokens = req.max_response_tokens;
+        let max_response_tokens = req.max_response_tokens();
         let (request, projection, coordinates_only, consistency, options, expected_repository_id) =
             req.into_parts();
         self.run_prepared(
@@ -232,7 +232,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
-        let max_response_tokens = req.max_response_tokens;
+        let max_response_tokens = req.max_response_tokens();
         let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
         self.run_prepared(
             "history",
@@ -278,7 +278,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
-        let max_response_tokens = req.max_response_tokens;
+        let max_response_tokens = req.max_response_tokens();
         let (request, options, execution, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "json",
@@ -447,25 +447,6 @@ impl ServerHandler for LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ReadResourceResponse, ErrorData>> + Send + '_ {
         self.read_receipt_resource(request.uri, context.protocol_version())
-    }
-
-    fn initialize(
-        &self,
-        request: rmcp::model::InitializeRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<rmcp::model::InitializeResult, ErrorData>> + Send + '_ {
-        context.peer.set_peer_info(request.clone());
-        let mut info = self.get_info();
-        if rmcp::model::ProtocolVersion::KNOWN_VERSIONS.contains(&request.protocol_version) {
-            info.protocol_version = request.protocol_version.clone();
-        } else {
-            tracing::warn!(
-                client_requested = %request.protocol_version,
-                server_fallback = %info.protocol_version,
-                "client requested unsupported protocol version; falling back to server default"
-            );
-        }
-        std::future::ready(Ok(info))
     }
 
     fn get_info(&self) -> rmcp::model::ServerInfo {

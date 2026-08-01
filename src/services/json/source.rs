@@ -1,5 +1,7 @@
 //! Loading live JSON files into bounded in-memory values and token accounting.
 
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 
 use serde_json::Value;
@@ -31,6 +33,93 @@ impl LoadedJson {
 
     pub(super) fn source_tokens(&self) -> usize {
         self.source_tokens
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum JsonMeasurementKey {
+    /// Prefix length within the request-local keys candidate page.
+    KeysPrefix(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JsonMeasurementCacheKey {
+    KeysPrefix(usize, Value),
+}
+
+impl Hash for JsonMeasurementCacheKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Self::KeysPrefix(length, value) => {
+                length.hash(state);
+                hash_json_value(value, state);
+            }
+        }
+    }
+}
+
+fn hash_json_value<H: Hasher>(value: &Value, state: &mut H) {
+    std::mem::discriminant(value).hash(state);
+    match value {
+        Value::Null => {}
+        Value::Bool(value) => value.hash(state),
+        Value::Number(value) => value.to_string().hash(state),
+        Value::String(value) => value.hash(state),
+        Value::Array(values) => values
+            .iter()
+            .for_each(|value| hash_json_value(value, state)),
+        Value::Object(values) => {
+            let mut entries = values.iter().collect::<Vec<_>>();
+            entries.sort_unstable_by_key(|(key, _)| *key);
+            entries.into_iter().for_each(|(key, value)| {
+                key.hash(state);
+                hash_json_value(value, state);
+            });
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct JsonMeasurementCounters {
+    pub(super) serializations: usize,
+    pub(super) tokenizer_counts: usize,
+    pub(super) cache_hits: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct JsonMeasurementCache {
+    measurements: HashMap<JsonMeasurementCacheKey, (String, usize)>,
+    counters: JsonMeasurementCounters,
+}
+
+impl JsonMeasurementCache {
+    pub(super) fn measure(
+        &mut self,
+        services: &Services,
+        key: JsonMeasurementKey,
+        value: &Value,
+    ) -> Result<usize> {
+        let cache_key = match key {
+            JsonMeasurementKey::KeysPrefix(length) => {
+                JsonMeasurementCacheKey::KeysPrefix(length, value.clone())
+            }
+        };
+        if let Some((_, tokens)) = self.measurements.get(&cache_key) {
+            self.counters.cache_hits = self.counters.cache_hits.saturating_add(1);
+            return Ok(*tokens);
+        }
+        let serialized = serde_json::to_string(value)
+            .map_err(|error| Error::SerializationFailure(error.to_string()))?;
+        self.counters.serializations = self.counters.serializations.saturating_add(1);
+        let tokens = services.config.tokenizer.count(&serialized);
+        self.counters.tokenizer_counts = self.counters.tokenizer_counts.saturating_add(1);
+        self.measurements.insert(cache_key, (serialized, tokens));
+        Ok(tokens)
+    }
+
+    #[cfg(test)]
+    pub(super) fn counters(&self) -> &JsonMeasurementCounters {
+        &self.counters
     }
 }
 

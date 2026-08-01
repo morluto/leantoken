@@ -139,6 +139,8 @@ async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
             .peer_info()
             .expect("initialize response")
             .server_info
+            .as_ref()
+            .expect("server identity")
             .name,
         "leantoken"
     );
@@ -148,6 +150,8 @@ async fn initialization_and_tool_listing_bypass_saturated_tool_admission() {
             .peer_info()
             .expect("initialize response")
             .server_info
+            .as_ref()
+            .expect("server identity")
             .version,
         mcp_runtime_version()
     );
@@ -1089,71 +1093,75 @@ fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
 }
 
 #[test]
-fn explicit_null_limits_are_not_treated_as_omitted() {
-    assert!(
-        serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-            "operation": "tree",
-            "max_results": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+fn explicit_null_limits_are_equivalent_to_omission() {
+    let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+        "operation": {"kind": "tree", "max_results": null}
+    }))
+    .expect("null files limit");
+    assert!(matches!(
+        files.operation,
+        FilesMcpOperation::Tree {
+            max_results: None,
+            ..
+        }
+    ));
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "text",
             "query": "answer",
-            "max_results": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "answer",
-            "max_tokens": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "answer",
+            "max_results": null,
+            "max_tokens": null,
             "context_lines": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-            "paths": ["lib.rs"],
-            "max_results": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-            "paths": ["lib.rs"],
-            "max_tokens": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-            "path": "lib.rs",
-            "target": {"kind": "lines", "start": 1, "end": 1},
-            "max_tokens": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "find answer",
-            "token_budget": null
-        }))
-        .is_err()
-    );
-    assert!(
-        serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
-            "task": "find answer",
-            "minimum_fragments_per_focus_path": null
-        }))
-        .is_err()
-    );
+        }
+    }))
+    .expect("null search limits");
+    let options = match search.operation {
+        SearchMcpOperation::Text { options } => options,
+        _ => panic!("expected text operation"),
+    };
+    assert_eq!(options.max_results, None);
+    assert_eq!(options.max_tokens, None);
+    assert_eq!(options.context_lines, None);
+
+    let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
+        "paths": ["lib.rs"],
+        "max_results": null,
+        "max_tokens": null
+    }))
+    .expect("null outline limits");
+    assert_eq!(outline.max_results, None);
+    assert_eq!(outline.max_tokens, None);
+
+    let read = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "lib.rs",
+        "target": {"kind": "lines", "start": 1, "end": 1},
+        "max_tokens": null
+    }))
+    .expect("null read limit");
+    assert_eq!(read.max_tokens, None);
+
+    let context = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer",
+        "token_budget": null,
+        "minimum_fragments_per_focus_path": null
+    }))
+    .expect("null context limits");
+    assert_eq!(context.token_budget, None);
+    assert_eq!(context.minimum_fragments_per_focus_path, None);
+}
+
+#[test]
+fn search_operation_rejects_unknown_fields() {
+    let error = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "text",
+            "query": "answer",
+            "max_token": 1
+        }
+    }))
+    .expect_err("misspelled search limit");
+    assert!(error.to_string().contains("unknown field"));
 }
 
 #[test]
@@ -1314,7 +1322,7 @@ fn tool_required_fields_match_the_wire_contract() {
         ("read", Some(serde_json::json!(["path", "target"]))),
         ("receipt_rebase", Some(serde_json::json!(["receipt_id"]))),
         ("savings", None),
-        ("search", Some(serde_json::json!(["query"]))),
+        ("search", Some(serde_json::json!(["operation"]))),
     ]
     .into_iter()
     .collect::<std::collections::HashMap<_, _>>();
@@ -1345,17 +1353,24 @@ fn files_schema_matches_operation_specific_runtime_requirements() {
         .find(|tool| tool.name == "files")
         .expect("files tool");
     let schema = serde_json::Value::Object((*tool.input_schema).clone());
-    let variants = schema["oneOf"].as_array().expect("operation variants");
+    let variants = schema["$defs"]["FilesMcpOperation"]["oneOf"]
+        .as_array()
+        .expect("operation variants");
     assert_eq!(variants.len(), 3);
-    assert_eq!(variants[0]["properties"]["operation"]["const"], "tree");
-    assert_eq!(variants[1]["properties"]["operation"]["const"], "find");
+    assert_eq!(variants[0]["properties"]["kind"]["const"], "tree");
+    assert_eq!(variants[1]["properties"]["kind"]["const"], "find");
     assert_eq!(variants[1]["properties"]["query"]["type"], "string");
-    assert_eq!(variants[1]["required"], serde_json::json!(["query"]));
-    assert_eq!(variants[2]["properties"]["operation"]["const"], "glob");
+    assert_eq!(variants[1]["properties"]["query"]["minLength"], 1);
+    assert_eq!(
+        variants[1]["required"],
+        serde_json::json!(["kind", "query"])
+    );
+    assert_eq!(variants[2]["properties"]["kind"]["const"], "glob");
     assert_eq!(variants[2]["properties"]["pattern"]["type"], "string");
-    assert_eq!(variants[2]["required"], serde_json::json!(["pattern"]));
-    assert_eq!(schema["properties"]["query"]["minLength"], 1);
-    assert_eq!(schema["properties"]["pattern"]["minLength"], 1);
+    assert_eq!(
+        variants[2]["required"],
+        serde_json::json!(["kind", "pattern"])
+    );
 }
 
 #[test]
@@ -1367,20 +1382,22 @@ fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
         .expect("search tool");
     let schema = serde_json::Value::Object((*tool.input_schema).clone());
     let exhaustive_modes = SearchMode::EXHAUSTIVE_MODES.map(SearchMode::wire_name);
-    assert!(schema["allOf"].as_array().is_some_and(|constraints| {
-        constraints.iter().any(|constraint| {
-            constraint["if"]["properties"]["all_occurrences"]["const"] == true
-                && constraint["if"]["required"] == serde_json::json!(["all_occurrences"])
-                && constraint["then"]["properties"]["mode"]["enum"]
-                    == serde_json::json!(exhaustive_modes)
-                && constraint["then"]["required"] == serde_json::json!(["mode"])
-        }) && constraints.iter().any(|constraint| {
-            constraint["if"]["properties"]["projection"]["const"] == "occurrences"
-                && constraint["if"]["required"] == serde_json::json!(["projection"])
-                && constraint["then"]["properties"]["all_occurrences"]["const"] == true
-                && constraint["then"]["required"] == serde_json::json!(["all_occurrences"])
-        })
-    }));
+    let variants = schema["$defs"]["SearchMcpOperation"]["oneOf"]
+        .as_array()
+        .expect("search operation variants");
+    let kinds = variants
+        .iter()
+        .filter_map(|variant| variant["properties"]["kind"]["const"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        ["auto", "text", "regex", "identifier", "symbol", "reference"]
+    );
+    assert_eq!(exhaustive_modes, ["text", "regex"]);
+    for variant in variants {
+        assert!(!variant["properties"]["query"].is_null());
+        assert!(!variant["properties"]["all_occurrences"].is_null());
+    }
 }
 
 #[test]
@@ -1390,11 +1407,11 @@ fn retrieval_tools_expose_consistency_boundary() {
         .into_iter()
         .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
     {
-        let consistency = tool
-            .input_schema
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|properties| properties.get("consistency"))
+        let schema = serde_json::Value::Object((*tool.input_schema).clone());
+        let consistency = schema
+            .pointer("/properties/consistency")
+            .or_else(|| schema.pointer("/$defs/FilesMcpOperation/oneOf/0/properties/consistency"))
+            .or_else(|| schema.pointer("/$defs/SearchMcpOperation/oneOf/0/properties/consistency"))
             .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
         assert_eq!(
             consistency.get("default"),
@@ -1514,23 +1531,33 @@ fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
         tools["context"].pointer("/properties/token_budget/default"),
         Some(&serde_json::json!(3_000))
     );
-    assert!(tools["files"].pointer("/properties/query").is_some());
-    assert!(tools["files"].pointer("/properties/pattern").is_some());
+    assert!(tools["files"].pointer("/$defs/FilesMcpOperation").is_some());
     assert!(tools["read"].pointer("/properties/symbol").is_none());
     assert!(tools["read"].pointer("/properties/start_line").is_none());
     assert!(tools["read"].pointer("/properties/target").is_some());
 
     let request = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-        "operation": "find",
-        "query": "mcp",
-        "pattern": "*.rs"
+        "operation": {"kind": "find", "query": "mcp"}
     }))
-    .expect("flat files request shape");
-    assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_err());
+    .expect("tagged files request shape");
+    assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
+    assert!(
+        serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
+            "operation": "find", "query": "mcp"
+        }))
+        .is_err()
+    );
     assert!(
         serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
             "path": "src/mcp.rs",
-            "target": {"kind": "symbol", "name": "LeanTokenMcp", "start": 1}
+            "target": {"kind": "symbol", "identity": {"name": "LeanTokenMcp"}}
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+            "path": "src/mcp.rs",
+            "target": {"kind": "symbol", "name": "LeanTokenMcp"}
         }))
         .is_err()
     );
@@ -1594,6 +1621,18 @@ fn assert_read_target_shapes() {
 
 #[test]
 fn retrieval_response_budget_schemas_are_optional_and_bounded() {
+    fn find_field<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+        match value {
+            serde_json::Value::Object(object) => object
+                .get(name)
+                .or_else(|| object.values().find_map(|value| find_field(value, name))),
+            serde_json::Value::Array(values) => {
+                values.iter().find_map(|value| find_field(value, name))
+            }
+            _ => None,
+        }
+    }
+
     let tools = LeanTokenMcp::tool_router().list_all();
     for name in [
         "context", "read", "search", "outline", "files", "history", "json",
@@ -1603,18 +1642,20 @@ fn retrieval_response_budget_schemas_are_optional_and_bounded() {
             .find(|tool| tool.name == name)
             .unwrap_or_else(|| panic!("{name} tool"));
         let schema = serde_json::Value::Object((*tool.input_schema).clone());
+        let response_limit = find_field(&schema, "max_response_tokens")
+            .unwrap_or_else(|| panic!("{name} response limit schema missing"));
         assert_eq!(
-            schema.pointer("/properties/max_response_tokens/minimum"),
+            response_limit.get("minimum"),
             Some(&serde_json::json!(1)),
             "{name}"
         );
         assert_eq!(
-            schema.pointer("/properties/max_response_tokens/maximum"),
+            response_limit.get("maximum"),
             Some(&serde_json::json!(32_000)),
             "{name}"
         );
         assert_eq!(
-            schema.pointer("/properties/max_response_tokens/default"),
+            response_limit.get("default"),
             Some(&serde_json::Value::Null),
             "{name}"
         );
@@ -1637,31 +1678,23 @@ fn context_focus_candidate_schema_exposes_generation_bounds() {
         schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),
         Some(&serde_json::json!(8))
     );
-    assert_eq!(
-        schema.pointer("/allOf/0/then/properties/focus_paths/minItems"),
-        Some(&serde_json::json!(1))
-    );
-    assert_eq!(
-        schema.pointer("/allOf/1/then/properties/focus_paths/minItems"),
-        Some(&serde_json::json!(1))
-    );
-    assert_eq!(
-        schema.pointer("/allOf/2/then/properties/receipt_id/type"),
-        Some(&serde_json::json!("null"))
-    );
-    assert_eq!(
-        schema.pointer("/allOf/2/then/properties/handoff/type"),
-        Some(&serde_json::json!("null"))
-    );
 }
 
 #[test]
 fn retrieval_response_budget_limits_are_validated_for_every_tool() {
+    fn set_limit(value: &mut serde_json::Value, nested: bool, limit: usize) {
+        if nested {
+            value["operation"]["max_response_tokens"] = serde_json::json!(limit);
+        } else {
+            value["max_response_tokens"] = serde_json::json!(limit);
+        }
+    }
+
     macro_rules! assert_invalid {
-        ($ty:ty, $base:expr) => {
+        ($ty:ty, $base:expr, $nested:expr) => {
             for invalid in [0, MAX_OUTPUT_TOKENS + 1] {
                 let mut value = $base;
-                value["max_response_tokens"] = serde_json::json!(invalid);
+                set_limit(&mut value, $nested, invalid);
                 let request = serde_json::from_value::<$ty>(value).expect("deserialize request");
                 assert!(
                     request.validate_limits(McpLimitPolicy::DEFAULT).is_err(),
@@ -1672,18 +1705,28 @@ fn retrieval_response_budget_limits_are_validated_for_every_tool() {
         };
     }
 
-    assert_invalid!(FilesMcpRequest, serde_json::json!({"operation": "tree"}));
-    assert_invalid!(SearchMcpRequest, serde_json::json!({"query": "needle"}));
+    assert_invalid!(
+        FilesMcpRequest,
+        serde_json::json!({"operation": {"kind": "tree"}}),
+        true
+    );
+    assert_invalid!(
+        SearchMcpRequest,
+        serde_json::json!({"operation": {"kind": "auto", "query": "needle"}}),
+        true
+    );
     assert_invalid!(
         OutlineMcpRequest,
-        serde_json::json!({"paths": ["src/lib.rs"]})
+        serde_json::json!({"paths": ["src/lib.rs"]}),
+        false
     );
     assert_invalid!(
         ReadMcpRequest,
         serde_json::json!({
             "path": "src/lib.rs",
             "target": {"kind": "lines", "start": 1, "end": 1}
-        })
+        }),
+        false
     );
     assert_invalid!(
         HistoryMcpRequest,
@@ -1691,16 +1734,18 @@ fn retrieval_response_budget_limits_are_validated_for_every_tool() {
             "operation": {
                 "kind": "read_symbol",
                 "path": "src/lib.rs",
-                "symbol": "owner",
+                "symbol": {"name": "owner"},
                 "revision": "HEAD"
             }
-        })
+        }),
+        true
     );
     assert_invalid!(
         JsonMcpRequest,
         serde_json::json!({
             "operation": {"kind": "query", "path": "data.json"}
-        })
+        }),
+        true
     );
 }
 
@@ -1760,11 +1805,11 @@ fn history_operation_maps_to_the_service_request() {
         "operation": {
             "kind": "diff_symbol",
             "path": "src/lib.rs",
-            "symbol": "Services",
+            "symbol": {"name": " Services ", "parent": " "},
             "base_revision": "main~1",
-            "head_revision": "main"
-        },
-        "max_tokens": 500
+            "head_revision": "main",
+            "max_tokens": 500
+        }
     }))
     .expect("history request");
     request
@@ -1797,18 +1842,18 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
             "targets": [
                 {
                     "path": "src/old.rs",
-                    "symbol": "old_name",
+            "symbol": {"name": "old_name"},
                     "head_path": "src/new.rs",
-                    "head_symbol": "new_name"
+                    "head_symbol": {"name": "new_name"}
                 }
             ],
             "base_revision": "main~1",
-            "head_revision": "main"
-        },
-        "max_results": 1,
-        "max_tokens": 500,
-        "max_response_tokens": 900,
-        "cursor": "history-cursor"
+            "head_revision": "main",
+            "max_results": 1,
+            "max_tokens": 500,
+            "max_response_tokens": 900,
+            "cursor": "history-cursor"
+        }
     }))
     .expect("batched history request");
     request
@@ -1837,21 +1882,12 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
         "operation": {
             "kind": "read_symbol",
             "path": "src/lib.rs",
-            "symbol": "item",
+            "symbol": {"name": "item"},
             "revision": "main"
         },
         "cursor": "not-valid-here"
-    }))
-    .expect("single history request");
-    assert!(matches!(
-        single_with_cursor
-            .into_parts()
-            .expect_err("cursor is exclusive to diff_symbols"),
-        crate::Error::InvalidInput {
-            field: "cursor",
-            reason: "is only valid for diff_symbols"
-        }
-    ));
+    }));
+    assert!(single_with_cursor.is_err());
 }
 
 #[test]
@@ -1863,9 +1899,9 @@ fn json_operation_maps_to_the_service_request() {
             "selector": {
                 "kind": "jmespath",
                 "expression": "graph_index.corpora[].cold_index_ms"
-            }
-        },
-        "max_items": 500
+            },
+            "max_items": 500
+        }
     }))
     .expect("JSON request");
     request
@@ -1887,10 +1923,10 @@ fn json_operation_maps_to_the_service_request() {
         "operation": {
             "kind": "query",
             "path": "artifacts/results.json",
-            "projection": "keys"
-        },
-        "depth": 1,
-        "cursor": "j2:source:query:2"
+            "projection": "keys",
+            "depth": 1,
+            "cursor": "j2:source:query:2"
+        }
     }))
     .expect("paged JSON request");
     let (request, _, execution, _) = request.into_parts();
@@ -1910,6 +1946,16 @@ fn json_operation_maps_to_the_service_request() {
     .expect_err("keys must be a query projection, not an operation");
     let message = invalid.to_string();
     assert!(message.contains("unknown variant") && message.contains("query"));
+
+    let invalid_outer_limit = serde_json::from_value::<JsonMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "numeric_summary",
+            "path": "artifacts/results.json"
+        },
+        "max_tokens": 1
+    }))
+    .expect_err("operation controls must not be accepted at the outer level");
+    assert!(invalid_outer_limit.to_string().contains("unknown field"));
 }
 
 #[test]
@@ -1938,23 +1984,21 @@ fn outline_cursor_maps_to_the_service_request() {
 #[test]
 fn compact_projections_map_to_service_requests() {
     let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-        "operation": "tree"
+        "operation": {"kind": "tree"}
     }))
     .expect("default files projection");
     let (_, projection, _, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Full);
 
     let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-        "operation": "find",
-        "query": "service",
-        "projection": "paths"
+        "operation": {"kind": "find", "query": "service", "projection": "paths"}
     }))
     .expect("path projection");
     let (_, projection, _, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Paths);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "query": "Services"
+        "operation": {"kind": "auto", "query": "Services"}
     }))
     .expect("default search projection");
     let (_, projection, coordinates_only, _, _, _) = search.into_parts();
@@ -1962,8 +2006,7 @@ fn compact_projections_map_to_service_requests() {
     assert!(!coordinates_only);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "query": "Services",
-        "projection": "grouped"
+        "operation": {"kind": "auto", "query": "Services", "projection": "grouped"}
     }))
     .expect("grouped projection");
     let (_, projection, coordinates_only, _, _, _) = search.into_parts();
@@ -1971,10 +2014,12 @@ fn compact_projections_map_to_service_requests() {
     assert!(!coordinates_only);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "query": "Services",
-        "mode": "text",
-        "all_occurrences": true,
-        "coordinates_only": true
+        "operation": {
+            "kind": "text",
+            "query": "Services",
+            "all_occurrences": true,
+            "coordinates_only": true
+        }
     }))
     .expect("coordinates-only occurrence projection");
     search
@@ -1985,9 +2030,7 @@ fn compact_projections_map_to_service_requests() {
     assert!(coordinates_only);
 
     let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "query": "Services",
-        "mode": "text",
-        "coordinates_only": true
+        "operation": {"kind": "text", "query": "Services", "coordinates_only": true}
     }))
     .expect("structurally valid search request");
     assert!(matches!(
@@ -2000,9 +2043,7 @@ fn compact_projections_map_to_service_requests() {
 
     for mode in ["auto", "identifier", "symbol", "reference"] {
         let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-            "query": "Services",
-            "mode": mode,
-            "all_occurrences": true
+            "operation": {"kind": mode, "query": "Services", "all_occurrences": true}
         }))
         .expect("structurally valid exhaustive search request");
         assert!(matches!(
@@ -2014,8 +2055,7 @@ fn compact_projections_map_to_service_requests() {
         ));
     }
     let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "query": "Services",
-        "all_occurrences": true
+        "operation": {"kind": "auto", "query": "Services", "all_occurrences": true}
     }))
     .expect("structurally valid exhaustive search request with default mode");
     assert!(matches!(
@@ -2040,4 +2080,15 @@ fn compact_projections_map_to_service_requests() {
     .expect("signature projection");
     let (_, projection, _, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Signatures);
+}
+
+#[test]
+fn search_query_preserves_significant_whitespace() {
+    let request = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "operation": {"kind": "text", "query": "  exact text  "}
+    }))
+    .expect("whitespace-surrounded search query");
+    let (request, _, _, _, _, _) = request.into_parts();
+
+    assert_eq!(request.query, "  exact text  ");
 }

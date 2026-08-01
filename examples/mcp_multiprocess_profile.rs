@@ -1225,17 +1225,18 @@ fn workload_request(workload: Workload) -> (&'static str, Value) {
         Workload::Files => (
             "files",
             json!({
-                "operation": {"kind": "tree"},
-                "max_results": 10
+                "operation": {"kind": "tree", "max_results": 10}
             }),
         ),
         Workload::Search => (
             "search",
             json!({
-                "query": "item_00010_1",
-                "mode": "auto",
-                "max_results": 20,
-                "max_tokens": 1_000
+                "operation": {
+                    "kind": "auto",
+                    "query": "item_00010_1",
+                    "max_results": 20,
+                    "max_tokens": 1_000
+                }
             }),
         ),
         Workload::Read => (

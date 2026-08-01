@@ -9,7 +9,7 @@ use super::numeric::numeric_summary;
 use super::projection::{ProjectionState, project_json, projection_item_count};
 use super::schema::project_schema_page;
 use super::selection::select_json;
-use super::source::json_tokens;
+use super::source::{JsonMeasurementCache, JsonMeasurementKey, json_tokens};
 use super::validation::validate_json_request;
 use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS, DEFAULT_JSON_TOKENS};
 use crate::model::{
@@ -50,6 +50,7 @@ struct QueryExecution<'a> {
     query_hash: &'a str,
     execution: JsonExecutionOptions,
     generation: u64,
+    measurements: &'a mut JsonMeasurementCache,
 }
 
 struct DiffExecution<'a> {
@@ -122,6 +123,7 @@ impl Services {
             .transpose()?;
         let query_hash = json_query_hash(&request.operation, execution)?;
         let generation = self.storage.repository_generation()?;
+        let mut measurements = JsonMeasurementCache::default();
         let mut result = match request.operation {
             JsonOperation::Query {
                 path,
@@ -136,6 +138,7 @@ impl Services {
                 query_hash: &query_hash,
                 execution,
                 generation,
+                measurements: &mut measurements,
             })?,
             JsonOperation::NumericSummary { path, selector } => {
                 self.execute_json_numeric_summary(path, selector, generation)?
@@ -167,6 +170,7 @@ impl Services {
             &mut result.response,
             result.key_response_fit.as_ref(),
             options,
+            &mut measurements,
         )?;
         self.finalize_bounded_response(&mut result.response, options)?;
         self.record_token_savings(
@@ -187,6 +191,7 @@ impl Services {
             query_hash,
             execution,
             generation,
+            measurements,
         } = input;
         let loaded = self.load_json(&path)?;
         let baseline_source_tokens = loaded.source_tokens();
@@ -200,7 +205,13 @@ impl Services {
                     &value,
                     limits.max_items,
                     limits.max_tokens,
-                    KeyProjectionContext::new(cursor, &source_hash, query_hash, execution),
+                    KeyProjectionContext::new(
+                        cursor,
+                        &source_hash,
+                        query_hash,
+                        execution,
+                        measurements,
+                    ),
                 )?;
                 let (value, total, returned, remaining, reason, next_cursor, tokens) =
                     page.into_parts();
@@ -386,6 +397,7 @@ impl Services {
         response: &mut JsonResponse,
         key_page_context: Option<&KeyResponseFit>,
         options: ServiceCallOptions,
+        measurements: &mut JsonMeasurementCache,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
             return Ok(());
@@ -420,8 +432,9 @@ impl Services {
                         consumed,
                     )
                 });
-                let source_tokens = json_tokens(
+                let source_tokens = measurements.measure(
                     self,
+                    JsonMeasurementKey::KeysPrefix(keep),
                     candidate
                         .value
                         .as_ref()
@@ -450,8 +463,9 @@ impl Services {
                         consumed,
                     )
                 });
-                let source_tokens = json_tokens(
+                let source_tokens = measurements.measure(
                     self,
+                    JsonMeasurementKey::KeysPrefix(keep),
                     response
                         .value
                         .as_ref()
@@ -481,8 +495,9 @@ impl Services {
                         consumed,
                     )
                 });
-                let source_tokens = json_tokens(
+                let source_tokens = measurements.measure(
                     self,
+                    JsonMeasurementKey::KeysPrefix(1),
                     minimum
                         .value
                         .as_ref()

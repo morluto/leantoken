@@ -26,6 +26,17 @@ pub(super) fn process_raw_event(
         return;
     }
 
+    let directory_hint = event_path_is_directory(&event);
+    if directory_hint == DirectoryHint::Unknown {
+        // Do this before generated-directory policy is applied by
+        // `relative_path`; a missing rename endpoint cannot be classified
+        // from filesystem metadata.
+        *reconcile = true;
+        // The full reconciliation supersedes path-level rename bookkeeping.
+        // In particular, do not let a generated-directory rename become a
+        // stale per-path update merely because one endpoint disappeared.
+        return;
+    }
     let mut inside = Vec::with_capacity(event.paths.len());
     let mut outside = false;
     for path in &event.paths {

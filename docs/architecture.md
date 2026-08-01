@@ -788,8 +788,9 @@ claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
-| Regex request candidate chunks | 20,510, calibrated at twice the 10,255-chunk boundary-profile maximum |
-| Regex request candidate bytes | 1 GiB, twice the largest representative indexed corpus rounded below the 2 GiB index ceiling |
+| Regex request candidate chunks | `max_results × 20` when a result bound is supplied, capped at 20,510; omitted result bounds retain the global ceiling |
+| Regex request candidate files | `max_results × 200` when a result bound is supplied, capped at 10,000 |
+| Regex request candidate bytes | `max(max_tokens × 64, 1 KiB)` when a token bound is supplied, capped at 1 GiB; omitted token bounds retain the global ceiling |
 | Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
@@ -934,6 +935,19 @@ returns `incomplete_work` with `complete=false`, the limiting dimension, and
 bounded aggregate counters; it never returns an exact occurrence total.
 Compiled regex size and DFA cache are also limited so pathological patterns
 fail closed.
+
+The request-derived regex budget is monotonic in caller-visible result and
+source-token limits and never exceeds the global file, chunk, or byte ceilings.
+The benchmark boundary values above are the defaults for exhaustive requests;
+bounded requests spend only the work implied by their requested result and token
+budgets. Cancellation remains checked at admission and at most every 64
+verified chunks.
+
+JSON keys pagination carries one measurement cache through dispatch and fitting.
+Each request-local entry retains the exact serialized JSON bytes and tokenizer
+count together, so binary-search probes and response fitting reuse measurements
+without changing output bytes, ordering, or token accounting. Cache counters are
+diagnostic only and do not alter the response contract.
 
 Occurrence grouping is a response projection over the already ranked and
 paginated exhaustive page; it performs no additional repository or SQLite
@@ -1349,6 +1363,12 @@ the completed diff receipt. No source body enters the manifest. Git probes are
 time-bounded; unavailable commit or working-tree provenance becomes an explicit
 gap instead of a clean-state guess. The final response is token-accounted only
 after the manifest is attached, so protocol cost remains visible.
+
+Ordinary context responses also carry the bounded `RepositoryProvenance` object
+observed at that snapshot boundary: commit and branch when available, clean /
+modified / untracked / unknown working-tree state, repository generation,
+freshness, and an explicit availability status. Handoff manifests reuse the same
+object, so hosts do not need to reconcile two independently sampled Git views.
 
 The model A/B harness can attach an optional benchmark-only orientation capsule
 to a prewalk handoff. A capsule contains exactly one safe relative owner path,

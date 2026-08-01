@@ -402,6 +402,34 @@ does not need to parse prose.
 
 ## MCP server
 
+### Breaking request contract
+
+The MCP request contract is generated from the same Rust types used by the
+RMCP `Parameters<T>` adapters. Clients should use the published schemas rather
+than reconstructing a second schema or protocol-version handshake. `files`,
+`search`, `json`, and `history` requests select one tagged operation under
+`operation`; controls that apply only to that operation are nested in the
+selected variant. For example, search uses
+`{"operation":{"kind":"regex","query":"unsafe\\s+fn"}}` and file discovery
+uses `{"operation":{"kind":"glob","pattern":"src/**/*.rs"}}`.
+
+The breaking shape change also makes symbol identity explicit. Outline and
+history results use `{ "name": "method", "parent": "Type" }` where a parent
+exists, and read/history inputs pass the same object rather than asking the
+client to rebuild a `parent.name` string. Repository-relative paths and
+non-empty selectors are normalized at the request boundary. Optional numeric
+limits treat omission and explicit `null` identically and use the documented
+default. Relationships that JSON Schema cannot express, such as
+`minimum_query_matches <= queries.length`, remain runtime validation errors.
+
+Ordinary context responses may include bounded `provenance` with commit,
+branch, working-tree state, repository generation, freshness, and an explicit
+availability status. Provenance is best effort: an unavailable Git probe does
+not invalidate otherwise valid context. The `+contract.<fingerprint>` suffix
+is only LeanToken's application-capability diagnostic digest over the generated
+tool catalog and LeanToken resource metadata; RMCP owns MCP protocol
+negotiation.
+
 `leantoken mcp` starts the stdio protocol before opening the repository cache so
 the initialize handshake is never blocked by indexing. After the client's
 initialized notification, one process becomes indexing leader and followers
@@ -648,9 +676,9 @@ Operations:
 - `{"kind":"glob","pattern":"src/**/*.rs"}`: indexed path matching.
 
 Pass one of those tagged objects as `operation`. Operation-specific fields
-cannot be mixed. Common inputs are `max_results` (default 20, maximum 100) and
-`cursor`. Output contains bounded file/directory entries with language and size
-metadata when available.
+cannot be mixed. `max_results`, `max_response_tokens`, `cursor`, and (for
+`tree`) `depth` belong to the selected operation. Output contains bounded
+file/directory entries with language and size metadata when available.
 
 Set `projection="paths"` for the opt-in path-only response. It returns the same
 ordered page as `full` in a `paths` array plus the complete `meta` freshness,
@@ -663,8 +691,10 @@ fields affect the next routing decision.
 Returns ranked source excerpts. Modes are `auto`, `text`, `regex`,
 `identifier`, `symbol`, and `reference`.
 
-Inputs include path filters, focus paths, result and token limits, context-line
-count, case sensitivity, and a generation-bound cursor. Defaults are 20 results,
+Each request selects a tagged operation such as
+`{"kind":"regex","query":"unsafe\\s+fn","max_results":20}`. Its options
+include path filters, focus paths, result and token limits, context-line count,
+case sensitivity, and a generation-bound cursor. Defaults are 20 results,
 8,000 source tokens, and two context lines. Each hit includes its
 path, one-based returned line range, excerpt, primary `match_kind`, all merged
 `match_kinds`, score reasons, content hash, raw score, and a `normalized_score`
@@ -719,11 +749,13 @@ persistent coverage receipt:
 
 ```json
 {
-  "query": "unsafe\\s+fn",
-  "mode": "regex",
-  "all_occurrences": true,
-  "coordinates_only": true,
-  "query_receipt": {"kind": "record"}
+  "operation": {
+    "kind": "regex",
+    "query": "unsafe\\s+fn",
+    "all_occurrences": true,
+    "coordinates_only": true,
+    "query_receipt": {"kind": "record"}
+  }
 }
 ```
 
@@ -740,13 +772,15 @@ the lexical scan:
 
 ```json
 {
-  "query": "unsafe\\s+fn",
-  "mode": "regex",
-  "all_occurrences": true,
-  "coordinates_only": true,
-  "query_receipt": {
-    "kind": "reuse",
-    "receipt_id": "q..."
+  "operation": {
+    "kind": "regex",
+    "query": "unsafe\\s+fn",
+    "all_occurrences": true,
+    "coordinates_only": true,
+    "query_receipt": {
+      "kind": "reuse",
+      "receipt_id": "q..."
+    }
   }
 }
 ```
@@ -767,10 +801,10 @@ model turn. A future handoff or capsule integration would need separate host
 evidence before claiming an avoided call.
 
 The MCP initialize response appends `+contract.<fingerprint>` to the runtime
-version. The fingerprint covers the running tool catalog, resource capability
-and template contract, result-envelope version, and default result mode, so
-clients can distinguish a stale server binary or cached contract from the
-feature set that accepted the request.
+version. The fingerprint covers the canonical generated tool catalog and
+LeanToken resource capability/template metadata, so clients can distinguish a
+stale server binary or cached application contract from the feature set that
+accepted the request. RMCP negotiates the MCP protocol version separately.
 
 Each page examines at most `max_results` ranked candidates. `max_tokens` may
 filter some or all of those candidates, so a page can contain fewer hits or be
@@ -859,9 +893,9 @@ Reads an exact source range.
 - `path` is required.
 - `target: {"kind":"lines","start":40,"end":90}` selects an inclusive
   one-based range.
-- `target: {"kind":"symbol","name":"LeanTokenMcp"}` selects one indexed
-  symbol definition. Nested definitions also accept the canonical
-  `parent.name` form, such as `Services.wait_for_initial_index_cancellable`.
+- `target: {"kind":"symbol","identity":{"name":"LeanTokenMcp"}}`
+  selects one indexed symbol definition. Nested definitions use
+  `{"name":"wait_for_initial_index_cancellable","parent":"Services"}`.
   An unqualified or qualified identity that matches multiple definitions
   returns typed `symbol_ambiguous` instead of selecting the first definition.
 - `target: {"kind":"heading","name":"Installation"}` selects one indexed
@@ -1018,7 +1052,7 @@ offset, line, and column.
 Reads symbol-aware evidence from immutable Git revisions without changing the
 working tree or index:
 
-- `operation: {"kind":"read_symbol","path":"src/lib.rs","symbol":"Services",
+- `operation: {"kind":"read_symbol","path":"src/lib.rs","symbol":{"name":"Services"},
   "revision":"main~1"}` parses the historical blob and returns that symbol.
 - `operation: {"kind":"diff_symbol",...}` parses the symbol independently at
   `base_revision` and `head_revision`, then returns a bounded unified diff.
@@ -1029,7 +1063,7 @@ working tree or index:
 
 Historical paths are repository-relative, revisions are resolved before object
 lookup, and blobs remain subject to the configured per-file byte limit.
-Nested symbols use the same `parent.name` qualification accepted by exact live
+Nested symbols use the same `{name,parent}` identity accepted by exact live
 reads. A unique bare name also resolves, while multiple matches return typed
 `symbol_ambiguous` instead of selecting by parser order. In `diff_symbols`, an
 ambiguous endpoint remains a per-target `unavailable` result with

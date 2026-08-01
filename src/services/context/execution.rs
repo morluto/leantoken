@@ -20,6 +20,10 @@ struct PreparedContext {
     changed_paths: HashSet<String>,
     working_tree_state: HandoffWorkingTreeState,
     working_tree_paths: Vec<String>,
+    working_tree_modified: bool,
+    working_tree_untracked: bool,
+    commit_revision: Option<String>,
+    branch: Option<String>,
     path_filter: PathFilter,
 }
 
@@ -45,8 +49,15 @@ impl Services {
             .iter()
             .map(|path| normalize_relative(path))
             .collect::<Result<Vec<_>>>()?;
-        let (diff_scope, mut changed_paths, working_tree_state_available) =
-            self.resolve_diff_scope(&request)?;
+        let (
+            diff_scope,
+            mut changed_paths,
+            working_tree_state_available,
+            working_tree_modified,
+            working_tree_untracked,
+        ) = self.resolve_diff_scope(&request)?;
+        let commit_revision = git_head_revision(&self.config.root).ok();
+        let branch = git_branch_name(&self.config.root).ok();
         let working_tree_state = if !working_tree_state_available {
             HandoffWorkingTreeState::Unknown
         } else if changed_paths.is_empty() {
@@ -73,6 +84,10 @@ impl Services {
                 changed_paths,
                 working_tree_state,
                 working_tree_paths,
+                working_tree_modified,
+                working_tree_untracked,
+                commit_revision,
+                branch,
                 path_filter,
             },
             retrieval,
@@ -93,6 +108,10 @@ impl Services {
             changed_paths,
             working_tree_state,
             working_tree_paths,
+            working_tree_modified,
+            working_tree_untracked,
+            commit_revision,
+            branch,
             path_filter,
         } = prepared;
         let ContextExecution {
@@ -248,6 +267,10 @@ impl Services {
                     diff_scope: diff_scope.as_ref(),
                     working_tree_state,
                     working_tree_paths: &working_tree_paths,
+                    working_tree_modified,
+                    working_tree_untracked,
+                    commit_revision: commit_revision.as_deref(),
+                    branch: branch.as_deref(),
                     resolved_workflow,
                 },
                 batch,

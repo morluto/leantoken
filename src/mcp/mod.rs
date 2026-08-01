@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
+    handler::server::wrapper::Parameters,
     model::{
         CacheScope, CallToolResult, ContentBlock, ListResourceTemplatesResult, ListResourcesResult,
         PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
@@ -15,7 +16,7 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::Config;
@@ -28,8 +29,10 @@ use crate::model::{
     DiffSymbolsRequest, DiffSymbolsTarget, FileOperation, FilesRequest, HandoffManifestRequest,
     HistoryOperation, HistoryRequest, IndexConsistency, IndexProgressSnapshot, JsonOperation,
     JsonProjection, JsonRequest, JsonSelector, MAX_RECEIPT_REBASE_SAMPLES_PER_OUTCOME,
-    OutlineRequest, ReadRequest, ReceiptRebaseRequest, SearchMode, SearchRequest, WorkflowEvidence,
+    NonEmptyText, OutlineRequest, ReadRequest, ReceiptRebaseRequest, SearchMode, SearchRequest,
+    SymbolIdentity, WorkflowEvidence,
 };
+use crate::repository::{RepositoryPath, RepositoryPattern};
 use crate::services::{
     JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
     ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
@@ -67,9 +70,7 @@ fn mcp_contract() -> serde_json::Value {
                 "name": "retrieval_receipt",
                 "mimeType": resources::RECEIPT_RESOURCE_MEDIA_TYPE,
             }],
-        },
-        "result_envelope_version": 2,
-        "default_result_mode": McpResultMode::Structured,
+        }
     })
 }
 

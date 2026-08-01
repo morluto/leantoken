@@ -10,11 +10,11 @@ pub(in crate::mcp) struct ReadMcpRequest {
     pub(in crate::mcp) expected_repository_id: Option<String>,
     /// Repository-relative UTF-8 source file.
     #[schemars(length(min = 1, max = 4096))]
-    pub(in crate::mcp) path: String,
+    pub(in crate::mcp) path: RepositoryPath,
     /// Exact symbol, document heading, line range, or continuation to read.
     pub(in crate::mcp) target: ReadMcpTarget,
     /// Maximum source tokens to return (default 8000, maximum 32000).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     /// Maximum tokens in the final serialized service response.
@@ -50,9 +50,8 @@ pub(in crate::mcp) struct ReadMcpRequest {
 pub(in crate::mcp) enum ReadMcpTarget {
     /// Read one indexed symbol definition.
     Symbol {
-        /// Exact indexed symbol name.
-        #[schemars(length(min = 1, max = 4096))]
-        name: String,
+        /// Structured indexed symbol identity.
+        identity: SymbolIdentity,
     },
     /// Read one indexed Markdown or LaTeX section by exact title or outline signature.
     Heading {
@@ -108,7 +107,14 @@ impl ReadMcpRequest {
     ) {
         let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
             match self.target {
-                ReadMcpTarget::Symbol { name } => (None, None, Some(name), None, None, None),
+                ReadMcpTarget::Symbol { identity } => (
+                    None,
+                    None,
+                    Some(identity.qualified_name()),
+                    None,
+                    None,
+                    None,
+                ),
                 ReadMcpTarget::Heading { name, occurrence } => {
                     (None, None, None, Some(name), Some(occurrence), None)
                 }
@@ -121,7 +127,7 @@ impl ReadMcpRequest {
             };
         (
             ReadRequest {
-                path: self.path,
+                path: self.path.into_string(),
                 start_line,
                 end_line,
                 symbol,

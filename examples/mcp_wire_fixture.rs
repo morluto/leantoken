@@ -89,6 +89,7 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
         coverage: Default::default(),
         routing: None,
         handoff_manifest: None,
+        provenance: None,
         warnings: Vec::new(),
         meta: ResponseMeta {
             repository_id: "repository".into(),

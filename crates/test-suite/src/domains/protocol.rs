@@ -39,7 +39,14 @@ async fn assert_mcp_limit_contract(
 
     for requested in [0, 1, limit, limit + 1] {
         let mut arguments = base_arguments.clone();
-        arguments[field] = serde_json::json!(requested);
+        if let Some(operation) = arguments
+            .get_mut("operation")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            operation.insert(field.into(), serde_json::json!(requested));
+        } else {
+            arguments[field] = serde_json::json!(requested);
+        }
         let result = call_tool(peer, tool, arguments).await;
         if requested == 0 && !zero_is_valid {
             let ServiceError::McpError(error) = result.expect_err("zero must be rejected") else {
@@ -84,7 +91,14 @@ async fn assert_mcp_limit_exceeded(
     requested: usize,
     limit: usize,
 ) {
-    arguments[field] = serde_json::json!(requested);
+    if let Some(operation) = arguments
+        .get_mut("operation")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        operation.insert(field.into(), serde_json::json!(requested));
+    } else {
+        arguments[field] = serde_json::json!(requested);
+    }
     let ServiceError::McpError(error) = call_tool(peer, tool, arguments)
         .await
         .expect_err("configured limit must be rejected")
@@ -130,7 +144,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     assert_mcp_limit_contract(
         client.peer(),
         "files",
-        serde_json::json!({"operation": "tree", "depth": 0}),
+        serde_json::json!({"operation": {"kind": "tree", "depth": 0}}),
         "max_results",
         100,
         false,
@@ -139,7 +153,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     assert_mcp_limit_contract(
         client.peer(),
         "search",
-        serde_json::json!({"query": "answer", "mode": "text"}),
+        serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
         "max_results",
         100,
         false,
@@ -148,7 +162,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     assert_mcp_limit_contract(
         client.peer(),
         "search",
-        serde_json::json!({"query": "answer", "mode": "text"}),
+        serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
         "max_tokens",
         32_000,
         false,
@@ -157,7 +171,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     assert_mcp_limit_contract(
         client.peer(),
         "search",
-        serde_json::json!({"query": "answer", "mode": "text"}),
+        serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
         "context_lines",
         20,
         true,
@@ -249,7 +263,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     let files = call_tool(
         client.peer(),
         "files",
-        serde_json::json!({"operation": "tree"}),
+        serde_json::json!({"operation": {"kind": "tree"}}),
     )
     .await
     .expect("files with configured default");
@@ -273,8 +287,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
         client.peer(),
         "search",
         serde_json::json!({
-            "query": "answer",
-            "mode": "text",
+            "operation": {"kind": "text", "query": "answer"},
             "expected_repository_id": repository_id,
         }),
     )
@@ -292,7 +305,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
         client.peer(),
         "search",
         serde_json::json!({
-            "query": "answer",
+            "operation": {"kind": "text", "query": "answer"},
             "expected_repository_id": "different-repository",
         }),
     )
@@ -380,21 +393,21 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let cases = [
         (
             "files",
-            serde_json::json!({"operation": "tree"}),
+            serde_json::json!({"operation": {"kind": "tree"}}),
             "max_results",
             2,
             1,
         ),
         (
             "search",
-            serde_json::json!({"query": "answer"}),
+            serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
             "max_results",
             2,
             1,
         ),
         (
             "search",
-            serde_json::json!({"query": "answer"}),
+            serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
             "max_tokens",
             51,
             50,
@@ -447,7 +460,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let starting = call_tool(
         client.peer(),
         "files",
-        serde_json::json!({"operation": "tree", "max_results": 1}),
+        serde_json::json!({"operation": {"kind": "tree", "max_results": 1}}),
     )
     .await
     .expect("valid starting request");
@@ -467,7 +480,7 @@ async fn customized_mcp_limits_apply_while_starting_and_after_failure() {
     let failed = call_tool(
         client.peer(),
         "files",
-        serde_json::json!({"operation": "tree", "max_results": 1}),
+        serde_json::json!({"operation": {"kind": "tree", "max_results": 1}}),
     )
     .await
     .expect("valid failed-state request");
@@ -507,10 +520,19 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let mut server = server_start.await.expect("join server startup");
 
     let server_info = client.peer().peer_info().expect("server initialize result");
-    assert_eq!(server_info.server_info.name, "leantoken");
+    assert_eq!(
+        server_info
+            .server_info
+            .as_ref()
+            .expect("server identity")
+            .name,
+        "leantoken"
+    );
     assert!(server_info.capabilities.resources.is_some());
     let (runtime_version, contract_fingerprint) = server_info
         .server_info
+        .as_ref()
+        .expect("server identity")
         .version
         .split_once("+contract.")
         .expect("runtime version carries the MCP contract fingerprint");
@@ -595,9 +617,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     );
 
     let files_arguments = serde_json::json!({
-        "operation": "tree",
-        "depth": 2,
-        "max_results": 10
+        "operation": {"kind": "tree", "depth": 2, "max_results": 10}
     })
     .as_object()
     .expect("request object")
@@ -615,12 +635,14 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "search",
         serde_json::json!({
-            "query": "answer",
-            "mode": "text",
-            "all_occurrences": true,
-            "include_paths": ["lib.rs"],
-            "context_lines": 0,
-            "max_results": 10
+            "operation": {
+                "kind": "text",
+                "query": "answer",
+                "all_occurrences": true,
+                "include_paths": ["lib.rs"],
+                "context_lines": 0,
+                "max_results": 10
+            }
         }),
     )
     .await
@@ -711,14 +733,16 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "search",
         serde_json::json!({
-            "query": "answer",
-            "mode": "text",
-            "all_occurrences": true,
-            "coordinates_only": true,
-            "include_paths": ["lib.rs"],
-            "context_lines": 0,
-            "max_results": 10,
-            "query_receipt": {"kind": "record"}
+            "operation": {
+                "kind": "text",
+                "query": "answer",
+                "all_occurrences": true,
+                "coordinates_only": true,
+                "include_paths": ["lib.rs"],
+                "context_lines": 0,
+                "max_results": 10,
+                "query_receipt": {"kind": "record"}
+            }
         }),
     )
     .await
@@ -738,16 +762,18 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "search",
         serde_json::json!({
-            "query": "answer",
-            "mode": "text",
-            "all_occurrences": true,
-            "coordinates_only": true,
-            "include_paths": ["lib.rs"],
-            "context_lines": 0,
-            "max_results": 10,
-            "query_receipt": {
-                "kind": "reuse",
-                "receipt_id": query_receipt_id
+            "operation": {
+                "kind": "text",
+                "query": "answer",
+                "all_occurrences": true,
+                "coordinates_only": true,
+                "include_paths": ["lib.rs"],
+                "context_lines": 0,
+                "max_results": 10,
+                "query_receipt": {
+                    "kind": "reuse",
+                    "receipt_id": query_receipt_id
+                }
             }
         }),
     )
@@ -792,11 +818,11 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
 
     for (arguments, expected_path) in [
         (
-            serde_json::json!({"operation": "find", "query": "many"}),
+            serde_json::json!({"operation": {"kind": "find", "query": "many"}}),
             "many.rs",
         ),
         (
-            serde_json::json!({"operation": "glob", "pattern": "lib.rs"}),
+            serde_json::json!({"operation": {"kind": "glob", "pattern": "lib.rs"}}),
             "lib.rs",
         ),
     ] {
@@ -836,11 +862,13 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     )
     .expect("write source after initial index");
     let reconcile_working_tree_arguments = serde_json::json!({
-        "query": "newly_committed_package",
-        "mode": "identifier",
-        "max_results": 5,
-        "max_tokens": 100,
-        "consistency": "reconcile_working_tree"
+        "operation": {
+            "kind": "identifier",
+            "query": "newly_committed_package",
+            "max_results": 5,
+            "max_tokens": 100,
+            "consistency": "reconcile_working_tree"
+        }
     })
     .as_object()
     .expect("working-tree search arguments")
@@ -863,49 +891,34 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .as_object()
     .expect("invalid read arguments")
     .clone();
-    let error = client
+    let response = client
         .peer()
         .call_tool(CallToolRequestParams::new("read").with_arguments(invalid_arguments))
         .await
-        .expect_err("invalid path should be a protocol error");
-    assert!(matches!(
-        error,
-        ServiceError::McpError(data)
-            if data.code == ErrorCode::INVALID_PARAMS
-                && data.data.as_ref().and_then(|value| value["category"].as_str())
-                    == Some("path_outside_root")
-    ));
+        .expect("invalid path should return a tool error result");
+    assert_eq!(response.is_error, Some(true));
+    assert!(
+        !serde_json::to_string(&response)
+            .expect("serialize bounded tool error")
+            .contains("../secret")
+    );
 
     let unknown_field = call_tool(
         client.peer(),
         "files",
         serde_json::json!({
-            "operation": "tree",
+            "operation": {"kind": "tree"},
             "bogus": true
         }),
     )
     .await
-    .expect_err("unknown fields should be protocol invalid-params errors");
-    let ServiceError::McpError(data) = unknown_field else {
-        panic!("unknown field returned a tool result error");
-    };
-    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
-    assert_eq!(
-        data.data
-            .as_ref()
-            .and_then(|value| value["category"].as_str()),
-        Some("invalid_input")
-    );
-    assert_eq!(
-        data.data.as_ref().and_then(|value| value["field"].as_str()),
-        Some("parameters")
-    );
-    assert!(
-        data.data
-            .as_ref()
-            .and_then(|value| value["reason"].as_str())
-            .is_some_and(|reason| reason.contains("unknown field") && reason.contains("bogus"))
-    );
+    .expect("unknown fields should return a tool error result");
+    assert_eq!(unknown_field.is_error, Some(true));
+    assert!(unknown_field.content.iter().any(|content| {
+        content
+            .as_text()
+            .is_some_and(|text| text.text.contains("unknown field") && text.text.contains("bogus"))
+    }));
 
     let missing_json = call_tool(
         client.peer(),
@@ -931,10 +944,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     );
 
     let oversized_arguments = serde_json::json!({
-        "query": "x".repeat(65 * 1024),
-        "mode": "text",
-        "max_results": 1,
-        "max_tokens": 10
+        "operation": {
+            "kind": "text",
+            "query": "x".repeat(65 * 1024),
+            "max_results": 1,
+            "max_tokens": 10
+        }
     })
     .as_object()
     .expect("oversized search arguments")
@@ -957,7 +972,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "files",
         serde_json::json!({
-            "operation": "tree",
+            "operation": {"kind": "tree"},
             "expected_repository_id": boundary_id
         }),
     )
@@ -975,7 +990,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "files",
         serde_json::json!({
-            "operation": "tree",
+            "operation": {"kind": "tree"},
             "expected_repository_id": oversized_id
         }),
     )
@@ -1001,7 +1016,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "files",
         serde_json::json!({
-            "operation": "tree",
+            "operation": {"kind": "tree"},
             "expected_repository_id": "é".repeat(64)
         }),
     )
@@ -1017,7 +1032,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         client.peer(),
         "files",
         serde_json::json!({
-            "operation": "tree",
+            "operation": {"kind": "tree"},
             "expected_repository_id": "é".repeat(65)
         }),
     )
@@ -1031,10 +1046,12 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     ));
 
     let bounded_arguments = serde_json::json!({
-        "query": "answer",
-        "mode": "text",
-        "max_results": 100,
-        "max_tokens": 50
+        "operation": {
+            "kind": "text",
+            "query": "answer",
+            "max_results": 100,
+            "max_tokens": 50
+        }
     })
     .as_object()
     .expect("bounded search arguments")
@@ -1232,22 +1249,30 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
         .as_object()
         .expect("read arguments")
         .clone();
-        let error = client
+        // RMCP 3.1 reports parameter-deserialization failures as tool-result
+        // errors, while service-level path checks remain MCP errors. Both
+        // paths must keep caller-controlled and canonical paths out of wire
+        // diagnostics.
+        let response = client
             .peer()
             .call_tool(CallToolRequestParams::new("read").with_arguments(arguments))
-            .await
-            .expect_err("path must be rejected");
-        let ServiceError::McpError(data) = error else {
-            panic!("unexpected service error: {error}");
+            .await;
+        let wire = match response {
+            Ok(response) => {
+                assert_eq!(response.is_error, Some(true));
+                serde_json::to_string(&response).expect("serialize tool error")
+            }
+            Err(ServiceError::McpError(data)) => {
+                assert_eq!(
+                    data.data
+                        .as_ref()
+                        .and_then(|value| value["category"].as_str()),
+                    Some("path_outside_root")
+                );
+                serde_json::to_string(&data).expect("serialize MCP error")
+            }
+            Err(other) => panic!("unexpected service error: {other}"),
         };
-        assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
-        assert_eq!(
-            data.data
-                .as_ref()
-                .and_then(|value| value["category"].as_str()),
-            Some("path_outside_root")
-        );
-        let wire = serde_json::to_string(&data).expect("serialize error");
         for marker in [
             requested,
             external_path.to_str().expect("external UTF-8"),
@@ -1286,28 +1311,28 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     for (tool, arguments, field, limit, zero_is_valid) in [
         (
             "files",
-            serde_json::json!({"operation": "tree", "depth": 0}),
+            serde_json::json!({"operation": {"kind": "tree", "depth": 0}}),
             "max_results",
             100,
             false,
         ),
         (
             "search",
-            serde_json::json!({"query": "answer", "mode": "text"}),
+            serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
             "max_results",
             100,
             false,
         ),
         (
             "search",
-            serde_json::json!({"query": "answer", "mode": "text"}),
+            serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
             "max_tokens",
             32_000,
             false,
         ),
         (
             "search",
-            serde_json::json!({"query": "answer", "mode": "text"}),
+            serde_json::json!({"operation": {"kind": "text", "query": "answer"}}),
             "context_lines",
             20,
             true,
@@ -1349,7 +1374,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     }
 
     let request = || {
-        let arguments = serde_json::json!({ "operation": "tree" })
+        let arguments = serde_json::json!({ "operation": {"kind": "tree"} })
             .as_object()
             .expect("arguments")
             .clone();

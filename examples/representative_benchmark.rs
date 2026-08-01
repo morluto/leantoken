@@ -4115,6 +4115,7 @@ mod tests {
             coverage: ContextCoverageReceipt::default(),
             routing: None,
             handoff_manifest: None,
+            provenance: None,
             warnings: Vec::new(),
             meta: ResponseMeta {
                 repository_id: "repository".into(),

@@ -9,6 +9,7 @@ use super::execution::{JsonCursorVersion, JsonKeyOrder};
 use super::keys::key_entries;
 use super::projection::{ProjectionState, count_nodes, project_json};
 use super::schema::{SchemaProjectionCounters, build_schema_breadth_first, project_schema_page};
+use super::source::{JsonMeasurementCache, JsonMeasurementKey};
 use super::validation::validate_json_request;
 use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
@@ -438,4 +439,50 @@ fn schema_projection_counters_are_zero_for_empty_cache() {
     assert_eq!(counters.schema_serializations, 0);
     assert_eq!(counters.schema_token_counts, 0);
     assert_eq!(counters.cache_hits, 0);
+}
+
+#[test]
+fn json_measurement_cache_reuses_serialization_and_exact_tokens() {
+    let root = tempfile::tempdir().expect("root");
+    let config = crate::Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("config");
+    let services = Services::open(config).expect("services");
+    let value = json!([{"pointer": "/src/lib.rs", "type": "file"}]);
+    let mut cache = JsonMeasurementCache::default();
+    let first = cache
+        .measure(&services, JsonMeasurementKey::KeysPrefix(1), &value)
+        .expect("first measurement");
+    let second = cache
+        .measure(&services, JsonMeasurementKey::KeysPrefix(1), &value)
+        .expect("cached measurement");
+    assert_eq!(first, second);
+    assert_eq!(
+        first,
+        services
+            .config
+            .tokenizer
+            .count(&serde_json::to_string(&value).expect("serialize"))
+    );
+    assert_eq!(cache.counters().serializations, 1);
+    assert_eq!(cache.counters().tokenizer_counts, 1);
+    assert_eq!(cache.counters().cache_hits, 1);
+
+    let different_value = json!([{"pointer": "/src/main.rs", "type": "file"}]);
+    let different_tokens = cache
+        .measure(
+            &services,
+            JsonMeasurementKey::KeysPrefix(1),
+            &different_value,
+        )
+        .expect("different measurement");
+    assert_eq!(
+        different_tokens,
+        services
+            .config
+            .tokenizer
+            .count(&serde_json::to_string(&different_value).expect("serialize different value"))
+    );
+    assert_eq!(cache.counters().serializations, 2);
+    assert_eq!(cache.counters().tokenizer_counts, 2);
+    assert_eq!(cache.counters().cache_hits, 1);
 }
