@@ -2043,10 +2043,20 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     let unsafe_runtime = runtime("0.9.0", b"unsafe");
     std::fs::write(unsafe_runtime.parent().unwrap().join("notes.txt"), b"keep")
         .expect("unrecognized sibling");
+    let referenced_alias = referenced
+        .parent()
+        .expect("referenced runtime directory")
+        .join("..")
+        .join("1.1.0")
+        .join(executable_name);
+    assert_eq!(
+        referenced_alias.canonicalize().unwrap(),
+        referenced.canonicalize().unwrap()
+    );
     let claude = serde_json::json!({
         "mcpServers": {
             "leantoken": {
-                "command": referenced,
+                "command": referenced_alias,
                 "args": ["--managed-by-setup", "mcp"]
             }
         }
@@ -2135,6 +2145,19 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     let final_list: serde_json::Value =
         serde_json::from_slice(&final_list.stdout).expect("final runtime JSON");
     assert_eq!(final_list["ignored_entries"], 0);
+
+    std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor config directory");
+    let oversized = std::fs::File::create(temp.path().join(".cursor/mcp.json"))
+        .expect("oversized Cursor config");
+    oversized
+        .set_len(8 * 1024 * 1024 + 1)
+        .expect("extend Cursor config");
+    let bounded = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("bounded runtime list");
+    assert!(!bounded.status.success());
+    assert!(String::from_utf8_lossy(&bounded.stderr).contains("byte limit"));
 }
 
 #[test]

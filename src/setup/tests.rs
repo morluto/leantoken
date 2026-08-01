@@ -9,6 +9,17 @@ fn runtime_root_falls_back_below_the_resolved_home() {
 }
 
 #[test]
+fn setup_file_reads_reject_content_above_the_memory_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("oversized.json");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(MAX_SETUP_FILE_BYTES + 1).unwrap();
+
+    let error = read_optional(&path).expect_err("oversized setup file must fail closed");
+    assert!(error.to_string().contains("byte limit"));
+}
+
+#[test]
 fn failed_launcher_verification_marks_setup_report_failed() {
     let mut report = empty_report(SetupOperation::Setup, true);
     report.cancelled = false;
@@ -1061,6 +1072,58 @@ fn codex_setup_does_not_touch_an_unselected_claude_skill() {
             .join(".agents/skills/leantoken/SKILL.md")
             .exists()
     );
+}
+
+#[test]
+fn final_client_removal_cleans_marker_owned_legacy_discovery_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let prompt = FixedPrompt {
+        selected: None,
+        confirmed: true,
+    };
+    let setup = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &prompt,
+    )
+    .unwrap();
+    assert!(!setup.has_client_failures());
+    let agents_skill = environment.home.join(".agents/skills/leantoken/SKILL.md");
+    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
+    fs::copy(&agents_skill, &claude_skill).unwrap();
+
+    let removal = run_with(
+        SetupOperation::Remove,
+        SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &prompt,
+    )
+    .unwrap();
+
+    assert_eq!(removal.discovery_plan.len(), 2);
+    assert!(!agents_skill.exists());
+    assert!(!claude_skill.exists());
 }
 
 #[test]

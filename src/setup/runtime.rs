@@ -309,14 +309,17 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
             }
         };
         let safely_prunable = managed_runtime_directory_is_exact(&item.path(), &executable)?;
+        let canonical_executable = executable.canonicalize()?;
         let referenced_by = registrations
             .iter()
-            .filter(|registration| Path::new(&registration.command) == executable)
+            .filter(|registration| {
+                Path::new(&registration.command)
+                    .canonicalize()
+                    .is_ok_and(|command| command == canonical_executable)
+            })
             .map(|registration| registration.client)
             .collect::<Vec<_>>();
-        let active = executable
-            .canonicalize()
-            .is_ok_and(|path| path == current_executable);
+        let active = canonical_executable == current_executable;
         entries.push(RuntimeInventoryEntry {
             report: RuntimeEntryReport {
                 version: version_name,

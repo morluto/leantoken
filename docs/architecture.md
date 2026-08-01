@@ -563,7 +563,9 @@ verification out per configured client.
 
 Private-runtime inventory is repository-free and bounded to 512 entries below
 the application runtime root and eight entries within any recognized semantic
-version directory. Listing reads configured host registrations once to attach
+version directory. Setup and inventory reads are capped at 8 MiB per client
+configuration, discovery file, or recovery journal before parsing. Listing
+reads at most six configured host registrations once to attach canonicalized
 references. Pruning defaults to a non-mutating plan, serializes applied deletion
 with setup, retains the active executable and every referenced runtime, and
 deletes only a version directory whose exact contents are its one expected

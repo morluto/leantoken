@@ -144,10 +144,19 @@ pub(super) fn run_with(
             .filter(|configured| !clients.contains(configured))
             .map(|client| client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
-        selected_discovery_paths
-            .difference(&remaining_paths)
-            .cloned()
+        if remaining_paths.is_empty() {
+            [
+                environment.home.join(".agents/skills/leantoken/SKILL.md"),
+                environment.home.join(".claude/skills/leantoken/SKILL.md"),
+            ]
+            .into_iter()
             .collect()
+        } else {
+            selected_discovery_paths
+                .difference(&remaining_paths)
+                .cloned()
+                .collect()
+        }
     };
 
     let plan = resolve_plan(
