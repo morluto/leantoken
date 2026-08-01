@@ -8,10 +8,11 @@ impl ReadCursor {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "-".to_string());
         format!(
-            "{}:read:v2:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:read:v3:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.generation,
             self.target_start_line,
-            self.target_end_line,
+            self.target_end_line
+                .map_or_else(|| "-".to_string(), |line| line.to_string()),
             self.next_start_line,
             self.next_byte,
             if self.full { "f" } else { "b" },
@@ -47,8 +48,11 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         "f" => true,
         _ => return Err(Error::StaleCursor),
     };
+    let target_end_line = (*target_end != "-")
+        .then(|| target_end.parse::<usize>().map_err(|_| Error::StaleCursor))
+        .transpose()?;
     if *kind != "read"
-        || *version != "v2"
+        || *version != "v3"
         || (*full_hash != "-"
             && (full_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
                 || !full_hash.bytes().all(is_lower_hex)))
@@ -62,7 +66,7 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     let cursor = ReadCursor {
         generation: generation.parse().map_err(|_| Error::StaleCursor)?,
         target_start_line: target_start.parse().map_err(|_| Error::StaleCursor)?,
-        target_end_line: target_end.parse().map_err(|_| Error::StaleCursor)?,
+        target_end_line,
         next_start_line: next_start.parse().map_err(|_| Error::StaleCursor)?,
         next_byte: next_byte.parse().map_err(|_| Error::StaleCursor)?,
         full_hash: (*full_hash != "-").then(|| (*full_hash).to_string()),
@@ -72,9 +76,10 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         path_hash: (*path_hash).into(),
     };
     if cursor.target_start_line == 0
-        || cursor.target_end_line < cursor.target_start_line
         || cursor.next_start_line < cursor.target_start_line
-        || cursor.next_start_line > cursor.target_end_line
+        || cursor.target_end_line.is_some_and(|end_line| {
+            end_line < cursor.target_start_line || cursor.next_start_line > end_line
+        })
         || cursor.next_byte == 0
     {
         return Err(Error::StaleCursor);

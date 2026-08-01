@@ -31,7 +31,7 @@ pub(super) fn resolve_read_target(
         }
         return Ok(ResolvedReadTarget {
             target_start_line: cursor.target_start_line,
-            target_end_line: Some(cursor.target_end_line),
+            target_end_line: cursor.target_end_line,
             page_start_line: cursor.next_start_line,
             page_start_byte: cursor.next_byte,
             expected_full_hash: cursor.full_hash,

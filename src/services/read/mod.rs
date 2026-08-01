@@ -435,11 +435,13 @@ impl Services {
         {
             return Err(Error::StaleCursor);
         }
-        let target_end_line = target
+        let observed_target_end_line = target
             .target_end_line
             .unwrap_or(snapshot.end_line)
             .min(snapshot.end_line);
-        if target.target_start_line > target_end_line || target.page_start_line > target_end_line {
+        if target.target_start_line > observed_target_end_line
+            || target.page_start_line > observed_target_end_line
+        {
             return Err(invalid_line_range());
         }
         if range.page_start_line != target.page_start_line {
@@ -476,7 +478,7 @@ impl Services {
             ReadCursor {
                 generation,
                 target_start_line: target.target_start_line,
-                target_end_line,
+                target_end_line: target.target_end_line,
                 next_start_line,
                 next_byte,
                 full_hash: snapshot.content_hash.clone(),
@@ -517,7 +519,7 @@ impl Services {
                 path: request.path.clone(),
                 status,
                 target_start_line: target.target_start_line,
-                target_end_line,
+                target_end_line: observed_target_end_line,
                 returned_start_line,
                 returned_end_line,
                 truncated,

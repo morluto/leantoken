@@ -1242,7 +1242,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             heading: None,
             heading_occurrence: None,
             continuation_cursor: Some(
-                "1:read:v2:1:1:1:1:b:-:0000000000000000:0:-".into(),
+                "1:read:v3:1:1:1:1:b:-:0000000000000000:0:-".into(),
             ),
             max_tokens: Some(100),
             expected_hash: None,
@@ -1296,6 +1296,49 @@ async fn token_truncated_read_reports_the_returned_line_range() {
     assert_eq!(response.returned_end_line, response.returned_start_line + returned_lines - 1);
     assert!(response.returned_end_line <= 4);
     assert!(response.meta.source_tokens <= 3);
+}
+
+#[tokio::test]
+async fn bounded_open_continuation_preserves_the_unbounded_target() {
+    let source = (1..=1_400)
+        .map(|line| format!("line_{line:04} repeated words for a large bounded read\n"))
+        .collect::<String>();
+    let (_root, services) = indexed_source("open.txt", source.as_bytes()).await;
+
+    let mut cursor = None;
+    let mut reconstructed = String::new();
+    let mut pages = 0usize;
+    loop {
+        let response = services
+            .read(ReadRequest {
+                path: "open.txt".into(),
+                start_line: None,
+                end_line: None,
+                symbol: None,
+                heading: None,
+                heading_occurrence: None,
+                continuation_cursor: cursor.take(),
+                max_tokens: Some(256),
+                expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::Bounded,
+            })
+            .await
+            .expect("open bounded page");
+        pages += 1;
+        reconstructed.push_str(response.content.as_deref().expect("page content"));
+        if !response.truncated {
+            assert!(response.continuation_cursor.is_none());
+            break;
+        }
+        cursor = response.continuation_cursor;
+        assert!(cursor.is_some(), "truncated page must provide a cursor");
+        assert!(pages < 100, "continuation cursor must make progress");
+    }
+
+    assert!(pages > 1, "fixture must require continuation pages");
+    assert_eq!(reconstructed, source);
 }
 
 #[tokio::test]

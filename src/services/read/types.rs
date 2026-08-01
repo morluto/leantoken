@@ -105,7 +105,9 @@ pub(super) struct MaterializedRead {
 pub(super) struct ReadCursor {
     pub(super) generation: u64,
     pub(super) target_start_line: usize,
-    pub(super) target_end_line: usize,
+    /// The requested target endpoint. `None` preserves an open-ended read even
+    /// when a bounded page stopped before EOF.
+    pub(super) target_end_line: Option<usize>,
     pub(super) next_start_line: usize,
     pub(super) next_byte: usize,
     /// Full-file hash for `Full` policy cursors; `None` for `Bounded` cursors.
