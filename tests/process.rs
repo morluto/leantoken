@@ -2054,6 +2054,54 @@ fn assert_runtime_prune_decisions(planned: &serde_json::Value) {
     }));
 }
 
+#[cfg(unix)]
+#[test]
+fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let data_home = temp.path().join("data");
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").expect("binary");
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("XDG_DATA_HOME", &data_home)
+            .env_remove("npm_lifecycle_event");
+        command
+    };
+    let initial = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("initial runtime list");
+    assert!(initial.status.success());
+    let initial: serde_json::Value =
+        serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
+    let runtime_root =
+        std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
+    let external = temp.path().join("external-runtimes");
+    let version = external.join("1.0.0");
+    std::fs::create_dir_all(&version).expect("external runtime directory");
+    let executable = version.join("leantoken");
+    std::fs::write(&executable, "external").expect("external runtime");
+    std::fs::create_dir_all(runtime_root.parent().expect("runtime root parent"))
+        .expect("runtime parent");
+    std::os::unix::fs::symlink(&external, &runtime_root).expect("symlink runtime root");
+
+    let list = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("list symlinked runtime root");
+    assert!(!list.status.success());
+    assert!(String::from_utf8_lossy(&list.stderr).contains("non-symlink directory"));
+    let prune = command()
+        .args(["runtime", "prune", "--keep-latest", "0", "--yes"])
+        .output()
+        .expect("prune symlinked runtime root");
+    assert!(!prune.status.success());
+    assert!(String::from_utf8_lossy(&prune.stderr).contains("non-symlink directory"));
+    assert!(executable.exists());
+    assert!(!external.join("setup.lock").exists());
+}
+
 #[cfg(not(windows))]
 #[test]
 fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
@@ -2455,6 +2503,47 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
         ])
     );
     assert_eq!(doctor_report["first_call"]["status"], "ready");
+
+    let configured_doctor = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env("XDG_DATA_HOME", &data_home)
+        .env("LOCALAPPDATA", &data_home)
+        .env("npm_lifecycle_event", "npx")
+        .env("npm_node_execpath", runtime.join("node"))
+        .env("npm_execpath", runtime.join("npm-cli.js"))
+        .args([
+            "--root",
+            repository.to_str().expect("repository UTF-8"),
+            "--database",
+            temp.path()
+                .join("configured-private-runtime.sqlite")
+                .to_str()
+                .expect("database UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
+        ])
+        .output()
+        .expect("run configured private-runtime doctor through npx environment");
+    assert!(
+        configured_doctor.status.success(),
+        "configured private runtime doctor stderr: {}",
+        String::from_utf8_lossy(&configured_doctor.stderr)
+    );
+    let configured_doctor: serde_json::Value = serde_json::from_slice(&configured_doctor.stdout)
+        .expect("configured private runtime doctor report");
+    assert_eq!(configured_doctor["integration"]["verified_client"], "codex");
+    assert_eq!(
+        configured_doctor["integration"]["registration_health"],
+        "current"
+    );
+    assert_eq!(
+        configured_doctor["integration"]["repair_command"],
+        "leantoken doctor --json"
+    );
     let codex = std::fs::read_to_string(temp.path().join(".codex/config.toml"))
         .expect("Codex configuration");
     assert!(codex.contains(runtime_path.to_str().expect("UTF-8 runtime path")));

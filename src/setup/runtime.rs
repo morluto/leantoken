@@ -147,6 +147,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     let home = home_directory()
         .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
     let runtime_root = setup_runtime_root(&home);
+    validate_runtime_root(&runtime_root)?;
     let _setup_lock = (!request.dry_run)
         .then(|| acquire_setup_lock(&runtime_root))
         .transpose()?;
@@ -196,6 +197,7 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
             });
             continue;
         }
+        validate_runtime_root(&runtime_root)?;
         match managed_runtime_directory_is_exact(&entry.directory, &entry.report.path) {
             Ok(true) => {}
             Ok(false) => {
@@ -286,6 +288,13 @@ struct RuntimeInventory {
 
 fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
     let runtime_root = setup_runtime_root(home);
+    if !validate_runtime_root(&runtime_root)? {
+        return Ok(RuntimeInventory {
+            entries: Vec::new(),
+            total_bytes: 0,
+            ignored_entries: 0,
+        });
+    }
     let directory = match fs::read_dir(&runtime_root) {
         Ok(directory) => directory,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -378,6 +387,20 @@ fn runtime_inventory(home: &Path) -> Result<RuntimeInventory> {
         total_bytes,
         ignored_entries,
     })
+}
+
+fn validate_runtime_root(runtime_root: &Path) -> Result<bool> {
+    match fs::symlink_metadata(runtime_root) {
+        Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
+            Ok(true)
+        }
+        Ok(_) => Err(Error::SetupFailure(format!(
+            "private runtime root must be a non-symlink directory: {}",
+            runtime_root.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn managed_runtime_directory_is_exact(directory: &Path, executable: &Path) -> Result<bool> {

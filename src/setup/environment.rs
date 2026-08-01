@@ -72,7 +72,9 @@ pub(super) fn home_directory() -> Option<PathBuf> {
         .or_else(|| BaseDirs::new().map(|directories| directories.home_dir().to_path_buf()))
 }
 
-pub(crate) fn diagnostic_state() -> SetupDiagnostic {
+pub(crate) fn diagnostic_state(
+    expected_launcher: Option<(&str, &[String], &str)>,
+) -> SetupDiagnostic {
     let Some(home) = home_directory() else {
         return SetupDiagnostic {
             registration_status: "unknown",
@@ -82,8 +84,22 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
             discovery_paths: Vec::new(),
         };
     };
-    let configured =
-        McpLauncher::current().and_then(|launcher| configured_registrations(&home, &launcher));
+    diagnostic_state_at(&home, expected_launcher)
+}
+
+pub(super) fn diagnostic_state_at(
+    home: &Path,
+    expected_launcher: Option<(&str, &[String], &str)>,
+) -> SetupDiagnostic {
+    let configured = match expected_launcher {
+        Some((command, args, version)) => {
+            configured_registrations_against(home, command, args, version)
+        }
+        None => {
+            McpLauncher::current().and_then(|launcher| configured_registrations(home, &launcher))
+        }
+    };
+    let inspection_failed = configured.is_err();
     let (registration_status, registrations) = match configured {
         Ok(registrations) if registrations.is_empty() => ("not_registered", registrations),
         Ok(registrations) => ("registered", registrations),
@@ -96,7 +112,7 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
     let expected_discovery_paths = registrations
         .iter()
         .filter(|registration| registration.managed)
-        .map(|registration| registration.client.discovery_path(&home))
+        .map(|registration| registration.client.discovery_path(home))
         .collect::<std::collections::BTreeSet<_>>();
     let discovery_paths = [
         home.join(".agents/skills/leantoken/SKILL.md"),
@@ -114,7 +130,9 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         registration_status,
         configured_clients,
         registrations,
-        discovery_status: if expected_discovery_paths.is_empty()
+        discovery_status: if inspection_failed {
+            "unknown"
+        } else if expected_discovery_paths.is_empty()
             || expected_discovery_paths
                 .iter()
                 .all(|path| !discovery_paths.contains(path))
@@ -136,9 +154,32 @@ pub(super) fn configured_registrations(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Vec<ConfiguredRegistration>> {
+    configured_registrations_against(
+        home,
+        launcher.command()?,
+        &launcher.args,
+        launcher.version(),
+    )
+}
+
+fn configured_registrations_against(
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
+) -> Result<Vec<ConfiguredRegistration>> {
     SetupClient::ALL
         .into_iter()
-        .filter_map(|client| read_configured_registration(client, home, launcher).transpose())
+        .filter_map(|client| {
+            read_configured_registration_against(
+                client,
+                home,
+                expected_command,
+                expected_args,
+                expected_version,
+            )
+            .transpose()
+        })
         .collect()
 }
 
@@ -146,6 +187,22 @@ pub(super) fn read_configured_registration(
     client: SetupClient,
     home: &Path,
     launcher: &McpLauncher,
+) -> Result<Option<ConfiguredRegistration>> {
+    read_configured_registration_against(
+        client,
+        home,
+        launcher.command()?,
+        &launcher.args,
+        launcher.version(),
+    )
+}
+
+fn read_configured_registration_against(
+    client: SetupClient,
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
 ) -> Result<Option<ConfiguredRegistration>> {
     let definition = client.definition(home);
     let Some(source) = read_optional(&definition.path)? else {
@@ -178,8 +235,7 @@ pub(super) fn read_configured_registration(
             toml_registration_command(entry, &definition.path)?
         }
     };
-    let expected_command = launcher.command()?.to_owned();
-    let matches_current = command == expected_command && args == launcher.args;
+    let matches_current = command == expected_command && args == expected_args;
     let managed = is_managed_registration(&command, &args, &setup_runtime_root(home));
     Ok(Some(ConfiguredRegistration {
         client,
@@ -187,7 +243,7 @@ pub(super) fn read_configured_registration(
         version: registered_version(&command, &args),
         command,
         args,
-        expected_version: launcher.version().to_owned(),
+        expected_version: expected_version.to_owned(),
         matches_current,
         managed,
     }))

@@ -159,7 +159,7 @@ pub fn run_configured_client(
     })?;
     let mut transport =
         DoctorTransport::spawn_launcher(config, &registration.command, &registration.args)?;
-    run_with_transport(config, ready_timeout, &mut transport, Some(client))
+    run_with_transport(config, ready_timeout, &mut transport, Some(&registration))
 }
 
 /// Verify an exact setup launcher through the same MCP contract used by
@@ -179,7 +179,7 @@ fn run_with_transport(
     config: &Config,
     ready_timeout: Duration,
     transport: &mut DoctorTransport,
-    verified_client: Option<SetupClient>,
+    verified_registration: Option<&setup::ConfiguredRegistration>,
 ) -> Result<DoctorReport> {
     transport.send(
         json!({
@@ -356,7 +356,15 @@ fn run_with_transport(
     };
 
     transport.close();
-    let setup = setup::diagnostic_state();
+    let expected_launcher = verified_registration.map(|registration| {
+        (
+            registration.command.as_str(),
+            registration.args.as_slice(),
+            registration.expected_version.as_str(),
+        )
+    });
+    let setup = setup::diagnostic_state(expected_launcher);
+    let verified_client = verified_registration.map(|registration| registration.client);
     let registrations = setup
         .registrations
         .iter()

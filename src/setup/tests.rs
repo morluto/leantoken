@@ -503,6 +503,31 @@ fn diagnostic_reports_configured_command_and_stale_release() {
 }
 
 #[test]
+fn diagnostic_preserves_unknown_discovery_state_after_config_parse_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let config = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(config, "[broken").unwrap();
+    let skill = environment.home.join(".agents/skills/leantoken/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    fs::write(&skill, format!("{DISCOVERY_SKILL_MARKER}\n")).unwrap();
+
+    let diagnostic = diagnostic_state_at(
+        &environment.home,
+        Some((
+            environment.launcher.command().unwrap(),
+            &environment.launcher.args,
+            environment.launcher.version(),
+        )),
+    );
+
+    assert_eq!(diagnostic.registration_status, "unknown");
+    assert_eq!(diagnostic.discovery_status, "unknown");
+    assert_eq!(diagnostic.discovery_paths, vec![skill]);
+}
+
+#[test]
 fn malformed_client_blocks_the_entire_plan_before_writes() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
