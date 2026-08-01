@@ -280,7 +280,7 @@ pub struct RuntimePruneResult {
     pub path: PathBuf,
     /// Bytes represented by this decision.
     pub size_bytes: u64,
-    /// `retained`, `would_remove`, `removed`, or `failed`.
+    /// `retained`, `would_remove`, `removed`, `partially_removed`, or `failed`.
     pub action: String,
     /// Stable explanation for retaining or selecting the runtime.
     pub reason: String,

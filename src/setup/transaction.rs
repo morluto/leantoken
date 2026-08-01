@@ -64,7 +64,7 @@ pub(super) fn content_hash(content: &str) -> String {
 
 pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()> {
     let path = transaction_path(runtime_root);
-    let Some(serialized) = read_optional(&path)? else {
+    let Some(serialized) = read_optional_with_limit(&path, MAX_SETUP_JOURNAL_BYTES)? else {
         return Ok(());
     };
     let journal: SetupTransactionJournal = serde_json::from_str(&serialized).map_err(|error| {
@@ -147,6 +147,11 @@ pub(super) fn begin_setup_transaction(
         entries,
     };
     let serialized = serde_json::to_string(&journal)?;
+    if serialized.len() as u64 > MAX_SETUP_JOURNAL_BYTES {
+        return Err(Error::SetupFailure(format!(
+            "setup recovery journal exceeds the {MAX_SETUP_JOURNAL_BYTES}-byte aggregate limit"
+        )));
+    }
     let mut temporary = NamedTempFile::new_in(&plan.transaction_root)?;
     temporary.write_all(serialized.as_bytes())?;
     temporary.as_file_mut().sync_all()?;

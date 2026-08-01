@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const MAX_SETUP_FILE_BYTES: u64 = 8 * 1024 * 1024;
+pub(super) const MAX_SETUP_JOURNAL_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum EditStatus {
@@ -25,33 +26,48 @@ impl fmt::Display for EditStatus {
 }
 
 pub(super) fn read_optional(path: &Path) -> Result<Option<String>> {
+    read_optional_with_limit(path, MAX_SETUP_FILE_BYTES)
+}
+
+pub(super) fn read_optional_with_limit(path: &Path, max_bytes: u64) -> Result<Option<String>> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    if file.metadata()?.len() > MAX_SETUP_FILE_BYTES {
-        return Err(setup_file_limit_error(path));
+    if file.metadata()?.len() > max_bytes {
+        return Err(setup_file_limit_error(path, max_bytes));
     }
     let mut bytes = Vec::new();
-    file.take(MAX_SETUP_FILE_BYTES + 1)
+    file.take(max_bytes.saturating_add(1))
         .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_SETUP_FILE_BYTES {
-        return Err(setup_file_limit_error(path));
+    if bytes.len() as u64 > max_bytes {
+        return Err(setup_file_limit_error(path, max_bytes));
     }
     String::from_utf8(bytes)
         .map(Some)
         .map_err(|error| invalid_config(path, error))
 }
 
-fn setup_file_limit_error(path: &Path) -> Error {
+fn setup_file_limit_error(path: &Path, max_bytes: u64) -> Error {
     Error::SetupFailure(format!(
-        "refusing to read setup file above the {MAX_SETUP_FILE_BYTES}-byte limit: {}",
+        "refusing to read setup file above the {max_bytes}-byte limit: {}",
         path.display()
     ))
 }
 
+pub(super) fn validate_setup_content_size(path: &Path, content: &str) -> Result<()> {
+    if content.len() as u64 > MAX_SETUP_FILE_BYTES {
+        return Err(Error::SetupFailure(format!(
+            "refusing to write setup file above the {MAX_SETUP_FILE_BYTES}-byte limit: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
+    validate_setup_content_size(path, updated)?;
     if original == updated {
         return Ok(());
     }

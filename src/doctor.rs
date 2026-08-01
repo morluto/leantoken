@@ -71,7 +71,7 @@ pub struct IntegrationReport {
     pub configured_clients: Vec<SetupClient>,
     /// Configured executable and version details for each LeanToken entry.
     pub registrations: Vec<RegistrationReport>,
-    /// `current`, `stale`, `not_registered`, or `unknown`.
+    /// `current`, `stale`, `unmanaged_stale`, `not_registered`, or `unknown`.
     pub registration_health: &'static str,
     /// `installed`, `partial`, `missing`, or `unknown`.
     pub discovery_status: &'static str,
@@ -371,16 +371,12 @@ fn run_with_transport(
             managed: registration.managed,
         })
         .collect::<Vec<_>>();
-    let registration_health = if registrations.is_empty() {
-        setup.registration_status
-    } else if registrations
-        .iter()
-        .all(|registration| registration.matches_current)
-    {
-        "current"
-    } else {
-        "stale"
-    };
+    let registration_health = registration_health(setup.registration_status, &registrations);
+    let repair_command = registration_repair_command(
+        setup.registration_status,
+        registration_health,
+        &registrations,
+    );
     let result_mode = McpResultMode::Structured;
     Ok(DoctorReport {
         status: "ready",
@@ -402,13 +398,7 @@ fn run_with_transport(
             launcher_status: "healthy",
             handshake_status: "healthy",
             catalog_status: "healthy",
-            repair_command: if setup.registration_status == "not_registered" {
-                "leantoken setup --all --dry-run".into()
-            } else if registration_health == "stale" {
-                "leantoken setup --refresh --yes".into()
-            } else {
-                "leantoken doctor --json".into()
-            },
+            repair_command,
         },
         first_call: FirstCallReport {
             status: "ready",
@@ -417,6 +407,51 @@ fn run_with_transport(
             repository_generation,
         },
     })
+}
+
+fn registration_health(
+    registration_status: &'static str,
+    registrations: &[RegistrationReport],
+) -> &'static str {
+    if registrations.is_empty() {
+        registration_status
+    } else if registrations
+        .iter()
+        .all(|registration| registration.matches_current)
+    {
+        "current"
+    } else if registrations
+        .iter()
+        .any(|registration| !registration.matches_current && !registration.managed)
+    {
+        "unmanaged_stale"
+    } else {
+        "stale"
+    }
+}
+
+fn registration_repair_command(
+    registration_status: &str,
+    registration_health: &str,
+    registrations: &[RegistrationReport],
+) -> String {
+    if registration_status == "not_registered" {
+        return "leantoken setup --all --dry-run".into();
+    }
+    if registration_health == "unmanaged_stale" {
+        let client_flags = registrations
+            .iter()
+            .filter(|registration| !registration.matches_current)
+            .map(|registration| format!("--{}", registration.client.cli_name()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        return format!("leantoken setup {client_flags} --force-unmanaged --dry-run");
+    }
+    if registration_health == "stale" {
+        "leantoken setup --refresh --yes".into()
+    } else {
+        "leantoken doctor --json".into()
+    }
 }
 
 fn server_version_matches_current_runtime(version: &str) -> bool {
@@ -480,7 +515,10 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
             registration.client, registration.command, version
         )?;
     }
-    if report.integration.registration_health == "stale" {
+    if matches!(
+        report.integration.registration_health,
+        "stale" | "unmanaged_stale"
+    ) {
         writeln!(
             output,
             "    Configured host entries do not match this executable; run {}.",
@@ -881,6 +919,38 @@ mod tests {
         assert!(sanitized.contains("<redacted-path>"));
         assert!(!sanitized.contains(path));
         assert_eq!(sanitized.chars().count(), MAX_DIAGNOSTIC_LINE_CHARS);
+    }
+
+    #[test]
+    fn unmanaged_stale_registration_prescribes_a_client_scoped_override_preview() {
+        let registration = |client, matches_current, managed| RegistrationReport {
+            client,
+            config_path: std::path::PathBuf::from("config"),
+            command: "/opt/manual-leantoken".into(),
+            args: vec!["mcp".into()],
+            configured_version: None,
+            expected_version: env!("CARGO_PKG_VERSION").into(),
+            matches_current,
+            managed,
+        };
+        let registrations = vec![
+            registration(SetupClient::Codex, false, false),
+            registration(SetupClient::Cursor, false, true),
+        ];
+
+        let health = registration_health("registered", &registrations);
+
+        assert_eq!(health, "unmanaged_stale");
+        assert_eq!(
+            registration_repair_command("registered", health, &registrations),
+            "leantoken setup --codex --cursor --force-unmanaged --dry-run"
+        );
+        let managed = vec![registration(SetupClient::Claude, false, true)];
+        assert_eq!(registration_health("registered", &managed), "stale");
+        assert_eq!(
+            registration_repair_command("registered", "stale", &managed),
+            "leantoken setup --refresh --yes"
+        );
     }
 
     #[test]

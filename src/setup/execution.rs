@@ -135,8 +135,24 @@ pub(super) fn run_with(
         .iter()
         .map(|client| client.discovery_path(&environment.home))
         .collect::<std::collections::BTreeSet<_>>();
-    let discovery_paths = if operation == SetupOperation::Setup {
-        selected_discovery_paths.into_iter().collect()
+    let (discovery_paths, discovery_cleanup_paths) = if operation == SetupOperation::Setup {
+        let mut required_paths = configured_registrations(&environment.home, launcher)?
+            .into_iter()
+            .filter(|registration| registration.managed)
+            .map(|registration| registration.client.discovery_path(&environment.home))
+            .collect::<std::collections::BTreeSet<_>>();
+        required_paths.extend(selected_discovery_paths.iter().cloned());
+        let cleanup_paths = [
+            environment.home.join(".agents/skills/leantoken/SKILL.md"),
+            environment.home.join(".claude/skills/leantoken/SKILL.md"),
+        ]
+        .into_iter()
+        .filter(|path| !required_paths.contains(path))
+        .collect();
+        (
+            selected_discovery_paths.into_iter().collect(),
+            cleanup_paths,
+        )
     } else {
         let remaining_paths = configured_registrations(&environment.home, launcher)?
             .into_iter()
@@ -145,17 +161,23 @@ pub(super) fn run_with(
             .map(|client| client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
         if remaining_paths.is_empty() {
-            [
-                environment.home.join(".agents/skills/leantoken/SKILL.md"),
-                environment.home.join(".claude/skills/leantoken/SKILL.md"),
-            ]
-            .into_iter()
-            .collect()
+            (
+                [
+                    environment.home.join(".agents/skills/leantoken/SKILL.md"),
+                    environment.home.join(".claude/skills/leantoken/SKILL.md"),
+                ]
+                .into_iter()
+                .collect(),
+                Vec::new(),
+            )
         } else {
-            selected_discovery_paths
-                .difference(&remaining_paths)
-                .cloned()
-                .collect()
+            (
+                selected_discovery_paths
+                    .difference(&remaining_paths)
+                    .cloned()
+                    .collect(),
+                Vec::new(),
+            )
         }
     };
 
@@ -169,6 +191,7 @@ pub(super) fn run_with(
             persistent_cli: environment.persistent_cli,
             runtime,
             discovery_paths,
+            discovery_cleanup_paths,
             force_unmanaged: request.force_unmanaged,
             transaction_root: &environment.runtime_root,
         },

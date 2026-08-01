@@ -2004,6 +2004,57 @@ fn cache_list_and_prune_do_not_require_a_repository() {
 }
 
 #[cfg(not(windows))]
+fn assert_human_runtime_list(output: &[u8]) {
+    let output = String::from_utf8_lossy(output);
+    assert!(output.contains("Private runtime root:"));
+    assert!(output.contains("4 runtime(s)"));
+    assert!(output.contains("referenced_by=Claude Code"));
+    assert!(output.contains("inactive,unrecognized"));
+}
+
+#[cfg(not(windows))]
+fn assert_human_runtime_prune(output: &[u8]) {
+    let output = String::from_utf8_lossy(output);
+    assert!(output.contains("Private runtime prune dry-run:"));
+    assert!(output.contains("would_remove  1.0.0  3 bytes  outside_retention"));
+    assert!(output.contains("retained  0.9.0  6 bytes  unrecognized_directory_contents"));
+}
+
+#[cfg(not(windows))]
+fn assert_runtime_inventory(listed: &serde_json::Value) {
+    assert_eq!(listed["total_entries"], 4);
+    let entries = listed["entries"].as_array().expect("runtime entries");
+    let referenced_entry = entries
+        .iter()
+        .find(|entry| entry["version"] == "1.1.0")
+        .expect("referenced runtime");
+    assert_eq!(
+        referenced_entry["referenced_by"],
+        serde_json::json!(["claude"])
+    );
+    let unsafe_entry = entries
+        .iter()
+        .find(|entry| entry["version"] == "0.9.0")
+        .expect("unsafe runtime");
+    assert_eq!(unsafe_entry["safely_prunable"], false);
+}
+
+#[cfg(not(windows))]
+fn assert_runtime_prune_decisions(planned: &serde_json::Value) {
+    let results = planned["results"].as_array().expect("prune decisions");
+    assert!(results.iter().any(|result| {
+        result["version"] == "1.1.0"
+            && result["action"] == "retained"
+            && result["reason"] == "referenced_by_client"
+    }));
+    assert!(results.iter().any(|result| {
+        result["version"] == "0.9.0"
+            && result["action"] == "retained"
+            && result["reason"] == "unrecognized_directory_contents"
+    }));
+}
+
+#[cfg(not(windows))]
 #[test]
 fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     let temp = tempfile::tempdir().expect("temporary home");
@@ -2074,29 +2125,14 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     assert!(listed.status.success());
     let listed: serde_json::Value =
         serde_json::from_slice(&listed.stdout).expect("runtime list JSON");
-    assert_eq!(listed["total_entries"], 4);
-    let entries = listed["entries"].as_array().expect("runtime entries");
-    let referenced_entry = entries
-        .iter()
-        .find(|entry| entry["version"] == "1.1.0")
-        .expect("referenced runtime");
-    assert_eq!(referenced_entry["referenced_by"], serde_json::json!(["claude"]));
-    let unsafe_entry = entries
-        .iter()
-        .find(|entry| entry["version"] == "0.9.0")
-        .expect("unsafe runtime");
-    assert_eq!(unsafe_entry["safely_prunable"], false);
+    assert_runtime_inventory(&listed);
 
     let human_list = command()
         .args(["runtime", "list"])
         .output()
         .expect("human runtime list");
     assert!(human_list.status.success());
-    let human_list = String::from_utf8_lossy(&human_list.stdout);
-    assert!(human_list.contains("Private runtime root:"));
-    assert!(human_list.contains("4 runtime(s)"));
-    assert!(human_list.contains("referenced_by=Claude Code"));
-    assert!(human_list.contains("inactive,unrecognized"));
+    assert_human_runtime_list(&human_list.stdout);
 
     let planned = command()
         .args([
@@ -2116,27 +2152,14 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     assert!(newest.exists());
     assert!(referenced.exists());
     assert!(unsafe_runtime.exists());
-    let results = planned["results"].as_array().expect("prune decisions");
-    assert!(results.iter().any(|result| {
-        result["version"] == "1.1.0"
-            && result["action"] == "retained"
-            && result["reason"] == "referenced_by_client"
-    }));
-    assert!(results.iter().any(|result| {
-        result["version"] == "0.9.0"
-            && result["action"] == "retained"
-            && result["reason"] == "unrecognized_directory_contents"
-    }));
+    assert_runtime_prune_decisions(&planned);
 
     let human_plan = command()
         .args(["runtime", "prune", "--keep-latest", "0"])
         .output()
         .expect("human runtime prune plan");
     assert!(human_plan.status.success());
-    let human_plan = String::from_utf8_lossy(&human_plan.stdout);
-    assert!(human_plan.contains("Private runtime prune dry-run:"));
-    assert!(human_plan.contains("would_remove  1.0.0  3 bytes  outside_retention"));
-    assert!(human_plan.contains("retained  0.9.0  6 bytes  unrecognized_directory_contents"));
+    assert_human_runtime_prune(&human_plan.stdout);
 
     let applied = command()
         .args([

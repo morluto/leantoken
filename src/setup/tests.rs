@@ -20,6 +20,41 @@ fn setup_file_reads_reject_content_above_the_memory_bound() {
 }
 
 #[test]
+fn setup_rejects_generated_client_configuration_above_the_read_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let path = environment.home.join(".cursor/mcp.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let prefix = "{\"padding\":\"";
+    let suffix = "\"}";
+    let padding = "x".repeat(MAX_SETUP_FILE_BYTES as usize - prefix.len() - suffix.len() - 1);
+    fs::write(&path, format!("{prefix}{padding}{suffix}")).unwrap();
+
+    let error = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: vec![SetupClient::Cursor],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: true,
+            dry_run: true,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .expect_err("generated oversized config must fail during planning");
+
+    assert!(error.to_string().contains("refusing to write setup file"));
+    assert!(fs::metadata(path).unwrap().len() < MAX_SETUP_FILE_BYTES);
+}
+
+#[test]
 fn failed_launcher_verification_marks_setup_report_failed() {
     let mut report = empty_report(SetupOperation::Setup, true);
     report.cancelled = false;
@@ -873,6 +908,24 @@ fn private_runtime_uses_native_executable_names_for_supported_package_layouts() 
 }
 
 #[test]
+fn runtime_removal_reports_when_the_executable_was_removed_but_directory_remains() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("1.2.3");
+    fs::create_dir(&directory).unwrap();
+    let executable = directory.join(runtime_executable_name(cfg!(windows)));
+    fs::write(&executable, "runtime").unwrap();
+    let sibling = directory.join("appeared-after-revalidation");
+    fs::write(&sibling, "retain").unwrap();
+
+    let removal = remove_runtime_directory(&directory, &executable);
+
+    assert!(matches!(removal, RuntimeRemoval::PartiallyRemoved(_)));
+    assert!(!executable.exists());
+    assert!(sibling.exists());
+    assert!(directory.exists());
+}
+
+#[test]
 fn setup_transaction_rolls_back_earlier_client_edits() {
     let temp = tempfile::tempdir().unwrap();
     let first_path = temp.path().join("first/config.json");
@@ -1075,6 +1128,65 @@ fn codex_setup_does_not_touch_an_unselected_claude_skill() {
 }
 
 #[test]
+fn codex_setup_and_refresh_remove_marker_owned_legacy_claude_discovery() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let prompt = FixedPrompt {
+        selected: None,
+        confirmed: true,
+    };
+    let request = SetupRequest {
+        clients: vec![SetupClient::Codex],
+        all: false,
+        refresh: false,
+        private_runtime: false,
+        yes: true,
+        dry_run: false,
+        allow_outdated: false,
+        force_unmanaged: false,
+    };
+    run_with(
+        SetupOperation::Setup,
+        request.clone(),
+        &environment,
+        &prompt,
+    )
+    .unwrap();
+    let agents_skill = environment.home.join(".agents/skills/leantoken/SKILL.md");
+    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
+    fs::copy(&agents_skill, &claude_skill).unwrap();
+
+    let setup = run_with(SetupOperation::Setup, request, &environment, &prompt).unwrap();
+    assert!(setup.discovery_plan.iter().any(|effect| {
+        effect.path == claude_skill && effect.action == ClientPlanAction::Remove
+    }));
+    assert!(!claude_skill.exists());
+
+    fs::copy(&agents_skill, &claude_skill).unwrap();
+    let refreshed = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &prompt,
+    )
+    .unwrap();
+    assert!(refreshed.discovery_plan.iter().any(|effect| {
+        effect.path == claude_skill && effect.action == ClientPlanAction::Remove
+    }));
+    assert!(!claude_skill.exists());
+}
+
+#[test]
 fn final_client_removal_cleans_marker_owned_legacy_discovery_files() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
@@ -1213,6 +1325,60 @@ fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
         &["mcp".into()],
         runtime_root
     ));
+    for package in ["latest", "next", "^1.2.3", ">=1.2.3"] {
+        assert!(!is_managed_registration(
+            "/usr/bin/node",
+            &[
+                "/usr/lib/node_modules/npm/bin/npx-cli.js".into(),
+                "--yes".into(),
+                "--prefer-offline".into(),
+                format!("--package=leantoken@{package}"),
+                "--".into(),
+                "leantoken".into(),
+                "mcp".into(),
+            ],
+            runtime_root
+        ));
+    }
+}
+
+#[test]
+fn recovery_journal_uses_its_separate_aggregate_read_bound() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtime");
+    let path = temp.path().join("client.json");
+    let original = "\n".repeat(5 * 1024 * 1024);
+    fs::write(&path, "new").unwrap();
+    let plan = ResolvedSetupPlan {
+        operation: SetupOperation::Setup,
+        persistent_cli: true,
+        launcher: None,
+        runtime: None,
+        edits: vec![PlannedClientEdit {
+            public: ClientSetupPlan {
+                client: SetupClient::Claude,
+                path: path.clone(),
+                action: ClientPlanAction::Update,
+                detected: true,
+            },
+            status: EditStatus::Updated,
+            original: Some(original.clone()),
+            updated: Some("new".into()),
+        }],
+        discovery_edits: Vec::new(),
+        ownership_override: false,
+        transaction_root: runtime_root.clone(),
+    };
+
+    let _transaction = begin_setup_transaction(&plan).unwrap().unwrap();
+    let journal_path = transaction_path(&runtime_root);
+    assert!(fs::metadata(&journal_path).unwrap().len() > MAX_SETUP_FILE_BYTES);
+    assert!(fs::metadata(&journal_path).unwrap().len() < MAX_SETUP_JOURNAL_BYTES);
+
+    recover_interrupted_transaction(&runtime_root).unwrap();
+
+    assert_eq!(fs::read_to_string(path).unwrap(), original);
+    assert!(!journal_path.exists());
 }
 
 #[test]

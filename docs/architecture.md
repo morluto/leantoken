@@ -564,14 +564,21 @@ verification out per configured client.
 Private-runtime inventory is repository-free and bounded to 512 entries below
 the application runtime root and eight entries within any recognized semantic
 version directory. Setup and inventory reads are capped at 8 MiB per client
-configuration, discovery file, or recovery journal before parsing. Listing
-reads at most six configured host registrations once to attach canonicalized
-references. Pruning defaults to a non-mutating plan, serializes applied deletion
-with setup, retains the active executable and every referenced runtime, and
-deletes only a version directory whose exact contents are its one expected
-native executable. Unknown root entries, malformed client configuration,
-unexpected directory contents, and interrupted setup journals fail closed or
-remain untouched. The retention request is capped at 64 versions.
+configuration or discovery file before parsing, and generated replacements are
+validated against that same bound before a plan can apply. The recovery journal
+has a separate 256 MiB aggregate read and write cap so it can retain up to six
+individually bounded client originals plus both legacy discovery originals
+after JSON escaping. Listing reads at most six configured host registrations
+once to attach canonicalized references. Pruning defaults to a non-mutating
+plan, serializes applied deletion with setup, retains the active executable and
+every referenced runtime, and deletes only a version directory whose exact
+contents are its one expected native executable. If unlinking succeeds but a
+concurrent directory change prevents the final directory removal, the report
+uses a distinct partial-removal action, subtracts the removed executable bytes,
+and returns the cleanup error. Unknown root entries, malformed client
+configuration, unexpected directory contents, and interrupted setup journals
+fail closed or remain untouched. The retention request is capped at 64
+versions.
 
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable

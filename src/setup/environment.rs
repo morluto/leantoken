@@ -222,7 +222,9 @@ fn is_legacy_npx_registration(command: &str, args: &[String]) -> bool {
             == Some("npx-cli.js")
         && args[1] == "--yes"
         && args[2] == "--prefer-offline"
-        && args[3].starts_with("--package=leantoken@")
+        && args[3]
+            .strip_prefix("--package=leantoken@")
+            .is_some_and(|version| semver::Version::parse(version).is_ok())
         && args[4] == "--"
         && args[5] == "leantoken"
         && args[6] == "mcp"

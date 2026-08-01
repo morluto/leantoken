@@ -22,6 +22,7 @@ pub(super) struct PlanEnvironment<'a> {
     pub(super) persistent_cli: bool,
     pub(super) runtime: Option<RuntimeInstallPlan>,
     pub(super) discovery_paths: Vec<PathBuf>,
+    pub(super) discovery_cleanup_paths: Vec<PathBuf>,
     pub(super) force_unmanaged: bool,
     pub(super) transaction_root: &'a Path,
 }
@@ -57,11 +58,28 @@ pub(super) fn resolve_plan(
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let discovery_edits = resolve_discovery_edits(
+    for edit in &edits {
+        if let Some(updated) = &edit.updated {
+            validate_setup_content_size(&edit.public.path, updated)?;
+        }
+    }
+    let mut discovery_edits = resolve_discovery_edits(
         operation,
         &environment.discovery_paths,
         Some(environment.launcher),
     )?;
+    if operation == SetupOperation::Setup {
+        let cleanup = resolve_discovery_edits(
+            SetupOperation::Remove,
+            &environment.discovery_cleanup_paths,
+            None,
+        )?;
+        discovery_edits.extend(
+            cleanup
+                .into_iter()
+                .filter(|edit| edit.public.action == ClientPlanAction::Remove),
+        );
+    }
     let launcher = (operation == SetupOperation::Setup)
         .then(|| launcher_plan(environment.launcher, environment.runtime.as_ref()))
         .transpose()?;

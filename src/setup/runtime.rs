@@ -108,6 +108,13 @@ struct RuntimeInventoryEntry {
     directory: PathBuf,
 }
 
+#[derive(Debug)]
+pub(super) enum RuntimeRemoval {
+    Removed,
+    PartiallyRemoved(std::io::Error),
+    Failed(std::io::Error),
+}
+
 /// Inspect the bounded application-owned private-runtime inventory.
 pub fn list_runtimes() -> Result<RuntimeListReport> {
     let home = home_directory()
@@ -214,10 +221,8 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
                 continue;
             }
         }
-        let removal =
-            fs::remove_file(&entry.report.path).and_then(|()| fs::remove_dir(&entry.directory));
-        match removal {
-            Ok(()) => {
+        match remove_runtime_directory(&entry.directory, &entry.report.path) {
+            RuntimeRemoval::Removed => {
                 sync_parent_directory(&entry.directory)?;
                 total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
                 results.push(RuntimePruneResult {
@@ -229,7 +234,22 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
                     error: None,
                 });
             }
-            Err(error) => results.push(RuntimePruneResult {
+            RuntimeRemoval::PartiallyRemoved(error) => {
+                total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
+                let mut error = error.to_string();
+                if let Err(sync_error) = sync_parent_directory(&entry.report.path) {
+                    error.push_str(&format!("; directory sync failed: {sync_error}"));
+                }
+                results.push(RuntimePruneResult {
+                    version: entry.report.version,
+                    path: entry.report.path,
+                    size_bytes: entry.report.size_bytes,
+                    action: "partially_removed".into(),
+                    reason: "executable_removed_directory_retained".into(),
+                    error: Some(error),
+                });
+            }
+            RuntimeRemoval::Failed(error) => results.push(RuntimePruneResult {
                 version: entry.report.version,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
@@ -246,6 +266,16 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
         total_bytes_after,
         results,
     })
+}
+
+pub(super) fn remove_runtime_directory(directory: &Path, executable: &Path) -> RuntimeRemoval {
+    if let Err(error) = fs::remove_file(executable) {
+        return RuntimeRemoval::Failed(error);
+    }
+    match fs::remove_dir(directory) {
+        Ok(()) => RuntimeRemoval::Removed,
+        Err(error) => RuntimeRemoval::PartiallyRemoved(error),
+    }
 }
 
 struct RuntimeInventory {
