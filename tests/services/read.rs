@@ -16,6 +16,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("indexed read");
@@ -39,6 +40,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("live read");
@@ -71,6 +73,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture delta base");
@@ -93,6 +96,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             expected_hash: Some(base_hash.clone()),
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("read unchanged delta target");
@@ -125,6 +129,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             expected_hash: Some(base_hash),
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("read changed delta");
@@ -169,6 +174,7 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
         expected_hash,
         delta: true,
         receipt_id: None,
+        policy: leantoken::ReadPolicy::Full,
     };
 
     let persistent_base = persistent_a
@@ -278,6 +284,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture process-local dirty base");
@@ -323,6 +330,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             expected_hash: Some(dirty.content_hash),
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("dirty base unavailable after restart");
@@ -367,6 +375,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
                     expected_hash: None,
                     delta: true,
                     receipt_id: None,
+                    policy: leantoken::ReadPolicy::Full,
                 })
                 .await
                 .is_err(),
@@ -407,6 +416,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         expected_hash: None,
         delta: true,
         receipt_id: None,
+        policy: leantoken::ReadPolicy::Full,
     };
 
     let first = services.read(request()).await.expect("capture latest base");
@@ -552,6 +562,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("read truncated delta target");
@@ -591,6 +602,7 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture small base");
@@ -609,6 +621,7 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("fall back to full content");
@@ -642,6 +655,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture symbol base");
@@ -665,6 +679,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
             expected_hash: None,
             delta: true,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("fall back after target movement");
@@ -705,6 +720,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first receipt read");
@@ -723,6 +739,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
             expected_hash: None,
             delta: false,
             receipt_id: first.meta.receipt_id,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("changed overlapping read");
@@ -748,6 +765,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first receipt read");
@@ -764,6 +782,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
             expected_hash: None,
             delta: false,
             receipt_id: first.meta.receipt_id,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("receipt-suppressed read");
@@ -805,6 +824,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact range");
@@ -824,6 +844,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: Some(exact.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("conditional exact range");
@@ -844,6 +865,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("open-ended range");
@@ -863,6 +885,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("open-start range");
@@ -882,6 +905,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("whole file");
@@ -898,6 +922,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact whole file");
@@ -918,6 +943,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("range through EOF");
@@ -942,6 +968,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             expected_hash: Some(exact.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("changed exact range");
@@ -969,6 +996,7 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("symbol range");
@@ -1002,6 +1030,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("bounded open-ended read");
@@ -1031,6 +1060,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("malformed UTF-8 must fail");
@@ -1061,6 +1091,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("line after terminal newline must fail");
@@ -1091,6 +1122,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact CRLF range");
@@ -1107,6 +1139,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("open CRLF range");
@@ -1129,6 +1162,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("final line");
@@ -1152,6 +1186,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("empty file");
@@ -1172,6 +1207,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect_err("invalid range");
@@ -1191,6 +1227,7 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("malformed cursor");
@@ -1205,12 +1242,13 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             heading: None,
             heading_occurrence: None,
             continuation_cursor: Some(
-                "1:read:1:1:1:1:00000000000000000000000000000000:0000000000000000".into(),
+                "1:read:v2:1:1:1:1:b:-:0000000000000000:0:-".into(),
             ),
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("cursor and target conflict");
@@ -1241,6 +1279,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("token-truncated range");
@@ -1282,6 +1321,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("read symbol page");
@@ -1322,6 +1362,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first page");
@@ -1338,6 +1379,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("conditional first page");
@@ -1362,6 +1404,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("cursor must not cross index generations");
@@ -1380,6 +1423,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("current first page");
@@ -1398,6 +1442,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("cursor must not cross live file versions");
@@ -1430,6 +1475,7 @@ async fn read_rejects_ignored_files() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("ignored file must not be readable");
@@ -1475,6 +1521,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified symbol");
@@ -1499,6 +1546,7 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("missing qualified symbol");
@@ -1535,6 +1583,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("late symbol read");
@@ -1564,4 +1613,195 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
     assert_eq!(outline.total_symbols, 1);
     assert_eq!(outline.returned_symbols, 1);
     assert_eq!(outline.symbol_counts_by_kind.get("function"), Some(&1));
+}
+
+#[tokio::test]
+async fn bounded_read_stops_early_and_reports_unknown_index_state() {
+    let source = b"line one\nline two\nline three\nline four\nline five\n";
+    let (_root, services) = indexed_source("bounded.txt", source).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "bounded.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Bounded,
+        })
+        .await
+        .expect("bounded read");
+
+    assert_eq!(response.status, ReadStatus::Content);
+    // Bounded reads do not hash the complete file, so index_state is unknown
+    // and indexed_hash is absent.
+    assert_eq!(response.index_state, leantoken::ReadIndexState::Unknown);
+    assert!(response.indexed_hash.is_none());
+    assert!(!response.index_stale);
+    // Bounded reads stop after the requested page; bytes_read should be less
+    // than the full file size.
+    assert!(response.live_bytes_read < source.len());
+    assert_eq!(response.content.as_deref(), Some("line one\n"));
+}
+
+#[tokio::test]
+async fn full_read_hashes_complete_file_and_reports_index_state() {
+    let source = b"line one\nline two\nline three\nline four\nline five\n";
+    let (_root, services) = indexed_source("full.txt", source).await;
+
+    let response = services
+        .read(ReadRequest {
+            path: "full.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
+        })
+        .await
+        .expect("full read");
+
+    assert_eq!(response.status, ReadStatus::Content);
+    // Full reads hash the complete file and report index verification.
+    assert_eq!(response.index_state, leantoken::ReadIndexState::Current);
+    assert!(response.indexed_hash.is_some());
+    assert!(!response.index_stale);
+    // Full reads scan the complete file.
+    assert_eq!(response.live_bytes_read, source.len());
+    assert_eq!(response.content.as_deref(), Some("line one\n"));
+}
+
+#[tokio::test]
+async fn full_read_reports_stale_index_state_when_live_file_diverges() {
+    let source = b"line one\nline two\nline three\n";
+    let (root, services) = indexed_source("stale.txt", source).await;
+
+    std::fs::write(
+        root.path().join("stale.txt"),
+        b"line one changed\nline two\nline three\n",
+    )
+    .expect("edit live file");
+
+    let response = services
+        .read(ReadRequest {
+            path: "stale.txt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
+        })
+        .await
+        .expect("full read after edit");
+
+    assert_eq!(response.status, ReadStatus::Content);
+    assert_eq!(response.index_state, leantoken::ReadIndexState::Stale);
+    assert!(response.index_stale);
+    assert!(response.indexed_hash.is_some());
+    assert_eq!(response.live_bytes_read, 37);
+    assert_eq!(
+        response.content.as_deref(),
+        Some("line one changed\n")
+    );
+}
+
+#[tokio::test]
+async fn delta_request_without_full_policy_is_rejected() {
+    let source = b"line one\nline two\n";
+    let (_root, services) = indexed_source("delta_policy.txt", source).await;
+
+    let error = services
+        .read(ReadRequest {
+            path: "delta_policy.txt".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash: None,
+            delta: true,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Bounded,
+        })
+        .await
+        .expect_err("delta with bounded policy must fail");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "policy",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn bounded_continuation_cursor_rejects_full_policy_switch() {
+    let source = b"line one\nline two\nline three\nline four\nline five\n";
+    let (_root, services) = indexed_source("cursor_switch.txt", source).await;
+
+    // First read with bounded policy and a tiny token limit to get a cursor.
+    let first = services
+        .read(ReadRequest {
+            path: "cursor_switch.txt".into(),
+            start_line: Some(1),
+            end_line: Some(5),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Bounded,
+        })
+        .await
+        .expect("bounded truncated read");
+    assert!(first.truncated);
+    let cursor = first
+        .continuation_cursor
+        .as_deref()
+        .expect("bounded cursor");
+
+    // Attempting to continue with Full policy must fail because the cursor
+    // was issued under Bounded policy.
+    let error = services
+        .read(ReadRequest {
+            path: "cursor_switch.txt".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: Some(cursor.to_string()),
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
+        })
+        .await
+        .expect_err("policy switch must fail");
+    assert!(matches!(error, Error::StaleCursor));
 }

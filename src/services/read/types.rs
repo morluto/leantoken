@@ -68,6 +68,9 @@ pub(super) struct ResolvedReadTarget {
     pub(super) page_start_line: usize,
     pub(super) page_start_byte: usize,
     pub(super) expected_full_hash: Option<String>,
+    pub(super) expected_file_size: Option<usize>,
+    pub(super) expected_modified_ns: Option<u128>,
+    pub(super) cursor_full: bool,
 }
 
 #[derive(Debug)]
@@ -78,8 +81,12 @@ pub(super) struct LiveReadRange {
 }
 
 pub(super) struct LiveFileSnapshot {
-    pub(super) content_hash: String,
+    /// `None` for bounded reads that stop before EOF; `Some` for full reads.
+    pub(super) content_hash: Option<String>,
     pub(super) end_line: usize,
+    pub(super) bytes_read: usize,
+    pub(super) file_size: usize,
+    pub(super) modified_ns: Option<u128>,
 }
 
 pub(super) struct LiveReadObservation {
@@ -101,7 +108,11 @@ pub(super) struct ReadCursor {
     pub(super) target_end_line: usize,
     pub(super) next_start_line: usize,
     pub(super) next_byte: usize,
-    pub(super) full_hash: String,
+    /// Full-file hash for `Full` policy cursors; `None` for `Bounded` cursors.
+    pub(super) full_hash: Option<String>,
+    pub(super) full: bool,
+    pub(super) file_size: usize,
+    pub(super) modified_ns: Option<u128>,
     pub(super) path_hash: String,
 }
 use super::*;

@@ -930,6 +930,7 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact read");

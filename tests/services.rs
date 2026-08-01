@@ -234,6 +234,7 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         expected_hash: None,
         delta: false,
         receipt_id: None,
+        policy: leantoken::ReadPolicy::default(),
     }
 }
 

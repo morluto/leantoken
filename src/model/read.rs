@@ -1,5 +1,71 @@
 use super::*;
 
+/// Typed read target selected by the caller. The flat `ReadRequest` option
+/// fields remain the wire-compatible input; this enum provides a typed
+/// projection for programmatic callers and internal resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReadTarget {
+    /// Read one indexed symbol definition.
+    Symbol { name: String },
+    /// Read one indexed Markdown or LaTeX section by exact title or outline signature.
+    Heading {
+        name: String,
+        #[serde(default = "default_heading_occurrence")]
+        occurrence: usize,
+    },
+    /// Read one inclusive one-based line range.
+    Lines { start: usize, end: usize },
+    /// Continue a truncated read without losing a partial final line.
+    Continuation { cursor: String },
+}
+
+fn default_heading_occurrence() -> usize {
+    1
+}
+
+/// I/O and verification policy for a live read.
+///
+/// `Bounded` (default) stops reading after the requested page is satisfied,
+/// reports `index_state: unknown`, and emits a metadata-bound continuation
+/// cursor. `Full` hashes the complete live file, reports current/stale with
+/// live and indexed hashes, and is required for delta requests.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadPolicy {
+    /// Stop after the requested page; no full-file hash or index staleness.
+    #[default]
+    Bounded,
+    /// Hash the complete live file and report index verification metadata.
+    Full,
+}
+
+impl std::fmt::Display for ReadPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bounded => write!(f, "bounded"),
+            Self::Full => write!(f, "full"),
+        }
+    }
+}
+
+/// Index verification state reported by a read response.
+///
+/// `Unknown` is reported by bounded reads that stop before EOF. `Current` and
+/// `Stale` are reported by full reads that hash the complete live file and
+/// compare it to the indexed snapshot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadIndexState {
+    /// The live file hash matches the indexed snapshot.
+    Current,
+    /// The live file hash differs from the indexed snapshot.
+    Stale,
+    /// The read stopped before EOF and could not verify index freshness.
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.read`.
 pub struct ReadRequest {
@@ -31,11 +97,17 @@ pub struct ReadRequest {
     pub expected_hash: Option<String>,
     /// Record a bounded base and prefer a cheaper changed follow-up. Without
     /// `expected_hash`, select the latest compatible base for this exact target.
+    /// Requires `policy: full`.
     #[serde(default)]
     pub delta: bool,
     /// Server-managed receipt whose previously returned evidence should be suppressed.
     #[serde(default)]
     pub receipt_id: Option<String>,
+    /// I/O and verification policy. `bounded` (default) stops after the
+    /// requested page; `full` hashes the complete live file and is required
+    /// for `delta: true`.
+    #[serde(default)]
+    pub policy: ReadPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +150,15 @@ pub struct ReadResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_hash: Option<String>,
     pub index_stale: bool,
+    /// Index verification state. `unknown` for bounded reads; `current` or
+    /// `stale` for full reads. Retained alongside `indexed_hash`/`index_stale`
+    /// for backward-compatible clients.
+    #[serde(default)]
+    pub index_state: ReadIndexState,
+    /// Number of live file bytes read to produce this response. Bounded reads
+    /// stop after the requested page; full reads scan the complete file.
+    #[serde(default)]
+    pub live_bytes_read: usize,
     pub meta: ResponseMeta,
 }
 

@@ -79,6 +79,7 @@ async fn five_services_return_bounded_grounded_responses() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first read");
@@ -96,6 +97,7 @@ async fn five_services_return_bounded_grounded_responses() {
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("conditional read");
@@ -299,6 +301,7 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("normalized read");

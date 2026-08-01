@@ -1,4 +1,5 @@
 use super::*;
+use crate::model::ReadPolicy;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +37,12 @@ pub(in crate::mcp) struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "index_consistency_schema")]
     pub(in crate::mcp) consistency: IndexConsistency,
+    /// I/O and verification policy. `bounded` (default) stops after the
+    /// requested page and reports `index_state: unknown`. `full` hashes the
+    /// complete live file, reports current/stale with indexed hashes, and is
+    /// required for `delta: true`.
+    #[serde(default)]
+    pub(in crate::mcp) policy: ReadPolicy,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -125,6 +132,7 @@ impl ReadMcpRequest {
                 expected_hash: self.expected_hash,
                 delta: self.delta,
                 receipt_id: self.receipt_id,
+                policy: self.policy,
             },
             self.consistency,
             service_call_options(self.max_response_tokens),

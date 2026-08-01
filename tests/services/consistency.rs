@@ -417,6 +417,7 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::Full,
             },
             IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
@@ -506,6 +507,7 @@ async fn read_reports_index_stale_when_live_file_diverges() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("read");
@@ -543,6 +545,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("first read");
@@ -564,6 +567,7 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("second read");

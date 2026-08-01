@@ -77,6 +77,7 @@ async fn retrieval_call_options_enforce_final_service_response_bounds() {
                 expected_hash: None,
                 delta: false,
                 receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             },
             options,
         )
@@ -445,6 +446,7 @@ async fn read_response_budget_reduces_source_without_skipping_continuation() {
         expected_hash: None,
         delta: false,
         receipt_id: None,
+        policy: leantoken::ReadPolicy::default(),
     };
     let full = services.read(request.clone()).await.expect("full read");
     let limit = full.meta.total_response_tokens.saturating_sub(500);
@@ -475,6 +477,7 @@ async fn read_response_budget_reduces_source_without_skipping_continuation() {
             expected_hash: None,
             delta: false,
             receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("continue bounded read");
