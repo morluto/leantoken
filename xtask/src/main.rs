@@ -23,6 +23,7 @@ const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
 const PRODUCT_PARALLEL_LANES: usize = 2;
+const PARALLEL_NEXTTEST_JOBS: &str = "2";
 const PRODUCT_PHASE_NAMES: [&str; 4] = [
     "library and binary units",
     "ordinary integration",
@@ -485,6 +486,8 @@ impl TestPlan {
                 "--all-features",
                 "--lib",
                 "--bins",
+                "-j",
+                PARALLEL_NEXTTEST_JOBS,
                 "--",
                 "--skip",
                 "tests::checked_in_fixture_cases_match",
@@ -496,6 +499,8 @@ impl TestPlan {
                 "--all-features",
                 "--test",
                 "integration",
+                "-j",
+                PARALLEL_NEXTTEST_JOBS,
                 "--",
                 "--skip",
                 "process::",
@@ -1024,9 +1029,9 @@ impl From<FixtureError> for XtaskError {
 #[cfg(test)]
 mod tests {
     use super::{
-        BENCHMARKS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError, listed_test_count,
-        process_test_jobs_for_os, run_parallel_product_plan, valid_fixture_identity,
-        workspace_root,
+        BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
+        listed_test_count, process_test_jobs_for_os, run_parallel_product_plan,
+        valid_fixture_identity, workspace_root,
     };
     use std::fs;
 
@@ -1063,6 +1068,13 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["-j", process_test_jobs_for_os(std::env::consts::OS)])
         );
+        for command in &plan.commands[..PRODUCT_PARALLEL_LANES] {
+            assert!(
+                command
+                    .windows(2)
+                    .any(|args| args == ["-j", PARALLEL_NEXTTEST_JOBS])
+            );
+        }
         assert!(
             plan.commands
                 .iter()

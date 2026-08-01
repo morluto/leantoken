@@ -99,7 +99,7 @@
       "id": "release-plan",
       "owner": "release packaging inputs",
       "required_events": ["manual"],
-      "paths": ["Cargo.toml", "Cargo.lock", "dist-workspace.toml", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "dist-workspace.toml", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     },
@@ -107,7 +107,7 @@
       "id": "npm",
       "owner": "npm packaging and installation",
       "required_events": ["merge_group", "push", "manual"],
-      "paths": ["Cargo.toml", "Cargo.lock", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },
@@ -116,6 +116,7 @@
       "owner": "repeated process lifecycle variation",
       "required_events": ["schedule"],
       "paths": [],
+      "schedule": "0 3 * * *",
       "matrix": [{"name": "ubuntu-latest"}, {"name": "macos-latest"}, {"name": "windows-latest"}],
       "depends_on": []
     },
@@ -124,6 +125,7 @@
       "owner": "timing and slow-test diagnostics",
       "required_events": ["schedule", "manual"],
       "paths": [],
+      "schedule": "0 4 * * 1",
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     }

@@ -97,10 +97,10 @@ concatenation pattern cannot return.
 The runner sequences units, ordinary domain integration, and process-heavy
 tests. CI uses `cargo xtask test product --parallel` to overlap only the
 library/binary unit lane and ordinary integration lane; those phases use
-`cargo-nextest`, while process-heavy executable/MCP behavior uses three nextest
-workers on macOS and four on Linux or Windows; the exact fixture aggregate
-remains serial after both lanes succeed. Doctests stay on their explicit Cargo
-command. The runner
+`cargo-nextest` with two workers each (a maximum of four across the overlap),
+while process-heavy executable/MCP behavior uses three nextest workers on macOS
+and four on Linux or Windows; the exact fixture aggregate remains serial after
+both lanes succeed. Doctests stay on their explicit Cargo command. The runner
 prints per-lane elapsed time and preserves child exit codes. It also owns exact
 fixture selection and the opt-in profile/stress commands.
 

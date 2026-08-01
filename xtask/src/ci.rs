@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 const TOPOLOGY_PATH: &str = "ci/test-topology.json";
 const PLAN_SCHEMA_VERSION: u32 = 1;
-const PLANNER_VERSION: &str = "ci-planner-v1";
+const PLANNER_VERSION: &str = "ci-planner-v2";
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -38,6 +38,8 @@ pub(crate) struct PlannerInput {
     pub(crate) base_revision: Option<String>,
     pub(crate) head_revision: String,
     #[serde(default)]
+    pub(crate) schedule: Option<String>,
+    #[serde(default)]
     pub(crate) changed_paths: Vec<String>,
     #[serde(default)]
     pub(crate) full_run: bool,
@@ -62,6 +64,8 @@ struct Lane {
     required_events: Vec<Event>,
     paths: Vec<String>,
     matrix: Vec<MatrixEntry>,
+    #[serde(default)]
+    schedule: Option<String>,
     #[serde(default)]
     depends_on: Vec<String>,
 }
@@ -89,6 +93,7 @@ pub(crate) struct Plan {
     pub(crate) planner_version: String,
     pub(crate) topology_digest: String,
     pub(crate) event: Event,
+    pub(crate) schedule: Option<String>,
     pub(crate) base_revision: Option<String>,
     pub(crate) head_revision: String,
     pub(crate) source_revision: String,
@@ -271,8 +276,7 @@ fn parse_plan_args(
     let head_revision = option_value(args, "--head")?.ok_or("--head is required")?;
     let base_revision = option_value(args, "--base")?;
     let changed_paths = if let Some(path) = option_value(args, "--changed-paths-file")? {
-        let contents = fs::read_to_string(root.join(path)).map_err(|error| error.to_string())?;
-        contents.lines().map(str::to_owned).collect()
+        read_changed_paths(root, &path)?
     } else {
         args.windows(2)
             .filter(|pair| pair[0] == "--changed-path")
@@ -284,6 +288,7 @@ fn parse_plan_args(
             event,
             base_revision,
             head_revision,
+            schedule: option_value(args, "--schedule")?,
             changed_paths,
             full_run: args.iter().any(|arg| arg == "--full-run"),
             diagnostic: args.iter().any(|arg| arg == "--diagnostic"),
@@ -315,6 +320,7 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
             topology.schema_version
         ));
     }
+    validate_schedule(&topology, &input)?;
     let paths = normalize_paths(&input.changed_paths)?;
     let known = paths.iter().all(|path| {
         topology
@@ -336,23 +342,25 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
     let conservative = fallback_reason.is_some();
     let mut selected = BTreeMap::<String, String>::new();
     for lane in &topology.lanes {
-        let required = lane.required_events.contains(&input.event);
+        let runnable = lane_runnable(lane, input.event, input.schedule.as_deref());
+        let required = runnable && lane.required_events.contains(&input.event);
         let changed = !lane.paths.is_empty()
             && paths
                 .iter()
                 .any(|path| lane.paths.iter().any(|pattern| path_matches(path, pattern)));
-        if required
-            || input.full_run
-            || input.diagnostic
-            || (changed
-                && matches!(
-                    input.event,
-                    Event::PullRequest
-                        | Event::MergeGroup
-                        | Event::Push
-                        | Event::Schedule
-                        | Event::Manual
-                ))
+        if runnable
+            && (required
+                || input.full_run
+                || input.diagnostic
+                || (changed
+                    && matches!(
+                        input.event,
+                        Event::PullRequest
+                            | Event::MergeGroup
+                            | Event::Push
+                            | Event::Schedule
+                            | Event::Manual
+                    )))
         {
             let reason = if input.full_run {
                 "full-run override adds this lane".to_owned()
@@ -370,9 +378,11 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
     }
     if conservative {
         for lane in &topology.lanes {
-            selected
-                .entry(lane.id.clone())
-                .or_insert_with(|| "conservative fallback selects this lane".to_owned());
+            if lane_runnable(lane, input.event, input.schedule.as_deref()) {
+                selected
+                    .entry(lane.id.clone())
+                    .or_insert_with(|| "conservative fallback selects this lane".to_owned());
+            }
         }
     }
     // Dependencies are monotonic: selecting a lane always selects its declared prerequisites.
@@ -438,6 +448,7 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
         planner_version: PLANNER_VERSION.to_owned(),
         topology_digest: topology_digest(root)?,
         event: input.event,
+        schedule: input.schedule,
         base_revision: input.base_revision,
         head_revision: input.head_revision.clone(),
         source_revision: input.head_revision,
@@ -459,6 +470,21 @@ fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
     }
     if plan.topology_digest != topology_digest(root)? {
         return Err("plan topology digest does not match the checked-in topology".to_owned());
+    }
+    if plan.event == Event::Schedule {
+        let schedule = plan
+            .schedule
+            .as_deref()
+            .filter(|schedule| !schedule.trim().is_empty())
+            .ok_or("scheduled plans require a cron identity")?;
+        if !topology
+            .lanes
+            .iter()
+            .filter_map(|lane| lane.schedule.as_deref())
+            .any(|known| known == schedule)
+        {
+            return Err(format!("unknown schedule cron identity `{schedule}`"));
+        }
     }
     let known = topology
         .lanes
@@ -501,7 +527,18 @@ fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
         return Err("fallback reason must not be empty".to_owned());
     }
     for lane in &topology.lanes {
-        if lane.required_events.contains(&plan.event) && !selected.contains(lane.id.as_str()) {
+        let runnable = lane_runnable(lane, plan.event, plan.schedule.as_deref());
+        if selected.contains(lane.id.as_str()) && !runnable {
+            return Err(format!(
+                "lane {} is not runnable for {} validation",
+                lane.id,
+                event_name(plan.event)
+            ));
+        }
+        if runnable
+            && lane.required_events.contains(&plan.event)
+            && !selected.contains(lane.id.as_str())
+        {
             return Err(format!(
                 "lane {} is required for {} but is unselected",
                 lane.id,
@@ -616,6 +653,55 @@ fn normalize_paths(paths: &[String]) -> Result<Vec<String>, String> {
     Ok(normalized.into_iter().collect())
 }
 
+fn read_changed_paths(root: &Path, path: &str) -> Result<Vec<String>, String> {
+    let contents = fs::read(root.join(path)).map_err(|error| error.to_string())?;
+    Ok(parse_changed_paths(&contents))
+}
+
+fn parse_changed_paths(contents: &[u8]) -> Vec<String> {
+    if contents.contains(&0) {
+        contents
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+            .collect()
+    } else {
+        String::from_utf8_lossy(contents)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+fn validate_schedule(topology: &Topology, input: &PlannerInput) -> Result<(), String> {
+    if input.event != Event::Schedule {
+        return Ok(());
+    }
+    let schedule = input
+        .schedule
+        .as_deref()
+        .filter(|schedule| !schedule.trim().is_empty())
+        .ok_or("scheduled plans require a cron identity")?;
+    if topology
+        .lanes
+        .iter()
+        .filter_map(|lane| lane.schedule.as_deref())
+        .any(|known| known == schedule)
+    {
+        Ok(())
+    } else {
+        Err(format!("unknown schedule cron identity `{schedule}`"))
+    }
+}
+
+fn lane_runnable(lane: &Lane, event: Event, schedule: Option<&str>) -> bool {
+    match event {
+        Event::PullRequest | Event::MergeGroup | Event::Push => lane.schedule.is_none(),
+        Event::Schedule => lane.schedule.is_none() || lane.schedule.as_deref() == schedule,
+        Event::Manual => true,
+    }
+}
+
 fn path_matches(path: &str, pattern: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix("**/Cargo.toml") {
         return path.ends_with("Cargo.toml") && (prefix.is_empty() || path.starts_with(prefix));
@@ -660,7 +746,7 @@ fn usage() -> String {
 mod tests {
     use super::{
         Event, LaneReceipt, PlannerInput, ReceiptStatus, build_plan, classify_receipt,
-        normalize_paths, validate_plan,
+        normalize_paths, parse_changed_paths, validate_plan,
     };
     use crate::workspace_root;
 
@@ -669,6 +755,7 @@ mod tests {
             event,
             base_revision: Some("base-sha".to_owned()),
             head_revision: "head-sha".to_owned(),
+            schedule: None,
             changed_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
             full_run: false,
             diagnostic: false,
@@ -686,7 +773,11 @@ mod tests {
             Event::Schedule,
             Event::Manual,
         ] {
-            let plan = build_plan(&root, input(event, &["src/config.rs"]).clone()).expect("plan");
+            let mut value = input(event, &["src/config.rs"]);
+            if event == Event::Schedule {
+                value.schedule = Some("0 3 * * *".to_owned());
+            }
+            let plan = build_plan(&root, value).expect("plan");
             validate_plan(&root, &plan).expect("valid plan");
             assert!(
                 plan.selected_lanes
@@ -729,6 +820,8 @@ mod tests {
             ("examples/context_utilization.rs", "examples"),
             ("Cargo.lock", "dependency-audit"),
             ("npm/package.json", "npm"),
+            ("package.json", "npm"),
+            ("package-lock.json", "npm"),
             ("dist-workspace.toml", "release-plan"),
         ];
         for (path, lane) in cases {
@@ -748,24 +841,95 @@ mod tests {
         let mut full = input(Event::PullRequest, &["docs/testing.md"]);
         full.full_run = true;
         let full_plan = build_plan(&workspace_root(), full).expect("full plan");
-        assert_eq!(full_plan.unselected_lanes.len(), 0);
+        assert!(
+            full_plan.unselected_lanes.iter().any(|lane| {
+                lane.lane == "scheduled-stress" || lane.lane == "scheduled-profile"
+            })
+        );
 
         let mut missing = input(Event::PullRequest, &["docs/testing.md"]);
         missing.base_revision = None;
         let plan = build_plan(&workspace_root(), missing).expect("fallback plan");
         assert!(plan.fallback_reason.is_some());
-        assert_eq!(plan.unselected_lanes.len(), 0);
+        assert!(
+            plan.unselected_lanes
+                .iter()
+                .any(|lane| lane.lane == "scheduled-stress")
+        );
     }
 
     #[test]
-    fn unknown_and_fork_inputs_select_every_lane() {
+    fn unknown_and_fork_inputs_select_every_runnable_lane() {
         for (path, fork) in [("new/unknown.file", false), ("src/config.rs", true)] {
             let mut value = input(Event::PullRequest, &[path]);
             value.fork = fork;
             let plan = build_plan(&workspace_root(), value).expect("fallback plan");
             assert!(plan.fallback_reason.is_some());
-            assert!(plan.unselected_lanes.is_empty());
+            assert!(
+                plan.unselected_lanes
+                    .iter()
+                    .any(|lane| lane.lane == "scheduled-stress")
+            );
+            assert!(
+                plan.unselected_lanes
+                    .iter()
+                    .any(|lane| lane.lane == "scheduled-profile")
+            );
         }
+    }
+
+    #[test]
+    fn schedule_selects_only_the_matching_lifecycle_lane() {
+        let mut nightly = input(Event::Schedule, &[]);
+        nightly.schedule = Some("0 3 * * *".to_owned());
+        let nightly_plan = build_plan(&workspace_root(), nightly).expect("nightly plan");
+        assert!(
+            nightly_plan
+                .selected_lanes
+                .iter()
+                .any(|lane| lane.lane == "scheduled-stress")
+        );
+        assert!(
+            nightly_plan
+                .unselected_lanes
+                .iter()
+                .any(|lane| lane.lane == "scheduled-profile")
+        );
+
+        let mut weekly = input(Event::Schedule, &[]);
+        weekly.schedule = Some("0 4 * * 1".to_owned());
+        let weekly_plan = build_plan(&workspace_root(), weekly).expect("weekly plan");
+        assert!(
+            weekly_plan
+                .selected_lanes
+                .iter()
+                .any(|lane| lane.lane == "scheduled-profile")
+        );
+        assert!(
+            weekly_plan
+                .unselected_lanes
+                .iter()
+                .any(|lane| lane.lane == "scheduled-stress")
+        );
+    }
+
+    #[test]
+    fn schedule_requires_a_known_cron_identity() {
+        let mut value = input(Event::Schedule, &[]);
+        value.schedule = Some("0 5 * * *".to_owned());
+        assert!(build_plan(&workspace_root(), value).is_err());
+    }
+
+    #[test]
+    fn changed_path_files_support_nul_delimited_and_legacy_lines() {
+        assert_eq!(
+            parse_changed_paths(b"src/caf\xc3\xa9.rs\0docs/a\tb.md\0"),
+            vec!["src/café.rs", "docs/a\tb.md"]
+        );
+        assert_eq!(
+            parse_changed_paths(b"src/lib.rs\ndocs/testing.md\n"),
+            vec!["src/lib.rs", "docs/testing.md"]
+        );
     }
 
     #[test]

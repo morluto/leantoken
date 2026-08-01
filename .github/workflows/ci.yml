@@ -62,6 +62,7 @@ jobs:
         id: context
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           MERGE_BASE: ${{ github.event.merge_group.base_sha }}
           PUSH_BASE: ${{ github.event.before }}
@@ -83,12 +84,13 @@ jobs:
           : > "$paths"
           if [[ -n "$base" && "$base" != "0000000000000000000000000000000000000000" ]] && \
              git cat-file -e "$base^{commit}" 2>/dev/null && git cat-file -e "$head^{commit}" 2>/dev/null; then
-            git diff --name-only "$base...$head" > "$paths"
+            git diff --name-only -z "$base...$head" > "$paths"
           elif [[ "$event" == "pull_request" || "$event" == "merge_group" ]]; then
             echo "::warning::base or head revision is unavailable; planner will use conservative fallback"
           fi
           {
             echo "event=$event"
+            echo "schedule=$EVENT_SCHEDULE"
             echo "base=$base"
             echo "head=$head"
             echo "paths=$paths"
@@ -101,6 +103,7 @@ jobs:
           EVENT: ${{ steps.context.outputs.event }}
           BASE: ${{ steps.context.outputs.base }}
           HEAD: ${{ steps.context.outputs.head }}
+          SCHEDULE: ${{ steps.context.outputs.schedule }}
           PATHS: ${{ steps.context.outputs.paths }}
           FORK: ${{ steps.context.outputs.fork }}
           FULL_RUN: ${{ github.event.inputs.full_run }}
@@ -112,6 +115,7 @@ jobs:
           [[ "$FULL_RUN" == "true" ]] && overrides+=(--full-run)
           [[ "$DIAGNOSTIC" == "true" ]] && overrides+=(--diagnostic)
           [[ "$FORK" == "true" ]] && overrides+=(--fork)
+          [[ -n "$SCHEDULE" ]] && overrides+=(--schedule "$SCHEDULE")
           cargo xtask ci plan \
             --event "$EVENT" \
             --base "$BASE" \
@@ -123,7 +127,7 @@ jobs:
           echo "selected_lanes=$(jq -c '[.selected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
           echo "unselected_lanes=$(jq -c '[.unselected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
           echo "fallback_reason=$(jq -r '.fallback_reason // ""' "$plan")" >> "$GITHUB_OUTPUT"
-          jq '{schema_version, event, source_revision, topology_digest, selected_lanes, unselected_lanes, fallback_reason}' "$plan" >> "$GITHUB_STEP_SUMMARY"
+          jq '{schema_version, event, schedule, source_revision, topology_digest, selected_lanes, unselected_lanes, fallback_reason}' "$plan" >> "$GITHUB_STEP_SUMMARY"
           selected=$(jq -r '[.selected_lanes[].lane] | join(",")' "$plan")
           echo "::notice::Selected CI lanes: $selected"
 
@@ -402,6 +406,9 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
