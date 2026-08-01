@@ -7,9 +7,92 @@ use serde_json::{Map, Value, json};
 
 use super::MAX_SCHEMA_OMITTED_POINTERS;
 use super::projection::{count_nodes, escape_pointer, json_type};
-use super::source::json_tokens;
 use crate::Result;
 use crate::services::Services;
+
+/// Work counters for one schema projection call, used by diagnostics and the
+/// schema profile example to measure candidate reuse.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct SchemaProjectionCounters {
+    /// Number of `build_schema_breadth_first` invocations.
+    pub(super) schema_builds: usize,
+    /// Number of `serde_json::to_string` calls on schema candidates.
+    pub(super) schema_serializations: usize,
+    /// Number of tokenizer count calls on serialized schema candidates.
+    pub(super) schema_token_counts: usize,
+    /// Number of times a cached `MeasuredProjection` was reused.
+    pub(super) cache_hits: usize,
+}
+
+/// Cached projection of one schema candidate: the rendered JSON value, its
+/// serialized string, and the exact tokenizer count over that string. The
+/// serialized string is retained so the final selection does not need to be
+/// re-serialized for token accounting.
+pub(super) struct MeasuredProjection {
+    value: Value,
+    /// Cached serialized representation. Retained for the projection cache
+    /// contract so callers that need the serialized form (e.g. response
+    /// fitting diagnostics) can reuse it without re-serializing.
+    #[allow(dead_code)]
+    serialized: String,
+    tokens: usize,
+}
+
+impl MeasuredProjection {
+    fn measure(services: &Services, value: Value, counters: &mut SchemaProjectionCounters) -> Result<Self> {
+        let serialized = serde_json::to_string(&value)
+            .map_err(|error| crate::Error::SerializationFailure(error.to_string()))?;
+        counters.schema_serializations = counters.schema_serializations.saturating_add(1);
+        let tokens = services.config.tokenizer.count(&serialized);
+        counters.schema_token_counts = counters.schema_token_counts.saturating_add(1);
+        Ok(Self { value, serialized, tokens })
+    }
+
+    pub(super) fn tokens(&self) -> usize {
+        self.tokens
+    }
+
+    pub(super) fn into_value(self) -> Value {
+        self.value
+    }
+}
+
+/// Request-local plan that memoizes `MeasuredProjection` results by `max_items`
+/// across the binary fit loop so already-computed candidates are reused.
+pub(super) struct SchemaProjectionPlan<'a> {
+    services: &'a Services,
+    cache: BTreeMap<usize, MeasuredProjection>,
+    counters: SchemaProjectionCounters,
+}
+
+impl<'a> SchemaProjectionPlan<'a> {
+    fn new(services: &'a Services) -> Self {
+        Self {
+            services,
+            cache: BTreeMap::new(),
+            counters: SchemaProjectionCounters::default(),
+        }
+    }
+
+    /// Build and measure a breadth-first schema at `max_items`, or return a
+    /// previously cached measurement. The schema value, serialized string, and
+    /// exact token count are all reused on cache hits.
+    fn candidate(&mut self, value: &Value, max_items: usize) -> Result<&MeasuredProjection> {
+        if !self.cache.contains_key(&max_items) {
+            let built = build_schema_breadth_first(value, max_items);
+            self.counters.schema_builds = self.counters.schema_builds.saturating_add(1);
+            let measured = MeasuredProjection::measure(self.services, built, &mut self.counters)?;
+            self.cache.insert(max_items, measured);
+        } else {
+            self.counters.cache_hits = self.counters.cache_hits.saturating_add(1);
+        }
+        Ok(self.cache.get(&max_items).expect("entry was just inserted or cached"))
+    }
+
+    fn counters(&self) -> &SchemaProjectionCounters {
+        &self.counters
+    }
+}
 
 pub(super) struct SchemaProjection {
     value: Value,
@@ -18,6 +101,7 @@ pub(super) struct SchemaProjection {
     remaining_items: usize,
     incomplete_reason: Option<crate::model::JsonIncompleteReason>,
     projected_tokens: usize,
+    counters: SchemaProjectionCounters,
 }
 
 impl SchemaProjection {
@@ -30,6 +114,7 @@ impl SchemaProjection {
         usize,
         Option<crate::model::JsonIncompleteReason>,
         usize,
+        SchemaProjectionCounters,
     ) {
         (
             self.value,
@@ -38,6 +123,7 @@ impl SchemaProjection {
             self.remaining_items,
             self.incomplete_reason,
             self.projected_tokens,
+            self.counters,
         )
     }
 }
@@ -208,13 +294,18 @@ pub(super) fn project_schema_page(
 ) -> Result<SchemaProjection> {
     let total_items = count_nodes(value);
     let item_limit = total_items.min(max_items).max(1);
-    let item_limited = build_schema_breadth_first(value, item_limit);
-    let item_limited_tokens = json_tokens(services, &item_limited)?;
+    let mut plan = SchemaProjectionPlan::new(services);
+    let item_limited = plan.candidate(value, item_limit)?;
+    let item_limited_tokens = item_limited.tokens();
     let (returned_items, schema, projected_tokens) = if item_limited_tokens <= max_tokens {
-        (item_limit, item_limited, item_limited_tokens)
+        (
+            item_limit,
+            plan.cache.remove(&item_limit).expect("item_limit was just measured").into_value(),
+            item_limited_tokens,
+        )
     } else {
-        let root = build_schema_breadth_first(value, 1);
-        let root_tokens = json_tokens(services, &root)?;
+        let root = plan.candidate(value, 1)?;
+        let root_tokens = root.tokens();
         if root_tokens > max_tokens {
             return Err(crate::Error::RequestLimitExceeded {
                 field: "one projected JSON item tokens",
@@ -225,23 +316,29 @@ pub(super) fn project_schema_page(
         let mut lower = 1usize;
         let mut upper = item_limit.saturating_sub(1);
         let mut best_items = 1usize;
-        let mut best = root;
+        let mut best_key = 1usize;
         let mut best_tokens = root_tokens;
         while lower <= upper {
             let middle = lower.saturating_add(upper.saturating_sub(lower) / 2);
-            let candidate = build_schema_breadth_first(value, middle);
-            let candidate_tokens = json_tokens(services, &candidate)?;
+            let candidate = plan.candidate(value, middle)?;
+            let candidate_tokens = candidate.tokens();
             if candidate_tokens <= max_tokens {
                 lower = middle.saturating_add(1);
                 best_items = middle;
-                best = candidate;
+                best_key = middle;
                 best_tokens = candidate_tokens;
             } else {
                 upper = middle.saturating_sub(1);
             }
         }
-        (best_items, best, best_tokens)
+        let schema = plan
+            .cache
+            .remove(&best_key)
+            .expect("best key was cached during binary search")
+            .into_value();
+        (best_items, schema, best_tokens)
     };
+    let counters = plan.counters().clone();
     let remaining_items = total_items.saturating_sub(returned_items);
     let incomplete_reason = (remaining_items > 0).then_some(if returned_items < item_limit {
         crate::model::JsonIncompleteReason::MaxTokens
@@ -255,5 +352,6 @@ pub(super) fn project_schema_page(
         remaining_items,
         incomplete_reason,
         projected_tokens,
+        counters,
     })
 }
