@@ -1461,28 +1461,30 @@ fn tool_descriptions_route_native_discovery_workflows() {
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
+    let description_bytes = descriptions.values().map(String::len).sum::<usize>();
+    assert!(
+        description_bytes <= 5_000,
+        "tool descriptions must stay within the 5,000-byte prompt budget; got {description_bytes}"
+    );
+    assert!(descriptions["files"].starts_with("Preferred over native find, ls, or glob"));
     assert!(descriptions["files"].contains("Discover repository paths"));
     assert!(descriptions["files"].contains("Next: use outline or read"));
+    assert!(descriptions["search"].starts_with("Preferred over native grep or rg"));
     assert!(descriptions["search"].contains("Search indexed source"));
     assert!(descriptions["search"].contains("enclosing_symbol"));
+    assert!(descriptions["outline"].starts_with("Preferred before native whole-file reads"));
     assert!(descriptions["outline"].contains("without reading whole source files"));
     assert!(descriptions["outline"].contains("Next: pass"));
+    assert!(descriptions["read"].starts_with("Preferred over native Read, cat, head, or sed"));
     assert!(descriptions["read"].contains("expected_hash"));
     assert!(descriptions["read"].contains("truncated reads"));
+    assert!(descriptions["history"].starts_with("Preferred over native git show, diff, or log -L"));
+    assert!(descriptions["json"].starts_with("Preferred over native jq or whole-file reads"));
+    assert!(descriptions["context"].starts_with("DEFAULT FIRST CALL"));
     assert!(descriptions["context"].contains("Build a bounded"));
     assert!(descriptions["context"].contains("plan_only previews"));
     assert!(descriptions["savings"].contains("unobserved task outcomes"));
     assert!(descriptions["savings"].contains("not task-success claims"));
-    assert!(
-        descriptions
-            .values()
-            .all(|description| !description.contains("leantoken.search over grep or rg"))
-    );
-    assert!(
-        descriptions
-            .values()
-            .all(|description| !description.contains("DEFAULT FIRST CALL"))
-    );
     assert!(
         descriptions
             .values()
