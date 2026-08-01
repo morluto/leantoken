@@ -421,20 +421,19 @@ impl Services {
         if let (Some(expected), Some(actual)) = (
             target.expected_full_hash.as_deref(),
             snapshot.content_hash.as_deref(),
-        ) {
-            if expected != actual {
-                return Err(Error::StaleCursor);
-            }
+        ) && expected != actual
+        {
+            return Err(Error::StaleCursor);
         }
-        if let Some(expected_size) = target.expected_file_size {
-            if expected_size != snapshot.file_size {
-                return Err(Error::StaleCursor);
-            }
+        if let Some(expected_size) = target.expected_file_size
+            && expected_size != snapshot.file_size
+        {
+            return Err(Error::StaleCursor);
         }
-        if let Some(expected_ns) = target.expected_modified_ns {
-            if Some(expected_ns) != snapshot.modified_ns {
-                return Err(Error::StaleCursor);
-            }
+        if let Some(expected_ns) = target.expected_modified_ns
+            && Some(expected_ns) != snapshot.modified_ns
+        {
+            return Err(Error::StaleCursor);
         }
         let target_end_line = target
             .target_end_line
