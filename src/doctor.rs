@@ -1062,8 +1062,7 @@ mod tests {
         );
 
         let explicit_path = root.path().join("explicit.sqlite");
-        let explicit =
-            Config::discover(root.path(), Some(explicit_path.clone())).expect("explicit config");
+        let explicit = Config::discover(root.path(), Some(explicit_path)).expect("explicit config");
         let explicit_arguments =
             launcher_arguments(&explicit, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
                 .expect("explicit launcher arguments");
@@ -1073,7 +1072,7 @@ mod tests {
             .expect("explicit database flag");
         assert_eq!(
             explicit_arguments.get(database_index + 1),
-            Some(&explicit_path.into_os_string())
+            Some(&explicit.database_path.into_os_string())
         );
     }
 
