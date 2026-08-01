@@ -28,7 +28,7 @@ pub fn run(
         home,
         runtime_root,
         native_executable,
-        persistent_cli: !launcher.uses_npx(),
+        persistent_cli: !launcher.is_ephemeral(),
         launcher,
         interactive: !json_output
             && std::io::stdin().is_terminal()

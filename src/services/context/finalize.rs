@@ -234,6 +234,10 @@ impl Services {
             diff_scope,
             working_tree_state,
             working_tree_paths,
+            working_tree_modified,
+            working_tree_untracked,
+            commit_revision,
+            branch,
             resolved_workflow,
         } = finalization;
         let CandidateBatch {
@@ -305,6 +309,30 @@ impl Services {
         response.workflow_receipt = workflow_receipt;
         response.meta.freshness = self.freshness();
         response.meta.repository_id = self.repository_id();
+        let provenance = RepositoryProvenance {
+            commit_revision: commit_revision.map(str::to_owned),
+            branch: branch.map(str::to_owned),
+            working_tree_state: if working_tree_state == HandoffWorkingTreeState::Unknown {
+                RepositoryWorkingTreeState::Unknown
+            } else if working_tree_modified {
+                RepositoryWorkingTreeState::Modified
+            } else if working_tree_untracked {
+                RepositoryWorkingTreeState::Untracked
+            } else {
+                RepositoryWorkingTreeState::Clean
+            },
+            repository_generation: generation,
+            freshness: response.meta.freshness.clone(),
+            status: if commit_revision.is_some()
+                && branch.is_some()
+                && working_tree_state != HandoffWorkingTreeState::Unknown
+            {
+                RepositoryProvenanceStatus::Available
+            } else {
+                RepositoryProvenanceStatus::Unavailable
+            },
+        };
+        response.provenance = Some(provenance.clone());
         if let Some(scope) = diff_scope {
             let mut scope = scope.clone();
             let mut indexed = 0usize;
@@ -352,28 +380,37 @@ impl Services {
                     content_hash: fragment.content_hash.clone(),
                 })
                 .collect::<Vec<_>>();
-            let resolved_head = response
+            // A diff-scoped handoff must identify the requested immutable head.
+            // Keep the ordinary response provenance as the current snapshot,
+            // but make the handoff copy internally consistent with that scope.
+            let handoff_commit_revision = response
                 .diff_scope
                 .as_ref()
-                .and_then(|scope| scope.head_revision.clone());
-            let (commit_revision, commit_revision_available) = if let Some(head) = resolved_head {
-                (Some(head), true)
-            } else {
-                match git_head_revision(&self.config.root) {
-                    Ok(head) => (Some(head), true),
-                    Err(error) => {
-                        tracing::debug!(%error, "handoff Git identity unavailable");
-                        (None, false)
-                    }
-                }
-            };
+                .and_then(|scope| scope.head_revision.clone())
+                .or_else(|| provenance.commit_revision.clone());
+            let handoff_provenance = handoff_commit_revision.as_ref().map_or_else(
+                || provenance.clone(),
+                |commit_revision| {
+                    let mut scoped = provenance.clone();
+                    scoped.commit_revision = Some(commit_revision.clone());
+                    scoped.status = if scoped.branch.is_some()
+                        && scoped.working_tree_state != RepositoryWorkingTreeState::Unknown
+                    {
+                        RepositoryProvenanceStatus::Available
+                    } else {
+                        RepositoryProvenanceStatus::Unavailable
+                    };
+                    scoped
+                },
+            );
+            let commit_revision_available = handoff_commit_revision.is_some();
             response.handoff_manifest = Some(handoff::build(
                 request,
                 handoff,
                 &response,
                 evidence,
                 HandoffProvenance {
-                    commit_revision,
+                    commit_revision: handoff_commit_revision,
                     commit_revision_available,
                     working_tree_state: if commit_revision_available {
                         working_tree_state
@@ -381,6 +418,7 @@ impl Services {
                         HandoffWorkingTreeState::Unknown
                     },
                     working_tree_paths: working_tree_paths.to_vec(),
+                    provenance: Some(handoff_provenance),
                 },
             ));
         }

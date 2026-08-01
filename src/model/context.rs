@@ -168,6 +168,50 @@ pub enum HandoffWorkingTreeState {
     Unknown,
 }
 
+/// Whether bounded repository provenance inspection completed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryProvenanceStatus {
+    /// Git metadata was observed at the context snapshot boundary.
+    Available,
+    /// One or more bounded Git observations were unavailable.
+    Unavailable,
+}
+
+/// Working-tree state observed by bounded repository provenance inspection.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryWorkingTreeState {
+    /// No modified or untracked paths were observed.
+    Clean,
+    /// At least one tracked path was modified, added, deleted, or renamed.
+    Modified,
+    /// At least one untracked path was observed and no tracked change was observed.
+    Untracked,
+    /// Git status could not be observed.
+    Unknown,
+}
+
+/// Bounded repository identity and freshness observed alongside a context response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RepositoryProvenance {
+    /// Resolved commit revision, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_revision: Option<String>,
+    /// Current branch name, when available; detached HEAD is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Bounded working-tree classification.
+    pub working_tree_state: RepositoryWorkingTreeState,
+    /// Atomic repository generation used for the response.
+    pub repository_generation: u64,
+    /// Index freshness observed for the response.
+    pub freshness: Freshness,
+    /// Explicit availability of the Git observations.
+    pub status: RepositoryProvenanceStatus,
+}
+
 /// Source coordinate and content identity retained without copying source text.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct HandoffEvidence {
@@ -196,6 +240,9 @@ pub struct HandoffManifest {
     pub repository_generation: u64,
     /// Index freshness observed for the context response.
     pub freshness: Freshness,
+    /// Same bounded provenance object exposed on the ordinary context response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<RepositoryProvenance>,
     /// Resolved Git commit at the handoff boundary, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit_revision: Option<String>,
@@ -857,6 +904,10 @@ pub struct ContextResponse {
     /// Opt-in compact state for a host-triggered executor handoff.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff_manifest: Option<HandoffManifest>,
+    /// Bounded repository identity and working-tree state observed at the
+    /// context snapshot boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<RepositoryProvenance>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     pub meta: ResponseMeta,

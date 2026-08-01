@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::cursor::{JsonCursor, make_json_cursor};
 use super::execution::{JsonExecutionOptions, JsonKeyOrder};
 use super::projection::{ProjectionState, escape_pointer, json_type, take_item};
-use super::source::json_tokens;
+use super::source::{JsonMeasurementCache, JsonMeasurementKey};
 use crate::services::Services;
 use crate::{Error, Result};
 
@@ -27,6 +27,7 @@ pub(super) struct KeyProjectionContext<'a> {
     source_hash: &'a str,
     query_hash: &'a str,
     execution: JsonExecutionOptions,
+    measurements: &'a mut JsonMeasurementCache,
 }
 
 impl<'a> KeyProjectionContext<'a> {
@@ -35,12 +36,14 @@ impl<'a> KeyProjectionContext<'a> {
         source_hash: &'a str,
         query_hash: &'a str,
         execution: JsonExecutionOptions,
+        measurements: &'a mut JsonMeasurementCache,
     ) -> Self {
         Self {
             cursor,
             source_hash,
             query_hash,
             execution,
+            measurements,
         }
     }
 }
@@ -122,19 +125,29 @@ pub(super) fn key_entries(
         .collect()
 }
 
-fn key_prefix_tokens(services: &Services, entries: &[Value], length: usize) -> Result<usize> {
-    json_tokens(services, &Value::Array(entries[..length].to_vec()))
+fn key_prefix_tokens(
+    services: &Services,
+    entries: &[Value],
+    length: usize,
+    measurements: &mut JsonMeasurementCache,
+) -> Result<usize> {
+    measurements.measure(
+        services,
+        JsonMeasurementKey::KeysPrefix(length),
+        &Value::Array(entries[..length].to_vec()),
+    )
 }
 
 fn largest_key_prefix_within_tokens(
     services: &Services,
     entries: &[Value],
     max_tokens: usize,
+    measurements: &mut JsonMeasurementCache,
 ) -> Result<(usize, usize)> {
     if entries.is_empty() {
-        return Ok((0, json_tokens(services, &Value::Array(Vec::new()))?));
+        return Ok((0, key_prefix_tokens(services, entries, 0, measurements)?));
     }
-    let full_tokens = key_prefix_tokens(services, entries, entries.len())?;
+    let full_tokens = key_prefix_tokens(services, entries, entries.len(), measurements)?;
     if full_tokens <= max_tokens {
         return Ok((entries.len(), full_tokens));
     }
@@ -143,13 +156,13 @@ fn largest_key_prefix_within_tokens(
     let mut upper = entries.len();
     while lower < upper {
         let middle = lower.saturating_add(upper).saturating_add(1) / 2;
-        if key_prefix_tokens(services, entries, middle)? <= max_tokens {
+        if key_prefix_tokens(services, entries, middle, measurements)? <= max_tokens {
             lower = middle;
         } else {
             upper = middle.saturating_sub(1);
         }
     }
-    let tokens = key_prefix_tokens(services, entries, lower)?;
+    let tokens = key_prefix_tokens(services, entries, lower, measurements)?;
     Ok((lower, tokens))
 }
 
@@ -178,11 +191,11 @@ pub(super) fn project_key_page(
     let page_end = offset.saturating_add(max_items).min(total_items);
     let candidates = &entries[offset..page_end];
     let (returned_items, projected_tokens) =
-        largest_key_prefix_within_tokens(services, candidates, max_tokens)?;
+        largest_key_prefix_within_tokens(services, candidates, max_tokens, context.measurements)?;
     if returned_items == 0 && !candidates.is_empty() {
         return Err(Error::RequestLimitExceeded {
             field: "one projected JSON item tokens",
-            requested: key_prefix_tokens(services, candidates, 1)?,
+            requested: key_prefix_tokens(services, candidates, 1, context.measurements)?,
             limit: max_tokens,
         });
     }

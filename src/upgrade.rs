@@ -11,6 +11,7 @@ use dialoguer::Confirm;
 use semver::Version;
 use serde::Serialize;
 
+use crate::invocation::{InvocationIdentity, InvocationMetadata, PackageManager};
 use crate::{Error, Result};
 
 const PACKAGE_NAME: &str = "leantoken";
@@ -32,9 +33,24 @@ pub struct UpgradeOptions {
 #[serde(rename_all = "snake_case")]
 enum InstallContext {
     Npx,
+    Npm,
+    Pnpm,
+    Yarn,
     GlobalNpm,
     Cargo,
     Unknown,
+}
+
+impl InstallContext {
+    fn package_manager(self) -> Option<PackageManager> {
+        match self {
+            Self::Npx => Some(PackageManager::Npx),
+            Self::Npm => Some(PackageManager::Npm),
+            Self::Pnpm => Some(PackageManager::Pnpm),
+            Self::Yarn => Some(PackageManager::Yarn),
+            Self::GlobalNpm | Self::Cargo | Self::Unknown => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,8 +155,7 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
 
     let command = upgrade_command(context, Some(&latest));
 
-    if context == InstallContext::Npx {
-        let refresh_command = npx_refresh_command(&latest);
+    if let Some(refresh_command) = ephemeral_refresh_command(context, &latest) {
         return print_report(
             UpgradeReport {
                 status: UpgradeStatus::Ephemeral,
@@ -218,10 +233,35 @@ pub(crate) fn latest_npm_version() -> Option<String> {
 }
 
 fn detect_current_context(executable: &Path) -> InstallContext {
-    let npm_command = env::var("npm_command").unwrap_or_default();
-    let lifecycle = env::var("npm_lifecycle_event").unwrap_or_default();
-    if npm_command == "exec" || lifecycle == "npx" {
-        return InstallContext::Npx;
+    let npm_command = env::var("npm_command").ok();
+    let lifecycle = env::var("npm_lifecycle_event").ok();
+    let npm_execpath = env::var_os("npm_execpath").map(PathBuf::from);
+    let npm_node_execpath = env::var_os("npm_node_execpath").map(PathBuf::from);
+    let yarn_version = env::var("YARN_VERSION").ok();
+    let yarn_package_json = env::var_os("npm_package_json").map(PathBuf::from);
+    let pnpm_script_src_dir = env::var_os("PNPM_SCRIPT_SRC_DIR")
+        .or_else(|| env::var_os("PNPM_SCRIPT_SRC"))
+        .map(PathBuf::from);
+    let identity = InvocationIdentity::detect(
+        executable,
+        &env::args().collect::<Vec<_>>(),
+        InvocationMetadata {
+            npm_command: npm_command.as_deref(),
+            npm_lifecycle_event: lifecycle.as_deref(),
+            npm_execpath: npm_execpath.as_deref(),
+            npm_node_execpath: npm_node_execpath.as_deref(),
+            yarn_version: yarn_version.as_deref(),
+            yarn_package_json: yarn_package_json.as_deref(),
+            pnpm_script_src_dir: pnpm_script_src_dir.as_deref(),
+        },
+    );
+    if let Some(package_manager) = identity.package_manager {
+        return match package_manager {
+            PackageManager::Npx => InstallContext::Npx,
+            PackageManager::Npm => InstallContext::Npm,
+            PackageManager::Pnpm => InstallContext::Pnpm,
+            PackageManager::Yarn => InstallContext::Yarn,
+        };
     }
 
     if path_contains(executable, ".cargo") {
@@ -229,16 +269,21 @@ fn detect_current_context(executable: &Path) -> InstallContext {
     }
 
     let npm_root = command_stdout("npm", &["root", "--global"]).map(PathBuf::from);
-    detect_install_context(executable, false, npm_root.as_deref())
+    detect_install_context(executable, None, npm_root.as_deref())
 }
 
 fn detect_install_context(
     executable: &Path,
-    ephemeral_npx: bool,
+    ephemeral_manager: Option<PackageManager>,
     global_npm_root: Option<&Path>,
 ) -> InstallContext {
-    if ephemeral_npx {
-        return InstallContext::Npx;
+    if let Some(package_manager) = ephemeral_manager {
+        return match package_manager {
+            PackageManager::Npx => InstallContext::Npx,
+            PackageManager::Npm => InstallContext::Npm,
+            PackageManager::Pnpm => InstallContext::Pnpm,
+            PackageManager::Yarn => InstallContext::Yarn,
+        };
     }
     if path_contains(executable, ".cargo") {
         return InstallContext::Cargo;
@@ -268,12 +313,29 @@ fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Opt
             arguments.push("--force".into());
             Some(CommandSpec::new("cargo", arguments))
         }
-        InstallContext::Npx | InstallContext::Unknown => None,
+        InstallContext::Npx
+        | InstallContext::Npm
+        | InstallContext::Pnpm
+        | InstallContext::Yarn
+        | InstallContext::Unknown => None,
     }
 }
 
 fn npx_refresh_command(version: &str) -> String {
-    format!("npx --yes leantoken@{version} setup --refresh --yes")
+    ephemeral_refresh_command(InstallContext::Npx, version).expect("npx is ephemeral")
+}
+
+fn ephemeral_refresh_command(context: InstallContext, version: &str) -> Option<String> {
+    let package_manager = context.package_manager()?;
+    let package = format!("leantoken@{version}");
+    Some(match package_manager {
+        PackageManager::Npx => format!("npx --yes {package} setup --refresh --yes"),
+        PackageManager::Npm => {
+            format!("npm exec --yes --package={package} -- leantoken setup --refresh --yes")
+        }
+        PackageManager::Pnpm => format!("pnpm dlx {package} setup --refresh --yes"),
+        PackageManager::Yarn => format!("yarn dlx {package} setup --refresh --yes"),
+    })
 }
 
 fn persistent_upgrade_guidance(refresh_command: &str) -> String {
@@ -318,9 +380,12 @@ fn latest_version(context: InstallContext) -> Option<String> {
                 .nth(1)
                 .map(str::to_owned)
         }),
-        InstallContext::Npx | InstallContext::GlobalNpm | InstallContext::Unknown => {
-            latest_npm_version()
-        }
+        InstallContext::Npx
+        | InstallContext::Npm
+        | InstallContext::Pnpm
+        | InstallContext::Yarn
+        | InstallContext::GlobalNpm
+        | InstallContext::Unknown => latest_npm_version(),
     }
 }
 
@@ -391,6 +456,11 @@ fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> R
             report.current_version
         )?,
         UpgradeStatus::Ephemeral => {
+            let package_manager = report
+                .context
+                .package_manager()
+                .map(PackageManager::label)
+                .unwrap_or("a package manager");
             writeln!(
                 output,
                 "Update available: v{} -> v{}",
@@ -399,7 +469,7 @@ fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> R
             )?;
             writeln!(
                 output,
-                "You are running LeanToken through npx; there is no persistent CLI to replace."
+                "You are running LeanToken through {package_manager}; there is no persistent CLI to replace."
             )?;
             if let Some(command) = report.command {
                 writeln!(
@@ -455,23 +525,23 @@ mod tests {
     #[test]
     fn distinguishes_ephemeral_global_npm_cargo_and_unknown() {
         assert_eq!(
-            detect_install_context(Path::new("/tmp/leantoken"), true, None),
+            detect_install_context(Path::new("/tmp/leantoken"), Some(PackageManager::Npx), None,),
             InstallContext::Npx
         );
         assert_eq!(
             detect_install_context(
                 Path::new("/usr/lib/node_modules/leantoken/bin/leantoken"),
-                false,
+                None,
                 Some(Path::new("/usr/lib/node_modules"))
             ),
             InstallContext::GlobalNpm
         );
         assert_eq!(
-            detect_install_context(Path::new("/home/me/.cargo/bin/leantoken"), false, None),
+            detect_install_context(Path::new("/home/me/.cargo/bin/leantoken"), None, None),
             InstallContext::Cargo
         );
         assert_eq!(
-            detect_install_context(Path::new("/usr/local/bin/leantoken"), false, None),
+            detect_install_context(Path::new("/usr/local/bin/leantoken"), None, None),
             InstallContext::Unknown
         );
     }
@@ -500,6 +570,18 @@ mod tests {
             "npx --yes leantoken@1.2.3 setup --refresh --yes"
         );
         assert!(!npx_refresh_command("1.2.3").contains("@latest"));
+    }
+
+    #[test]
+    fn package_manager_refresh_commands_preserve_the_exact_version() {
+        assert_eq!(
+            ephemeral_refresh_command(InstallContext::Pnpm, "1.2.3"),
+            Some("pnpm dlx leantoken@1.2.3 setup --refresh --yes".into())
+        );
+        assert_eq!(
+            ephemeral_refresh_command(InstallContext::Yarn, "1.2.3"),
+            Some("yarn dlx leantoken@1.2.3 setup --refresh --yes".into())
+        );
     }
 
     #[test]

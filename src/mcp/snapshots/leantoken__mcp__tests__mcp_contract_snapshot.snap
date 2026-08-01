@@ -1,10 +1,8 @@
 ---
 source: src/mcp/tests.rs
-assertion_line: 333
 expression: mcp_contract()
 ---
 {
-  "default_result_mode": "structured",
   "resources": {
     "capability": {
       "listChanged": false,
@@ -19,7 +17,6 @@ expression: mcp_contract()
       }
     ]
   },
-  "result_envelope_version": 2,
   "tools": [
     {
       "description": "Build a bounded, ranked evidence bundle for a broad coding, debugging, review, or architecture task. Returns fragments, coverage, omissions, and an optional receipt; plan_only previews candidates without source or receipt mutation. Use strict scopes and required evidence when coverage must be explicit, response_profile=compact for the smallest fail-loud result, and known_hashes or receipt_id for follow-ups. Example: {\"task\":\"Audit MCP tool discovery\"}.",
@@ -280,81 +277,12 @@ expression: mcp_contract()
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "strict_focus_paths": {
-                  "const": true
-                }
-              },
-              "required": [
-                "strict_focus_paths"
-              ]
-            },
-            "then": {
-              "properties": {
-                "focus_paths": {
-                  "minItems": 1
-                }
-              },
-              "required": [
-                "focus_paths"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "minimum_fragments_per_focus_path": {
-                  "not": {
-                    "type": "null"
-                  }
-                }
-              },
-              "required": [
-                "minimum_fragments_per_focus_path"
-              ]
-            },
-            "then": {
-              "properties": {
-                "focus_paths": {
-                  "minItems": 1
-                }
-              },
-              "required": [
-                "focus_paths"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "plan_only": {
-                  "const": true
-                }
-              },
-              "required": [
-                "plan_only"
-              ]
-            },
-            "then": {
-              "properties": {
-                "handoff": {
-                  "type": "null"
-                },
-                "receipt_id": {
-                  "type": "null"
-                }
-              }
-            }
-          }
-        ],
         "properties": {
           "base_revision": {
             "default": null,
             "description": "Base revision or `BASE..HEAD` range for diff-scoped context.",
             "maxLength": 256,
+            "minLength": 1,
             "type": [
               "string",
               "null"
@@ -455,7 +383,10 @@ expression: mcp_contract()
             "description": "Maximum returned fragments (default 8, maximum 100).",
             "maximum": 100,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_response_tokens": {
             "default": null,
@@ -463,14 +394,20 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "minimum_fragments_per_focus_path": {
             "default": null,
             "description": "Minimum returned fragments required per focus path (maximum 8); requires\nnon-empty `focus_paths`.",
             "maximum": 8,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "must_include_paths": {
             "default": [],
@@ -559,7 +496,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "workflow": {
             "$ref": "#/$defs/ContextWorkflow",
@@ -585,26 +525,205 @@ expression: mcp_contract()
       "name": "context"
     },
     {
-      "description": "Discover repository paths and metadata. Use tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":\"find\",\"query\":\"mcp\"}.",
+      "description": "Discover repository paths and metadata. Select a tagged operation with operation.kind: tree for hierarchy, find for fuzzy filenames, or glob for path patterns; returns paths, not source. Set the selected operation's projection=paths to omit per-entry metadata. Next: use outline or read once the file is known. Example: {\"operation\":{\"kind\":\"find\",\"query\":\"mcp\"}}.",
       "inputSchema": {
         "$defs": {
-          "FileOperation": {
-            "description": "Repository path-discovery operation.",
+          "FilesMcpOperation": {
             "oneOf": [
               {
-                "const": "tree",
-                "description": "Return a compact hierarchy.",
-                "type": "string"
+                "additionalProperties": false,
+                "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "depth": {
+                    "default": null,
+                    "description": "Maximum hierarchy depth below `path`.",
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "tree",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "path": {
+                    "default": null,
+                    "description": "Optional repository-relative directory for `tree`.",
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/FilesMcpProjection",
+                    "default": "full"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
               },
               {
-                "const": "find",
-                "description": "Fuzzy-match paths and basenames.",
-                "type": "string"
+                "additionalProperties": false,
+                "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "find",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/FilesMcpProjection",
+                    "default": "full"
+                  },
+                  "query": {
+                    "description": "Non-empty fuzzy filename or path query for `find`.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
               },
               {
-                "const": "glob",
-                "description": "Match indexed paths with a glob.",
-                "type": "string"
+                "additionalProperties": false,
+                "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "glob",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "pattern": {
+                    "description": "Non-empty glob pattern for `glob`.",
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/FilesMcpProjection",
+                    "default": "full"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "pattern"
+                ],
+                "type": "object"
               }
             ]
           },
@@ -626,122 +745,7 @@ expression: mcp_contract()
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "oneOf": [
-          {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "query"
-                  ]
-                },
-                {
-                  "required": [
-                    "pattern"
-                  ]
-                }
-              ]
-            },
-            "properties": {
-              "operation": {
-                "const": "tree"
-              }
-            }
-          },
-          {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "path"
-                  ]
-                },
-                {
-                  "required": [
-                    "pattern"
-                  ]
-                },
-                {
-                  "required": [
-                    "depth"
-                  ]
-                }
-              ]
-            },
-            "properties": {
-              "operation": {
-                "const": "find"
-              },
-              "query": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "query"
-            ]
-          },
-          {
-            "not": {
-              "anyOf": [
-                {
-                  "required": [
-                    "path"
-                  ]
-                },
-                {
-                  "required": [
-                    "query"
-                  ]
-                },
-                {
-                  "required": [
-                    "depth"
-                  ]
-                }
-              ]
-            },
-            "properties": {
-              "operation": {
-                "const": "glob"
-              },
-              "pattern": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "pattern"
-            ]
-          }
-        ],
         "properties": {
-          "consistency": {
-            "default": "indexed_generation",
-            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
-            "enum": [
-              "indexed_generation",
-              "reconcile_working_tree"
-            ],
-            "type": "string"
-          },
-          "cursor": {
-            "default": null,
-            "description": "Cursor returned by the same operation and repository generation.",
-            "maxLength": 4096,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "depth": {
-            "default": null,
-            "description": "Maximum hierarchy depth below `path` for `tree`.",
-            "format": "uint",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "expected_repository_id": {
             "default": null,
             "description": "Expected opaque repository identity from an earlier response.",
@@ -751,59 +755,9 @@ expression: mcp_contract()
               "null"
             ]
           },
-          "max_response_tokens": {
-            "default": null,
-            "description": "Maximum tokens in the final serialized service response.",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_results": {
-            "default": 20,
-            "description": "Maximum entries to return (default 20, maximum 100).",
-            "format": "uint",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
           "operation": {
-            "$ref": "#/$defs/FileOperation",
-            "description": "Path operation to perform."
-          },
-          "path": {
-            "default": null,
-            "description": "Optional repository-relative directory for `tree`.",
-            "maxLength": 4096,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pattern": {
-            "default": null,
-            "description": "Non-empty glob pattern for `glob`.",
-            "maxLength": 4096,
-            "minLength": 1,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "projection": {
-            "$ref": "#/$defs/FilesMcpProjection",
-            "default": "full",
-            "description": "Response shape: `full` entries (default) or ordered `paths` only."
-          },
-          "query": {
-            "default": null,
-            "description": "Non-empty fuzzy filename or path query for `find`.",
-            "maxLength": 65536,
-            "minLength": 1,
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/$defs/FilesMcpOperation",
+            "description": "Tagged path operation. Bounds and cursors live on the variant that uses them."
           }
         },
         "required": [
@@ -827,20 +781,52 @@ expression: mcp_contract()
                     "const": "read_symbol",
                     "type": "string"
                   },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "path": {
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "revision": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "symbol": {
-                    "maxLength": 4096,
-                    "minLength": 1,
-                    "type": "string"
+                    "$ref": "#/$defs/SymbolIdentity"
                   }
                 },
                 "required": [
@@ -856,11 +842,13 @@ expression: mcp_contract()
                 "description": "Compare one parsed symbol across revisions, including added or removed endpoints.",
                 "properties": {
                   "base_revision": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "head_revision": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -869,15 +857,46 @@ expression: mcp_contract()
                     "const": "diff_symbol",
                     "type": "string"
                   },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "path": {
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "symbol": {
-                    "maxLength": 4096,
-                    "minLength": 1,
-                    "type": "string"
+                    "$ref": "#/$defs/SymbolIdentity"
                   }
                 },
                 "required": [
@@ -894,11 +913,23 @@ expression: mcp_contract()
                 "description": "Diff an ordered symbol set with shared revisions, metadata, and bounded Git work.",
                 "properties": {
                   "base_revision": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
+                  "cursor": {
+                    "default": null,
+                    "description": "Opaque cursor returned by `diff_symbols`; reuse the exact operation.",
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "head_revision": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -906,6 +937,39 @@ expression: mcp_contract()
                   "kind": {
                     "const": "diff_symbols",
                     "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "targets": {
                     "items": {
@@ -932,6 +996,39 @@ expression: mcp_contract()
                     "const": "symbol_log",
                     "type": "string"
                   },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "path": {
                     "maxLength": 4096,
                     "minLength": 1,
@@ -939,6 +1036,7 @@ expression: mcp_contract()
                   },
                   "revision": {
                     "default": null,
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": [
@@ -947,9 +1045,7 @@ expression: mcp_contract()
                     ]
                   },
                   "symbol": {
-                    "maxLength": 4096,
-                    "minLength": 1,
-                    "type": "string"
+                    "$ref": "#/$defs/SymbolIdentity"
                   }
                 },
                 "required": [
@@ -966,6 +1062,7 @@ expression: mcp_contract()
             "properties": {
               "head_path": {
                 "default": null,
+                "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                 "maxLength": 4096,
                 "minLength": 1,
                 "type": [
@@ -974,13 +1071,15 @@ expression: mcp_contract()
                 ]
               },
               "head_symbol": {
-                "default": null,
-                "maxLength": 4096,
-                "minLength": 1,
-                "type": [
-                  "string",
-                  "null"
-                ]
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/SymbolIdentity"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "path": {
                 "maxLength": 4096,
@@ -988,9 +1087,7 @@ expression: mcp_contract()
                 "type": "string"
               },
               "symbol": {
-                "maxLength": 4096,
-                "minLength": 1,
-                "type": "string"
+                "$ref": "#/$defs/SymbolIdentity"
               }
             },
             "required": [
@@ -998,21 +1095,33 @@ expression: mcp_contract()
               "symbol"
             ],
             "type": "object"
+          },
+          "SymbolIdentity": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "parent": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "cursor": {
-            "default": null,
-            "description": "Opaque cursor returned by `diff_symbols`; reuse the exact operation.",
-            "maxLength": 128,
-            "minLength": 1,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "expected_repository_id": {
             "default": null,
             "description": "Expected opaque repository identity from an earlier response.",
@@ -1021,30 +1130,6 @@ expression: mcp_contract()
               "string",
               "null"
             ]
-          },
-          "max_response_tokens": {
-            "default": null,
-            "description": "Maximum tokens in the final serialized service response.",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_results": {
-            "default": 20,
-            "description": "Maximum results (default 20): 32 for `diff_symbols`, 100 for `symbol_log`.",
-            "format": "uint",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_tokens": {
-            "default": 8000,
-            "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
           },
           "operation": {
             "$ref": "#/$defs/HistoryMcpOperation",
@@ -1068,11 +1153,76 @@ expression: mcp_contract()
                 "additionalProperties": false,
                 "description": "Select and project one JSON value.",
                 "properties": {
+                  "array_sample_size": {
+                    "default": null,
+                    "description": "Array elements sampled by collapsed projections (default 3, maximum 20).",
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "cursor": {
+                    "default": null,
+                    "description": "Opaque cursor returned by an incomplete keys projection.",
+                    "maxLength": 256,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "depth": {
+                    "default": null,
+                    "description": "Maximum keys traversal depth relative to the selected root (root is zero).",
+                    "format": "uint",
+                    "maximum": 64,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "kind": {
                     "const": "query",
                     "type": "string"
                   },
+                  "max_items": {
+                    "default": null,
+                    "description": "Maximum structural items returned (default 1000, maximum 10000).",
+                    "format": "uint",
+                    "maximum": 10000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "path": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1102,11 +1252,56 @@ expression: mcp_contract()
                 "additionalProperties": false,
                 "description": "Summarize numeric leaves below one JSON selection.",
                 "properties": {
+                  "array_sample_size": {
+                    "default": null,
+                    "description": "Array elements sampled by collapsed projections (default 3, maximum 20).",
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "kind": {
                     "const": "numeric_summary",
                     "type": "string"
                   },
+                  "max_items": {
+                    "default": null,
+                    "description": "Maximum structural items returned (default 1000, maximum 10000).",
+                    "format": "uint",
+                    "maximum": 10000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "path": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1132,12 +1327,25 @@ expression: mcp_contract()
                 "additionalProperties": false,
                 "description": "Compare selected fields between two JSON files.",
                 "properties": {
+                  "array_sample_size": {
+                    "default": null,
+                    "description": "Array elements sampled by collapsed projections (default 3, maximum 20).",
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
                   "base_path": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
                   },
                   "head_path": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1145,6 +1353,39 @@ expression: mcp_contract()
                   "kind": {
                     "const": "diff_fields",
                     "type": "string"
+                  },
+                  "max_items": {
+                    "default": null,
+                    "description": "Maximum structural items returned (default 1000, maximum 10000).",
+                    "format": "uint",
+                    "maximum": 10000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "description": "Maximum tokens in the final serialized service response.",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "projection": {
                     "$ref": "#/$defs/JsonProjection",
@@ -1195,6 +1436,7 @@ expression: mcp_contract()
                 "description": "Standard JMESPath expression.",
                 "properties": {
                   "expression": {
+                    "description": "Trimmed, non-empty text accepted at a serialized service boundary.",
                     "maxLength": 4096,
                     "minLength": 1,
                     "type": "string"
@@ -1241,37 +1483,6 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "array_sample_size": {
-            "default": null,
-            "description": "Array elements sampled by collapsed projections (default 3, maximum 20).",
-            "format": "uint",
-            "maximum": 20,
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "cursor": {
-            "default": null,
-            "description": "Opaque cursor returned by an incomplete keys projection.",
-            "maxLength": 256,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "depth": {
-            "default": null,
-            "description": "Maximum keys traversal depth relative to the selected root (root is zero).",
-            "format": "uint",
-            "maximum": 64,
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
           "expected_repository_id": {
             "default": null,
             "description": "Expected opaque repository identity from an earlier response.",
@@ -1280,33 +1491,6 @@ expression: mcp_contract()
               "string",
               "null"
             ]
-          },
-          "max_items": {
-            "default": null,
-            "description": "Maximum structural items returned (default 1000, maximum 10000).",
-            "format": "uint",
-            "maximum": 10000,
-            "minimum": 1,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "max_response_tokens": {
-            "default": null,
-            "description": "Maximum tokens in the final serialized service response.",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_tokens": {
-            "default": 8000,
-            "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
           },
           "operation": {
             "$ref": "#/$defs/JsonMcpOperation",
@@ -1376,7 +1560,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_results": {
             "default": 20,
@@ -1384,7 +1571,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 100,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_tokens": {
             "default": 8000,
@@ -1392,7 +1582,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "paths": {
             "description": "One to 256 repository-relative source files to outline.",
@@ -1454,20 +1647,18 @@ expression: mcp_contract()
                 "additionalProperties": false,
                 "description": "Read one indexed symbol definition.",
                 "properties": {
+                  "identity": {
+                    "$ref": "#/$defs/SymbolIdentity",
+                    "description": "Structured indexed symbol identity."
+                  },
                   "kind": {
                     "const": "symbol",
-                    "type": "string"
-                  },
-                  "name": {
-                    "description": "Exact indexed symbol name.",
-                    "maxLength": 4096,
-                    "minLength": 1,
                     "type": "string"
                   }
                 },
                 "required": [
                   "kind",
-                  "name"
+                  "identity"
                 ],
                 "type": "object"
               },
@@ -1564,6 +1755,28 @@ expression: mcp_contract()
                 "type": "string"
               }
             ]
+          },
+          "SymbolIdentity": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "parent": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1607,7 +1820,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_tokens": {
             "default": 8000,
@@ -1615,7 +1831,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "path": {
             "description": "Repository-relative UTF-8 source file.",
@@ -1680,7 +1899,10 @@ expression: mcp_contract()
             "format": "uint",
             "maximum": 32000,
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "max_samples_per_outcome": {
             "default": null,
@@ -1732,7 +1954,7 @@ expression: mcp_contract()
       "name": "savings"
     },
     {
-      "description": "Search indexed source for symbols, references, identifiers, text, or regex. mode=symbol is ranked and structural; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true. coordinates_only omits excerpts. query_receipt record/reuse persists only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: ranked symbol {\"query\":\"InternalFailure\",\"mode\":\"symbol\"}; exhaustive text {\"query\":\"InternalFailure\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}.",
+      "description": "Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
       "inputSchema": {
         "$defs": {
           "QueryReceiptAction": {
@@ -1774,170 +1996,887 @@ expression: mcp_contract()
               }
             ]
           },
-          "SearchMcpProjection": {
-            "description": "Response projection for indexed search.",
+          "SearchMcpOperation": {
             "oneOf": [
               {
-                "const": "auto",
-                "description": "Select `occurrences` for exhaustive lexical search and `full` otherwise.",
-                "type": "string"
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "auto",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
               },
               {
-                "const": "full",
-                "description": "Preserve the complete ranked-hit response.",
-                "type": "string"
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
               },
               {
-                "const": "grouped",
-                "description": "Group the selected page into symbol or file summaries.",
-                "type": "string"
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "regex",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
               },
               {
-                "const": "occurrences",
-                "description": "Share each exhaustive lexical excerpt across its exact occurrence coordinates.",
-                "type": "string"
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "identifier",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "symbol",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "properties": {
+                  "all_occurrences": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "case_sensitive": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
+                  "context_lines": {
+                    "default": 2,
+                    "format": "uint",
+                    "maximum": 20,
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "coordinates_only": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "cursor": {
+                    "default": null,
+                    "maxLength": 4096,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "exclude_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "focus_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "include_paths": {
+                    "default": [],
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "type": "array"
+                  },
+                  "kind": {
+                    "const": "reference",
+                    "type": "string"
+                  },
+                  "max_response_tokens": {
+                    "default": null,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_results": {
+                    "default": 20,
+                    "format": "uint",
+                    "maximum": 100,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_tokens": {
+                    "default": 8000,
+                    "format": "uint",
+                    "maximum": 32000,
+                    "minimum": 1,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prefer_structural": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "projection": {
+                    "$ref": "#/$defs/SearchMcpProjection",
+                    "default": "auto"
+                  },
+                  "query": {
+                    "description": "Non-empty search query; leading and trailing whitespace is significant.",
+                    "maxLength": 65536,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "query_receipt": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/QueryReceiptAction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "receipt_id": {
+                    "default": null,
+                    "maxLength": 128,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "query"
+                ],
+                "type": "object"
               }
             ]
           },
-          "SearchMode": {
-            "description": "Search candidate source.",
-            "oneOf": [
-              {
-                "const": "auto",
-                "description": "Combine structural and lexical candidates.",
-                "type": "string"
-              },
-              {
-                "const": "text",
-                "description": "Match a literal substring.",
-                "type": "string"
-              },
-              {
-                "const": "regex",
-                "description": "Verify a Rust regular expression over indexed chunks.",
-                "type": "string"
-              },
-              {
-                "const": "identifier",
-                "description": "Search identifier tokens and structural names.",
-                "type": "string"
-              },
-              {
-                "const": "symbol",
-                "description": "Search definitions only.",
-                "type": "string"
-              },
-              {
-                "const": "reference",
-                "description": "Search syntactic references only.",
-                "type": "string"
-              }
-            ]
+          "SearchMcpProjection": {
+            "enum": [
+              "auto",
+              "full",
+              "grouped",
+              "occurrences"
+            ],
+            "type": "string"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
-        "allOf": [
-          {
-            "if": {
-              "properties": {
-                "all_occurrences": {
-                  "const": true
-                }
-              },
-              "required": [
-                "all_occurrences"
-              ]
-            },
-            "then": {
-              "properties": {
-                "mode": {
-                  "enum": [
-                    "text",
-                    "regex"
-                  ]
-                }
-              },
-              "required": [
-                "mode"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "projection": {
-                  "const": "occurrences"
-                }
-              },
-              "required": [
-                "projection"
-              ]
-            },
-            "then": {
-              "properties": {
-                "all_occurrences": {
-                  "const": true
-                }
-              },
-              "required": [
-                "all_occurrences"
-              ]
-            }
-          }
-        ],
         "properties": {
-          "all_occurrences": {
-            "default": false,
-            "description": "Return every text or regex occurrence with exact coordinates and counts;\nrequires `mode=text` or `mode=regex` and cannot broaden `symbol` search.",
-            "type": "boolean"
-          },
-          "case_sensitive": {
-            "default": false,
-            "description": "Preserve query case when matching.",
-            "type": "boolean"
-          },
-          "consistency": {
-            "default": "indexed_generation",
-            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
-            "enum": [
-              "indexed_generation",
-              "reconcile_working_tree"
-            ],
-            "type": "string"
-          },
-          "context_lines": {
-            "default": 2,
-            "description": "Lines before and after each match (default 2, maximum 20).",
-            "format": "uint",
-            "maximum": 20,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "coordinates_only": {
-            "default": false,
-            "description": "Omit excerpts and hashes from an exhaustive occurrence response.",
-            "type": "boolean"
-          },
-          "cursor": {
-            "default": null,
-            "description": "Cursor returned by the same search and repository generation.",
-            "maxLength": 4096,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "exclude_paths": {
-            "default": [],
-            "description": "Exclude matching repository paths.",
-            "items": {
-              "maxLength": 4096,
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
           "expected_repository_id": {
             "default": null,
             "description": "Expected opaque repository identity from an earlier response.",
@@ -1947,95 +2886,13 @@ expression: mcp_contract()
               "null"
             ]
           },
-          "focus_paths": {
-            "default": [],
-            "description": "Boost matching paths without filtering other results.",
-            "items": {
-              "maxLength": 4096,
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
-          "include_paths": {
-            "default": [],
-            "description": "Include only matching repository paths.",
-            "items": {
-              "maxLength": 4096,
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
-          "max_response_tokens": {
-            "default": null,
-            "description": "Maximum tokens in the final serialized service response.",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_results": {
-            "default": 20,
-            "description": "Maximum hits to return (default 20, maximum 100).",
-            "format": "uint",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "max_tokens": {
-            "default": 8000,
-            "description": "Maximum source tokens across excerpts (default 8000, maximum 32000).",
-            "format": "uint",
-            "maximum": 32000,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "mode": {
-            "$ref": "#/$defs/SearchMode",
-            "default": "auto",
-            "description": "Candidate source to search (default `auto`).\n`symbol` is ranked and structural; exhaustive occurrences require `text` or `regex`."
-          },
-          "prefer_structural": {
-            "default": false,
-            "description": "Prefer structural definitions when identifier channels find the same definition.",
-            "type": "boolean"
-          },
-          "projection": {
-            "$ref": "#/$defs/SearchMcpProjection",
-            "default": "auto",
-            "description": "Response shape. Exhaustive searches default to `occurrences`; others default to `full`."
-          },
-          "query": {
-            "description": "Non-empty text, identifier, symbol, or Rust regular expression to find.",
-            "maxLength": 65536,
-            "minLength": 1,
-            "type": "string"
-          },
-          "query_receipt": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/QueryReceiptAction"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "description": "Explicitly record or reuse complete exhaustive-query coverage."
-          },
-          "receipt_id": {
-            "default": null,
-            "description": "Suppress evidence already returned under this server-managed receipt.",
-            "maxLength": 128,
-            "type": [
-              "string",
-              "null"
-            ]
+          "operation": {
+            "$ref": "#/$defs/SearchMcpOperation",
+            "description": "Search semantics and all bounds are owned by the selected tagged operation."
           }
         },
         "required": [
-          "query"
+          "operation"
         ],
         "type": "object"
       },

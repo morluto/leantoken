@@ -20,7 +20,7 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     pub(in crate::mcp) expected_repository_id: Option<String>,
     /// One to 256 repository-relative source files to outline.
     #[schemars(length(min = 1, max = 256), inner(length(max = 4096)))]
-    pub(in crate::mcp) paths: Vec<String>,
+    pub(in crate::mcp) paths: Vec<RepositoryPath>,
     /// Keep definitions whose names contain this value.
     #[serde(default)]
     #[schemars(length(max = 4096))]
@@ -30,11 +30,11 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     #[schemars(length(max = 4096))]
     pub(in crate::mcp) symbol_kind: Option<String>,
     /// Maximum definitions and imports to return (default 20, maximum 100).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
     pub(in crate::mcp) max_results: Option<usize>,
     /// Maximum signature and import tokens (default 8000, maximum 32000).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     /// Maximum tokens in the final serialized service response.
@@ -80,7 +80,11 @@ impl OutlineMcpRequest {
     ) {
         (
             OutlineRequest {
-                paths: self.paths,
+                paths: self
+                    .paths
+                    .into_iter()
+                    .map(RepositoryPath::into_string)
+                    .collect(),
                 symbol_name: self.symbol_name,
                 symbol_kind: self.symbol_kind,
                 max_results: self.max_results,

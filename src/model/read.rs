@@ -7,7 +7,7 @@ use super::*;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReadTarget {
     /// Read one indexed symbol definition.
-    Symbol { name: String },
+    Symbol { identity: SymbolIdentity },
     /// Read one indexed Markdown or LaTeX section by exact title or outline signature.
     Heading {
         name: String,

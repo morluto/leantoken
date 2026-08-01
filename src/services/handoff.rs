@@ -25,6 +25,7 @@ pub(super) struct HandoffProvenance {
     pub(super) commit_revision_available: bool,
     pub(super) working_tree_state: HandoffWorkingTreeState,
     pub(super) working_tree_paths: Vec<String>,
+    pub(super) provenance: Option<crate::model::RepositoryProvenance>,
 }
 
 pub(super) fn validate_request(request: &HandoffManifestRequest) -> Result<()> {
@@ -191,6 +192,7 @@ pub(super) fn build(
         repository_id: response.meta.repository_id.clone(),
         repository_generation: response.meta.repository_generation,
         freshness: response.meta.freshness.clone(),
+        provenance: provenance.provenance,
         commit_revision: provenance.commit_revision,
         working_tree_state: provenance.working_tree_state,
         base_revision: response

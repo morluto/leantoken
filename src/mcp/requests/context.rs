@@ -2,7 +2,9 @@ use super::*;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(transform = add_context_option_constraints)]
+#[schemars(
+    description = "Context cross-field relationships remain runtime-validated: strict focus constraints require focus_paths, plan_only cannot combine with receipt_id or handoff, and handoff cannot be combined with plan_only."
+)]
 pub(in crate::mcp) struct ContextMcpRequest {
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
@@ -16,9 +18,9 @@ pub(in crate::mcp) struct ContextMcpRequest {
     pub(in crate::mcp) workflow_evidence: WorkflowEvidence,
     /// Natural-language coding task; include known identifiers and constraints.
     #[schemars(length(min = 3, max = 65536))]
-    pub(in crate::mcp) task: String,
+    pub(in crate::mcp) task: NonEmptyText,
     /// Maximum source tokens across selected fragments (default 3000, maximum 32000).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(
         schema_with = "context_token_limit_schema",
         default = "default_context_token_option"
@@ -45,7 +47,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     #[schemars(length(max = 32))]
     pub(in crate::mcp) required_evidence: Vec<ContextRequiredEvidence>,
     /// Maximum returned fragments (default 8, maximum 100).
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(
         schema_with = "context_fragment_limit_schema",
         default = "default_context_fragment_option"
@@ -65,7 +67,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     pub(in crate::mcp) strict_focus_paths: bool,
     /// Minimum returned fragments required per focus path (maximum 8); requires
     /// non-empty `focus_paths`.
-    #[serde(default, deserialize_with = "deserialize_optional_limit")]
+    #[serde(default)]
     #[schemars(schema_with = "context_focus_fragment_limit_schema")]
     pub(in crate::mcp) minimum_fragments_per_focus_path: Option<usize>,
     /// Boost candidates for these exact symbol names.
@@ -91,7 +93,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     /// Base revision or `BASE..HEAD` range for diff-scoped context.
     #[serde(default)]
     #[schemars(length(max = 256))]
-    pub(in crate::mcp) base_revision: Option<String>,
+    pub(in crate::mcp) base_revision: Option<NonEmptyText>,
     /// Changed paths for diff-scoped context.
     #[serde(default)]
     #[schemars(length(max = 512), inner(length(max = 4096)))]
@@ -151,7 +153,7 @@ impl ContextMcpRequest {
         });
         (
             ContextRequest {
-                task: self.task,
+                task: self.task.into_string(),
                 token_budget: self.token_budget.unwrap_or(default_token_budget),
                 include_paths: self.include_paths,
                 must_include_paths: self.must_include_paths,
@@ -167,7 +169,7 @@ impl ContextMcpRequest {
                 known_hashes: self.known_hashes,
                 receipt_id: self.receipt_id,
                 prior_repository_generation: self.prior_repository_generation,
-                base_revision: self.base_revision,
+                base_revision: self.base_revision.map(NonEmptyText::into_string),
                 changed_paths: self.changed_paths,
                 strict_changed_paths: self.strict_changed_paths,
                 explain_diagnostics: false,
@@ -192,7 +194,7 @@ pub(in crate::mcp) const fn default_context_fragment_option() -> Option<usize> {
 
 pub(in crate::mcp) fn context_fragment_limit_schema(_: &mut SchemaGenerator) -> Schema {
     schemars::json_schema!({
-        "type": "integer",
+        "type": ["integer", "null"],
         "minimum": 1,
         "maximum": MAX_RESULTS,
         "default": DEFAULT_CONTEXT_FRAGMENTS
@@ -201,51 +203,9 @@ pub(in crate::mcp) fn context_fragment_limit_schema(_: &mut SchemaGenerator) -> 
 
 pub(in crate::mcp) fn context_focus_fragment_limit_schema(_: &mut SchemaGenerator) -> Schema {
     schemars::json_schema!({
-        "type": "integer",
+        "type": ["integer", "null"],
         "minimum": 1,
         "maximum": MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
         "default": null
     })
-}
-
-pub(in crate::mcp) fn add_context_option_constraints(schema: &mut Schema) {
-    schema.insert(
-        "allOf".into(),
-        serde_json::json!([
-            {
-                "if": {
-                    "properties": {"strict_focus_paths": {"const": true}},
-                    "required": ["strict_focus_paths"]
-                },
-                "then": {
-                    "properties": {"focus_paths": {"minItems": 1}},
-                    "required": ["focus_paths"]
-                }
-            },
-            {
-                "if": {
-                    "properties": {
-                        "minimum_fragments_per_focus_path": {"not": {"type": "null"}}
-                    },
-                    "required": ["minimum_fragments_per_focus_path"]
-                },
-                "then": {
-                    "properties": {"focus_paths": {"minItems": 1}},
-                    "required": ["focus_paths"]
-                }
-            },
-            {
-                "if": {
-                    "properties": {"plan_only": {"const": true}},
-                    "required": ["plan_only"]
-                },
-                "then": {
-                    "properties": {
-                        "receipt_id": {"type": "null"},
-                        "handoff": {"type": "null"}
-                    }
-                }
-            }
-        ]),
-    );
 }

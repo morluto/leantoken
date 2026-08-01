@@ -41,6 +41,10 @@ pub(super) struct ContextFinalization<'a> {
     pub(super) diff_scope: Option<&'a DiffScopeReceipt>,
     pub(super) working_tree_state: HandoffWorkingTreeState,
     pub(super) working_tree_paths: &'a [String],
+    pub(super) working_tree_modified: bool,
+    pub(super) working_tree_untracked: bool,
+    pub(super) commit_revision: Option<&'a str>,
+    pub(super) branch: Option<&'a str>,
     pub(super) resolved_workflow: ContextWorkflow,
 }
 

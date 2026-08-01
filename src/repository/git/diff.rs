@@ -79,6 +79,37 @@ pub(crate) fn git_head_revision(root: &Path) -> Result<String> {
     )
 }
 
+/// Resolve the current branch name with the same bounded Git command policy
+/// used for other snapshot metadata. Detached HEAD is reported as unavailable.
+pub(crate) fn git_branch_name(root: &Path) -> Result<String> {
+    let output = run_git_capture(
+        root,
+        Path::new("git"),
+        &["symbolic-ref".into(), "--short".into(), "HEAD".into()],
+        GitCaptureOptions {
+            timeout: Duration::from_millis(500),
+            field: "git branch",
+            timeout_reason: "git branch lookup timed out",
+            failure_reason: "git branch lookup failed",
+            max_output_bytes: 512,
+        },
+    )?;
+    let branch = String::from_utf8(output)
+        .map_err(|_| Error::InvalidInput {
+            field: "git branch",
+            reason: "git branch name is not valid UTF-8",
+        })?
+        .trim()
+        .to_owned();
+    if branch.is_empty() {
+        return Err(Error::InvalidInput {
+            field: "git branch",
+            reason: "git branch name is unavailable",
+        });
+    }
+    Ok(branch)
+}
+
 /// Parse bounded target-side hunk ranges between a base revision and the working tree.
 pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
     git_diff_hunks_with_head(root, base_revision, None, &[], max)

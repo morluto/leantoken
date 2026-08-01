@@ -20,6 +20,7 @@ pub mod episode;
 pub mod error;
 /// Repository discovery, parsing, and transactional reconciliation.
 pub mod indexer;
+mod invocation;
 /// MCP server adapter built on the official Rust SDK.
 pub mod mcp;
 /// Request and response models shared by CLI, MCP, and services.

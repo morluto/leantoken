@@ -28,6 +28,54 @@ pub(super) const MAX_REGEX_PLAN_TERM_BYTES: usize = 256;
 pub(super) const MAX_REGEX_LITERAL_SEQUENCE: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RegexWorkLimits {
+    pub(super) files: usize,
+    pub(super) chunks: usize,
+    pub(super) bytes: usize,
+}
+
+impl Default for RegexWorkLimits {
+    fn default() -> Self {
+        Self {
+            files: DEFAULT_REGEX_WORK_FILES,
+            chunks: DEFAULT_REGEX_WORK_CHUNKS,
+            bytes: DEFAULT_REGEX_WORK_BYTES,
+        }
+    }
+}
+
+impl RegexWorkLimits {
+    /// Derive bounded scan work from caller-visible result and token budgets.
+    /// Each dimension remains below the repository-wide emergency ceilings.
+    /// Scan ceilings are independent of page-sized result bounds so cursor
+    /// continuation can reach later matches. The configured chunk size is
+    /// always affordable so a small output budget cannot reject a valid
+    /// candidate before result filtering.
+    pub(super) fn for_request(
+        max_results: Option<usize>,
+        max_tokens: Option<usize>,
+        minimum_chunk_bytes: usize,
+    ) -> Self {
+        let result_work_bytes = max_results.map(|value| value.max(1).saturating_mul(64));
+        let token_work_bytes = max_tokens.map(|tokens| tokens.max(1).saturating_mul(64));
+        Self {
+            files: DEFAULT_REGEX_WORK_FILES,
+            chunks: DEFAULT_REGEX_WORK_CHUNKS,
+            bytes: match (token_work_bytes, result_work_bytes) {
+                (None, None) => DEFAULT_REGEX_WORK_BYTES,
+                (token_bytes, result_bytes) => token_bytes
+                    .into_iter()
+                    .chain(result_bytes)
+                    .max()
+                    .unwrap_or(0)
+                    .max(minimum_chunk_bytes)
+                    .clamp(1024, DEFAULT_REGEX_WORK_BYTES),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RegexPlanning {
     Enabled,
     Disabled,
@@ -65,19 +113,31 @@ pub(super) struct RegexScan {
 
 #[derive(Default)]
 pub(super) struct RegexWorkBudget {
+    limits: RegexWorkLimits,
     candidate_files: usize,
     candidate_chunks: usize,
     candidate_bytes: usize,
 }
 
 impl RegexWorkBudget {
+    pub(super) fn for_request(
+        max_results: Option<usize>,
+        max_tokens: Option<usize>,
+        minimum_chunk_bytes: usize,
+    ) -> Self {
+        Self {
+            limits: RegexWorkLimits::for_request(max_results, max_tokens, minimum_chunk_bytes),
+            ..Self::default()
+        }
+    }
+
     pub(super) fn charge_file(&mut self, cancellation: &CancellationToken) -> Result<()> {
         check_cancelled(cancellation)?;
         self.candidate_files = self.candidate_files.saturating_add(1);
         self.enforce(
             RegexWorkDimension::CandidateFiles,
             self.candidate_files,
-            DEFAULT_REGEX_WORK_FILES,
+            self.limits.files,
         )
     }
 
@@ -91,12 +151,12 @@ impl RegexWorkBudget {
         self.enforce(
             RegexWorkDimension::CandidateChunks,
             self.candidate_chunks,
-            DEFAULT_REGEX_WORK_CHUNKS,
+            self.limits.chunks,
         )?;
         self.enforce(
             RegexWorkDimension::CandidateBytes,
             self.candidate_bytes,
-            DEFAULT_REGEX_WORK_BYTES,
+            self.limits.bytes,
         )?;
         if self
             .candidate_chunks
@@ -190,6 +250,7 @@ mod regex_work_budget_tests {
     fn aggregate_chunk_budget_reports_complete_bounded_counters() {
         let cancellation = CancellationToken::new();
         let mut budget = RegexWorkBudget {
+            limits: RegexWorkLimits::default(),
             candidate_files: 7,
             candidate_chunks: DEFAULT_REGEX_WORK_CHUNKS,
             candidate_bytes: 11_000,
@@ -214,6 +275,7 @@ mod regex_work_budget_tests {
         let cancellation = CancellationToken::new();
         cancellation.cancel();
         let mut budget = RegexWorkBudget {
+            limits: RegexWorkLimits::default(),
             candidate_chunks: REGEX_CANCELLATION_CHECK_INTERVAL - 1,
             ..RegexWorkBudget::default()
         };
@@ -221,5 +283,30 @@ mod regex_work_budget_tests {
             budget.charge_chunk(1, &cancellation),
             Err(Error::Cancelled)
         ));
+    }
+
+    #[test]
+    fn request_work_limits_are_monotonic_and_globally_bounded() {
+        let small = RegexWorkLimits::for_request(Some(1), Some(1), 32 * 1024);
+        let large = RegexWorkLimits::for_request(Some(100), Some(32_000), 32 * 1024);
+        assert_eq!(small.files, large.files);
+        assert_eq!(small.chunks, large.chunks);
+        assert!(small.bytes <= large.bytes);
+        assert!(large.files <= DEFAULT_REGEX_WORK_FILES);
+        assert!(large.chunks <= DEFAULT_REGEX_WORK_CHUNKS);
+        assert!(large.bytes <= DEFAULT_REGEX_WORK_BYTES);
+    }
+
+    #[test]
+    fn omitted_request_dimensions_keep_their_independent_global_ceiling() {
+        let token_limited = RegexWorkLimits::for_request(None, Some(1), 32 * 1024);
+        assert_eq!(token_limited.files, DEFAULT_REGEX_WORK_FILES);
+        assert_eq!(token_limited.chunks, DEFAULT_REGEX_WORK_CHUNKS);
+        assert_eq!(token_limited.bytes, 32 * 1024);
+
+        let result_limited = RegexWorkLimits::for_request(Some(1), None, 32 * 1024);
+        assert_eq!(result_limited.files, DEFAULT_REGEX_WORK_FILES);
+        assert_eq!(result_limited.chunks, DEFAULT_REGEX_WORK_CHUNKS);
+        assert_eq!(result_limited.bytes, 32 * 1024);
     }
 }
