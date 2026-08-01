@@ -1,0 +1,74 @@
+name: Publish Cargo package
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify release versions
+        shell: bash
+        env:
+          DIST_PLAN: ${{ inputs.plan }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "leantoken") | .version')
+          server_version=$(jq -r '.version' server.json)
+          package_version=$(jq -r '.packages[0].version' server.json)
+          expected_version=$(jq -r '.releases[] | select(.app_name == "leantoken") | .app_version' <<< "$DIST_PLAN")
+
+          if [[ "$tag_version" != "$cargo_version" || "$cargo_version" != "$server_version" || "$server_version" != "$package_version" || "$package_version" != "$expected_version" ]]; then
+            echo "Release versions do not match: tag=$tag_version cargo=$cargo_version server=$server_version package=$package_version plan=$expected_version" >&2
+            exit 1
+          fi
+
+      - name: Verify Cargo package
+        run: cargo publish -p leantoken --locked --dry-run
+
+      - name: Authenticate with crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish Cargo package
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "leantoken") | .version')
+          crate_url="https://crates.io/api/v1/crates/leantoken/$version"
+          crate_json_path="$RUNNER_TEMP/leantoken-$version.json"
+          status=$(curl --location --retry 3 --silent --show-error --output "$crate_json_path" --write-out '%{http_code}' "$crate_url" || true)
+          case "$status" in
+            200)
+              if jq -e --arg version "$version" '.version.num == $version and (.version.yanked | not)' "$crate_json_path" >/dev/null; then
+                echo "leantoken@$version is already published"
+                exit 0
+              fi
+              echo "leantoken@$version exists on crates.io but is yanked" >&2
+              exit 1
+              ;;
+            404)
+              cargo publish -p leantoken --locked
+              ;;
+            *)
+              echo "Could not determine whether leantoken@$version is published on crates.io (HTTP $status)" >&2
+              exit 1
+              ;;
+          esac
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}

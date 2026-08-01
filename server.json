@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.morluto/leantoken",
+  "title": "LeanToken",
+  "description": "Token-bounded repository context for coding agents over MCP.",
+  "repository": {
+    "url": "https://github.com/morluto/leantoken",
+    "source": "github"
+  },
+  "version": "0.1.20",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "registryBaseUrl": "https://crates.io",
+      "identifier": "leantoken",
+      "version": "0.1.20",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
+    }
+  ]
+}

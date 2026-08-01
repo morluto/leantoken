@@ -1,0 +1,72 @@
+name: Publish MCP Registry metadata
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - name: Verify release versions
+        shell: bash
+        env:
+          DIST_PLAN: ${{ inputs.plan }}
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "leantoken") | .version')
+          server_version=$(jq -r '.version' server.json)
+          package_version=$(jq -r '.packages[0].version' server.json)
+          expected_version=$(jq -r '.releases[] | select(.app_name == "leantoken") | .app_version' <<< "$DIST_PLAN")
+
+          if [[ "$tag_version" != "$cargo_version" || "$cargo_version" != "$server_version" || "$server_version" != "$package_version" || "$package_version" != "$expected_version" ]]; then
+            echo "Release versions do not match: tag=$tag_version cargo=$cargo_version server=$server_version package=$package_version plan=$expected_version" >&2
+            exit 1
+          fi
+
+      - name: Wait for Cargo package availability
+        shell: bash
+        run: |
+          version=$(jq -r '.packages[0].version' server.json)
+          crate_url="https://crates.io/api/v1/crates/leantoken/$version"
+          for attempt in {1..30}; do
+            if curl --fail --location --retry 2 --silent --show-error "$crate_url" >/dev/null; then
+              echo "leantoken@$version is available on crates.io"
+              exit 0
+            fi
+            echo "Waiting for leantoken@$version to become available on crates.io (attempt $attempt/30)"
+            sleep 10
+          done
+          echo "Timed out waiting for leantoken@$version on crates.io" >&2
+          exit 1
+
+      - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.0
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar --extract --gzip --no-same-owner mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Validate MCP Registry metadata
+        run: ./mcp-publisher validate
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP Registry metadata
+        run: ./mcp-publisher publish

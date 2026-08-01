@@ -9,6 +9,8 @@ read exact ranges, and explore Git history through a CLI and MCP server.
 
 **Language:** English · [简体中文](docs/i18n/zh-CN/README.md) · [日本語](docs/i18n/ja-JP/README.md) · [한국어](docs/i18n/ko-KR/README.md)
 
+- MCP Registry name: `mcp-name: io.github.morluto/leantoken`
+
 <img src="assets/leantoken-hero-v3.jpg" alt="LeanToken narrowing a large codebase to the files and code an AI agent needs" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
@@ -333,6 +335,18 @@ leantoken --root /path/to/repo mcp
 ```
 
 </details>
+
+For the Cargo distribution, install the published crate and point your MCP
+client at the resulting executable:
+
+```bash
+cargo install leantoken --version VERSION
+leantoken --root /path/to/repo mcp
+```
+
+The official MCP Registry entry is `io.github.morluto/leantoken`. Registry
+clients that support Cargo packages can install the matching `leantoken`
+version and use the `mcp` command shown above.
 
 ## Installation options
 
