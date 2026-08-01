@@ -255,84 +255,91 @@ impl Indexer {
         if let Some(progress) = &progress {
             progress.phase(IndexProgressPhase::Preparation);
         }
-        let publication_started = Instant::now();
-        let publish = |writer: &mut ReconciliationWriter<'_, '_>| {
-            for path in &removed_paths {
-                writer.delete(path)?;
-            }
-            let preparation = self.prepare_candidate_batches_with_progress(
-                &candidates,
-                cancellation,
-                profiling,
-                || {
-                    if let Some(progress) = &progress {
-                        progress.phase(IndexProgressPhase::Preparation);
-                    }
-                },
-                |prepared| {
-                    if let Some(progress) = &progress {
-                        progress.prepared_batch(prepared.len());
-                        progress.phase(IndexProgressPhase::RelationalWrite);
-                    }
-                    let mut indexed = Vec::with_capacity(prepared.len());
-                    let mut source_token_counts = HashMap::with_capacity(prepared.len());
-                    for result in prepared {
-                        check_cancelled(cancellation)?;
-                        match result {
-                            PreparedFile::Indexed(file, source_token_count, warning) => {
-                                source_bytes.replace(&file.path, file.size_bytes);
-                                source_token_counts.insert(file.path.clone(), source_token_count);
-                                indexed.push(*file);
-                                if let Some(warning) = warning {
-                                    push_warning(&mut warnings, warning);
-                                }
-                            }
-                            PreparedFile::Binary(path) => {
-                                source_bytes.remove(&path);
-                                skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                                if existing.contains_key(&path)
-                                    && removed_paths.insert(path.clone())
-                                {
-                                    writer.delete(&path)?;
-                                }
-                            }
-                            PreparedFile::Oversized(path) => {
-                                source_bytes.remove(&path);
-                                skip_reasons.oversized_during_read =
-                                    skip_reasons.oversized_during_read.saturating_add(1);
-                                if existing.contains_key(&path)
-                                    && removed_paths.insert(path.clone())
-                                {
-                                    writer.delete(&path)?;
-                                }
-                            }
-                            PreparedFile::Failed(path, error) => {
-                                skip_reasons.failed = skip_reasons.failed.saturating_add(1);
-                                push_warning(&mut warnings, format!("{path}: {error}"));
+
+        // Phase 1: Preparation runs outside BEGIN IMMEDIATE so the SQLite
+        // writer lock is not held during filesystem reads, hashing, parsing,
+        // tokenization, or import resolution.  Prepared records are staged
+        // in a bounded in-memory buffer.
+        let mut staged = PreparedReconciliation::new(self.config.tokenizer.name());
+        for path in &removed_paths {
+            staged.stage_removal(path.clone());
+        }
+        let preparation = self.prepare_candidate_batches_with_progress(
+            &candidates,
+            cancellation,
+            profiling,
+            || {
+                if let Some(progress) = &progress {
+                    progress.phase(IndexProgressPhase::Preparation);
+                }
+            },
+            |prepared| {
+                if let Some(progress) = &progress {
+                    progress.prepared_batch(prepared.len());
+                    progress.phase(IndexProgressPhase::RelationalWrite);
+                }
+                let mut indexed = Vec::with_capacity(prepared.len());
+                let mut source_token_counts = HashMap::with_capacity(prepared.len());
+                for result in prepared {
+                    check_cancelled(cancellation)?;
+                    match result {
+                        PreparedFile::Indexed(file, source_token_count, warning) => {
+                            source_bytes.replace(&file.path, file.size_bytes);
+                            source_token_counts.insert(file.path.clone(), source_token_count);
+                            indexed.push(*file);
+                            if let Some(warning) = warning {
+                                push_warning(&mut warnings, warning);
                             }
                         }
+                        PreparedFile::Binary(path) => {
+                            source_bytes.remove(&path);
+                            skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                            if existing.contains_key(&path)
+                                && removed_paths.insert(path.clone())
+                            {
+                                staged.stage_removal(path);
+                            }
+                        }
+                        PreparedFile::Oversized(path) => {
+                            source_bytes.remove(&path);
+                            skip_reasons.oversized_during_read =
+                                skip_reasons.oversized_during_read.saturating_add(1);
+                            if existing.contains_key(&path)
+                                && removed_paths.insert(path.clone())
+                            {
+                                staged.stage_removal(path);
+                            }
+                        }
+                        PreparedFile::Failed(path, error) => {
+                            skip_reasons.failed = skip_reasons.failed.saturating_add(1);
+                            push_warning(&mut warnings, format!("{path}: {error}"));
+                        }
                     }
-                    resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                    let staged_files = indexed.len();
-                    files_indexed = files_indexed.saturating_add(indexed.len());
-                    for file in indexed {
-                        check_cancelled(cancellation)?;
-                        let source_token_count = source_token_counts
-                            .remove(&file.path)
-                            .expect("prepared file has a source token count");
-                        writer.replace_with_source_tokens(
-                            file,
-                            self.config.tokenizer.name(),
-                            source_token_count,
-                        )?;
-                    }
-                    if let Some(progress) = &progress {
-                        progress.staged(staged_files);
-                    }
-                    Ok(())
-                },
-            )?;
-            source_bytes.enforce()?;
+                }
+                resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                let staged_files = indexed.len();
+                files_indexed = files_indexed.saturating_add(indexed.len());
+                for file in indexed {
+                    check_cancelled(cancellation)?;
+                    let source_token_count = source_token_counts
+                        .remove(&file.path)
+                        .expect("prepared file has a source token count");
+                    staged.stage_indexed(file, source_token_count);
+                }
+                if let Some(progress) = &progress {
+                    progress.staged(staged_files);
+                }
+                Ok(())
+            },
+        )?;
+        source_bytes.enforce()?;
+
+        // Phase 2: Publication inside BEGIN IMMEDIATE performs only fast
+        // DELETE + INSERT operations via staged.apply.  The transaction
+        // rechecks the baseline generation and config_hash before applying.
+        let publication_started = Instant::now();
+        let publish = |writer: &mut ReconciliationWriter<'_, '_>| {
+            staged.apply(writer)?;
             Ok(preparation)
         };
         let observe_publication =

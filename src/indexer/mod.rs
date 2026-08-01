@@ -23,9 +23,9 @@ use crate::repository::{
     validate_relative,
 };
 use crate::storage::{
-    ChunkInput, ImportInput, ImportProjection, IndexedFile, PublicationDiagnostics,
-    ReconciliationPublicationPhase, ReconciliationWriter, ReferenceInput, Storage, SymbolInput,
-    process_write_bytes,
+    ChunkInput, ImportInput, ImportProjection, IndexedFile, PreparedReconciliation,
+    PublicationDiagnostics, ReconciliationPublicationPhase, ReconciliationWriter, ReferenceInput,
+    Storage, SymbolInput, process_write_bytes,
 };
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};

@@ -309,6 +309,82 @@ impl Indexer {
         let mut warnings = Vec::new();
         let mut skip_reasons = IndexSkipReasonCounts::default();
         before_preparation();
+
+        // Phase 1: Preparation runs outside BEGIN IMMEDIATE so the SQLite
+        // writer lock is not held during filesystem reads, hashing, parsing,
+        // tokenization, or import resolution.
+        let mut staged = PreparedReconciliation::new(self.config.tokenizer.name());
+        let preparation = self.prepare_candidate_batches(
+            &candidates,
+            cancellation,
+            StorageProfiling::Omit,
+            |prepared| {
+                let mut indexed = Vec::with_capacity(prepared.len());
+                let mut source_token_counts = HashMap::with_capacity(prepared.len());
+                for result in prepared {
+                    check_cancelled(cancellation)?;
+                    match result {
+                        PreparedFile::Indexed(file, source_token_count, warning) => {
+                            source_bytes.replace(&file.path, file.size_bytes);
+                            let same = existing.get(&file.path).is_some_and(|record| {
+                                record.content_hash == file.content_hash
+                                    && record.size_bytes == file.size_bytes
+                                    && record.modified_ns == file.modified_ns
+                            });
+                            if same {
+                                unchanged += 1;
+                                continue;
+                            }
+                            source_token_counts
+                                .insert(file.path.clone(), source_token_count);
+                            indexed.push(*file);
+                            if let Some(warning) = warning {
+                                push_warning(&mut warnings, warning);
+                            }
+                        }
+                        PreparedFile::Binary(path) => {
+                            source_bytes.remove(&path);
+                            skip_reasons.binary = skip_reasons.binary.saturating_add(1);
+                            if existing.contains_key(&path)
+                                && deletions.insert(path.clone())
+                            {
+                                staged.stage_removal(path);
+                            }
+                        }
+                        PreparedFile::Oversized(path) => {
+                            source_bytes.remove(&path);
+                            skip_reasons.oversized_during_read =
+                                skip_reasons.oversized_during_read.saturating_add(1);
+                            if existing.contains_key(&path)
+                                && deletions.insert(path.clone())
+                            {
+                                staged.stage_removal(path);
+                            }
+                        }
+                        PreparedFile::Failed(path, error) => {
+                            skip_reasons.failed = skip_reasons.failed.saturating_add(1);
+                            push_warning(&mut warnings, format!("{path}: {error}"));
+                        }
+                    }
+                }
+                resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                for file in indexed {
+                    check_cancelled(cancellation)?;
+                    updated_paths.insert(file.path.clone());
+                    let source_token_count = source_token_counts
+                        .remove(&file.path)
+                        .expect("prepared file has a source token count");
+                    staged.stage_indexed(file, source_token_count);
+                }
+                Ok(())
+            },
+        )?;
+        source_bytes.enforce()?;
+
+        // Phase 2: Publication inside BEGIN IMMEDIATE.  Relocations and import
+        // projection refresh remain inside the transaction because they
+        // require live table state.  staged.apply performs only fast
+        // DELETE + INSERT operations for the prepared files.
         let (generation, _preparation) =
             self.storage
                 .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
@@ -328,76 +404,7 @@ impl Indexer {
                         )?;
                     }
                     writer.refresh_import_projections(&import_projections)?;
-                    let preparation = self.prepare_candidate_batches(
-                        &candidates,
-                        cancellation,
-                        StorageProfiling::Omit,
-                        |prepared| {
-                            let mut indexed = Vec::with_capacity(prepared.len());
-                            let mut source_token_counts = HashMap::with_capacity(prepared.len());
-                            for result in prepared {
-                                check_cancelled(cancellation)?;
-                                match result {
-                                    PreparedFile::Indexed(file, source_token_count, warning) => {
-                                        source_bytes.replace(&file.path, file.size_bytes);
-                                        let same = existing.get(&file.path).is_some_and(|record| {
-                                            record.content_hash == file.content_hash
-                                                && record.size_bytes == file.size_bytes
-                                                && record.modified_ns == file.modified_ns
-                                        });
-                                        if same {
-                                            unchanged += 1;
-                                            continue;
-                                        }
-                                        source_token_counts
-                                            .insert(file.path.clone(), source_token_count);
-                                        indexed.push(*file);
-                                        if let Some(warning) = warning {
-                                            push_warning(&mut warnings, warning);
-                                        }
-                                    }
-                                    PreparedFile::Binary(path) => {
-                                        source_bytes.remove(&path);
-                                        skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                                        if existing.contains_key(&path)
-                                            && deletions.insert(path.clone())
-                                        {
-                                            writer.delete(&path)?;
-                                        }
-                                    }
-                                    PreparedFile::Oversized(path) => {
-                                        source_bytes.remove(&path);
-                                        skip_reasons.oversized_during_read =
-                                            skip_reasons.oversized_during_read.saturating_add(1);
-                                        if existing.contains_key(&path)
-                                            && deletions.insert(path.clone())
-                                        {
-                                            writer.delete(&path)?;
-                                        }
-                                    }
-                                    PreparedFile::Failed(path, error) => {
-                                        skip_reasons.failed = skip_reasons.failed.saturating_add(1);
-                                        push_warning(&mut warnings, format!("{path}: {error}"));
-                                    }
-                                }
-                            }
-                            resolve_imports(&mut indexed, &repository_paths, cancellation)?;
-                            for file in indexed {
-                                check_cancelled(cancellation)?;
-                                updated_paths.insert(file.path.clone());
-                                let source_token_count = source_token_counts
-                                    .remove(&file.path)
-                                    .expect("prepared file has a source token count");
-                                writer.replace_with_source_tokens(
-                                    file,
-                                    self.config.tokenizer.name(),
-                                    source_token_count,
-                                )?;
-                            }
-                            Ok(())
-                        },
-                    )?;
-                    source_bytes.enforce()?;
+                    staged.apply(writer)?;
                     Ok(preparation)
                 })?;
         check_cancelled(cancellation)?;
