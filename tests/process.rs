@@ -2087,6 +2087,17 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
         .expect("unsafe runtime");
     assert_eq!(unsafe_entry["safely_prunable"], false);
 
+    let human_list = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("human runtime list");
+    assert!(human_list.status.success());
+    let human_list = String::from_utf8_lossy(&human_list.stdout);
+    assert!(human_list.contains("Private runtime root:"));
+    assert!(human_list.contains("4 runtime(s)"));
+    assert!(human_list.contains("referenced_by=Claude Code"));
+    assert!(human_list.contains("inactive,unrecognized"));
+
     let planned = command()
         .args([
             "--json",
@@ -2116,6 +2127,16 @@ fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
             && result["action"] == "retained"
             && result["reason"] == "unrecognized_directory_contents"
     }));
+
+    let human_plan = command()
+        .args(["runtime", "prune", "--keep-latest", "0"])
+        .output()
+        .expect("human runtime prune plan");
+    assert!(human_plan.status.success());
+    let human_plan = String::from_utf8_lossy(&human_plan.stdout);
+    assert!(human_plan.contains("Private runtime prune dry-run:"));
+    assert!(human_plan.contains("would_remove  1.0.0  3 bytes  outside_retention"));
+    assert!(human_plan.contains("retained  0.9.0  6 bytes  unrecognized_directory_contents"));
 
     let applied = command()
         .args([
