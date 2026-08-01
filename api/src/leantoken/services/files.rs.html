@@ -191,12 +191,12 @@
 <a href=#191 id=191 data-nosnippet>191</a>            field: <span class="string">"pattern"</span>,
 <a href=#192 id=192 data-nosnippet>192</a>            reason: <span class="string">"is required for glob"</span>,
 <a href=#193 id=193 data-nosnippet>193</a>        })<span class="question-mark">?</span>;
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>normalized_pattern = pattern.replace(<span class="string">'\\'</span>, <span class="string">"/"</span>);
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>normalized_pattern = <span class="kw">crate</span>::repository::RepositoryPattern::parse(pattern)<span class="question-mark">?</span>;
 <a href=#195 id=195 data-nosnippet>195</a>    <span class="comment">// Validate with globset even when SQL owns matching, so invalid patterns fail
 <a href=#196 id=196 data-nosnippet>196</a>    // the same way as before.
-<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">let </span>matcher = Glob::new(<span class="kw-2">&amp;</span>normalized_pattern)<span class="question-mark">?</span>.compile_matcher();
+<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">let </span>matcher = Glob::new(normalized_pattern.as_str())<span class="question-mark">?</span>.compile_matcher();
 <a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>after = cursor_path(cursor)<span class="question-mark">?</span>;
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((primary, alternate)) = sql_glob_patterns(<span class="kw-2">&amp;</span>normalized_pattern) {
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((primary, alternate)) = sql_glob_patterns(normalized_pattern.as_str()) {
 <a href=#200 id=200 data-nosnippet>200</a>        check_cancelled(cancellation)<span class="question-mark">?</span>;
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>projected = session.list_glob_paths(
 <a href=#202 id=202 data-nosnippet>202</a>            <span class="kw-2">&amp;</span>primary,
@@ -319,7 +319,7 @@
 <a href=#319 id=319 data-nosnippet>319</a>                    field: <span class="string">"pattern"</span>,
 <a href=#320 id=320 data-nosnippet>320</a>                    reason: <span class="string">"is required for glob"</span>,
 <a href=#321 id=321 data-nosnippet>321</a>                })<span class="question-mark">?</span>;
-<a href=#322 id=322 data-nosnippet>322</a>            Glob::new(<span class="kw-2">&amp;</span>pattern.replace(<span class="string">'\\'</span>, <span class="string">"/"</span>))<span class="question-mark">?</span>;
+<a href=#322 id=322 data-nosnippet>322</a>            <span class="kw">crate</span>::repository::RepositoryPattern::parse(pattern)<span class="question-mark">?</span>;
 <a href=#323 id=323 data-nosnippet>323</a>        }
 <a href=#324 id=324 data-nosnippet>324</a>    }
 <a href=#325 id=325 data-nosnippet>325</a>    validate_files_cursor(request.cursor.as_deref(), <span class="kw-2">&amp;</span>request.operation)<span class="question-mark">?</span>;

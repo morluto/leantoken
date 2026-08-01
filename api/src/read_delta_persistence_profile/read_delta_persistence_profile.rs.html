@@ -206,113 +206,114 @@
 <a href=#206 id=206 data-nosnippet>206</a>        expected_hash,
 <a href=#207 id=207 data-nosnippet>207</a>        delta: <span class="bool-val">true</span>,
 <a href=#208 id=208 data-nosnippet>208</a>        receipt_id: <span class="prelude-val">None</span>,
-<a href=#209 id=209 data-nosnippet>209</a>    }
-<a href=#210 id=210 data-nosnippet>210</a>}
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a><span class="kw">fn </span>generated_source(lines: usize) -&gt; String {
-<a href=#213 id=213 data-nosnippet>213</a>    (<span class="number">1</span>..=lines)
-<a href=#214 id=214 data-nosnippet>214</a>        .map(|line| <span class="macro">format!</span>(<span class="string">"let value_{line} = compute_value({line});\n"</span>))
-<a href=#215 id=215 data-nosnippet>215</a>        .collect()
-<a href=#216 id=216 data-nosnippet>216</a>}
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>observe(response: <span class="kw-2">&amp;</span>ReadResponse, totals: <span class="kw-2">&amp;mut </span>OutcomeTotals) {
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">match </span>response
-<a href=#220 id=220 data-nosnippet>220</a>        .delta_receipt
-<a href=#221 id=221 data-nosnippet>221</a>        .as_ref()
-<a href=#222 id=222 data-nosnippet>222</a>        .map(|receipt| <span class="kw-2">&amp;</span>receipt.outcome)
-<a href=#223 id=223 data-nosnippet>223</a>    {
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="prelude-val">Some</span>(ReadDeltaOutcome::Delta) =&gt; totals.delta = totals.delta.saturating_add(<span class="number">1</span>),
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="prelude-val">Some</span>(ReadDeltaOutcome::NotModified) =&gt; {
-<a href=#226 id=226 data-nosnippet>226</a>            totals.not_modified = totals.not_modified.saturating_add(<span class="number">1</span>);
-<a href=#227 id=227 data-nosnippet>227</a>        }
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">_ </span>=&gt; totals.full = totals.full.saturating_add(<span class="number">1</span>),
-<a href=#229 id=229 data-nosnippet>229</a>    }
-<a href=#230 id=230 data-nosnippet>230</a>    totals.emitted_source_tokens = totals
-<a href=#231 id=231 data-nosnippet>231</a>        .emitted_source_tokens
-<a href=#232 id=232 data-nosnippet>232</a>        .saturating_add(response.meta.source_tokens);
-<a href=#233 id=233 data-nosnippet>233</a>    totals.total_response_tokens = totals
-<a href=#234 id=234 data-nosnippet>234</a>        .total_response_tokens
-<a href=#235 id=235 data-nosnippet>235</a>        .saturating_add(response.meta.total_response_tokens);
-<a href=#236 id=236 data-nosnippet>236</a>    totals.receipt_avoided_tokens = totals.receipt_avoided_tokens.saturating_add(
-<a href=#237 id=237 data-nosnippet>237</a>        response
-<a href=#238 id=238 data-nosnippet>238</a>            .delta_receipt
-<a href=#239 id=239 data-nosnippet>239</a>            .as_ref()
-<a href=#240 id=240 data-nosnippet>240</a>            .map_or(<span class="number">0</span>, |receipt| receipt.avoided_tokens),
-<a href=#241 id=241 data-nosnippet>241</a>    );
-<a href=#242 id=242 data-nosnippet>242</a>}
-<a href=#243 id=243 data-nosnippet>243</a>
-<a href=#244 id=244 data-nosnippet>244</a><span class="kw">fn </span>phase_report(
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw-2">mut </span>samples: Vec&lt;u128&gt;,
-<a href=#246 id=246 data-nosnippet>246</a>    totals: OutcomeTotals,
-<a href=#247 id=247 data-nosnippet>247</a>    database_bytes_delta: i128,
-<a href=#248 id=248 data-nosnippet>248</a>    wal_bytes_delta: i128,
-<a href=#249 id=249 data-nosnippet>249</a>    process_write_bytes_delta: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-<a href=#250 id=250 data-nosnippet>250</a>) -&gt; PhaseReport {
-<a href=#251 id=251 data-nosnippet>251</a>    samples.sort_unstable();
-<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">let </span>total = samples.iter().copied().sum::&lt;u128&gt;();
-<a href=#253 id=253 data-nosnippet>253</a>    PhaseReport {
-<a href=#254 id=254 data-nosnippet>254</a>        samples: samples.len(),
-<a href=#255 id=255 data-nosnippet>255</a>        p50_micros: percentile(<span class="kw-2">&amp;</span>samples, <span class="number">50</span>),
-<a href=#256 id=256 data-nosnippet>256</a>        p95_micros: percentile(<span class="kw-2">&amp;</span>samples, <span class="number">95</span>),
-<a href=#257 id=257 data-nosnippet>257</a>        mean_micros: total / samples.len().max(<span class="number">1</span>) <span class="kw">as </span>u128,
-<a href=#258 id=258 data-nosnippet>258</a>        full_responses: totals.full,
-<a href=#259 id=259 data-nosnippet>259</a>        delta_responses: totals.delta,
-<a href=#260 id=260 data-nosnippet>260</a>        not_modified_responses: totals.not_modified,
-<a href=#261 id=261 data-nosnippet>261</a>        emitted_source_tokens: totals.emitted_source_tokens,
-<a href=#262 id=262 data-nosnippet>262</a>        total_response_tokens: totals.total_response_tokens,
-<a href=#263 id=263 data-nosnippet>263</a>        receipt_avoided_tokens: totals.receipt_avoided_tokens,
-<a href=#264 id=264 data-nosnippet>264</a>        database_bytes_delta,
-<a href=#265 id=265 data-nosnippet>265</a>        wal_bytes_delta,
-<a href=#266 id=266 data-nosnippet>266</a>        process_write_bytes_delta,
-<a href=#267 id=267 data-nosnippet>267</a>    }
-<a href=#268 id=268 data-nosnippet>268</a>}
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a><span class="kw">fn </span>percentile(sorted: <span class="kw-2">&amp;</span>[u128], percentile: usize) -&gt; u128 {
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>index = sorted
-<a href=#272 id=272 data-nosnippet>272</a>        .len()
-<a href=#273 id=273 data-nosnippet>273</a>        .saturating_sub(<span class="number">1</span>)
-<a href=#274 id=274 data-nosnippet>274</a>        .saturating_mul(percentile)
-<a href=#275 id=275 data-nosnippet>275</a>        .saturating_add(<span class="number">99</span>)
-<a href=#276 id=276 data-nosnippet>276</a>        / <span class="number">100</span>;
-<a href=#277 id=277 data-nosnippet>277</a>    sorted.get(index).copied().unwrap_or_default()
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="kw">fn </span>wal_path(database: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span><span class="kw-2">mut </span>path = database.as_os_str().to_os_string();
-<a href=#282 id=282 data-nosnippet>282</a>    path.push(<span class="string">"-wal"</span>);
-<a href=#283 id=283 data-nosnippet>283</a>    PathBuf::from(path)
-<a href=#284 id=284 data-nosnippet>284</a>}
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a><span class="kw">fn </span>file_bytes(path: <span class="kw-2">&amp;</span>Path) -&gt; u64 {
-<a href=#287 id=287 data-nosnippet>287</a>    fs::metadata(path).map_or(<span class="number">0</span>, |metadata| metadata.len())
-<a href=#288 id=288 data-nosnippet>288</a>}
-<a href=#289 id=289 data-nosnippet>289</a>
-<a href=#290 id=290 data-nosnippet>290</a><span class="kw">fn </span>artifact_delta(before: u64, after: u64) -&gt; i128 {
-<a href=#291 id=291 data-nosnippet>291</a>    i128::from(after) - i128::from(before)
-<a href=#292 id=292 data-nosnippet>292</a>}
-<a href=#293 id=293 data-nosnippet>293</a>
-<a href=#294 id=294 data-nosnippet>294</a><span class="kw">fn </span>write_delta(before: <span class="prelude-ty">Option</span>&lt;u64&gt;, after: <span class="prelude-ty">Option</span>&lt;u64&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="prelude-val">Some</span>(after<span class="question-mark">?</span>.saturating_sub(before<span class="question-mark">?</span>))
-<a href=#296 id=296 data-nosnippet>296</a>}
-<a href=#297 id=297 data-nosnippet>297</a>
-<a href=#298 id=298 data-nosnippet>298</a><span class="kw">fn </span>linux_process_write_bytes() -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#299 id=299 data-nosnippet>299</a>    fs::read_to_string(<span class="string">"/proc/self/io"</span>)
-<a href=#300 id=300 data-nosnippet>300</a>        .ok()<span class="question-mark">?
-<a href=#301 id=301 data-nosnippet>301</a>        </span>.lines()
-<a href=#302 id=302 data-nosnippet>302</a>        .find_map(|line| {
-<a href=#303 id=303 data-nosnippet>303</a>            line.strip_prefix(<span class="string">"write_bytes:"</span>)
-<a href=#304 id=304 data-nosnippet>304</a>                .and_then(|value| value.trim().parse().ok())
-<a href=#305 id=305 data-nosnippet>305</a>        })
-<a href=#306 id=306 data-nosnippet>306</a>}
-<a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a><span class="kw">fn </span>linux_status_kib(field: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#309 id=309 data-nosnippet>309</a>    fs::read_to_string(<span class="string">"/proc/self/status"</span>)
-<a href=#310 id=310 data-nosnippet>310</a>        .ok()<span class="question-mark">?
-<a href=#311 id=311 data-nosnippet>311</a>        </span>.lines()
-<a href=#312 id=312 data-nosnippet>312</a>        .find_map(|line| {
-<a href=#313 id=313 data-nosnippet>313</a>            line.strip_prefix(field)
-<a href=#314 id=314 data-nosnippet>314</a>                .and_then(|value| value.split_whitespace().next())
-<a href=#315 id=315 data-nosnippet>315</a>                .and_then(|value| value.parse().ok())
-<a href=#316 id=316 data-nosnippet>316</a>        })
-<a href=#317 id=317 data-nosnippet>317</a>}
+<a href=#209 id=209 data-nosnippet>209</a>        policy: leantoken::model::ReadPolicy::Full,
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>}
+<a href=#212 id=212 data-nosnippet>212</a>
+<a href=#213 id=213 data-nosnippet>213</a><span class="kw">fn </span>generated_source(lines: usize) -&gt; String {
+<a href=#214 id=214 data-nosnippet>214</a>    (<span class="number">1</span>..=lines)
+<a href=#215 id=215 data-nosnippet>215</a>        .map(|line| <span class="macro">format!</span>(<span class="string">"let value_{line} = compute_value({line});\n"</span>))
+<a href=#216 id=216 data-nosnippet>216</a>        .collect()
+<a href=#217 id=217 data-nosnippet>217</a>}
+<a href=#218 id=218 data-nosnippet>218</a>
+<a href=#219 id=219 data-nosnippet>219</a><span class="kw">fn </span>observe(response: <span class="kw-2">&amp;</span>ReadResponse, totals: <span class="kw-2">&amp;mut </span>OutcomeTotals) {
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">match </span>response
+<a href=#221 id=221 data-nosnippet>221</a>        .delta_receipt
+<a href=#222 id=222 data-nosnippet>222</a>        .as_ref()
+<a href=#223 id=223 data-nosnippet>223</a>        .map(|receipt| <span class="kw-2">&amp;</span>receipt.outcome)
+<a href=#224 id=224 data-nosnippet>224</a>    {
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="prelude-val">Some</span>(ReadDeltaOutcome::Delta) =&gt; totals.delta = totals.delta.saturating_add(<span class="number">1</span>),
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="prelude-val">Some</span>(ReadDeltaOutcome::NotModified) =&gt; {
+<a href=#227 id=227 data-nosnippet>227</a>            totals.not_modified = totals.not_modified.saturating_add(<span class="number">1</span>);
+<a href=#228 id=228 data-nosnippet>228</a>        }
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">_ </span>=&gt; totals.full = totals.full.saturating_add(<span class="number">1</span>),
+<a href=#230 id=230 data-nosnippet>230</a>    }
+<a href=#231 id=231 data-nosnippet>231</a>    totals.emitted_source_tokens = totals
+<a href=#232 id=232 data-nosnippet>232</a>        .emitted_source_tokens
+<a href=#233 id=233 data-nosnippet>233</a>        .saturating_add(response.meta.source_tokens);
+<a href=#234 id=234 data-nosnippet>234</a>    totals.total_response_tokens = totals
+<a href=#235 id=235 data-nosnippet>235</a>        .total_response_tokens
+<a href=#236 id=236 data-nosnippet>236</a>        .saturating_add(response.meta.total_response_tokens);
+<a href=#237 id=237 data-nosnippet>237</a>    totals.receipt_avoided_tokens = totals.receipt_avoided_tokens.saturating_add(
+<a href=#238 id=238 data-nosnippet>238</a>        response
+<a href=#239 id=239 data-nosnippet>239</a>            .delta_receipt
+<a href=#240 id=240 data-nosnippet>240</a>            .as_ref()
+<a href=#241 id=241 data-nosnippet>241</a>            .map_or(<span class="number">0</span>, |receipt| receipt.avoided_tokens),
+<a href=#242 id=242 data-nosnippet>242</a>    );
+<a href=#243 id=243 data-nosnippet>243</a>}
+<a href=#244 id=244 data-nosnippet>244</a>
+<a href=#245 id=245 data-nosnippet>245</a><span class="kw">fn </span>phase_report(
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw-2">mut </span>samples: Vec&lt;u128&gt;,
+<a href=#247 id=247 data-nosnippet>247</a>    totals: OutcomeTotals,
+<a href=#248 id=248 data-nosnippet>248</a>    database_bytes_delta: i128,
+<a href=#249 id=249 data-nosnippet>249</a>    wal_bytes_delta: i128,
+<a href=#250 id=250 data-nosnippet>250</a>    process_write_bytes_delta: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#251 id=251 data-nosnippet>251</a>) -&gt; PhaseReport {
+<a href=#252 id=252 data-nosnippet>252</a>    samples.sort_unstable();
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span>total = samples.iter().copied().sum::&lt;u128&gt;();
+<a href=#254 id=254 data-nosnippet>254</a>    PhaseReport {
+<a href=#255 id=255 data-nosnippet>255</a>        samples: samples.len(),
+<a href=#256 id=256 data-nosnippet>256</a>        p50_micros: percentile(<span class="kw-2">&amp;</span>samples, <span class="number">50</span>),
+<a href=#257 id=257 data-nosnippet>257</a>        p95_micros: percentile(<span class="kw-2">&amp;</span>samples, <span class="number">95</span>),
+<a href=#258 id=258 data-nosnippet>258</a>        mean_micros: total / samples.len().max(<span class="number">1</span>) <span class="kw">as </span>u128,
+<a href=#259 id=259 data-nosnippet>259</a>        full_responses: totals.full,
+<a href=#260 id=260 data-nosnippet>260</a>        delta_responses: totals.delta,
+<a href=#261 id=261 data-nosnippet>261</a>        not_modified_responses: totals.not_modified,
+<a href=#262 id=262 data-nosnippet>262</a>        emitted_source_tokens: totals.emitted_source_tokens,
+<a href=#263 id=263 data-nosnippet>263</a>        total_response_tokens: totals.total_response_tokens,
+<a href=#264 id=264 data-nosnippet>264</a>        receipt_avoided_tokens: totals.receipt_avoided_tokens,
+<a href=#265 id=265 data-nosnippet>265</a>        database_bytes_delta,
+<a href=#266 id=266 data-nosnippet>266</a>        wal_bytes_delta,
+<a href=#267 id=267 data-nosnippet>267</a>        process_write_bytes_delta,
+<a href=#268 id=268 data-nosnippet>268</a>    }
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="kw">fn </span>percentile(sorted: <span class="kw-2">&amp;</span>[u128], percentile: usize) -&gt; u128 {
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>index = sorted
+<a href=#273 id=273 data-nosnippet>273</a>        .len()
+<a href=#274 id=274 data-nosnippet>274</a>        .saturating_sub(<span class="number">1</span>)
+<a href=#275 id=275 data-nosnippet>275</a>        .saturating_mul(percentile)
+<a href=#276 id=276 data-nosnippet>276</a>        .saturating_add(<span class="number">99</span>)
+<a href=#277 id=277 data-nosnippet>277</a>        / <span class="number">100</span>;
+<a href=#278 id=278 data-nosnippet>278</a>    sorted.get(index).copied().unwrap_or_default()
+<a href=#279 id=279 data-nosnippet>279</a>}
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="kw">fn </span>wal_path(database: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span><span class="kw-2">mut </span>path = database.as_os_str().to_os_string();
+<a href=#283 id=283 data-nosnippet>283</a>    path.push(<span class="string">"-wal"</span>);
+<a href=#284 id=284 data-nosnippet>284</a>    PathBuf::from(path)
+<a href=#285 id=285 data-nosnippet>285</a>}
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a><span class="kw">fn </span>file_bytes(path: <span class="kw-2">&amp;</span>Path) -&gt; u64 {
+<a href=#288 id=288 data-nosnippet>288</a>    fs::metadata(path).map_or(<span class="number">0</span>, |metadata| metadata.len())
+<a href=#289 id=289 data-nosnippet>289</a>}
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a><span class="kw">fn </span>artifact_delta(before: u64, after: u64) -&gt; i128 {
+<a href=#292 id=292 data-nosnippet>292</a>    i128::from(after) - i128::from(before)
+<a href=#293 id=293 data-nosnippet>293</a>}
+<a href=#294 id=294 data-nosnippet>294</a>
+<a href=#295 id=295 data-nosnippet>295</a><span class="kw">fn </span>write_delta(before: <span class="prelude-ty">Option</span>&lt;u64&gt;, after: <span class="prelude-ty">Option</span>&lt;u64&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="prelude-val">Some</span>(after<span class="question-mark">?</span>.saturating_sub(before<span class="question-mark">?</span>))
+<a href=#297 id=297 data-nosnippet>297</a>}
+<a href=#298 id=298 data-nosnippet>298</a>
+<a href=#299 id=299 data-nosnippet>299</a><span class="kw">fn </span>linux_process_write_bytes() -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#300 id=300 data-nosnippet>300</a>    fs::read_to_string(<span class="string">"/proc/self/io"</span>)
+<a href=#301 id=301 data-nosnippet>301</a>        .ok()<span class="question-mark">?
+<a href=#302 id=302 data-nosnippet>302</a>        </span>.lines()
+<a href=#303 id=303 data-nosnippet>303</a>        .find_map(|line| {
+<a href=#304 id=304 data-nosnippet>304</a>            line.strip_prefix(<span class="string">"write_bytes:"</span>)
+<a href=#305 id=305 data-nosnippet>305</a>                .and_then(|value| value.trim().parse().ok())
+<a href=#306 id=306 data-nosnippet>306</a>        })
+<a href=#307 id=307 data-nosnippet>307</a>}
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a><span class="kw">fn </span>linux_status_kib(field: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#310 id=310 data-nosnippet>310</a>    fs::read_to_string(<span class="string">"/proc/self/status"</span>)
+<a href=#311 id=311 data-nosnippet>311</a>        .ok()<span class="question-mark">?
+<a href=#312 id=312 data-nosnippet>312</a>        </span>.lines()
+<a href=#313 id=313 data-nosnippet>313</a>        .find_map(|line| {
+<a href=#314 id=314 data-nosnippet>314</a>            line.strip_prefix(field)
+<a href=#315 id=315 data-nosnippet>315</a>                .and_then(|value| value.split_whitespace().next())
+<a href=#316 id=316 data-nosnippet>316</a>                .and_then(|value| value.parse().ok())
+<a href=#317 id=317 data-nosnippet>317</a>        })
+<a href=#318 id=318 data-nosnippet>318</a>}
 </code></pre></div></section></main></body></html>

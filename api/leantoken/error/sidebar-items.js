@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error","IndexLimitKind","RetrievalLimitKind","RetryableOperation"],"struct":["InputViolation","InputViolations","ResponseBudgetBreakdown"],"type":["Result"]};
+window.SIDEBAR_ITEMS = {"enum":["Error","IndexLimitKind","RegexWorkDimension","RetrievalLimitKind","RetryableOperation"],"struct":["InputViolation","InputViolations","ResponseBudgetBreakdown"],"type":["Result"]};

@@ -11,10 +11,10 @@
 <a href=#11 id=11 data-nosnippet>11</a>    validate_glob_patterns(<span class="kw-2">&amp;</span>request.focus_paths)<span class="question-mark">?</span>;
 <a href=#12 id=12 data-nosnippet>12</a>    validate_cursor(request.cursor.as_deref())<span class="question-mark">?</span>;
 <a href=#13 id=13 data-nosnippet>13</a>    <span class="kw">if </span>request.all_occurrences &amp;&amp; !request.mode.supports_all_occurrences() {
-<a href=#14 id=14 data-nosnippet>14</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#15 id=15 data-nosnippet>15</a>            field: <span class="string">"all occurrences"</span>,
-<a href=#16 id=16 data-nosnippet>16</a>            reason: <span class="string">"requires text or regex mode"</span>,
-<a href=#17 id=17 data-nosnippet>17</a>        });
+<a href=#14 id=14 data-nosnippet>14</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(incompatible_occurrence_options(
+<a href=#15 id=15 data-nosnippet>15</a>            request.mode,
+<a href=#16 id=16 data-nosnippet>16</a>            <span class="macro">vec!</span>[<span class="string">"all_occurrences=true"</span>.into()],
+<a href=#17 id=17 data-nosnippet>17</a>        ));
 <a href=#18 id=18 data-nosnippet>18</a>    }
 <a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">if </span>request.prefer_structural
 <a href=#20 id=20 data-nosnippet>20</a>        &amp;&amp; !<span class="macro">matches!</span>(request.mode, SearchMode::Auto | SearchMode::Identifier)
