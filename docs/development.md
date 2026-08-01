@@ -532,7 +532,7 @@ Run the deterministic semantic change receipt gate in release mode:
 ```bash
 cargo run --release -p leantoken-benchmarks --bin semantic_change_receipt_benchmark -- \
   --iterations 21 \
-  --output benchmarks/reports/semantic-change-receipt-v1.json
+  --output target/semantic-change-receipt-v1.json
 ```
 
 The gate checks an exact symbol/configuration truth set, configuration-value
