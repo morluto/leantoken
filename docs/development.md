@@ -18,6 +18,13 @@ Local hooks deliberately do not compile the project or run tests. The full
 lint and test gates run in GitHub Actions, where they do not block commits or
 the first push.
 
+Install `cargo-nextest` when running the complete local product suite; CI
+installs the repository's nextest release automatically:
+
+```bash
+cargo install cargo-nextest --locked
+```
+
 An older checkout may still have the retired push-hook wrapper installed. It
 can be removed once with:
 
@@ -89,10 +96,11 @@ concatenation pattern cannot return.
 
 The runner sequences units, ordinary domain integration, and process-heavy
 tests. CI uses `cargo xtask test product --parallel` to overlap only the
-library/binary unit lane and ordinary integration lane. At most two Cargo child
-processes run concurrently; process-heavy executable/MCP behavior and the exact
-fixture aggregate remain serial after both lanes succeed. The runner prints
-per-lane elapsed time and preserves child exit codes. It also owns exact
+library/binary unit lane and ordinary integration lane; those phases use
+`cargo-nextest`, while process-heavy executable/MCP behavior is capped at two
+nextest workers and the exact fixture aggregate remains serial after both
+lanes succeed. Doctests stay on their explicit Cargo command. The runner
+prints per-lane elapsed time and preserves child exit codes. It also owns exact
 fixture selection and the opt-in profile/stress commands.
 
 Checked-in fixtures run as one aggregate in the existing test profile. The unit

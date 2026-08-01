@@ -68,6 +68,31 @@ marks tests slower than ten seconds, terminates a hung test after six periods,
 and sets retries to zero. The command prints slow tests and final failures;
 profiling never turns a retry into merge evidence.
 
+The deterministic product phases use `cargo-nextest` with the same feature
+graph and explicit process bounds. Doctests remain a separate Cargo command;
+nextest does not silently replace documentation evidence. Required lanes use
+zero retries, while scheduled stress and profiling are separate lifecycle
+evidence rather than recovery for a failed merge test.
+
+CI selection is produced by the checked-in `xtask` planner and
+[`ci/test-topology.json`](../ci/test-topology.json). It records the event,
+source revision, topology digest, selected and intentionally unselected lanes,
+dependency edges, bounded matrices, and human-readable reasons:
+
+```bash
+cargo xtask ci plan --event pull_request --base BASE --head HEAD \
+  --changed-paths-file changed-paths.txt --dry-run
+cargo xtask ci validate-plan --input target/ci-plan.json
+```
+
+Unknown paths, unavailable pull-request or merge-group bases, fork inputs, and
+planner inconsistencies select the conservative evidence set and record a
+fallback reason. `--full-run` and `--diagnostic` only add lanes. The stable
+`Required checks` aggregate runs for both pull requests and merge queues; a
+selected job that fails, cancels, times out, or disappears is not treated as a
+successful skip. Branch protection must require that aggregate before PR
+platform coverage is narrowed.
+
 All merge and CI Cargo commands use `--locked`. Dependency updates are the
 only workflow that intentionally changes `Cargo.lock`.
 

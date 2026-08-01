@@ -1,3 +1,4 @@
+mod ci;
 #[allow(
     dead_code,
     reason = "the shared fixture type exposes paths used by the test harness"
@@ -44,6 +45,7 @@ fn run() -> Result<(), XtaskError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("check-test-architecture") => check_architecture(&root),
+        Some("ci") => ci::run(&root, args.collect()).map_err(XtaskError::Architecture),
         Some("test") => run_test_command(&root, args.collect()),
         Some("test-focused") => focused_test_command(&root, args.collect()),
         Some(command) => Err(XtaskError::Usage(format!("unknown command `{command}`"))),
@@ -323,8 +325,7 @@ fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
 }
 
 fn fixture_test_command() -> Vec<String> {
-    cargo_command([
-        "test",
+    nextest_command([
         "--locked",
         "--workspace",
         "--exclude",
@@ -476,8 +477,7 @@ struct TestPlan {
 impl TestPlan {
     fn for_workspace(root: &Path) -> Result<Self, XtaskError> {
         let mut commands = vec![
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--workspace",
                 "--exclude",
@@ -489,8 +489,7 @@ impl TestPlan {
                 "--skip",
                 "tests::checked_in_fixture_cases_match",
             ]),
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
@@ -501,8 +500,7 @@ impl TestPlan {
                 "--skip",
                 "process::",
             ]),
-            cargo_command([
-                "test",
+            nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
@@ -510,8 +508,8 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "process::",
-                "--",
-                "--test-threads=2",
+                "-j",
+                "2",
             ]),
         ];
         if has_checked_in_fixtures(root)? {
@@ -537,8 +535,7 @@ impl TestPlan {
             ));
         }
         Ok(Self {
-            commands: vec![cargo_command([
-                "test",
+            commands: vec![nextest_command([
                 "--locked",
                 "--package",
                 PRODUCT,
@@ -546,17 +543,15 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "process::",
-                "--",
-                "--test-threads=2",
+                "-j",
+                "2",
             ])],
             repetitions,
         })
     }
     fn profile() -> Self {
         Self {
-            commands: vec![cargo_command([
-                "nextest",
-                "run",
+            commands: vec![nextest_command([
                 "--locked",
                 "--workspace",
                 "--exclude",
@@ -581,6 +576,13 @@ impl TestPlan {
 
 fn cargo_command<const N: usize>(args: [&str; N]) -> Vec<String> {
     std::iter::once("cargo".to_owned())
+        .chain(args.into_iter().map(str::to_owned))
+        .collect()
+}
+
+fn nextest_command<const N: usize>(args: [&str; N]) -> Vec<String> {
+    std::iter::once("cargo".to_owned())
+        .chain(["nextest".to_owned(), "run".to_owned()])
         .chain(args.into_iter().map(str::to_owned))
         .collect()
 }
@@ -612,6 +614,7 @@ struct Target {
 }
 
 fn check_architecture(root: &Path) -> Result<(), XtaskError> {
+    ci::check_topology(root).map_err(XtaskError::Architecture)?;
     let output = Command::new("cargo")
         .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
         .current_dir(root)
@@ -1042,7 +1045,11 @@ mod tests {
         );
         assert!(!plan.commands[0].contains(&"process::".to_owned()));
         assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"process::".to_owned()));
-        assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"--test-threads=2".to_owned()));
+        assert!(
+            plan.commands[PRODUCT_PARALLEL_LANES]
+                .windows(2)
+                .any(|args| args == ["-j", "2"])
+        );
         assert!(
             plan.commands
                 .iter()
