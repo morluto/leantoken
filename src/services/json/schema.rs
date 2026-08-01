@@ -39,13 +39,21 @@ pub(super) struct MeasuredProjection {
 }
 
 impl MeasuredProjection {
-    fn measure(services: &Services, value: Value, counters: &mut SchemaProjectionCounters) -> Result<Self> {
+    fn measure(
+        services: &Services,
+        value: Value,
+        counters: &mut SchemaProjectionCounters,
+    ) -> Result<Self> {
         let serialized = serde_json::to_string(&value)
             .map_err(|error| crate::Error::SerializationFailure(error.to_string()))?;
         counters.schema_serializations = counters.schema_serializations.saturating_add(1);
         let tokens = services.config.tokenizer.count(&serialized);
         counters.schema_token_counts = counters.schema_token_counts.saturating_add(1);
-        Ok(Self { value, serialized, tokens })
+        Ok(Self {
+            value,
+            serialized,
+            tokens,
+        })
     }
 
     pub(super) fn tokens(&self) -> usize {
@@ -86,7 +94,10 @@ impl<'a> SchemaProjectionPlan<'a> {
         } else {
             self.counters.cache_hits = self.counters.cache_hits.saturating_add(1);
         }
-        Ok(self.cache.get(&max_items).expect("entry was just inserted or cached"))
+        Ok(self
+            .cache
+            .get(&max_items)
+            .expect("entry was just inserted or cached"))
     }
 
     fn counters(&self) -> &SchemaProjectionCounters {
@@ -300,7 +311,10 @@ pub(super) fn project_schema_page(
     let (returned_items, schema, projected_tokens) = if item_limited_tokens <= max_tokens {
         (
             item_limit,
-            plan.cache.remove(&item_limit).expect("item_limit was just measured").into_value(),
+            plan.cache
+                .remove(&item_limit)
+                .expect("item_limit was just measured")
+                .into_value(),
             item_limited_tokens,
         )
     } else {

@@ -335,8 +335,7 @@ impl Indexer {
                                 unchanged += 1;
                                 continue;
                             }
-                            source_token_counts
-                                .insert(file.path.clone(), source_token_count);
+                            source_token_counts.insert(file.path.clone(), source_token_count);
                             indexed.push(*file);
                             if let Some(warning) = warning {
                                 push_warning(&mut warnings, warning);
@@ -345,9 +344,7 @@ impl Indexer {
                         PreparedFile::Binary(path) => {
                             source_bytes.remove(&path);
                             skip_reasons.binary = skip_reasons.binary.saturating_add(1);
-                            if existing.contains_key(&path)
-                                && deletions.insert(path.clone())
-                            {
+                            if existing.contains_key(&path) && deletions.insert(path.clone()) {
                                 staged.stage_removal(path);
                             }
                         }
@@ -355,9 +352,7 @@ impl Indexer {
                             source_bytes.remove(&path);
                             skip_reasons.oversized_during_read =
                                 skip_reasons.oversized_during_read.saturating_add(1);
-                            if existing.contains_key(&path)
-                                && deletions.insert(path.clone())
-                            {
+                            if existing.contains_key(&path) && deletions.insert(path.clone()) {
                                 staged.stage_removal(path);
                             }
                         }

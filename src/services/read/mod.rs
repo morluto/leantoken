@@ -10,8 +10,7 @@ use super::execution_options::RetrievalExecution;
 use super::read_delta::ReadDeltaInput;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
-    validate_optional_input,
+    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -419,9 +418,10 @@ impl Services {
         let range = observation.range;
         let live_bytes_read = snapshot.bytes_read;
         let full = target.cursor_full;
-        if let (Some(expected), Some(actual)) =
-            (target.expected_full_hash.as_deref(), snapshot.content_hash.as_deref())
-        {
+        if let (Some(expected), Some(actual)) = (
+            target.expected_full_hash.as_deref(),
+            snapshot.content_hash.as_deref(),
+        ) {
             if expected != actual {
                 return Err(Error::StaleCursor);
             }

@@ -314,8 +314,8 @@ fn schema_projection_plan_preserves_byte_for_byte_output_across_token_budgets() 
         serde_json::to_vec_pretty(&fixture_value).expect("serialize fixture"),
     )
     .expect("write fixture");
-    let config =
-        crate::Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let config = crate::Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("config");
     let services = Services::open(config).expect("services");
 
     // Full-budget projection: should be complete.
@@ -329,13 +329,24 @@ fn schema_projection_plan_preserves_byte_for_byte_output_across_token_budgets() 
 
     // Token-limited projection: should be incomplete with fewer items.
     // Use a budget large enough to include some top-level keys but not all nodes.
-    let partial = project_schema_page(&services, &fixture_value, 10_000, 200).expect("partial schema");
-    let (partial_value, partial_total, partial_returned, partial_remaining, partial_reason, partial_tokens, _) =
-        partial.into_parts();
+    let partial =
+        project_schema_page(&services, &fixture_value, 10_000, 200).expect("partial schema");
+    let (
+        partial_value,
+        partial_total,
+        partial_returned,
+        partial_remaining,
+        partial_reason,
+        partial_tokens,
+        _,
+    ) = partial.into_parts();
     assert_eq!(partial_total, full_total);
     assert!(partial_returned < partial_total);
     assert!(partial_remaining > 0);
-    assert_eq!(partial_reason, Some(crate::model::JsonIncompleteReason::MaxTokens));
+    assert_eq!(
+        partial_reason,
+        Some(crate::model::JsonIncompleteReason::MaxTokens)
+    );
     assert!(partial_tokens <= 200);
     let partial_serialized = serde_json::to_string(&partial_value).expect("serialize partial");
 
@@ -347,7 +358,8 @@ fn schema_projection_plan_preserves_byte_for_byte_output_across_token_budgets() 
     );
 
     // Re-running with the same budget must produce identical bytes and tokens.
-    let repeat = project_schema_page(&services, &fixture_value, 10_000, 200).expect("repeat partial");
+    let repeat =
+        project_schema_page(&services, &fixture_value, 10_000, 200).expect("repeat partial");
     let (repeat_value, _, _, _, _, repeat_tokens, _) = repeat.into_parts();
     let repeat_serialized = serde_json::to_string(&repeat_value).expect("serialize repeat");
     assert_eq!(partial_serialized, repeat_serialized);
@@ -374,8 +386,8 @@ fn schema_projection_plan_reuses_root_candidate_on_cache_hit() {
         serde_json::to_vec_pretty(&fixture_value).expect("serialize"),
     )
     .expect("write fixture");
-    let config =
-        crate::Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let config = crate::Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("config");
     let services = Services::open(config).expect("services");
 
     // With a token budget that fits the full 13-node schema, no binary search.
@@ -397,14 +409,26 @@ fn schema_projection_plan_reuses_root_candidate_on_cache_hit() {
     let full_schema = build_schema_breadth_first(&fixture_value, 13);
     let full_str = serde_json::to_string(&full_schema).expect("serialize full");
     let full_tokens = services.config.tokenizer.count(&full_str);
-    assert!(full_tokens > root_tokens, "full schema ({full_tokens} tokens) must exceed root ({root_tokens} tokens) for binary search");
+    assert!(
+        full_tokens > root_tokens,
+        "full schema ({full_tokens} tokens) must exceed root ({root_tokens} tokens) for binary search"
+    );
 
-    let partial = project_schema_page(&services, &fixture_value, 10_000, root_tokens).expect("partial");
+    let partial =
+        project_schema_page(&services, &fixture_value, 10_000, root_tokens).expect("partial");
     let (_, _, _returned, _, _, _, partial_counters) = partial.into_parts();
     // The item_limit (13) and root (1) are built before the loop. The binary
     // search starts with lower=1, upper=12. When middle=1, it's a cache hit.
-    assert!(partial_counters.cache_hits >= 1, "expected at least 1 cache hit, got {}", partial_counters.cache_hits);
-    assert!(partial_counters.schema_builds >= 2, "expected at least 2 builds, got {}", partial_counters.schema_builds);
+    assert!(
+        partial_counters.cache_hits >= 1,
+        "expected at least 1 cache hit, got {}",
+        partial_counters.cache_hits
+    );
+    assert!(
+        partial_counters.schema_builds >= 2,
+        "expected at least 2 builds, got {}",
+        partial_counters.schema_builds
+    );
 }
 
 #[test]

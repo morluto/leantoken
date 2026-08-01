@@ -68,9 +68,7 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         full_hash: (*full_hash != "-").then(|| (*full_hash).to_string()),
         full,
         file_size: file_size.parse().map_err(|_| Error::StaleCursor)?,
-        modified_ns: (*modified_ns != "-").then(|| {
-            modified_ns.parse::<u128>().unwrap_or(0)
-        }),
+        modified_ns: (*modified_ns != "-").then(|| modified_ns.parse::<u128>().unwrap_or(0)),
         path_hash: (*path_hash).into(),
     };
     if cursor.target_start_line == 0
