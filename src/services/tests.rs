@@ -13,6 +13,14 @@ struct ScanGate {
     changed: Condvar,
 }
 
+struct ScanGateRelease(Arc<ScanGate>);
+
+impl Drop for ScanGateRelease {
+    fn drop(&mut self) {
+        self.0.open();
+    }
+}
+
 impl ScanGate {
     fn wait(&self) {
         *self.entered.lock().expect("scan gate entered") = true;
@@ -312,6 +320,7 @@ async fn reconciliation_waiter_admission_has_an_exact_boundary() {
 async fn caller_after_scan_start_waits_for_the_next_wave() {
     let (root, services) = indexed_services().await;
     let gate = Arc::new(ScanGate::default());
+    let _gate_release = ScanGateRelease(Arc::clone(&gate));
     let hook_gate = Arc::clone(&gate);
     services
         .reconciliation
@@ -326,7 +335,7 @@ async fn caller_after_scan_start_waits_for_the_next_wave() {
             )
             .await
     });
-    wait_until(|| gate.entered()).await;
+    wait_until_with_timer(|| gate.entered()).await;
 
     fs::write(
         root.path().join("later.rs"),
@@ -342,7 +351,7 @@ async fn caller_after_scan_start_waits_for_the_next_wave() {
             )
             .await
     });
-    wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+    wait_until_with_timer(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
     gate.open();
 
     first.await.expect("join first").expect("first wave");
@@ -379,6 +388,7 @@ async fn caller_after_scan_start_waits_for_the_next_wave() {
 async fn cancelling_the_only_pending_waiter_never_starts_its_wave() {
     let (_root, services) = indexed_services().await;
     let gate = Arc::new(ScanGate::default());
+    let _gate_release = ScanGateRelease(Arc::clone(&gate));
     let hook_gate = Arc::clone(&gate);
     services
         .reconciliation
@@ -393,7 +403,7 @@ async fn cancelling_the_only_pending_waiter_never_starts_its_wave() {
             )
             .await
     });
-    wait_until(|| gate.entered()).await;
+    wait_until_with_timer(|| gate.entered()).await;
 
     let cancellation = CancellationToken::new();
     let second_services = services.clone();
@@ -403,7 +413,7 @@ async fn cancelling_the_only_pending_waiter_never_starts_its_wave() {
             .apply_consistency(IndexConsistency::ReconcileWorkingTree, second_cancellation)
             .await
     });
-    wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+    wait_until_with_timer(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
     cancellation.cancel();
     assert!(matches!(
         second.await.expect("join cancelled waiter"),
@@ -626,6 +636,7 @@ async fn cancellation_precedes_initial_reconciliation_deadline_and_removes_waite
 async fn aborting_a_running_waiter_does_not_cancel_its_wave() {
     let (_root, services) = indexed_services().await;
     let gate = Arc::new(ScanGate::default());
+    let _gate_release = ScanGateRelease(Arc::clone(&gate));
     let hook_gate = Arc::clone(&gate);
     services
         .reconciliation
@@ -640,7 +651,7 @@ async fn aborting_a_running_waiter_does_not_cancel_its_wave() {
             )
             .await
     });
-    wait_until(|| gate.entered()).await;
+    wait_until_with_timer(|| gate.entered()).await;
     first.abort();
     assert!(first.await.expect_err("aborted waiter").is_cancelled());
 
@@ -653,7 +664,7 @@ async fn aborting_a_running_waiter_does_not_cancel_its_wave() {
             )
             .await
     });
-    wait_until(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
+    wait_until_with_timer(|| services.reconciliation.diagnostics().pending_waiters == 1).await;
     gate.open();
 
     second.await.expect("join second").expect("second wave");
