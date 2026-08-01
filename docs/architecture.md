@@ -286,11 +286,18 @@ One repository-scoped operation lock serializes reconciliation across processes.
 Discovery, hashing, and membership planning happen before publication. An
 immediate write transaction then verifies that the generation and config used
 to build the plan are still current. A stale plan is discarded and recomputed.
-Each file- and byte-bounded Rayon batch is prepared, resolved, and inserted into
-that one uncommitted transaction before its memory is released. A later parse,
-storage, or cancellation error rolls back every earlier batch. Replacements,
-deletions, and generation advancement become visible together at the final
-commit.
+Preparation — filesystem reads, hashing, parsing, tokenization, import
+resolution, and batch formation — executes **outside** the `BEGIN IMMEDIATE`
+writer transaction, staging prepared `IndexedFile` records in a bounded
+in-memory `PreparedReconciliation` buffer. The writer transaction is then
+opened only for the fast set-based publication phase: deletions, replacements,
+FTS rebuilds, and generation advancement. This decomposition ensures the
+SQLite writer lock is held for the minimum duration required for atomicity,
+not for the full preparation workload. A later parse, storage, or cancellation
+error during preparation discards the staged buffer without affecting the live
+database. A stale baseline detected inside the transaction rolls back all
+staged writes. Replacements, deletions, and generation advancement become
+visible together at the final commit.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
@@ -306,6 +313,10 @@ of the four FTS rebuilds, commit, checkpoint, Linux process write bytes, and
 `dbstat` FTS footprints. It also sums per-file worker durations for reads, text
 preparation, hashing, parsing, whole-file token counting, chunk token counting,
 and record projection. Worker durations overlap and are not wall-clock phases.
+After the phase decomposition, `publication_ms` measures only the `BEGIN
+IMMEDIATE` transaction lifetime (fast writes + FTS rebuilds + commit), not the
+full preparation workload. `preparation_ms` measures the out-of-transaction
+preparation phase. Their sum is bounded by `total_ms`.
 This diagnostic path uses a disposable serialized writer connection with
 automatic checkpointing disabled and performs an explicit post-commit
 `TRUNCATE` checkpoint; the ordinary writer retains normal WAL behavior.
@@ -743,6 +754,9 @@ claims.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
+| Regex request candidate chunks | 20,510, calibrated at twice the 10,255-chunk boundary-profile maximum |
+| Regex request candidate bytes | 1 GiB, twice the largest representative indexed corpus rounded below the 2 GiB index ceiling |
+| Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
 | Regex candidate-plan aggregate term bytes | 256 |
@@ -880,8 +894,12 @@ Path-scoped plans apply include/exclude filters to lightweight chunk ID/path
 rows before the 10,000-candidate bound, hydrate only admitted IDs, and fail
 explicitly if more than 100,000 FTS rows would need inspection. Both paths
 retain the matching-chunk limit, while the fallback retains its file and
-per-file chunk limits. Compiled regex size and DFA cache are also limited so
-pathological patterns fail closed.
+per-file chunk limits. One request-owned work budget also counts admitted
+candidate files, chunks, and content bytes across either path. Exhaustion
+returns `incomplete_work` with `complete=false`, the limiting dimension, and
+bounded aggregate counters; it never returns an exact occurrence total.
+Compiled regex size and DFA cache are also limited so pathological patterns
+fail closed.
 
 Occurrence grouping is a response projection over the already ranked and
 paginated exhaustive page; it performs no additional repository or SQLite
@@ -1322,8 +1340,16 @@ instead of adding a guessed fixed overhead.
 
 ## Path and data safety
 
-All repository-facing paths are relative. Absolute paths, parent traversal,
-NUL bytes, and canonical paths outside the repository root are rejected.
+`RepositoryPath` and `RepositoryPattern` own repository-relative identity.
+They preserve a transparent JSON string representation, normalize both host
+separator styles to `/`, remove redundant `.` and empty components, and reject
+absolute or drive-qualified paths, parent traversal, NUL bytes, empty non-root
+patterns, and configured size/count violations. `RepositoryPatternSet`
+compiles case-sensitive glob syntax once with `globset`; a literal denotes the
+exact path and all descendants. Import resolution uses the path type's
+repository-relative join rather than glob parsing. Query-receipt and index-scope
+identity use the v2 canonicalization domain and therefore fail closed on older
+opaque evidence. Canonical paths outside the repository root are rejected.
 Symlink escapes are rejected when live content is opened. `leantoken.read`
 requires an indexed path, so ignore rules also govern which files can be read
 through the tool.
