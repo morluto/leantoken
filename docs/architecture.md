@@ -1142,8 +1142,11 @@ selects the newest compatible base for the same repository and exact target by
 reverse-scanning at most its existing 128 insertion-order keys. This adds no
 unbounded index, storage, fan-out, or concurrency. An unchanged target returns
 `not_modified`; any coordinate change fails safe to full current content.
-Ordinary reads never consult or populate the registry. Search and outline never
-invent empty successful results at generation zero.
+Ordinary reads never consult or populate the registry. Continuation cursors use
+the version-three shape: their target endpoint is optional, so a bounded
+open-ended page preserves an open target instead of storing the last partially
+scanned line as an artificial EOF. Older cursor versions fail closed. Search
+and outline never invent empty successful results at generation zero.
 
 ## Concurrency design constraints
 
