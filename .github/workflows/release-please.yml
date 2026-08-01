@@ -125,11 +125,18 @@ jobs:
       - name: Generate changelog
         if: steps.version.outputs.skip != 'true'
         run: |
+          GENERATED_CHANGELOG="$RUNNER_TEMP/leantoken-changelog.md"
           git cliff --config cliff.toml \
             --github-repo "morluto/leantoken" \
             --tag "${{ steps.version.outputs.new_tag }}" \
-            --prepend CHANGELOG.md \
+            --output "$GENERATED_CHANGELOG" \
             ${{ steps.version.outputs.latest_tag }}..HEAD
+          {
+            cat "$GENERATED_CHANGELOG"
+            printf '\n'
+            awk '/^## / { found = 1 } found' CHANGELOG.md
+          } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
