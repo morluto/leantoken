@@ -15,6 +15,12 @@ pub(super) struct PlannedDiscoveryEdit {
     pub(super) updated: Option<String>,
 }
 
+#[derive(Debug)]
+pub(super) struct PlannedConfigurationSnapshot {
+    pub(super) path: PathBuf,
+    pub(super) original: Option<String>,
+}
+
 pub(super) struct PlanEnvironment<'a> {
     pub(super) detected: &'a [SetupClient],
     pub(super) home: &'a Path,
@@ -23,6 +29,7 @@ pub(super) struct PlanEnvironment<'a> {
     pub(super) runtime: Option<RuntimeInstallPlan>,
     pub(super) discovery_paths: Vec<PathBuf>,
     pub(super) discovery_cleanup_paths: Vec<PathBuf>,
+    pub(super) configuration_snapshots: Vec<PlannedConfigurationSnapshot>,
     pub(super) force_unmanaged: bool,
     pub(super) transaction_root: &'a Path,
 }
@@ -84,6 +91,7 @@ pub(super) fn resolve_plan(
         runtime: environment.runtime,
         edits,
         discovery_edits,
+        configuration_snapshots: environment.configuration_snapshots,
         ownership_override: environment.force_unmanaged,
         transaction_root: environment.transaction_root.to_path_buf(),
     })

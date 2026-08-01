@@ -88,6 +88,30 @@ impl SetupPrompt for FixedPrompt {
     }
 }
 
+struct ConfigMutatingPrompt {
+    path: PathBuf,
+    content: String,
+}
+
+impl SetupPrompt for ConfigMutatingPrompt {
+    fn select(
+        &self,
+        _operation: SetupOperation,
+        _detected: &[SetupClient],
+        _preferred: &[SetupClient],
+    ) -> Result<Option<Vec<SetupClient>>> {
+        Ok(None)
+    }
+
+    fn confirm(&self, _operation: SetupOperation, _plan: &ResolvedSetupPlan) -> Result<bool> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&self.path, &self.content)?;
+        Ok(true)
+    }
+}
+
 fn environment(temp: &tempfile::TempDir) -> SetupEnvironment {
     SetupEnvironment {
         home: temp.path().join("home"),
@@ -500,6 +524,25 @@ fn diagnostic_reports_configured_command_and_stale_release() {
                 .iter()
                 .any(|argument| argument == "--package=leantoken@1.2.3")
     }));
+}
+
+#[test]
+fn registered_version_recognizes_direct_package_manager_pins() {
+    for command in ["npx", "pnpm", "yarn"] {
+        assert_eq!(
+            registered_version(
+                command,
+                &[
+                    "dlx".into(),
+                    "leantoken@1.2.3".into(),
+                    "--managed-by-setup".into(),
+                    "mcp".into(),
+                ]
+            )
+            .as_deref(),
+            Some("1.2.3")
+        );
+    }
 }
 
 #[test]
@@ -987,6 +1030,7 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
         runtime: None,
         edits,
         discovery_edits: Vec::new(),
+        configuration_snapshots: Vec::new(),
         ownership_override: false,
         transaction_root: temp.path().join("runtime"),
     };
@@ -1027,6 +1071,7 @@ fn failed_rollback_retains_recovery_journal() {
         runtime: None,
         edits: vec![edit],
         discovery_edits: Vec::new(),
+        configuration_snapshots: Vec::new(),
         ownership_override: false,
         transaction_root: runtime_root.clone(),
     };
@@ -1344,6 +1389,57 @@ fn ownership_and_edit_share_one_snapshot_before_preflight() {
 }
 
 #[test]
+fn discovery_cleanup_revalidates_unselected_configuration_snapshots() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = environment(&temp);
+    let discovery_path = SetupClient::Claude.discovery_path(&environment.home);
+    fs::create_dir_all(discovery_path.parent().unwrap()).unwrap();
+    let discovery = format!("{DISCOVERY_SKILL_MARKER}\nlegacy Claude discovery\n");
+    fs::write(&discovery_path, &discovery).unwrap();
+    let config_path = SetupClient::Claude.definition(&environment.home).path;
+    let config = serde_json::to_string_pretty(&json!({
+        "mcpServers": {
+            "leantoken": {
+                "command": environment.launcher.command().unwrap(),
+                "args": environment.launcher.args.clone(),
+            }
+        }
+    }))
+    .unwrap();
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: vec![SetupClient::Codex],
+            all: false,
+            refresh: false,
+            private_runtime: false,
+            yes: false,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &ConfigMutatingPrompt {
+            path: config_path.clone(),
+            content: config,
+        },
+    )
+    .unwrap();
+
+    let error = report.results[0].error.as_deref().unwrap();
+    assert!(error.contains("configuration changed after preflight"));
+    assert!(error.contains(&config_path.to_string_lossy().into_owned()));
+    assert_eq!(fs::read_to_string(discovery_path).unwrap(), discovery);
+    assert!(
+        !SetupClient::Codex
+            .definition(&environment.home)
+            .path
+            .exists()
+    );
+}
+
+#[test]
 fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
     let runtime_root = Path::new("/data/leantoken/runtimes");
     let managed_runtime = runtime_root
@@ -1430,6 +1526,7 @@ fn recovery_journal_uses_its_separate_aggregate_read_bound() {
             updated: Some("new".into()),
         }],
         discovery_edits: Vec::new(),
+        configuration_snapshots: Vec::new(),
         ownership_override: false,
         transaction_root: runtime_root.clone(),
     };

@@ -181,6 +181,7 @@ fn run_with_transport(
     transport: &mut DoctorTransport,
     verified_registration: Option<&setup::ConfiguredRegistration>,
 ) -> Result<DoctorReport> {
+    let expected_server_version = expected_server_version(verified_registration);
     transport.send(
         json!({
             "jsonrpc": "2.0",
@@ -209,12 +210,12 @@ fn run_with_transport(
             format!("MCP identified itself as {server_name:?}, expected \"leantoken\""),
         ));
     }
-    if !server_version_matches_current_runtime(&server_version) {
+    if !server_version_matches_runtime(&server_version, expected_server_version) {
         return Err(doctor_error(
             "handshake",
             format!(
                 "MCP reported version {server_version}, expected {}+contract.<32 hex characters>",
-                env!("CARGO_PKG_VERSION")
+                expected_server_version
             ),
         ));
     }
@@ -360,7 +361,7 @@ fn run_with_transport(
         (
             registration.command.as_str(),
             registration.args.as_slice(),
-            registration.expected_version.as_str(),
+            expected_server_version,
         )
     });
     let setup = setup::diagnostic_state(expected_launcher);
@@ -462,12 +463,19 @@ fn registration_repair_command(
     }
 }
 
-fn server_version_matches_current_runtime(version: &str) -> bool {
+fn server_version_matches_runtime(version: &str, expected_version: &str) -> bool {
     version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
+        .strip_prefix(&format!("{expected_version}+contract."))
         .is_some_and(|fingerprint| {
             fingerprint.len() == 32 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
         })
+}
+
+fn expected_server_version(verified_registration: Option<&setup::ConfiguredRegistration>) -> &str {
+    verified_registration
+        .and_then(|registration| registration.version.as_deref())
+        .filter(|version| semver::Version::parse(version).is_ok())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
 /// Print a doctor report as JSON or Context Distillery terminal output.
@@ -962,22 +970,50 @@ mod tests {
     }
 
     #[test]
-    fn runtime_version_requires_the_current_semver_and_bounded_schema_fingerprint() {
+    fn runtime_version_requires_the_expected_semver_and_bounded_schema_fingerprint() {
         let current = concat!(
             env!("CARGO_PKG_VERSION"),
             "+contract.0123456789abcdef0123456789abcdef"
         );
-        assert!(server_version_matches_current_runtime(current));
-        assert!(!server_version_matches_current_runtime(env!(
-            "CARGO_PKG_VERSION"
-        )));
-        assert!(!server_version_matches_current_runtime(concat!(
-            env!("CARGO_PKG_VERSION"),
-            "+contract.short"
-        )));
-        assert!(!server_version_matches_current_runtime(
-            "999.0.0+contract.0123456789abcdef0123456789abcdef"
+        let pinned = "0.1.19+contract.0123456789abcdef0123456789abcdef";
+        assert!(server_version_matches_runtime(
+            current,
+            env!("CARGO_PKG_VERSION")
         ));
+        assert!(server_version_matches_runtime(pinned, "0.1.19"));
+        assert!(!server_version_matches_runtime(
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_VERSION")
+        ));
+        assert!(!server_version_matches_runtime(
+            concat!(env!("CARGO_PKG_VERSION"), "+contract.short"),
+            env!("CARGO_PKG_VERSION")
+        ));
+        assert!(!server_version_matches_runtime(pinned, "0.1.18"));
+    }
+
+    #[test]
+    fn configured_doctor_expects_the_stored_launcher_version() {
+        let registration = setup::ConfiguredRegistration {
+            client: SetupClient::Codex,
+            path: "config.toml".into(),
+            command: "npx".into(),
+            args: vec!["--package=leantoken@0.1.19".into()],
+            version: Some("0.1.19".into()),
+            expected_version: env!("CARGO_PKG_VERSION").into(),
+            matches_current: false,
+            managed: true,
+        };
+
+        assert_eq!(expected_server_version(Some(&registration)), "0.1.19");
+        assert_eq!(expected_server_version(None), env!("CARGO_PKG_VERSION"));
+
+        let mut floating = registration;
+        floating.version = Some("latest".into());
+        assert_eq!(
+            expected_server_version(Some(&floating)),
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     #[test]

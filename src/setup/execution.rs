@@ -135,8 +135,14 @@ pub(super) fn run_with(
         .iter()
         .map(|client| client.discovery_path(&environment.home))
         .collect::<std::collections::BTreeSet<_>>();
+    let unselected_clients = SetupClient::ALL
+        .into_iter()
+        .filter(|client| !clients.contains(client))
+        .collect::<Vec<_>>();
+    let (unselected_registrations, configuration_snapshots) =
+        configured_registrations_with_snapshots(&environment.home, launcher, &unselected_clients)?;
     let (discovery_paths, discovery_cleanup_paths) = if operation == SetupOperation::Setup {
-        let mut required_paths = configured_registrations(&environment.home, launcher)?
+        let mut required_paths = unselected_registrations
             .into_iter()
             .filter(|registration| registration.managed)
             .map(|registration| registration.client.discovery_path(&environment.home))
@@ -154,10 +160,9 @@ pub(super) fn run_with(
             cleanup_paths,
         )
     } else {
-        let remaining_paths = configured_registrations(&environment.home, launcher)?
+        let remaining_paths = unselected_registrations
             .into_iter()
             .map(|registration| registration.client)
-            .filter(|configured| !clients.contains(configured))
             .map(|client| client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
         if remaining_paths.is_empty() {
@@ -192,6 +197,7 @@ pub(super) fn run_with(
             runtime,
             discovery_paths,
             discovery_cleanup_paths,
+            configuration_snapshots,
             force_unmanaged: request.force_unmanaged,
             transaction_root: &environment.runtime_root,
         },

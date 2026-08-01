@@ -162,6 +162,32 @@ pub(super) fn configured_registrations(
     )
 }
 
+pub(super) fn configured_registrations_with_snapshots(
+    home: &Path,
+    launcher: &McpLauncher,
+    clients: &[SetupClient],
+) -> Result<(
+    Vec<ConfiguredRegistration>,
+    Vec<PlannedConfigurationSnapshot>,
+)> {
+    let mut registrations = Vec::new();
+    let mut snapshots = Vec::with_capacity(clients.len());
+    for client in clients {
+        let definition = client.definition(home);
+        let original = read_optional(&definition.path)?;
+        if let Some(registration) =
+            configured_registration_from_source(*client, home, launcher, original.as_deref())?
+        {
+            registrations.push(registration);
+        }
+        snapshots.push(PlannedConfigurationSnapshot {
+            path: definition.path,
+            original,
+        });
+    }
+    Ok((registrations, snapshots))
+}
+
 fn configured_registrations_against(
     home: &Path,
     expected_command: &str,
@@ -426,7 +452,11 @@ pub(super) fn toml_registration_command(
 
 pub(super) fn registered_version(command: &str, args: &[String]) -> Option<String> {
     args.iter()
-        .find_map(|argument| argument.strip_prefix("--package=leantoken@"))
+        .find_map(|argument| {
+            argument
+                .strip_prefix("--package=leantoken@")
+                .or_else(|| argument.strip_prefix("leantoken@"))
+        })
         .map(str::to_owned)
         .or_else(|| {
             Path::new(command)

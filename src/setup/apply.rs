@@ -5,8 +5,9 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
         Ok(installed) => installed.unwrap_or(false),
         Err(error) => return failed_results(&plan.edits, error.to_string()),
     };
-    if let Err(error) =
-        preflight_edits(&plan.edits).and_then(|()| preflight_discovery(&plan.discovery_edits))
+    if let Err(error) = preflight_configuration_snapshots(&plan.configuration_snapshots)
+        .and_then(|()| preflight_edits(&plan.edits))
+        .and_then(|()| preflight_discovery(&plan.discovery_edits))
     {
         if runtime_installed && let Some(runtime) = &plan.runtime {
             let _ = fs::remove_file(&runtime.destination);
@@ -96,6 +97,20 @@ pub(super) fn rollback_message(error: Error, rollback: Result<()>) -> String {
             "setup transaction failed: {error}; rollback requires recovery: {rollback_error}"
         ),
     }
+}
+
+pub(super) fn preflight_configuration_snapshots(
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> Result<()> {
+    for snapshot in snapshots {
+        if read_optional(&snapshot.path)? != snapshot.original {
+            return Err(Error::SetupFailure(format!(
+                "configuration changed after preflight: {}",
+                snapshot.path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {

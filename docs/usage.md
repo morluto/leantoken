@@ -395,7 +395,9 @@ unregistered processes that share an explicit database.
 Pass `--client codex` (or another supported client) to read that host's stored
 registration and launch its exact command and arguments instead. This verifies
 the configuration users actually restart into, including pinned npx and private
-runtime launchers.
+runtime launchers. When the registration exposes an exact pinned release, the
+handshake is validated against that configured release rather than the version
+of the doctor process that launched it.
 Failures use the `doctor_failure` category and identify the `registration`,
 `launch`, `handshake`, `catalog`, or `first_retrieval` stage so repair tooling
 does not need to parse prose.
