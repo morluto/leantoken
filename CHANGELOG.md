@@ -1,6 +1,85 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.21] - 2026-08-01
+### Benchmarks
+
+- Separate stable summaries from raw evidence
+### Bug Fixes
+
+- **release:** Format preserved changelog entries
+- **release:** Preserve previous changelog entries
+- **mcp:** Restore tool-local routing cues
+- **protocol:** Restore public APIs and validate setup paths
+- **retrieval:** Preserve bounded response and snapshot contracts
+- **ci:** Align validation planning with changed artifacts
+- **ci:** Close planner review gaps
+- **test:** Make sandbox creation process-safe
+- **setup:** Classify package-manager invocation identity
+- **watcher:** Reconcile ambiguous rename events
+- **read:** Preserve open bounded cursor targets
+- **storage:** Keep staging databases out of repositories
+- **benchmarks:** Update live-read policy references
+- **benchmarks:** Qualify read policy imports
+- **context:** Preserve empty-pattern validation errors
+- **read:** Simplify cursor freshness checks
+- Migrate graph benchmark to canonical diagnostics field
+- **concurrency:** Align CPU-aware capacity bounds
+- **setup:** Invoke npx launchers directly
+- **tests:** Isolate process tests from inherited npm_lifecycle_event
+- **upgrade:** State how to upgrade npx integrations
+- **upgrade:** Avoid unrelated global install guidance
+### Chores
+
+- Prune orphaned benchmark artifacts
+- Remove historical audit artifacts
+- Format cleanup changes
+### Continuous Integration
+
+- Optimize test suite routing
+### Documentation
+
+- Document the new retrieval contracts
+- **read:** Describe versioned continuation endpoints
+- **architecture:** Document file-backed reconciliation staging
+- **architecture:** Align staging ledger with implementation
+- **architecture:** Record root-cause cleanup evidence
+- **json:** Clarify operation and projection contracts
+- Describe dynamic reader pool bounds
+- Add comprehensive DX audit report (July 2026)
+### Features
+
+- **mcp:** Publish through Cargo and MCP Registry
+- **setup:** Harden agent onboarding lifecycle (#431) ([#431](https://github.com/morluto/leantoken/pull/431))
+- **context:** Expose bounded repository provenance
+- **mcp:** Align contracts with RMCP 3.1.0
+- **storage:** Stage reconciliation records in SQLite
+- **read:** Make live freshness and I/O policy explicit
+- **search:** Bound regex work and clarify occurrence routing
+### Performance
+
+- **test:** Scale process workers by runner
+- **json:** Cache exact projection measurements
+- **search:** Bound regex work by request budgets
+- **indexer:** Move preparation outside publication transactions
+- **json:** Reuse measured schema projections
+- Make blocking executor and SQLite pool size CPU-aware
+### Refactoring
+
+- **repository:** Centralize relative path and pattern policy
+- Remove retired compatibility layers
+- **examples:** Model benchmark pipeline state
+- Remove production clippy suppressions
+- **services:** Stage context and search execution
+- **json:** Decompose structural query service
+### Testing
+
+- **mcp:** Refresh generated catalog snapshot
+- **read:** Request full freshness in live profile
+- Simplify frozen report lint path
+- Decouple frozen graph report from harness churn
+- Refresh graph report provenance
+
 ## [0.1.20] - 2026-07-30
 ### Benchmarks
 
