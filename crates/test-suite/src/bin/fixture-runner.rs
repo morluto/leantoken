@@ -31,7 +31,17 @@ mod tests {
             .expect("test-suite manifest is below the workspace root");
         let cases = FixtureCase::list(workspace_root.join("fixtures"), None)
             .expect("checked-in fixture inventory is valid");
-        assert!(!cases.is_empty(), "checked-in fixture inventory is empty");
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| case.identity.as_str())
+                .collect::<Vec<_>>(),
+            ["indexing_repository/path_validation", "protocol/catalog"]
+        );
+        assert!(
+            cases.len() <= 10_000,
+            "fixture inventory exceeded its bound"
+        );
         for case in cases {
             leantoken_test_suite::run_fixture(&case.identity, false)
                 .unwrap_or_else(|error| panic!("fixture {} failed: {error}", case.identity));

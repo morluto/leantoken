@@ -3,13 +3,15 @@ use leantoken_test_support::FixtureCase;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::compare_or_bless;
+
 #[derive(Debug, Deserialize)]
 struct ProtocolCatalogRequest {}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolCatalogExpectation {
-    is_json_array: bool,
-    contains_context: bool,
+    tool_names: Vec<String>,
+    all_tools_have_input_schema: bool,
 }
 
 pub(crate) fn run(case: &FixtureCase, bless: bool) -> Result<(), String> {
@@ -21,24 +23,28 @@ pub(crate) fn run(case: &FixtureCase, bless: bool) -> Result<(), String> {
         &fs::read(&case.expected).map_err(|error| format!("read expected: {error}"))?,
     )
     .map_err(|error| format!("decode expected: {error}"))?;
-    let catalog = tool_catalog_json();
+    let catalog: serde_json::Value = serde_json::from_str(&tool_catalog_json())
+        .map_err(|error| format!("decode catalog: {error}"))?;
+    let tools = catalog
+        .as_array()
+        .ok_or_else(|| "tool catalog is not a JSON array".to_owned())?;
+    let mut tool_names = Vec::with_capacity(tools.len());
+    let all_tools_have_input_schema = tools.iter().all(|tool| {
+        let Some(object) = tool.as_object() else {
+            return false;
+        };
+        let Some(name) = object.get("name").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        tool_names.push(name.to_owned());
+        object
+            .get("inputSchema")
+            .is_some_and(serde_json::Value::is_object)
+    });
+    tool_names.sort();
     let actual = ProtocolCatalogExpectation {
-        is_json_array: catalog.starts_with('[') && catalog.ends_with(']'),
-        contains_context: catalog.contains("context"),
+        tool_names,
+        all_tools_have_input_schema,
     };
-    if bless {
-        let rendered = serde_json::to_string_pretty(&actual).map_err(|error| error.to_string())?;
-        fs::write(&case.expected, format!("{rendered}\n"))
-            .map_err(|error| format!("write blessed expectation: {error}"))?;
-        println!("blessed {}: {:?} -> {:?}", case.identity, expected, actual);
-        return Ok(());
-    }
-    if expected != actual {
-        return Err(format!(
-            "semantic fixture mismatch for {}: expected {:?}, actual {:?}",
-            case.identity, expected, actual
-        ));
-    }
-    println!("fixture passed: {}", case.identity);
-    Ok(())
+    compare_or_bless(case, &expected, &actual, bless)
 }
