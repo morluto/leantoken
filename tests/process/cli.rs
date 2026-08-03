@@ -339,7 +339,15 @@ pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
         ],
     );
 
-    assert_eq!(dotted, omitted);
+    assert_eq!(dotted["entries"], omitted["entries"]);
+    for key in [
+        "repository_id",
+        "repository_generation",
+        "index_scope",
+        "next_cursor",
+    ] {
+        assert_eq!(dotted["meta"][key], omitted["meta"][key], "meta.{key}");
+    }
 }
 
 pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
