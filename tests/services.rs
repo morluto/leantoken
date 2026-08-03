@@ -332,6 +332,10 @@ fn init_git_repo(root: &std::path::Path) {
     run(&["init"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "Test"]);
+    // Keep fixture bytes stable when the host has a global autocrlf setting.
+    // Otherwise Windows can report the fixture's LF files as modified before
+    // the test changes its intended file, corrupting working-tree signals.
+    run(&["config", "core.autocrlf", "false"]);
     run(&["add", "-A"]);
     run(&["commit", "-m", "init"]);
 }
