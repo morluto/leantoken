@@ -151,41 +151,61 @@ fn same_directory_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
 }
 
 fn open_real_directory(directory: &Path) -> std::result::Result<Dir, String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
+    let parent_path = directory
+        .parent()
+        .ok_or_else(|| "cache directory has no parent".to_owned())?;
+    let name = directory
+        .file_name()
+        .ok_or_else(|| "cache directory has no final component".to_owned())?;
+    let parent = Dir::open_ambient_dir(parent_path, cap_std::ambient_authority())
+        .map_err(|error| error.to_string())?;
+    let parent_file = parent.into_std_file();
+    let file = cap_primitives::fs::open_dir_nofollow(&parent_file, Path::new(name))
+        .map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            directory.display()
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
 
-        // Open the final component as a reparse point rather than following a
-        // transient directory junction/symlink. BACKUP_SEMANTICS permits a
-        // directory handle through std::fs::OpenOptions on Windows.
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-        let mut options = fs::OpenOptions::new();
-        options
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
-        let file = options.open(directory).map_err(|error| error.to_string())?;
-        let metadata = file.metadata().map_err(|error| error.to_string())?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "cache directory is not a real directory: {}",
-                directory.display()
-            ));
-        }
-        Ok(Dir::from_std_file(file))
+fn open_real_child(parent: Dir, name: &OsStr) -> std::result::Result<Dir, String> {
+    let parent_file = parent.into_std_file();
+    let file = cap_primitives::fs::open_dir_nofollow(&parent_file, Path::new(name))
+        .map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            name.to_string_lossy()
+        ));
     }
-    #[cfg(not(windows))]
-    {
-        Dir::open_ambient_dir(directory, cap_std::ambient_authority())
-            .map_err(|error| error.to_string())
-    }
+    Ok(Dir::from_std_file(file))
 }
 
 fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
     ensure_real_directory(directory)?;
+    let managed_root = directory
+        .parent()
+        .ok_or_else(|| "cache directory has no managed root".to_owned())?;
+    let cache_name = directory
+        .file_name()
+        .ok_or_else(|| "cache directory has no cache id".to_owned())?;
     #[cfg(unix)]
     let expected_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
-    let handle = open_real_directory(directory)?;
+    let root_handle = open_real_directory(managed_root)?;
+    if root_handle
+        .symlink_metadata(cache_name)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("cache directory is not a real directory".into());
+    }
+    let handle = open_real_child(root_handle, cache_name)?;
 
     #[cfg(unix)]
     let handle = {

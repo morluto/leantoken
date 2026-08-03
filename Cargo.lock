@@ -990,6 +990,7 @@ dependencies = [
  "assert_cmd",
  "base64",
  "blake3",
+ "cap-primitives",
  "cap-std",
  "clap",
  "command-group",

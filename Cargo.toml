@@ -36,6 +36,7 @@ path = "tests/integration.rs"
 base64 = "0.22.1"
 blake3 = "1.8.2"
 cap-std = "4.0.2"
+cap-primitives = "4.0.2"
 clap = { version = "4.5.51", features = ["derive"] }
 command-group = "5.0.1"
 directories = "6.0.0"
