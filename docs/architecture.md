@@ -1553,11 +1553,11 @@ written through a temporary file and atomically persisted only when the target
 does not exist. Path-only source-shape strata are diagnostic labels and never
 change production completeness or extraction.
 
-The manual Swift structural evaluator is also example-only. Its root
-`tree-sitter-swift` 0.7.2 dependency is development-only; an excluded,
-independently locked manifest provides the same diagnostic with 0.7.3. Neither
-adds Swift language detection, extraction, parser-cache entries, index rows, or
-release binary code. The diagnostic admits at most 100,000 clean tracked
+The manual Swift structural evaluator is also example-only. An excluded,
+independently locked manifest owns its pinned `tree-sitter-swift` 0.7.3
+dependency. It adds no Swift language detection, extraction, parser-cache
+entries, index rows, or release binary code. The diagnostic admits at most
+100,000 clean tracked
 `.swift` files at one exact lowercase commit, with the same 4,096-byte path,
 8-MiB file, 8-GiB corpus, one-million-node-per-file, 100-million-total-node,
 one-million-recovery-node, 512-category, 32-reported-category, Git-output, Git

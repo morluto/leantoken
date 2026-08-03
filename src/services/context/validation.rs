@@ -209,13 +209,8 @@ impl Services {
             validate_input(path, "changed path", MAX_PATH_BYTES)?;
             validate_relative(path)?;
         }
-        if let Some(revision) = request
-            .base_revision
-            .as_deref()
-            .filter(|revision| !revision.trim().is_empty())
-        {
-            validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
-            parse_revision_range(revision)?;
+        if let Some(revision) = request.base_revision.as_deref() {
+            validate_revision_field(revision)?;
         }
         for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
             .queries
@@ -229,6 +224,24 @@ impl Services {
         }
         Ok(())
     }
+}
+
+pub(super) fn validate_revision_field(revision: &str) -> Result<()> {
+    if revision.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "must not be empty",
+        });
+    }
+    if revision != revision.trim() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "must not have leading or trailing whitespace",
+        });
+    }
+    validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+    parse_revision_range(revision)?;
+    Ok(())
 }
 
 pub(super) fn validate_context_option_constraints(

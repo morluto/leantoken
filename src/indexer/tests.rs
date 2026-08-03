@@ -238,6 +238,42 @@ fn cancellation_after_publication_returns_committed_success_and_completed_progre
     assert_eq!(progress.current_generation, 1);
 }
 
+#[test]
+fn targeted_cancellation_after_publication_returns_committed_success() {
+    let root = tempfile::tempdir().expect("root");
+    let source = root.path().join("lib.rs");
+    fs::write(&source, "fn before() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    indexer.reconcile(false).expect("initial reconcile");
+    fs::write(&source, "fn after() {}\n").expect("updated source");
+    let cancellation = CancellationToken::new();
+
+    let response = indexer
+        .reconcile_paths_once_with_post_publication_hook(&["lib.rs".into()], &cancellation, || {
+            cancellation.cancel()
+        })
+        .expect("a targeted committed generation must not be reported as cancelled");
+
+    assert_eq!(response.repository_generation, 2);
+    assert_eq!(
+        storage
+            .search_word("after", 10)
+            .expect("published targeted search")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage
+            .search_word("before", 10)
+            .expect("removed targeted search")
+            .len(),
+        0
+    );
+}
+
 fn assert_skip_reasons(
     response: &IndexReport,
     binary: usize,

@@ -3,6 +3,8 @@ use leantoken_test_support::FixtureCase;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::compare_or_bless;
+
 #[derive(Debug, Deserialize)]
 struct RepositoryPathRequest {
     path: String,
@@ -25,19 +27,5 @@ pub(crate) fn run(case: &FixtureCase, bless: bool) -> Result<(), String> {
     let actual = RepositoryPathExpectation {
         valid: validate_relative(&request.path).is_ok(),
     };
-    if bless {
-        let rendered = serde_json::to_string_pretty(&actual).map_err(|error| error.to_string())?;
-        fs::write(&case.expected, format!("{rendered}\n"))
-            .map_err(|error| format!("write blessed expectation: {error}"))?;
-        println!("blessed {}: {:?} -> {:?}", case.identity, expected, actual);
-        return Ok(());
-    }
-    if expected != actual {
-        return Err(format!(
-            "semantic fixture mismatch for {}: expected {:?}, actual {:?}",
-            case.identity, expected, actual
-        ));
-    }
-    println!("fixture passed: {}", case.identity);
-    Ok(())
+    compare_or_bless(case, &expected, &actual, bless)
 }

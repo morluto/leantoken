@@ -1,6 +1,6 @@
 use super::support::{
-    ChildExt, Duration, Instant, McpProcess, assert_runtime_version, database_state, run,
-    wait_until, write_rust_fixture_set,
+    Duration, Instant, McpProcess, assert_runtime_version, database_state, run, wait_until,
+    write_rust_fixture_set,
 };
 
 pub(super) fn mcp_initialize_precedes_storage_open() {
@@ -37,9 +37,8 @@ pub(super) fn mcp_initialize_precedes_storage_open() {
         "method": "notifications/initialized"
     }));
     wait_until(Duration::from_secs(10), || {
-        database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 1 && files == 1
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
     });
 }
 
@@ -122,8 +121,7 @@ pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
             continue;
         }
         assert_eq!(
-            response["result"]["structuredContent"]["fragments"][0]["path"],
-            "lib.rs",
+            response["result"]["structuredContent"]["fragments"][0]["path"], "lib.rs",
             "{response}"
         );
         assert!(
@@ -177,7 +175,6 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
     process.stdin.take();
 
     let status = process
-        .child
         .wait_timeout(Duration::from_secs(2))
         .expect("wait for MCP process")
         .expect("MCP process should honor startup cancellation");
@@ -223,15 +220,13 @@ pub(super) fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     std::fs::create_dir(database.with_extension("sqlite.leader.lock"))
         .expect("invalid leadership artifact");
 
-    let mut process =
-        McpProcess::spawn_with_captured_stderr(root.path(), &database, &["--json"]);
+    let mut process = McpProcess::spawn_with_captured_stderr(root.path(), &database, &["--json"]);
     process.initialize();
     process.send_initialized();
     process.wait_until_unavailable(Duration::from_secs(5));
     process.stdin.take();
 
     let status = process
-        .child
         .wait_timeout(Duration::from_secs(5))
         .expect("wait for JSON MCP failure")
         .expect("JSON MCP process should exit after EOF");
@@ -285,7 +280,9 @@ pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
                 "unsafe_repository_root"
             );
             assert!(
-                !response.to_string().contains(home.to_str().expect("UTF-8 home")),
+                !response
+                    .to_string()
+                    .contains(home.to_str().expect("UTF-8 home")),
                 "unsafe path leaked in tool response: {response}"
             );
             assert!(!database.exists(), "unsafe root opened its SQLite cache");
@@ -306,11 +303,7 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     std::fs::write(root.path().join("a.rs"), "fn original() {}\n").expect("fixture");
     std::fs::write(root.path().join("b.rs"), "fn crosses_limit() {}\n").expect("second file");
     let database = root.path().join("index.sqlite");
-    let mut process = McpProcess::spawn_with_args(
-        root.path(),
-        &database,
-        &["--max-files", "1"],
-    );
+    let mut process = McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     process.initialize();
     process.send_initialized();
 
@@ -334,7 +327,10 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
             assert_eq!(response["result"]["isError"], true);
             break;
         }
-        assert!(Instant::now() < deadline, "limit remained retryable: {response}");
+        assert!(
+            Instant::now() < deadline,
+            "limit remained retryable: {response}"
+        );
         id += 1;
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -353,7 +349,10 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
         }
     }));
     let response = process.response(Duration::from_secs(5));
-    assert_eq!(response["result"]["isError"], true, "runtime retried: {response}");
+    assert_eq!(
+        response["result"]["isError"], true,
+        "runtime retried: {response}"
+    );
     assert!(
         response["result"]["content"][0]["text"]
             .as_str()
@@ -386,7 +385,8 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     }
     let initialize_deadline = Instant::now() + Duration::from_secs(5);
     for process in &processes {
-        let response = process.response(initialize_deadline.saturating_duration_since(Instant::now()));
+        let response =
+            process.response(initialize_deadline.saturating_duration_since(Instant::now()));
         assert_eq!(response["id"], 1);
         assert!(response.get("result").is_some(), "{response}");
     }
@@ -398,9 +398,8 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     }
 
     wait_until(Duration::from_secs(15), || {
-        database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 1 && files == 20
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 20)
     });
     for process in &mut processes {
         process.wait_until_ready(Duration::from_secs(5));
@@ -414,16 +413,14 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
 
 pub(super) fn mcp_follower_takes_over_after_leader_exit() {
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("lib.rs"), "fn before_failover() {}\n")
-        .expect("write fixture");
+    std::fs::write(root.path().join("lib.rs"), "fn before_failover() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
     let mut leader = McpProcess::spawn(root.path(), &database);
     leader.initialize();
     leader.send_initialized();
     wait_until(Duration::from_secs(10), || {
-        database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 1 && files == 1
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
     });
 
     let mut follower = McpProcess::spawn(root.path(), &database);
@@ -439,25 +436,22 @@ pub(super) fn mcp_follower_takes_over_after_leader_exit() {
     )
     .expect("modify repository after leader exit");
     wait_until(Duration::from_secs(15), || {
-        database_state(&database).is_some_and(|(generation, files, changed)| {
-            generation == 2 && files == 1 && changed
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, changed)| generation == 2 && files == 1 && changed)
     });
 }
 
 pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn first() {}\n").expect("first fixture");
-    std::fs::write(root.path().join("b.rs"), "fn exceeds_limit() {}\n")
-        .expect("second fixture");
+    std::fs::write(root.path().join("b.rs"), "fn exceeds_limit() {}\n").expect("second fixture");
     let database = root.path().join("index.sqlite");
     let coordination = leantoken::coordination::IndexCoordination::for_database(&database);
     let operation_blocker = coordination
         .acquire_operation(&tokio_util::sync::CancellationToken::new())
         .expect("block leader reconciliation");
 
-    let mut leader =
-        McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
+    let mut leader = McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     leader.initialize();
     leader.send_initialized();
     wait_until(Duration::from_secs(5), || {
@@ -467,8 +461,7 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
             .is_none()
     });
 
-    let mut follower =
-        McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
+    let mut follower = McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     follower.initialize();
     follower.send_initialized();
 
@@ -489,8 +482,7 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let first = follower.response(Duration::from_secs(30));
     if first["result"]["isError"] != true {
         assert_eq!(
-            first["result"]["structuredContent"]["reason"],
-            "index_building",
+            first["result"]["structuredContent"]["reason"], "index_building",
             "{first}"
         );
     }
@@ -504,8 +496,11 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
 
 pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("old.rs"), "fn committed_before_crash() {}\n")
-        .expect("old fixture");
+    std::fs::write(
+        root.path().join("old.rs"),
+        "fn committed_before_crash() {}\n",
+    )
+    .expect("old fixture");
     let database = root.path().join("index.sqlite");
     let initial = run(root.path(), &database, &["index"]);
     assert_eq!(initial["repository_generation"], 1);
@@ -515,8 +510,7 @@ pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation
     // making every product-loop run parse thousands of unnecessary symbols.
     write_rust_fixture_set(root.path(), "new", 20, 150);
 
-    let coordination =
-        leantoken::coordination::IndexCoordination::for_database(&database);
+    let coordination = leantoken::coordination::IndexCoordination::for_database(&database);
     let operation_blocker = coordination
         .acquire_operation(&tokio_util::sync::CancellationToken::new())
         .expect("block reconciliation");
@@ -543,14 +537,12 @@ pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation
     leader.kill_now();
 
     wait_until(Duration::from_secs(5), || {
-        database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 1 && files == 1
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
     });
     wait_until(Duration::from_secs(20), || {
-        database_state(&database).is_some_and(|(generation, files, _)| {
-            generation == 2 && files == 21
-        })
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 2 && files == 21)
     });
     follower.wait_until_ready(Duration::from_secs(5));
 }

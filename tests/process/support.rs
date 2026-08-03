@@ -1,56 +1,21 @@
 use std::{
     ffi::OsString,
-    io::{BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::Path,
-    process::{Child, ChildStdin, Stdio},
+    process::{ChildStdin, ExitStatus, Stdio},
     sync::mpsc,
 };
 
-pub(crate) use assert_cmd::Command;
-pub(crate) use wait_timeout::ChildExt;
-pub(crate) use std::time::{Duration, Instant};
 use clap::Parser;
+use command_group::{CommandGroup, GroupChild};
 
-pub(crate) fn assert_runtime_version(value: &serde_json::Value) {
-    let version = value.as_str().expect("runtime version string");
-    let fingerprint = version
-        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
-        .expect("runtime version carries the current package version and contract fingerprint");
-    assert_eq!(fingerprint.len(), 32);
-    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
-}
+pub(crate) use assert_cmd::Command;
+pub(crate) use std::time::{Duration, Instant};
 
 pub(crate) const EXPECTED_INDEX_CONTENT_VERSION: u64 = 13;
-
-pub(crate) fn run(
-    root: &std::path::Path,
-    database: &std::path::Path,
-    arguments: &[&str],
-) -> serde_json::Value {
-    let mut command = Command::cargo_bin("leantoken").expect("binary");
-    let _process_home = apply_hermetic_environment(&mut command, root);
-    let output = command
-        .args([
-            "--root",
-            root.to_str().expect("root UTF-8"),
-            "--database",
-            database.to_str().expect("database UTF-8"),
-            "--json",
-        ])
-        .args(arguments)
-        .output()
-        .expect("run leantoken");
-    assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("JSON output")
-}
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn process_environment(root: &Path) -> (Vec<(String, OsString)>, Option<tempfile::TempDir>) {
-    // Keep the synthetic home outside the repository. The product rejects a
-    // repository that contains its home directory as an unsafe broad root.
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let host_home = directories::BaseDirs::new().map(|dirs| {
         dirs.home_dir()
@@ -90,7 +55,7 @@ fn process_environment(root: &Path) -> (Vec<(String, OsString)>, Option<tempfile
 
     // env_clear is deliberate for hermetic fixtures, but Windows child
     // processes still need the host runtime's launcher variables. Preserve
-    // those values while keeping the fixture's home/config roots isolated.
+    // those values while keeping temp/config roots per fixture.
     for name in [
         "SystemRoot",
         "windir",
@@ -109,7 +74,6 @@ fn process_environment(root: &Path) -> (Vec<(String, OsString)>, Option<tempfile
             environment.push((name.into(), value));
         }
     }
-
     (environment, process_home)
 }
 
@@ -120,6 +84,53 @@ fn apply_hermetic_environment(command: &mut Command, root: &Path) -> Option<temp
         command.env(name, value);
     }
     process_home
+}
+
+fn apply_hermetic_std_environment(
+    command: &mut std::process::Command,
+    root: &Path,
+) -> Option<tempfile::TempDir> {
+    command.env_clear();
+    let (environment, process_home) = process_environment(root);
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    process_home
+}
+
+pub(crate) fn assert_runtime_version(value: &serde_json::Value) {
+    let version = value.as_str().expect("runtime version string");
+    let fingerprint = version
+        .strip_prefix(concat!(env!("CARGO_PKG_VERSION"), "+contract."))
+        .expect("runtime version carries the current package version and contract fingerprint");
+    assert_eq!(fingerprint.len(), 32);
+    assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+pub(crate) fn run(
+    root: &std::path::Path,
+    database: &std::path::Path,
+    arguments: &[&str],
+) -> serde_json::Value {
+    let mut command = Command::cargo_bin("leantoken").expect("binary");
+    let _process_home = apply_hermetic_environment(&mut command, root);
+    let output = command
+        .args([
+            "--root",
+            root.to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+        ])
+        .args(arguments)
+        .output()
+        .expect("run leantoken");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("JSON output")
 }
 
 pub(crate) fn run_error(
@@ -161,7 +172,6 @@ pub(crate) fn assert_cli_parse_error(arguments: &[&str]) {
         .args(arguments)
         .output()
         .expect("run CLI parse failure");
-
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     assert_eq!(
@@ -182,11 +192,11 @@ pub(crate) fn leantoken_program_name() -> std::ffi::OsString {
 }
 
 pub(crate) struct McpProcess {
-    pub(crate) child: Child,
+    pub(crate) child: GroupChild,
     _process_home: Option<tempfile::TempDir>,
     pub(crate) stdin: Option<ChildStdin>,
-    pub(crate) lines: mpsc::Receiver<String>,
-    pub(crate) stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
+    lines: mpsc::Receiver<String>,
+    stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
 }
 
 impl McpProcess {
@@ -235,11 +245,7 @@ impl McpProcess {
         capture_stderr: bool,
     ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
-        let (environment, process_home) = process_environment(root);
-        command.env_clear();
-        for (name, value) in environment {
-            command.env(name, value);
-        }
+        let process_home = apply_hermetic_std_environment(&mut command, root);
         command
             .args([
                 "--root",
@@ -258,16 +264,14 @@ impl McpProcess {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn()
+            .group_spawn()
             .expect("spawn MCP process");
-        let stdin = child.stdin.take().expect("MCP stdin");
-        let stdout = child.stdout.take().expect("MCP stdout");
-        let stderr_task = child.stderr.take().map(|mut stderr| {
+        let stdin = child.inner().stdin.take().expect("MCP stdin");
+        let stdout = child.inner().stdout.take().expect("MCP stdout");
+        let stderr_task = child.inner().stderr.take().map(|mut stderr| {
             std::thread::spawn(move || {
                 let mut output = Vec::new();
-                stderr
-                    .read_to_end(&mut output)
-                    .expect("read MCP stderr");
+                stderr.read_to_end(&mut output).expect("read MCP stderr");
                 output
             })
         });
@@ -350,7 +354,7 @@ impl McpProcess {
                 return;
             }
             id += 1;
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(POLL_INTERVAL);
         }
         panic!("MCP process did not become ready within {timeout:?}");
     }
@@ -382,7 +386,7 @@ impl McpProcess {
                 "runtime failure remained hidden behind startup state: {response}"
             );
             id += 1;
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 
@@ -395,7 +399,9 @@ impl McpProcess {
 
     pub(crate) fn send_raw_line(&mut self, line: &str) {
         let stdin = self.stdin.as_mut().expect("live MCP stdin");
-        stdin.write_all(line.as_bytes()).expect("write raw MCP line");
+        stdin
+            .write_all(line.as_bytes())
+            .expect("write raw MCP line");
         stdin.write_all(b"\n").expect("terminate raw MCP line");
         stdin.flush().expect("flush raw MCP line");
     }
@@ -422,6 +428,19 @@ impl McpProcess {
             if value.get("id").is_some() {
                 return value;
             }
+        }
+    }
+
+    pub(crate) fn wait_timeout(&mut self, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(Some(status));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 
@@ -459,7 +478,7 @@ pub(crate) fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool)
         if condition() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(POLL_INTERVAL);
     }
     panic!("condition not met within {timeout:?}");
 }
@@ -480,11 +499,9 @@ pub(crate) fn write_rust_fixture_set(
 }
 
 pub(crate) fn database_state(database: &std::path::Path) -> Option<(u64, u64, bool)> {
-    let connection = rusqlite::Connection::open_with_flags(
-        database,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
+    let connection =
+        rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()?;
     connection.busy_timeout(Duration::from_millis(50)).ok()?;
     let generation = connection
         .query_row(

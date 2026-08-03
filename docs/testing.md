@@ -183,10 +183,12 @@ boundary proves the behavior.
 
 ## CI lanes
 
-The required matrix runs units, ordinary domains, process behavior, and fast
-contracts on Ubuntu, macOS, and Windows with `fail-fast: false`. Linux quality
+The planner selects units, ordinary domains, process behavior, and fast
+contracts independently from their owned paths. Selected product and contract
+lanes run on Ubuntu, macOS, and Windows with `fail-fast: false`. Linux quality
 also checks formatting, workspace clippy, architecture direction, and rustdoc.
-Coverage and examples remain separate visible jobs. Extended tokenizer,
+Coverage and examples remain separate visible jobs and are not enabled merely
+because another Rust-owned lane changed. Extended tokenizer,
 long-contract, repeated concurrency, profiling, benchmark, and model-evidence
 work are explicit nightly, weekly, or manual lanes rather than permanently
 ignored tests. The existing private-diagnostics concurrency profiler remains a

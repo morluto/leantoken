@@ -56,7 +56,29 @@ impl Indexer {
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
     ) -> Result<IndexReport> {
-        self.reconcile_paths_once_with_hooks(paths, cancellation, || {}, before_preparation)
+        self.reconcile_paths_once_with_all_hooks(
+            paths,
+            cancellation,
+            || {},
+            before_preparation,
+            || {},
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn reconcile_paths_once_with_post_publication_hook(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        after_publication: impl FnOnce(),
+    ) -> Result<IndexReport> {
+        self.reconcile_paths_once_with_all_hooks(
+            paths,
+            cancellation,
+            || {},
+            || {},
+            after_publication,
+        )
     }
 
     pub(super) fn observe_visibility_delta(
@@ -112,12 +134,30 @@ impl Indexer {
         (visibility_delta, observed_deletions)
     }
 
+    #[cfg(test)]
     pub(super) fn reconcile_paths_once_with_hooks(
         &self,
         paths: &[String],
         cancellation: &CancellationToken,
         after_discovery: impl FnOnce(),
         before_preparation: impl FnOnce(),
+    ) -> Result<IndexReport> {
+        self.reconcile_paths_once_with_all_hooks(
+            paths,
+            cancellation,
+            after_discovery,
+            before_preparation,
+            || {},
+        )
+    }
+
+    fn reconcile_paths_once_with_all_hooks(
+        &self,
+        paths: &[String],
+        cancellation: &CancellationToken,
+        after_discovery: impl FnOnce(),
+        before_preparation: impl FnOnce(),
+        after_publication: impl FnOnce(),
     ) -> Result<IndexReport> {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
@@ -413,7 +453,7 @@ impl Indexer {
                     staged.apply(writer)?;
                     Ok(preparation)
                 })?;
-        check_cancelled(cancellation)?;
+        after_publication();
         let files_removed = deletions.len();
         let files_indexed = updated_paths.len();
         let files_skipped = skip_reasons.total();

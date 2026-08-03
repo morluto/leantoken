@@ -80,11 +80,8 @@ pub(super) fn mcp_result_modes_project_exact_wire_shapes() {
             true,
         ),
     ] {
-        let mut process = McpProcess::spawn_with_mcp_args(
-            root.path(),
-            &database,
-            &["--result-mode", requested],
-        );
+        let mut process =
+            McpProcess::spawn_with_mcp_args(root.path(), &database, &["--result-mode", requested]);
         process.initialize_as(client_name, client_version, protocol);
         process.send_initialized();
         process.wait_until_ready(Duration::from_secs(30));
@@ -184,9 +181,7 @@ pub(super) fn mcp_receipt_created_by_one_process_is_reused_by_another() {
     let second_response = second.response(Duration::from_secs(10));
     let second_result = &second_response["result"]["structuredContent"];
     assert!(
-        second_result["hits"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
+        second_result["hits"].as_array().is_some_and(Vec::is_empty),
         "{second_response}"
     );
     assert!(
@@ -382,9 +377,7 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
     let third_response = third.response(Duration::from_secs(10));
     let third_result = &third_response["result"]["structuredContent"];
     assert!(
-        third_result["hits"]
-            .as_array()
-            .is_some_and(Vec::is_empty),
+        third_result["hits"].as_array().is_some_and(Vec::is_empty),
         "{third_response}"
     );
     assert!(

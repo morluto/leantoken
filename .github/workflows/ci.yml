@@ -47,7 +47,12 @@ jobs:
       manifests: ${{ steps.filter.outputs.manifests }}
       npm: ${{ steps.filter.outputs.npm }}
       release: ${{ steps.filter.outputs.release }}
-      rust: ${{ steps.filter.outputs.rust }}
+      quality: ${{ steps.filter.outputs.quality }}
+      rust_quality: ${{ steps.filter.outputs.rust_quality }}
+      product: ${{ steps.filter.outputs.product }}
+      contract: ${{ steps.filter.outputs.contract }}
+      examples: ${{ steps.filter.outputs.examples }}
+      coverage: ${{ steps.filter.outputs.coverage }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -133,7 +138,7 @@ jobs:
           selected=$(jq -r '[.selected_lanes[].lane] | join(",")' "$plan")
           echo "::notice::Selected CI lanes: $selected"
 
-      - name: Export compatibility selectors
+      - name: Export lane selectors
         id: filter
         env:
           SELECTED: ${{ steps.plan.outputs.selected_lanes }}
@@ -143,13 +148,26 @@ jobs:
           echo "manifests=$(has dependency-audit && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "npm=$(has npm && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "release=$(has release-plan && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          if has product-linux || has product-macos || has product-windows || has contract || has examples || has coverage; then rust=true; else rust=false; fi
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "quality=$(has quality && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if has product-linux || has product-macos || has product-windows; then product=true; else product=false; fi
+          if has contract; then contract=true; else contract=false; fi
+          if has examples; then examples=true; else examples=false; fi
+          if has coverage; then coverage=true; else coverage=false; fi
+          if [[ "$product" == true || "$contract" == true || "$examples" == true || "$coverage" == true ]]; then
+            rust_quality=true
+          else
+            rust_quality=false
+          fi
+          echo "product=$product" >> "$GITHUB_OUTPUT"
+          echo "contract=$contract" >> "$GITHUB_OUTPUT"
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+          echo "coverage=$coverage" >> "$GITHUB_OUTPUT"
+          echo "rust_quality=$rust_quality" >> "$GITHUB_OUTPUT"
 
   quality:
     name: Code quality checks
     needs: changes
-    if: github.event_name != 'schedule' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.quality == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -162,21 +180,21 @@ jobs:
           node-version: 22
 
       - name: Install Rust
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: quality
           cache-workspace-crates: true
 
       - name: Verify locked dependency graph
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Check duplicate files
@@ -196,25 +214,25 @@ jobs:
         run: node --test npm/npm-packaging.test.mjs
 
       - name: Check formatting
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         run: cargo fmt --all -- --check
 
       - name: Check test architecture
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         run: cargo xtask check-test-architecture
 
       - name: Lint all targets
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Validate public API documentation
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.rust_quality == 'true'
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --locked --workspace --no-deps
 
       - name: Upload documentation for deployment
-        if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: needs.changes.outputs.rust_quality == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v7
         with:
           name: rustdoc
@@ -314,7 +332,7 @@ jobs:
   ci:
     name: ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.npm == 'true'
+    if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true' || needs.changes.outputs.npm == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -336,13 +354,13 @@ jobs:
           node-version: 22
 
       - name: Install Rust
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
 
       - name: Cache Rust dependencies
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true'
         id: rust-cache
         uses: Swatinem/rust-cache@v2
         with:
@@ -350,7 +368,7 @@ jobs:
           cache-workspace-crates: true
 
       - name: Install nextest
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.product == 'true'
         uses: taiki-e/install-action@nextest
 
       - name: Test npm installation
@@ -359,7 +377,7 @@ jobs:
         run: node --test npm/npm-install-e2e.mjs
 
       - name: Test product behavior
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.product == 'true'
         timeout-minutes: 15
         run: |
           started=$(date +%s)
@@ -368,12 +386,12 @@ jobs:
           echo "Product nextest lane (${elapsed}s; cache-hit=${{ steps.rust-cache.outputs.cache-hit || 'unknown' }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Test token-economy contract
-        if: needs.changes.outputs.rust == 'true'
+        if: needs.changes.outputs.contract == 'true'
         timeout-minutes: 10
         run: cargo test-contract
 
       - name: Upload preserved test failures
-        if: always() && needs.changes.outputs.rust == 'true'
+        if: always() && (needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true')
         uses: actions/upload-artifact@v7
         with:
           name: test-failures-${{ matrix.os }}-${{ github.sha }}
@@ -458,7 +476,7 @@ jobs:
   example-tests:
     name: Benchmark and example tests
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.examples == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -513,8 +531,11 @@ jobs:
       COVERAGE_RESULT: ${{ needs.coverage.result }}
       MANIFESTS_CHANGED: ${{ needs.changes.outputs.manifests }}
       RELEASE_CHANGED: ${{ needs.changes.outputs.release }}
-      RUST_CHANGED: ${{ needs.changes.outputs.rust }}
-      NPM_CHANGED: ${{ needs.changes.outputs.npm }}
+      PRODUCT_SELECTED: ${{ needs.changes.outputs.product }}
+      CONTRACT_SELECTED: ${{ needs.changes.outputs.contract }}
+      NPM_SELECTED: ${{ needs.changes.outputs.npm }}
+      EXAMPLES_SELECTED: ${{ needs.changes.outputs.examples }}
+      COVERAGE_SELECTED: ${{ needs.changes.outputs.coverage }}
       SELECTED_LANES: ${{ needs.changes.outputs.selected_lanes }}
       UNSELECTED_LANES: ${{ needs.changes.outputs.unselected_lanes }}
       FALLBACK_REASON: ${{ needs.changes.outputs.fallback_reason }}
@@ -584,27 +605,29 @@ jobs:
           require_when "$RELEASE_CHANGED" "release plan" "$RELEASE_PLAN_RESULT"
 
           product_changed=false
-          if [[ "$RUST_CHANGED" == "true" || "$NPM_CHANGED" == "true" ]]; then
+          if [[ "$PRODUCT_SELECTED" == "true" || "$CONTRACT_SELECTED" == "true" || "$NPM_SELECTED" == "true" ]]; then
             product_changed=true
           fi
           require_when "$product_changed" "cross-platform product tests" "$PRODUCT_RESULT"
-          require_when "$RUST_CHANGED" "benchmark and example tests" "$EXAMPLE_TESTS_RESULT"
-          require_when "$RUST_CHANGED" "test coverage" "$COVERAGE_RESULT"
+          require_when "$CONTRACT_SELECTED" "token-economy contract" "$PRODUCT_RESULT"
+          require_when "$NPM_SELECTED" "npm installation" "$PRODUCT_RESULT"
+          require_when "$EXAMPLES_SELECTED" "benchmark and example tests" "$EXAMPLE_TESTS_RESULT"
+          require_when "$COVERAGE_SELECTED" "test coverage" "$COVERAGE_RESULT"
 
           exit "$failed"
 
   coverage:
     name: Test coverage
     needs: changes
-    if: github.event_name == 'schedule' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.coverage == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       RUSTUP_TOOLCHAIN: stable
       # Rust attributes `include!` bodies to both the physical source and the
       # include-only façade. Count the physical files, but not those duplicate
-      # zero-coverage aliases or subprocess-only CLI entrypoints; mixed façades
-      # with executable logic stay gated.
+      # zero-coverage aliases or the subprocess-only CLI entrypoints; mixed
+      # façades with executable logic stay gated.
       COVERAGE_IGNORE_REGEX: >-
         concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/main/dispatch\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
     steps:
@@ -657,7 +680,7 @@ jobs:
   docs-deploy:
     name: Deploy API documentation
     needs: [changes, quality]
-    if: needs.changes.outputs.rust == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: needs.changes.outputs.rust_quality == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

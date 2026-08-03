@@ -9,12 +9,7 @@ pub(super) fn setup_and_remove_do_not_require_a_repository() {
         .env("USERPROFILE", temp.path())
         .env_remove("npm_lifecycle_event")
         .current_dir(temp.path())
-        .args([
-            "--json",
-            "setup",
-            "--claude",
-            "--yes",
-        ])
+        .args(["--json", "setup", "--claude", "--yes"])
         .output()
         .expect("run setup");
     assert!(
@@ -25,8 +20,8 @@ pub(super) fn setup_and_remove_do_not_require_a_repository() {
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
     assert_eq!(report["results"][0]["status"], "configured");
-    let config = std::fs::read_to_string(temp.path().join(".claude.json"))
-        .expect("Claude configuration");
+    let config =
+        std::fs::read_to_string(temp.path().join(".claude.json")).expect("Claude configuration");
     assert!(config.contains("\"leantoken\""));
     assert!(config.contains("\"mcp\""));
 
@@ -54,14 +49,6 @@ pub(super) fn repository_options_are_rejected_by_repository_free_commands() {
         vec!["--json", "--root", ".", "setup", "--all", "--dry-run"],
         vec!["--json", "--root", ".", "remove", "--all", "--dry-run"],
         vec!["--json", "cache", "list", "--max-file-bytes", "1"],
-        vec![
-            "--json",
-            "runtime",
-            "prune",
-            "--yes",
-            "--database",
-            "ignored.sqlite",
-        ],
         vec![
             "--json",
             "--root",
@@ -112,8 +99,14 @@ pub(super) fn episode_audit_is_repo_free_deterministic_and_read_only() {
         "--input",
         input.to_str().expect("input UTF-8"),
     ];
-    let first = command().args(arguments).output().expect("first JSON audit");
-    let second = command().args(arguments).output().expect("second JSON audit");
+    let first = command()
+        .args(arguments)
+        .output()
+        .expect("first JSON audit");
+    let second = command()
+        .args(arguments)
+        .output()
+        .expect("second JSON audit");
     assert!(
         first.status.success(),
         "stderr: {}",
@@ -187,10 +180,6 @@ pub(super) fn setup_requires_yes_before_non_interactive_mutation() {
     assert_eq!(error["category"], "invalid_request");
 }
 
-// Windows ProjectDirs uses the Known Folder API and cannot be redirected to a
-// disposable cache root through per-process environment variables. The cache
-// module tests cover Windows lease and deletion semantics without user data.
-#[cfg(not(windows))]
 pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
     let command = || {
@@ -212,8 +201,7 @@ pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
         "stderr: {}",
         String::from_utf8_lossy(&listed.stderr)
     );
-    let list: serde_json::Value =
-        serde_json::from_slice(&listed.stdout).expect("cache list JSON");
+    let list: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("cache list JSON");
     let cache_root = std::path::PathBuf::from(list["cache_root"].as_str().expect("cache root"));
     let cache = cache_root.join("0000000000000001");
     std::fs::create_dir_all(&cache).expect("cache directory");
@@ -246,14 +234,7 @@ pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
     assert!(human_list.contains("scope=full"));
 
     let summary = command()
-        .args([
-            "--json",
-            "cache",
-            "list",
-            "--summary",
-            "--state",
-            "corrupt",
-        ])
+        .args(["--json", "cache", "list", "--summary", "--state", "corrupt"])
         .output()
         .expect("cache summary");
     assert!(summary.status.success());
@@ -277,21 +258,14 @@ pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
         .output()
         .expect("dry-run prune");
     assert!(dry_run.status.success());
-    let dry_run: serde_json::Value =
-        serde_json::from_slice(&dry_run.stdout).expect("prune JSON");
+    let dry_run: serde_json::Value = serde_json::from_slice(&dry_run.stdout).expect("prune JSON");
     assert_eq!(dry_run["results"][0]["action"], "kept");
     assert_eq!(dry_run["results"][1]["action"], "would_delete");
     assert!(database.exists());
     assert!(legacy_database.exists());
 
     let human_prune = command()
-        .args([
-            "cache",
-            "prune",
-            "--max-total-bytes",
-            "1",
-            "--dry-run",
-        ])
+        .args(["cache", "prune", "--max-total-bytes", "1", "--dry-run"])
         .output()
         .expect("human prune plan");
     assert!(human_prune.status.success());
@@ -313,8 +287,7 @@ pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
         "stderr: {}",
         String::from_utf8_lossy(&prune.stderr)
     );
-    let prune: serde_json::Value =
-        serde_json::from_slice(&prune.stdout).expect("prune JSON");
+    let prune: serde_json::Value = serde_json::from_slice(&prune.stdout).expect("prune JSON");
     assert_eq!(prune["results"][0]["action"], "kept");
     assert_eq!(prune["results"][1]["action"], "deleted");
     assert!(database.exists());

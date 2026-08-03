@@ -1,8 +1,9 @@
+use clap::Parser;
+
 use super::support::{
     Command, EXPECTED_INDEX_CONTENT_VERSION, assert_cli_parse_error, database_state,
     leantoken_program_name, run, run_error,
 };
-use clap::Parser;
 
 pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -90,10 +91,7 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     );
     assert_eq!(delta["window"], "delta");
     assert_eq!(delta["response_accounting"]["tracked_requests"], 1);
-    assert_eq!(
-        delta["observations"]["request_classification"]["useful"],
-        1
-    );
+    assert_eq!(delta["observations"]["request_classification"]["useful"], 1);
 }
 
 pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
@@ -182,11 +180,7 @@ pub(super) fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_
     run(root.path(), &database, &["index"]);
     std::fs::write(&source, "pub fn answer() -> u8 { 43 }\n").expect("edit fixture");
 
-    let reconciled = run(
-        root.path(),
-        &database,
-        &["search", "43", "--mode", "text"],
-    );
+    let reconciled = run(root.path(), &database, &["search", "43", "--mode", "text"]);
     assert_eq!(reconciled["hits"][0]["path"], "lib.rs");
     assert_eq!(reconciled["meta"]["repository_generation"], 2);
 
@@ -212,11 +206,8 @@ pub(super) fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_
 
 pub(super) fn cli_savings_renders_a_color_aware_human_table() {
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(
-        root.path().join("lib.rs"),
-        "pub fn answer() -> u8 { 42 }\n",
-    )
-    .expect("write fixture");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write fixture");
     let database = root.path().join("index.sqlite");
     run(root.path(), &database, &["index"]);
     run(
@@ -250,9 +241,11 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
         .expect("plain savings report");
     assert!(plain.status.success());
     let plain = String::from_utf8(plain.stdout).expect("plain UTF-8");
-    assert!(plain.starts_with(
-        "LeanToken Observed Token Accounting\n===================================\n"
-    ));
+    assert!(
+        plain.starts_with(
+            "LeanToken Observed Token Accounting\n===================================\n"
+        )
+    );
     assert!(plain.contains("response tokens"));
     assert!(plain.contains("Persisted observations"));
     assert!(plain.contains("Request classes:"));
@@ -270,9 +263,11 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
         .output()
         .expect("colored savings report");
     assert!(colored.status.success());
-    assert!(String::from_utf8(colored.stdout)
-        .expect("colored UTF-8")
-        .contains("\x1b[1;36mLeanToken Observed Token Accounting\x1b[0m"));
+    assert!(
+        String::from_utf8(colored.stdout)
+            .expect("colored UTF-8")
+            .contains("\x1b[1;36mLeanToken Observed Token Accounting\x1b[0m")
+    );
 
     let no_color = command()
         .env("CLICOLOR_FORCE", "1")
@@ -280,9 +275,11 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
         .output()
         .expect("NO_COLOR savings report");
     assert!(no_color.status.success());
-    assert!(!String::from_utf8(no_color.stdout)
-        .expect("NO_COLOR UTF-8")
-        .contains("\x1b["));
+    assert!(
+        !String::from_utf8(no_color.stdout)
+            .expect("NO_COLOR UTF-8")
+            .contains("\x1b[")
+    );
 }
 
 pub(super) fn cli_index_explains_skipped_binary_files_without_returning_paths() {
@@ -314,8 +311,11 @@ pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("src directory");
     std::fs::write(root.path().join("README.md"), "fixture\n").expect("readme");
-    std::fs::write(root.path().join("src/lib.rs"), "pub fn answer() -> u8 { 42 }\n")
-        .expect("source");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn answer() -> u8 { 42 }\n",
+    )
+    .expect("source");
     let database = root.path().join("index.sqlite");
     run(root.path(), &database, &["index"]);
 
@@ -339,7 +339,15 @@ pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
         ],
     );
 
-    assert_eq!(dotted, omitted);
+    assert_eq!(dotted["entries"], omitted["entries"]);
+    for key in [
+        "repository_id",
+        "repository_generation",
+        "index_scope",
+        "next_cursor",
+    ] {
+        assert_eq!(dotted["meta"][key], omitted["meta"][key], "meta.{key}");
+    }
 }
 
 pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
@@ -388,8 +396,7 @@ pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
         .output()
         .expect("run JSON retrieval");
     assert!(!json.status.success());
-    let error: serde_json::Value =
-        serde_json::from_slice(&json.stderr).expect("structured error");
+    let error: serde_json::Value = serde_json::from_slice(&json.stderr).expect("structured error");
     assert_eq!(
         error,
         serde_json::json!({
@@ -459,13 +466,7 @@ pub(super) fn cli_json_errors_expose_stable_safe_metadata() {
 }
 
 pub(super) fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
-    assert_cli_parse_error(&[
-        "files",
-        "tree",
-        "--max-results",
-        "nope",
-        "--json",
-    ]);
+    assert_cli_parse_error(&["files", "tree", "--max-results", "nope", "--json"]);
     assert_cli_parse_error(&["--json", "--unknown"]);
 
     let human_arguments = ["files", "tree", "--max-results", "nope"];

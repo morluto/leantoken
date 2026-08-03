@@ -2,6 +2,8 @@ pub(super) fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)
     let Some((base, head)) = revision.split_once("..") else {
         return Ok(None);
     };
+    let base = base.trim();
+    let head = head.trim();
     if base.trim().is_empty()
         || head.trim().is_empty()
         || base.ends_with('.')

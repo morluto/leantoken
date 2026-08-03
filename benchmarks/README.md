@@ -1718,19 +1718,16 @@ diagnostic manifest retains 0.7.3. This keeps both corpus reports and the
 known-valid syntax regression executable without placing either grammar in the
 normal dependency graph.
 
-Run both pinned source-free parse diagnostics from a clean OpenClaw checkout:
+Run the manifest-owned pinned source-free parse diagnostic from a clean OpenClaw
+checkout:
 
 ```bash
-cargo test --locked --example swift_parse_diagnostic
-cargo run --locked --release --example swift_parse_diagnostic -- \
-  --repository /path/to/openclaw \
-  --revision 9feb6ad161877da86200693b039638dbf3411e66 \
-  --output /new/path/swift-parse-diagnostic-0.7.2.json
-
 CARGO_TARGET_DIR=target cargo test --locked \
-  --manifest-path benchmarks/swift-grammar-073/Cargo.toml
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml \
+  --bin swift-parse-diagnostic-073
 CARGO_TARGET_DIR=target cargo run --locked --release \
-  --manifest-path benchmarks/swift-grammar-073/Cargo.toml -- \
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml \
+  --bin swift-parse-diagnostic-073 -- \
   --repository /path/to/openclaw \
   --revision 9feb6ad161877da86200693b039638dbf3411e66 \
   --output /new/path/swift-parse-diagnostic-0.7.3.json
