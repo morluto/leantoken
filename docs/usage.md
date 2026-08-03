@@ -32,7 +32,7 @@ leantoken index [--rebuild]
 leantoken status
 leantoken coverage
 leantoken savings
-leantoken doctor [--ready-timeout-seconds SECONDS]
+leantoken doctor [--client CLIENT] [--ready-timeout-seconds SECONDS]
 leantoken files <tree|find|glob> [options] [--consistency <mode>]
 leantoken search <query> [options] [--consistency <mode>]
 leantoken outline <path>... [--consistency <mode>]
@@ -43,8 +43,11 @@ leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken update [--check] [--yes]
 leantoken upgrade [--check] [--yes]
 leantoken mcp [--result-mode dual|text|structured]
-leantoken setup [CLIENT...] [--all] [--refresh] [--yes] [--dry-run] [--allow-outdated]
-leantoken remove [CLIENT...] [--all] [--yes] [--dry-run]
+leantoken setup [CLIENT...] [--all] [--refresh] [--private-runtime] [--yes]
+                [--dry-run] [--allow-outdated] [--force-unmanaged]
+leantoken remove [CLIENT...] [--all] [--yes] [--dry-run] [--force-unmanaged]
+leantoken runtime list
+leantoken runtime prune [--keep-latest COUNT] [--dry-run] [--yes]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
                      [--compatibility CLASS] [--index-content-version VERSION]
                      [--incompatible-with-current] [--limit COUNT] [--cursor CURSOR]
@@ -241,23 +244,31 @@ increment `files_removed` when its stale entry is deleted.
 ## MCP setup and version lifecycle
 
 Setup writes only the `leantoken` entry in each selected global client config.
-It also manages a concise `leantoken` discovery skill in
-`~/.agents/skills/leantoken/SKILL.md` and
-`~/.claude/skills/leantoken/SKILL.md`. Hosts preload only its name and routing
-description, then load the instructions on selection; the nine MCP schemas
-remain deferred. Repeated setup updates only marker-owned copies, removal
-preserves an unowned file at either path, and partial client removal retains the
-skill while another LeanToken registration remains. JSON setup reports the
-exact `cl100k_base` size of one discovery skill as telemetry; it is not a
-pass/fail cap on the routing guidance.
+It manages a concise discovery skill only for the selected host family: Claude
+Code uses `~/.claude/skills/leantoken/SKILL.md`; Cursor, OpenCode, Codex,
+Gemini CLI, and Antigravity use `~/.agents/skills/leantoken/SKILL.md`. Hosts
+preload only its name and routing description, then load the instructions on
+selection; the nine MCP schemas remain deferred. Repeated setup updates only
+marker-owned skill copies, removal preserves an unowned file, and partial
+client removal retains a shared skill while another managed registration needs
+it. JSON setup reports the exact `cl100k_base` size of one discovery skill as
+telemetry; it is not a pass/fail cap on the routing guidance.
+
+New MCP launchers carry a hidden setup ownership marker. Exact-version npx
+launchers created by earlier releases and executables below LeanToken's private
+runtime root are recognized for migration. A same-name manual registration is
+otherwise left untouched and setup fails with its exact path. Review that file,
+then pass `--force-unmanaged --dry-run` to preview the replacement before
+applying it explicitly.
 When setup runs through npx, the stored command pins
 `leantoken@<exact current version>` and retains `--yes` so background MCP
 startup cannot block on an install prompt. The launcher may contact npm to
 resolve or download that exact package, but it cannot switch to a newer version
 between restarts.
 
-To avoid retaining npm and Node wrapper processes for every MCP session, select
-the private native runtime explicitly:
+For regular use, the private native runtime is recommended to avoid retaining
+npm and Node wrapper processes for every MCP session. It remains explicit so a
+zero-install setup does not silently add an application-data write:
 
 ```bash
 npx --yes leantoken@0.1.10 setup --codex --private-runtime --dry-run
@@ -272,7 +283,26 @@ setup, and a durable journal restores pre-transaction contents on the next
 setup invocation after an interruption; recovery refuses to overwrite a file
 changed independently after the interruption. The registered command launches
 that native executable directly. Removal deletes registrations but retains
-versioned runtimes for explicit rollback; it never selects `latest`.
+versioned runtimes for explicit rollback; it never selects `latest`. Private
+installation rejects a runtime root that is a symlink or is not a directory.
+JSON reports a transaction-wide `apply_error` even when an orphan discovery
+skill was the only planned mutation and no client result rows exist.
+
+`runtime list` reports installed versions, executable bytes, active state, and
+client references. `runtime prune` is a dry-run unless `--yes` is present; it
+always retains referenced and active runtimes, keeps the newest two
+unreferenced versions by default, and refuses directories containing anything
+other than the expected native executable. Applied pruning rechecks every
+supported client configuration immediately before deletion and removes through
+snapshot-matched open directory handles, so a concurrent registration or path
+swap fails closed. Change the bounded retention window with `--keep-latest` (0
+through 64):
+
+```bash
+leantoken runtime list
+leantoken runtime prune --keep-latest 2 --dry-run
+leantoken runtime prune --keep-latest 2 --yes
+```
 
 Choose upgrades and rollbacks explicitly by running the desired version, then
 refresh only entries that already exist:
@@ -368,9 +398,19 @@ configured host registrations and their inferred versions, and the executable's
 `index_content_version`. This doctor launches the current executable and
 compares it with configured host entries; it does not claim to identify other
 unregistered processes that share an explicit database.
-Failures use the `doctor_failure` category and identify the `launch`,
-`handshake`, `catalog`, or `first_retrieval` stage so repair tooling does not
-need to parse prose.
+Pass `--client codex` (or another supported client) to read that host's stored
+registration and launch its exact command and arguments instead. This verifies
+the configuration users actually restart into, including pinned npx and private
+runtime launchers. When the registration exposes an exact pinned release, the
+handshake and tool catalog are validated against that configured release rather
+than the version of the doctor process that launched it. Aggregate doctor output
+reports an exact but disabled OpenCode entry as `disabled` and recommends a
+managed refresh instead of calling it current. The configured-child MCP contract
+does not expose its index schema, so this mode omits `index_content_version`
+instead of reporting the launching doctor's compile-time value.
+Failures use the `doctor_failure` category and identify the `registration`,
+`launch`, `handshake`, `catalog`, or `first_retrieval` stage so repair tooling
+does not need to parse prose.
 
 ## MCP server
 

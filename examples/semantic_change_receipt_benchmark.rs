@@ -175,7 +175,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         && gates.bounded_p95_latency;
     let report = Report {
         schema_version: 1,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         tokenizer: tokenizer.name(),
         harness_revision,
         harness_tracked_worktree_dirty,

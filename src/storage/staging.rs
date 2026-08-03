@@ -114,7 +114,7 @@ pub(crate) struct PreparedReconciliation {
     path: PathBuf,
     connection: Option<Connection>,
     replacements: Vec<(IndexedFile, usize)>,
-    removals: HashSet<String>,
+    removals: Vec<String>,
     tokenizer: String,
     baseline_generation: u64,
     config_hash: String,
@@ -173,7 +173,7 @@ impl PreparedReconciliation {
             path,
             connection: Some(connection),
             replacements: Vec::new(),
-            removals: HashSet::new(),
+            removals: Vec::new(),
             tokenizer: tokenizer.to_string(),
             baseline_generation: baseline.repository_generation,
             config_hash: config_hash.to_string(),
@@ -190,7 +190,11 @@ impl PreparedReconciliation {
     }
 
     pub(crate) fn stage_removal(&mut self, path: String) {
-        self.removals.insert(path);
+        self.removals.push(path);
+    }
+
+    pub(crate) fn pending_removals(&self) -> usize {
+        self.removals.len()
     }
 
     /// Flush one bounded preparation batch to the stage database.
@@ -210,9 +214,7 @@ impl PreparedReconciliation {
             Error::OperationFailure("reconciliation stage connection is closed".into())
         })?;
         let tx = connection.transaction()?;
-        let mut removals = std::mem::take(&mut self.removals)
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut removals = std::mem::take(&mut self.removals);
         removals.sort();
         let replacements = std::mem::take(&mut self.replacements);
 

@@ -57,6 +57,8 @@ pub struct SetupRequest {
     pub dry_run: bool,
     /// Permit an intentionally selected older npx release.
     pub allow_outdated: bool,
+    /// Permit replacing or removing a registration not recognized as setup-managed.
+    pub force_unmanaged: bool,
 }
 
 /// Planned action for one client configuration.
@@ -183,6 +185,8 @@ pub struct SetupReport {
     pub cancelled: bool,
     /// Whether this report describes a dry-run without mutation.
     pub dry_run: bool,
+    /// Whether the caller explicitly allowed effects on an unmanaged registration.
+    pub ownership_override: bool,
     /// Whether setup ran from a persistent CLI installation.
     pub persistent_cli: bool,
     /// Exact launcher considered for setup, omitted for removal.
@@ -197,6 +201,9 @@ pub struct SetupReport {
     pub discovery_skill_tokens: Option<usize>,
     /// Per-client outcomes.
     pub results: Vec<ClientSetupResult>,
+    /// Transaction-wide apply failure, including discovery-only cleanup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_error: Option<String>,
     /// Exact-launcher MCP verification after a setup mutation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<SetupVerification>,
@@ -209,6 +216,12 @@ impl SetupReport {
         self.results.iter().any(|result| result.error.is_some())
     }
 
+    /// Return true when the setup transaction itself did not complete.
+    #[must_use]
+    pub fn has_apply_failure(&self) -> bool {
+        self.apply_error.is_some()
+    }
+
     /// Return true when post-setup launcher verification failed.
     #[must_use]
     pub fn has_verification_failure(&self) -> bool {
@@ -217,9 +230,96 @@ impl SetupReport {
             .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
     }
 
-    /// Return true when a client edit or launcher verification failed.
+    /// Return true when apply, a client edit, or launcher verification failed.
     #[must_use]
     pub fn has_failures(&self) -> bool {
-        self.has_client_failures() || self.has_verification_failure()
+        self.has_apply_failure() || self.has_client_failures() || self.has_verification_failure()
+    }
+}
+
+/// One versioned private runtime managed by LeanToken setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeEntryReport {
+    /// Semantic LeanToken release stored in this directory.
+    pub version: String,
+    /// Exact native executable path.
+    pub path: PathBuf,
+    /// Native executable size in bytes.
+    pub size_bytes: u64,
+    /// Configured clients whose launcher references this runtime.
+    pub referenced_by: Vec<SetupClient>,
+    /// Whether this executable is running the current command.
+    pub active: bool,
+    /// Whether the directory has the exact safe managed layout required for pruning.
+    pub safely_prunable: bool,
+}
+
+/// Bounded inventory of application-owned private runtimes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeListReport {
+    /// Versioned runtime root inspected by the command.
+    pub runtime_root: PathBuf,
+    /// Recognized runtime directories.
+    pub total_entries: usize,
+    /// Aggregate bytes of recognized runtime executables.
+    pub total_bytes: u64,
+    /// Unrecognized root entries retained without inspection or mutation.
+    pub ignored_entries: usize,
+    /// Runtime entries in descending semantic-version order.
+    pub entries: Vec<RuntimeEntryReport>,
+}
+
+/// Selection and consent for private-runtime pruning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimePruneRequest {
+    /// Newest unreferenced runtimes to retain in addition to every referenced runtime.
+    pub keep_latest: usize,
+    /// Resolve the exact deletion plan without mutation.
+    pub dry_run: bool,
+    /// Apply the deletion plan without prompting.
+    pub yes: bool,
+}
+
+/// One private-runtime prune decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePruneResult {
+    /// Runtime release considered.
+    pub version: String,
+    /// Exact executable path.
+    pub path: PathBuf,
+    /// Bytes represented by this decision.
+    pub size_bytes: u64,
+    /// `retained`, `would_remove`, `removed`, `partially_removed`, or `failed`.
+    pub action: String,
+    /// Stable explanation for retaining or selecting the runtime.
+    pub reason: String,
+    /// Bounded failure detail when deletion did not complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Outcome of a bounded private-runtime prune operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePruneReport {
+    /// Versioned runtime root inspected by the command.
+    pub runtime_root: PathBuf,
+    /// Whether this report is a non-mutating plan.
+    pub dry_run: bool,
+    /// Bytes present before pruning.
+    pub total_bytes_before: u64,
+    /// Bytes retained after completed removals, or projected for a dry-run.
+    pub total_bytes_after: u64,
+    /// Completed decisions, in inventory order, before any transaction-wide stop.
+    pub results: Vec<RuntimePruneResult>,
+    /// Transaction-wide failure that stopped pruning before the next deletion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_error: Option<String>,
+}
+
+impl RuntimePruneReport {
+    /// Return true when one or more selected runtimes could not be removed.
+    #[must_use]
+    pub fn has_failures(&self) -> bool {
+        self.apply_error.is_some() || self.results.iter().any(|result| result.error.is_some())
     }
 }

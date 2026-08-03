@@ -141,6 +141,11 @@ const COMMAND_SCOPE_OPTIONS: &[ScopedGlobalOption] = &[
         advanced: true,
     },
     ScopedGlobalOption {
+        id: "database",
+        long: "--database",
+        advanced: false,
+    },
+    ScopedGlobalOption {
         id: "tokenizer",
         long: "--tokenizer",
         advanced: false,
@@ -291,6 +296,10 @@ pub struct Cli {
     #[arg(long, value_enum, value_name = "ENCODING", default_value_t = Tokenizer::default(), global = true)]
     pub tokenizer: Tokenizer,
 
+    /// Internal marker attached to MCP launchers managed by `leantoken setup`.
+    #[arg(long, global = true, hide = true)]
+    pub managed_by_setup: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -311,6 +320,7 @@ impl Cli {
             Commands::Setup(_)
                 | Commands::Remove(_)
                 | Commands::Cache(_)
+                | Commands::Runtime(_)
                 | Commands::Episode(_)
                 | Commands::Update(_)
                 | Commands::Upgrade(_)
@@ -336,6 +346,7 @@ impl Cli {
             Commands::Setup(_) => "setup",
             Commands::Remove(_) => "remove",
             Commands::Cache(_) => "cache",
+            Commands::Runtime(_) => "runtime",
             Commands::Episode(_) => "episode",
             Commands::Update(_) => "update",
             Commands::Upgrade(_) => "upgrade",
@@ -472,17 +483,18 @@ impl Cli {
                 let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
                 let response_profile = args.response_profile.map(Into::into);
-                AppRequest::Context(Box::new(ContextAppRequest {
+                AppRequest::Context {
                     request: (*args).into(),
                     workflow,
                     workflow_evidence,
-                    handoff: handoff.map(Box::new),
+                    handoff,
                     max_response_tokens,
                     response_profile,
-                }))
+                }
             }
             Commands::Doctor(args) => AppRequest::Doctor {
                 ready_timeout: Duration::from_secs(args.ready_timeout_seconds),
+                client: args.client,
             },
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
@@ -492,6 +504,10 @@ impl Cli {
             Commands::Cache(args) => match args.command {
                 CacheCommand::List(args) => AppRequest::CacheList(args.into()),
                 CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
+            },
+            Commands::Runtime(args) => match args.command {
+                RuntimeCommand::List => AppRequest::RuntimeList,
+                RuntimeCommand::Prune(args) => AppRequest::RuntimePrune(args.into()),
             },
             Commands::Episode(args) => match args.command {
                 EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.into()),
@@ -506,6 +522,7 @@ impl Cli {
 
 /// Parsed application request produced by the CLI.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AppRequest {
     Index {
         rebuild: bool,
@@ -540,9 +557,17 @@ pub enum AppRequest {
         request: JsonRequest,
         max_response_tokens: Option<usize>,
     },
-    Context(Box<ContextAppRequest>),
+    Context {
+        request: ContextRequest,
+        workflow: crate::model::ContextWorkflow,
+        workflow_evidence: WorkflowEvidence,
+        handoff: Option<HandoffManifestRequest>,
+        max_response_tokens: Option<usize>,
+        response_profile: Option<crate::model::ContextResponseProfile>,
+    },
     Doctor {
         ready_timeout: Duration,
+        client: Option<SetupClient>,
     },
     Mcp {
         result_mode: McpResultMode,
@@ -551,6 +576,8 @@ pub enum AppRequest {
     Remove(SetupRequest),
     CacheList(CacheListRequest),
     CachePrune(CachePruneRequest),
+    RuntimeList,
+    RuntimePrune(crate::setup::RuntimePruneRequest),
     EpisodeAudit(crate::episode::EpisodeAuditRequest),
     Upgrade {
         check: bool,
@@ -623,6 +650,9 @@ pub enum Commands {
     /// Inspect or prune centrally managed repository caches.
     Cache(CacheArgs),
 
+    /// Inspect or prune application-owned private runtimes.
+    Runtime(RuntimeArgs),
+
     /// Audit existing redacted model/tool episode artifacts.
     Episode(EpisodeArgs),
 
@@ -637,6 +667,10 @@ pub enum Commands {
 /// is being built.
 #[derive(Debug, Clone, Args)]
 pub struct DoctorArgs {
+    /// Verify the exact launcher stored for this configured client.
+    #[arg(long, value_enum, value_name = "CLIENT")]
+    pub client: Option<SetupClient>,
+
     /// Maximum seconds to wait for the first repository retrieval to become ready.
     #[arg(
         long,
@@ -660,6 +694,7 @@ use json::*;
 use outline::*;
 use read::*;
 use retrieval::*;
+use runtime::*;
 use search::*;
 mod episode;
 mod files;
@@ -669,6 +704,7 @@ mod json;
 mod outline;
 mod read;
 mod retrieval;
+mod runtime;
 mod search;
 
 #[cfg(test)]

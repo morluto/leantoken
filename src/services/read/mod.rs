@@ -215,6 +215,7 @@ impl Services {
             cancellation,
         } = execution;
         let request = self.observe_service_result(operation, normalize_read_request(request))?;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(operation, validate_read_input(&request))?;

@@ -22,8 +22,6 @@ struct PreparedContext {
     working_tree_paths: Vec<String>,
     working_tree_modified: bool,
     working_tree_untracked: bool,
-    commit_revision: Option<String>,
-    branch: Option<String>,
     path_filter: PathFilter,
 }
 
@@ -56,8 +54,6 @@ impl Services {
             working_tree_modified,
             working_tree_untracked,
         ) = self.resolve_diff_scope(&request)?;
-        let commit_revision = git_head_revision(&self.config.root).ok();
-        let branch = git_branch_name(&self.config.root).ok();
         let working_tree_state = if !working_tree_state_available {
             HandoffWorkingTreeState::Unknown
         } else if changed_paths.is_empty() {
@@ -86,8 +82,6 @@ impl Services {
                 working_tree_paths,
                 working_tree_modified,
                 working_tree_untracked,
-                commit_revision,
-                branch,
                 path_filter,
             },
             retrieval,
@@ -110,8 +104,6 @@ impl Services {
             working_tree_paths,
             working_tree_modified,
             working_tree_untracked,
-            commit_revision,
-            branch,
             path_filter,
         } = prepared;
         let ContextExecution {
@@ -133,6 +125,11 @@ impl Services {
                 .collect::<HashSet<_>>()
         });
         self.consistent(|session, generation| {
+            // Provenance is part of the same snapshot boundary as indexed
+            // evidence. Git probes outside this closure can observe a later
+            // checkout while the response is still pinned to `generation`.
+            let commit_revision = git_head_revision(&self.config.root).ok();
+            let branch = git_branch_name(&self.config.root).ok();
             let facet_plan = facets::plan_with_workflow_evidence(
                 &request.task,
                 &workflow_evidence,

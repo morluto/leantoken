@@ -131,6 +131,7 @@ pub struct Services {
 #[non_exhaustive]
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
+    receipt_resource_reserve: bool,
     context_response_profile: Option<ContextResponseProfile>,
     initial_reconciliation_deadline: Option<tokio::time::Instant>,
 }
@@ -141,6 +142,7 @@ impl ServiceCallOptions {
     pub const fn new() -> Self {
         Self {
             max_response_tokens: None,
+            receipt_resource_reserve: false,
             context_response_profile: None,
             initial_reconciliation_deadline: None,
         }
@@ -160,6 +162,17 @@ impl ServiceCallOptions {
     #[must_use]
     pub const fn max_response_tokens(self) -> Option<usize> {
         self.max_response_tokens
+    }
+
+    /// Reserve space for the adapter's optional receipt-resource decoration.
+    #[must_use]
+    pub const fn with_receipt_resource_reserve(mut self, enabled: bool) -> Self {
+        self.receipt_resource_reserve = enabled;
+        self
+    }
+
+    pub(crate) const fn receipt_resource_reserve(self) -> bool {
+        self.receipt_resource_reserve
     }
 
     /// Select the presentation depth for a context response.
@@ -254,20 +267,29 @@ impl Services {
     where
         T: RetrievalResponse + Clone,
     {
-        self.response_accountant
-            .fits_with_receipt_reserve(response, returned_items, options)
+        if options.receipt_resource_reserve() {
+            self.response_accountant
+                .fits_with_receipt_reserve(response, returned_items, options)
+        } else {
+            self.response_fits(response, options)
+        }
     }
 
     fn finalized_response_tokens_with_receipt_reserve<T>(
         &self,
         response: &T,
         returned_items: usize,
+        options: ServiceCallOptions,
     ) -> Result<usize>
     where
         T: RetrievalResponse + Clone,
     {
-        self.response_accountant
-            .finalized_tokens_with_receipt_reserve(response, returned_items)
+        if options.receipt_resource_reserve() {
+            self.response_accountant
+                .finalized_tokens_with_receipt_reserve(response, returned_items)
+        } else {
+            self.finalized_response_tokens(response)
+        }
     }
 
     fn response_budget_exceeded(
@@ -299,15 +321,20 @@ impl Services {
         response: &T,
         returned_items: usize,
         provided_max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<Error>
     where
         T: RetrievalResponse + Clone,
     {
-        self.response_accountant.budget_error_with_receipt_reserve(
-            response,
-            returned_items,
-            provided_max_response_tokens,
-        )
+        if options.receipt_resource_reserve() {
+            self.response_accountant.budget_error_with_receipt_reserve(
+                response,
+                returned_items,
+                provided_max_response_tokens,
+            )
+        } else {
+            self.response_budget_error(response, provided_max_response_tokens)
+        }
     }
 
     fn finalize_bounded_response<T>(
@@ -316,9 +343,27 @@ impl Services {
         options: ServiceCallOptions,
     ) -> Result<()>
     where
-        T: RetrievalResponse,
+        T: RetrievalResponse + Clone,
     {
-        self.response_accountant.finalize_bounded(response, options)
+        if options.receipt_resource_reserve() {
+            let reserved_tokens = self
+                .response_accountant
+                .finalized_tokens_with_receipt_resource(response)?;
+            self.response_accountant.finalize(response)?;
+            if let Some(limit) = options.max_response_tokens()
+                && reserved_tokens > limit
+            {
+                let minimum = reserved_tokens;
+                return Err(accounting::ResponseAccountant::budget_exceeded(
+                    response.meta_mut(),
+                    limit,
+                    minimum,
+                ));
+            }
+            Ok(())
+        } else {
+            self.response_accountant.finalize_bounded(response, options)
+        }
     }
 
     fn validate_call_options(&self, options: ServiceCallOptions) -> Result<()> {

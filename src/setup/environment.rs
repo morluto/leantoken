@@ -72,7 +72,9 @@ pub(super) fn home_directory() -> Option<PathBuf> {
         .or_else(|| BaseDirs::new().map(|directories| directories.home_dir().to_path_buf()))
 }
 
-pub(crate) fn diagnostic_state() -> SetupDiagnostic {
+pub(crate) fn diagnostic_state(
+    expected_launcher: Option<(&str, &[String], &str)>,
+) -> SetupDiagnostic {
     let Some(home) = home_directory() else {
         return SetupDiagnostic {
             registration_status: "unknown",
@@ -82,8 +84,22 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
             discovery_paths: Vec::new(),
         };
     };
-    let configured =
-        McpLauncher::current().and_then(|launcher| configured_registrations(&home, &launcher));
+    diagnostic_state_at(&home, expected_launcher)
+}
+
+pub(super) fn diagnostic_state_at(
+    home: &Path,
+    expected_launcher: Option<(&str, &[String], &str)>,
+) -> SetupDiagnostic {
+    let configured = match expected_launcher {
+        Some((command, args, version)) => {
+            configured_registrations_against(home, command, args, version)
+        }
+        None => {
+            McpLauncher::current().and_then(|launcher| configured_registrations(home, &launcher))
+        }
+    };
+    let inspection_failed = configured.is_err();
     let (registration_status, registrations) = match configured {
         Ok(registrations) if registrations.is_empty() => ("not_registered", registrations),
         Ok(registrations) => ("registered", registrations),
@@ -93,26 +109,45 @@ pub(crate) fn diagnostic_state() -> SetupDiagnostic {
         .iter()
         .map(|registration| registration.client)
         .collect();
+    let expected_discovery_paths = registrations
+        .iter()
+        .filter(|registration| registration.managed)
+        .map(|registration| registration.client.discovery_path(home))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut discovery_inspection_failed = false;
     let discovery_paths = [
         home.join(".agents/skills/leantoken/SKILL.md"),
         home.join(".claude/skills/leantoken/SKILL.md"),
     ]
     .into_iter()
-    .filter(|path| {
-        read_optional(path)
-            .ok()
-            .flatten()
-            .is_some_and(|content| content.contains(DISCOVERY_SKILL_MARKER))
+    .filter_map(|path| match read_optional(&path) {
+        Ok(Some(content)) if content.contains(DISCOVERY_SKILL_MARKER) => Some(path),
+        Ok(_) => None,
+        Err(_) => {
+            discovery_inspection_failed = true;
+            None
+        }
     })
     .collect::<Vec<_>>();
     SetupDiagnostic {
         registration_status,
         configured_clients,
         registrations,
-        discovery_status: match discovery_paths.len() {
-            0 => "missing",
-            2 => "installed",
-            _ => "partial",
+        discovery_status: if inspection_failed || discovery_inspection_failed {
+            "unknown"
+        } else if expected_discovery_paths.is_empty()
+            || expected_discovery_paths
+                .iter()
+                .all(|path| !discovery_paths.contains(path))
+        {
+            "missing"
+        } else if expected_discovery_paths
+            .iter()
+            .all(|path| discovery_paths.contains(path))
+        {
+            "installed"
+        } else {
+            "partial"
         },
         discovery_paths,
     }
@@ -122,9 +157,101 @@ pub(super) fn configured_registrations(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Vec<ConfiguredRegistration>> {
+    configured_registrations_against(
+        home,
+        launcher.command()?,
+        &launcher.args,
+        launcher.version(),
+    )
+}
+
+pub(super) fn configured_registrations_with_snapshots(
+    home: &Path,
+    launcher: &McpLauncher,
+    clients: &[SetupClient],
+) -> Result<(
+    Vec<ConfiguredRegistration>,
+    Vec<PlannedConfigurationSnapshot>,
+)> {
+    let mut snapshots = Vec::with_capacity(
+        clients.len() + usize::from(clients.contains(&SetupClient::OpenCode)).saturating_mul(3),
+    );
+    for client in clients {
+        for path in client.configuration_paths(home) {
+            let original = read_optional(&path)?;
+            snapshots.push(PlannedConfigurationSnapshot { path, original });
+        }
+    }
+    let registrations =
+        configured_registrations_from_snapshots(home, launcher, clients, &snapshots)?;
+    Ok((registrations, snapshots))
+}
+
+pub(super) fn configured_registrations_from_snapshots(
+    home: &Path,
+    launcher: &McpLauncher,
+    clients: &[SetupClient],
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> Result<Vec<ConfiguredRegistration>> {
+    clients
+        .iter()
+        .filter_map(|client| {
+            let definition = client_definition_from_snapshots(*client, home, snapshots);
+            let source = configuration_snapshot_source(&definition.path, snapshots);
+            configured_registration_from_definition(*client, home, launcher, &definition, source)
+                .transpose()
+        })
+        .collect()
+}
+
+pub(super) fn client_definition_from_snapshots(
+    client: SetupClient,
+    home: &Path,
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> ClientDefinition {
+    let candidates = client.configuration_paths(home);
+    if !candidates
+        .iter()
+        .any(|candidate| snapshots.iter().any(|snapshot| snapshot.path == *candidate))
+    {
+        return client.definition(home);
+    }
+    let path = candidates
+        .iter()
+        .find(|candidate| configuration_snapshot_source(candidate, snapshots).is_some())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone());
+    client.definition_at(path)
+}
+
+pub(super) fn configuration_snapshot_source<'a>(
+    path: &Path,
+    snapshots: &'a [PlannedConfigurationSnapshot],
+) -> Option<&'a str> {
+    snapshots
+        .iter()
+        .find(|snapshot| snapshot.path == path)
+        .and_then(|snapshot| snapshot.original.as_deref())
+}
+
+fn configured_registrations_against(
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
+) -> Result<Vec<ConfiguredRegistration>> {
     SetupClient::ALL
         .into_iter()
-        .filter_map(|client| read_configured_registration(client, home, launcher).transpose())
+        .filter_map(|client| {
+            read_configured_registration_against(
+                client,
+                home,
+                expected_command,
+                expected_args,
+                expected_version,
+            )
+            .transpose()
+        })
         .collect()
 }
 
@@ -133,48 +260,260 @@ pub(super) fn read_configured_registration(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Option<ConfiguredRegistration>> {
+    let source = read_optional(&client.definition(home).path)?;
+    configured_registration_from_source(client, home, launcher, source.as_deref())
+}
+
+pub(super) fn configured_registration_from_source(
+    client: SetupClient,
+    home: &Path,
+    launcher: &McpLauncher,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
     let definition = client.definition(home);
-    let Some(source) = read_optional(&definition.path)? else {
+    configured_registration_from_definition(client, home, launcher, &definition, source)
+}
+
+pub(super) fn configured_registration_from_definition(
+    client: SetupClient,
+    home: &Path,
+    launcher: &McpLauncher,
+    definition: &ClientDefinition,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
+    configured_registration_from_definition_against(
+        client,
+        home,
+        launcher.command()?,
+        &launcher.args,
+        launcher.version(),
+        definition,
+        source,
+    )
+}
+
+fn read_configured_registration_against(
+    client: SetupClient,
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
+) -> Result<Option<ConfiguredRegistration>> {
+    let definition = client.definition(home);
+    let source = read_optional(&definition.path)?;
+    configured_registration_from_definition_against(
+        client,
+        home,
+        expected_command,
+        expected_args,
+        expected_version,
+        &definition,
+        source.as_deref(),
+    )
+}
+
+fn configured_registration_from_definition_against(
+    client: SetupClient,
+    home: &Path,
+    expected_command: &str,
+    expected_args: &[String],
+    expected_version: &str,
+    definition: &ClientDefinition,
+    source: Option<&str>,
+) -> Result<Option<ConfiguredRegistration>> {
+    let Some(source) = source else {
         return Ok(None);
     };
-    let (command, args) = match definition.format {
-        ConfigFormat::Json { section, shape } => {
-            let root: Value = jsonc_parser::parse_to_serde_value(&source, &ParseOptions::default())
-                .map_err(|error| invalid_config(&definition.path, error))?;
-            let Some(entry) = root
-                .get(section)
-                .and_then(Value::as_object)
-                .and_then(|section| section.get(SERVER_NAME))
-            else {
-                return Ok(None);
-            };
-            json_registration_command(entry, shape, &definition.path)?
-        }
-        ConfigFormat::Toml => {
-            let document = source
-                .parse::<DocumentMut>()
-                .map_err(|error| invalid_config(&definition.path, error))?;
-            let Some(entry) = document
-                .get("mcp_servers")
-                .and_then(Item::as_table)
-                .and_then(|servers| servers.get(SERVER_NAME))
-            else {
-                return Ok(None);
-            };
-            toml_registration_command(entry, &definition.path)?
-        }
-    };
-    let expected_command = launcher.command()?.to_owned();
-    let matches_current = command == expected_command && args == launcher.args;
+    let (command, args, enabled, startup_timeout_seconds, launcher_settings_match) =
+        match definition.format {
+            ConfigFormat::Json { section, shape } => {
+                let root: Value =
+                    jsonc_parser::parse_to_serde_value(source, &ParseOptions::default())
+                        .map_err(|error| invalid_config(&definition.path, error))?;
+                let Some(entry) = root
+                    .get(section)
+                    .and_then(Value::as_object)
+                    .and_then(|section| section.get(SERVER_NAME))
+                else {
+                    return Ok(None);
+                };
+                let enabled = match shape {
+                    JsonEntryShape::CommandAndArgs => true,
+                    JsonEntryShape::OpenCode => entry
+                        .get("enabled")
+                        .map(|enabled| {
+                            enabled.as_bool().ok_or_else(|| {
+                                invalid_config(
+                                    &definition.path,
+                                    "OpenCode MCP enabled flag must be a boolean",
+                                )
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or(true),
+                };
+                let (command, args) = json_registration_command(entry, shape, &definition.path)?;
+                (command, args, enabled, None, true)
+            }
+            ConfigFormat::Toml => {
+                let document = source
+                    .parse::<DocumentMut>()
+                    .map_err(|error| invalid_config(&definition.path, error))?;
+                let Some(entry) = document
+                    .get("mcp_servers")
+                    .and_then(Item::as_table)
+                    .and_then(|servers| servers.get(SERVER_NAME))
+                else {
+                    return Ok(None);
+                };
+                let (command, args, startup_timeout_seconds) =
+                    toml_registration_command(entry, &definition.path)?;
+                let launcher_settings_match =
+                    startup_timeout_seconds == Some(CODEX_STARTUP_TIMEOUT_SECONDS);
+                (
+                    command,
+                    args,
+                    true,
+                    startup_timeout_seconds,
+                    launcher_settings_match,
+                )
+            }
+        };
+    let matches_current =
+        command == expected_command && args == expected_args && launcher_settings_match;
+    let managed = is_managed_registration(&command, &args, &setup_runtime_root(home));
     Ok(Some(ConfiguredRegistration {
         client,
-        path: definition.path,
+        path: definition.path.clone(),
+        source_hash: *blake3::hash(source.as_bytes()).as_bytes(),
         version: registered_version(&command, &args),
         command,
         args,
-        expected_version: launcher.version().to_owned(),
+        startup_timeout_seconds,
+        expected_version: expected_version.to_owned(),
         matches_current,
+        managed,
+        enabled,
     }))
+}
+
+pub(crate) fn configured_registration(
+    client: SetupClient,
+) -> Result<Option<ConfiguredRegistration>> {
+    let home = home_directory()
+        .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
+    let launcher = McpLauncher::current()?;
+    read_configured_registration(client, &home, &launcher)
+}
+
+pub(super) fn is_managed_registration(command: &str, args: &[String], runtime_root: &Path) -> bool {
+    if args.iter().any(|argument| argument == "--managed-by-setup") {
+        return true;
+    }
+    is_legacy_package_manager_registration(command, args)
+        || is_legacy_private_runtime_registration(command, args, runtime_root)
+}
+
+fn is_legacy_package_manager_registration(command: &str, args: &[String]) -> bool {
+    is_legacy_node_npx_registration(command, args)
+        || is_legacy_node_npm_registration(command, args)
+        || is_legacy_direct_npx_registration(command, args)
+        || is_legacy_direct_npm_registration(command, args)
+        || is_legacy_dlx_registration(command, args)
+}
+
+fn command_has_stem(command: &str, expected: &str) -> bool {
+    Path::new(command)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn argument_has_file_name(argument: &str, expected: &str) -> bool {
+    Path::new(argument)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+}
+
+fn is_exact_legacy_package(argument: &str, prefix: &str) -> bool {
+    argument
+        .strip_prefix(prefix)
+        .is_some_and(|version| semver::Version::parse(version).is_ok())
+}
+
+fn is_legacy_node_npx_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "node")
+        && args.len() == 7
+        && Path::new(&args[0])
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("npx-cli.js"))
+        && args[1] == "--yes"
+        && args[2] == "--prefer-offline"
+        && is_exact_legacy_package(&args[3], "--package=leantoken@")
+        && args[4] == "--"
+        && args[5] == "leantoken"
+        && args[6] == "mcp"
+}
+
+fn is_legacy_node_npm_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "node")
+        && args.len() == 7
+        && argument_has_file_name(&args[0], "npm-cli.js")
+        && args[1] == "exec"
+        && args[2] == "--yes"
+        && is_exact_legacy_package(&args[3], "--package=leantoken@")
+        && args[4] == "--"
+        && args[5] == "leantoken"
+        && args[6] == "mcp"
+}
+
+fn is_legacy_direct_npx_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "npx")
+        && args.len() == 3
+        && args[0] == "--yes"
+        && is_exact_legacy_package(&args[1], "leantoken@")
+        && args[2] == "mcp"
+}
+
+fn is_legacy_direct_npm_registration(command: &str, args: &[String]) -> bool {
+    command_has_stem(command, "npm")
+        && args.len() == 6
+        && args[0] == "exec"
+        && args[1] == "--yes"
+        && is_exact_legacy_package(&args[2], "--package=leantoken@")
+        && args[3] == "--"
+        && args[4] == "leantoken"
+        && args[5] == "mcp"
+}
+
+fn is_legacy_dlx_registration(command: &str, args: &[String]) -> bool {
+    (command_has_stem(command, "pnpm") || command_has_stem(command, "yarn"))
+        && args.len() == 3
+        && args[0] == "dlx"
+        && is_exact_legacy_package(&args[1], "leantoken@")
+        && args[2] == "mcp"
+}
+
+fn is_legacy_private_runtime_registration(
+    command: &str,
+    args: &[String],
+    runtime_root: &Path,
+) -> bool {
+    if args != ["mcp"] {
+        return false;
+    }
+    let Ok(relative) = Path::new(command).strip_prefix(runtime_root) else {
+        return false;
+    };
+    let components = relative.components().collect::<Vec<_>>();
+    components.len() == 2
+        && components[0]
+            .as_os_str()
+            .to_str()
+            .is_some_and(|version| semver::Version::parse(version).is_ok())
+        && components[1].as_os_str() == runtime_executable_name(cfg!(windows))
 }
 
 pub(super) fn json_registration_command(
@@ -239,7 +578,7 @@ pub(super) fn json_string_array(
 pub(super) fn toml_registration_command(
     entry: &Item,
     path: &Path,
-) -> Result<(String, Vec<String>)> {
+) -> Result<(String, Vec<String>, Option<u64>)> {
     let table = entry
         .as_table()
         .ok_or_else(|| invalid_config(path, "LeanToken MCP entry must be a table"))?;
@@ -261,12 +600,33 @@ pub(super) fn toml_registration_command(
         })
         .transpose()?
         .unwrap_or_default();
-    Ok((command.to_owned(), args))
+    let startup_timeout_seconds = table
+        .get("startup_timeout_sec")
+        .map(|timeout| {
+            let timeout = timeout.as_integer().ok_or_else(|| {
+                invalid_config(path, "LeanToken MCP startup_timeout_sec must be an integer")
+            })?;
+            u64::try_from(timeout)
+                .ok()
+                .filter(|timeout| *timeout > 0)
+                .ok_or_else(|| {
+                    invalid_config(
+                        path,
+                        "LeanToken MCP startup_timeout_sec must be a positive integer",
+                    )
+                })
+        })
+        .transpose()?;
+    Ok((command.to_owned(), args, startup_timeout_seconds))
 }
 
 pub(super) fn registered_version(command: &str, args: &[String]) -> Option<String> {
     args.iter()
-        .find_map(|argument| argument.strip_prefix("--package=leantoken@"))
+        .find_map(|argument| {
+            argument
+                .strip_prefix("--package=leantoken@")
+                .or_else(|| argument.strip_prefix("leantoken@"))
+        })
         .map(str::to_owned)
         .or_else(|| {
             Path::new(command)
@@ -279,16 +639,12 @@ pub(super) fn registered_version(command: &str, args: &[String]) -> Option<Strin
         })
 }
 
-pub(super) fn configured_clients(home: &Path, launcher: &McpLauncher) -> Result<Vec<SetupClient>> {
-    SetupClient::ALL
-        .into_iter()
-        .filter_map(|client| {
-            let resolved = resolve_client_edit(SetupOperation::Remove, client, &[], home, launcher);
-            match resolved {
-                Ok(edit) if matches!(edit.status, EditStatus::Removed) => Some(Ok(client)),
-                Ok(_) => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
+pub(super) fn managed_clients_from_registrations(
+    registrations: &[ConfiguredRegistration],
+) -> Vec<SetupClient> {
+    registrations
+        .iter()
+        .filter(|registration| registration.managed)
+        .map(|registration| registration.client)
         .collect()
 }

@@ -235,6 +235,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(operation, validate_outline_input(&request))?;
@@ -605,6 +606,7 @@ impl Services {
                 options
                     .max_response_tokens()
                     .expect("fitting only runs with a response limit"),
+                options,
             )?);
         }
         let receipt_candidates = response

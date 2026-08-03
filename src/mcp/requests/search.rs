@@ -310,6 +310,7 @@ impl SearchMcpRequest {
             SearchMcpProjection::Auto => SearchMcpProjection::Full,
             projection => projection,
         };
+        let receipt_resource = options.receipt_id.is_some() || options.query_receipt.is_some();
         (
             SearchRequest {
                 query: options.query.into_string(),
@@ -342,7 +343,7 @@ impl SearchMcpRequest {
             projection,
             options.coordinates_only,
             options.consistency,
-            service_call_options(options.max_response_tokens),
+            service_call_options_with_receipt(options.max_response_tokens, receipt_resource),
             self.expected_repository_id,
         )
     }

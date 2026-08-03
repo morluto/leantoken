@@ -421,7 +421,7 @@ pub(super) fn run(args: &ColdMatrixArgs) -> AnyResult<()> {
     let report = ColdMatrixReport {
         schema_version: SCHEMA_VERSION,
         generated_unix_ms: unix_millis(),
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         leantoken_git_revision: revision,
         leantoken_worktree_dirty: dirty,
         release_build: !cfg!(debug_assertions),

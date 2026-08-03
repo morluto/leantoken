@@ -9,12 +9,25 @@ job also assembles the five native binaries into one script-free npm tarball.
 A trusted-publishing job verifies that tarball and publishes it to npm with
 provenance before the release workflow completes.
 
+The release workflow also publishes the Cargo package to crates.io with
+`rust-lang/crates-io-auth-action`, then publishes the matching `server.json`
+metadata to the official MCP Registry with `mcp-publisher`. Registry metadata
+is not a second server artifact: it points clients at the exact Cargo version
+that was just published.
+
 The Cargo package, git tag, GitHub release, and npm package must use the same
 exact version. MCP setup embeds `CARGO_PKG_VERSION` in npx launchers, so a
 release with mismatched package metadata would create a launcher for a package
 that does not exist. After publishing, users opt into that release with
 `npx --yes leantoken@VERSION setup --refresh --yes`; existing entries never
 advance automatically.
+
+Before the first automated Cargo release, publish the initial version manually
+with `cargo publish --locked`, then configure `morluto/leantoken` as a trusted
+publisher for the `release.yml` GitHub Actions workflow on crates.io.
+After that bootstrap, tagged releases publish Cargo first and MCP Registry
+metadata second. The MCP Registry namespace is
+`io.github.morluto/leantoken`.
 
 ## Release Cadence
 

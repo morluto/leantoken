@@ -105,6 +105,7 @@ impl ReadMcpRequest {
         ServiceCallOptions,
         Option<String>,
     ) {
+        let receipt_resource = self.receipt_id.is_some();
         let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
             match self.target {
                 ReadMcpTarget::Symbol { identity } => (
@@ -141,7 +142,7 @@ impl ReadMcpRequest {
                 policy: self.policy,
             },
             self.consistency,
-            service_call_options(self.max_response_tokens),
+            service_call_options_with_receipt(self.max_response_tokens, receipt_resource),
             self.expected_repository_id,
         )
     }

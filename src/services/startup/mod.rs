@@ -190,19 +190,37 @@ fn prepare_repository_cache_fallback(config: &Config) -> Result<Config> {
         return Err(Error::PathOutsideRoot(canonical_cache));
     }
     let ignore_path = cache_root.join(".gitignore");
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&ignore_path)
-    {
-        Ok(mut ignore) => {
+    ensure_effective_cache_ignore(&ignore_path)?;
+    Ok(fallback)
+}
+
+fn ensure_effective_cache_ignore(path: &std::path::Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(Error::InvalidConfiguration(
+                "repository cache .gitignore must be a regular file".into(),
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut ignore = OpenOptions::new().write(true).create_new(true).open(path)?;
             ignore.write_all(b"*\n")?;
             ignore.sync_all()?;
+            return Ok(());
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
-    Ok(fallback)
+    let contents = fs::read_to_string(path)?;
+    if contents.lines().any(|line| line.trim() == "*") {
+        return Ok(());
+    }
+    let mut ignore = OpenOptions::new().append(true).open(path)?;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        ignore.write_all(b"\n")?;
+    }
+    ignore.write_all(b"*\n")?;
+    ignore.sync_all()?;
+    Ok(())
 }
 
 fn ensure_real_directories(repository: &Dir, relative: &std::path::Path) -> Result<()> {

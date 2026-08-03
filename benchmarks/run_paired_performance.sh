@@ -102,8 +102,8 @@ for side in base head; do
       cargo build --release --package leantoken-benchmarks --bin hot_path_bounds --bin indexing_profile
   )
   mkdir "${bin_dir}"
-  cp "${build_target}/release/examples/hot_path_bounds" "${bin_dir}/"
-  cp "${build_target}/release/examples/indexing_profile" "${bin_dir}/"
+  cp "${build_target}/release/hot_path_bounds" "${bin_dir}/"
+  cp "${build_target}/release/indexing_profile" "${bin_dir}/"
 done
 
 hot_args=()

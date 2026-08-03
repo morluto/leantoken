@@ -9,6 +9,8 @@ read exact ranges, and explore Git history through a CLI and MCP server.
 
 **Language:** English · [简体中文](docs/i18n/zh-CN/README.md) · [日本語](docs/i18n/ja-JP/README.md) · [한국어](docs/i18n/ko-KR/README.md)
 
+- MCP Registry name: `mcp-name: io.github.morluto/leantoken`
+
 <img src="assets/leantoken-hero-v3.jpg" alt="LeanToken narrowing a large codebase to the files and code an AI agent needs" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
@@ -45,11 +47,12 @@ project-local or ancestor install, and point to
 `npx leantoken@latest setup`. Older releases that predate this check can be
 bootstrapped directly with that versioned command.
 
-The setup wizard labels supported clients it detects, but leaves every client
-unselected so you choose exactly which coding agents receive LeanToken. Before
-writing anything, it shows the exact configuration paths and MCP launcher and
-asks for confirmation. An npx-based setup pins the exact LeanToken version
-that ran setup, so restarting a client cannot silently move to a newer release.
+The interactive setup wizard preselects supported clients it detects; you can
+change that selection before continuing. It then shows the exact configuration
+paths and MCP launcher and asks for a separate final confirmation. Automation
+never treats detection as consent. An npx-based setup pins the exact LeanToken
+version that ran setup, so restarting a client cannot silently move to a newer
+release.
 
 Global setup never stores the repository where setup happened. OpenCode gets a
 workspace-relative working directory; other supported clients launch LeanToken
@@ -107,10 +110,11 @@ npx leantoken setup --claude --codex --yes
 npx leantoken setup --all --yes
 ```
 
-Use `--private-runtime` to copy the exact package-native executable into
-LeanToken's versioned application-data directory and configure clients to
-launch it directly, without persistent npm/Node wrappers. Preview its path and
-digest with `--dry-run`.
+For regular use, `--private-runtime` is the recommended launcher: it copies the
+exact package-native executable into LeanToken's versioned application-data
+directory so clients launch one verified process directly, without persistent
+npm/Node wrappers. It remains opt-in so the zero-install path does not add an
+application-data write. Preview its path and digest with `--dry-run`.
 
 Automation never treats detection as consent: `--yes` requires explicit client
 flags, `--all`, or `--refresh` for entries already managed by LeanToken. Preview
@@ -120,13 +124,25 @@ the same resolved plan without changing files:
 npx leantoken setup --codex --cursor --dry-run
 ```
 
-Setup adds the `leantoken` MCP entry plus a small owned discovery skill in the
-host-standard user skill directories. The skill advertises routing metadata;
-it does not duplicate tool schemas, add rules, or install shell hooks. Remove
-the owned integration with:
+Setup adds the `leantoken` MCP entry plus a small owned discovery skill only in
+the directories used by the selected hosts: Claude Code uses `~/.claude`, while
+Codex and the other supported hosts use `~/.agents`. The skill advertises
+routing metadata; it does not duplicate tool schemas, add rules, or install
+shell hooks. Setup marks new MCP launchers as managed and refuses to replace a
+same-name manual entry unless you review the dry-run and pass
+`--force-unmanaged`. Remove the owned integration with:
 
 ```bash
 npx leantoken remove
+```
+
+After private-runtime upgrades, inspect retained versions and preview a
+reference-safe cleanup before applying it:
+
+```bash
+npx leantoken runtime list
+npx leantoken runtime prune --dry-run
+npx leantoken runtime prune --yes
 ```
 
 Refresh only existing LeanToken MCP entries after explicitly choosing a new
@@ -320,6 +336,18 @@ leantoken --root /path/to/repo mcp
 
 </details>
 
+For the Cargo distribution, install the published crate and point your MCP
+client at the resulting executable:
+
+```bash
+cargo install leantoken --version VERSION
+leantoken --root /path/to/repo mcp
+```
+
+The official MCP Registry entry is `io.github.morluto/leantoken`. Registry
+clients that support Cargo packages can install the matching `leantoken`
+version and use the `mcp` command shown above.
+
 ## Installation options
 
 The npm package includes native binaries for:
@@ -333,7 +361,7 @@ postinstall hook. Other targets, including musl Linux, must build from source.
 Install Rust 1.95 or later and a native C/C++ toolchain, then run:
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken leantoken
+cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
 ```
 
 ## Updating

@@ -75,6 +75,55 @@ pub(super) fn cache_list_filter_hash(
     hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
 }
 
+/// Hash used by cursors issued before the filter-hash namespace was versioned.
+/// Keep accepting it so a cursor returned by the previous server remains
+/// usable across a rolling upgrade.
+pub(super) fn legacy_cache_list_filter_hash(
+    request: &CacheListRequest,
+    repository_root: Option<&Path>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    if request.states.is_empty() {
+        hasher.update(b"all-states");
+    } else {
+        for state in CacheState::ALL {
+            if request.states.contains(&state) {
+                hasher.update(state.label().as_bytes());
+                hasher.update(b"\0");
+            }
+        }
+    }
+    hasher.update(b"\xff");
+    if let Some(root) = repository_root {
+        hasher.update(root.as_os_str().as_encoded_bytes());
+    }
+    hasher.update(b"\xffcompatibility\0");
+    if request.compatibilities.is_empty() {
+        hasher.update(b"all");
+    } else {
+        for compatibility in CacheCompatibility::ALL {
+            if request.compatibilities.contains(&compatibility) {
+                hasher.update(compatibility.label().as_bytes());
+                hasher.update(b"\0");
+            }
+        }
+    }
+    hasher.update(b"\xffcontent-versions\0");
+    let mut versions = request.index_content_versions.clone();
+    versions.sort_unstable();
+    versions.dedup();
+    if versions.is_empty() {
+        hasher.update(b"all");
+    } else {
+        for version in versions {
+            hasher.update(&version.to_le_bytes());
+        }
+    }
+    hasher.update(b"\xffincompatible\0");
+    hasher.update(&[u8::from(request.incompatible_with_current)]);
+    hasher.finalize().to_hex()[..CACHE_LIST_CURSOR_HASH_CHARS].to_owned()
+}
+
 pub(super) fn encode_cache_list_cursor_with_prefix(
     prefix: &str,
     filter_hash: &str,

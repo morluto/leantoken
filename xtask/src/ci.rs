@@ -2,11 +2,14 @@ use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const TOPOLOGY_PATH: &str = "ci/test-topology.json";
 const PLAN_SCHEMA_VERSION: u32 = 1;
 const PLANNER_VERSION: &str = "ci-planner-v2";
+const MAX_CHANGED_PATHS_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_CHANGED_PATHS: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +40,8 @@ pub(crate) struct PlannerInput {
     #[serde(default)]
     pub(crate) base_revision: Option<String>,
     pub(crate) head_revision: String,
+    #[serde(default)]
+    pub(crate) source_revision: Option<String>,
     #[serde(default)]
     pub(crate) schedule: Option<String>,
     #[serde(default)]
@@ -288,6 +293,7 @@ fn parse_plan_args(
             event,
             base_revision,
             head_revision,
+            source_revision: option_value(args, "--source")?,
             schedule: option_value(args, "--schedule")?,
             changed_paths,
             full_run: args.iter().any(|arg| arg == "--full-run"),
@@ -451,7 +457,10 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
         schedule: input.schedule,
         base_revision: input.base_revision,
         head_revision: input.head_revision.clone(),
-        source_revision: input.head_revision,
+        source_revision: input
+            .source_revision
+            .filter(|revision| !revision.trim().is_empty())
+            .unwrap_or_else(|| input.head_revision.clone()),
         selected_lanes,
         unselected_lanes,
         dependencies,
@@ -638,7 +647,13 @@ fn ensure_acyclic(topology: &Topology) -> Result<(), String> {
 
 fn normalize_paths(paths: &[String]) -> Result<Vec<String>, String> {
     let mut normalized = BTreeSet::new();
-    for path in paths.iter().map(|path| path.trim()) {
+    if paths.len() > MAX_CHANGED_PATHS {
+        return Err(format!(
+            "changed-path input contains {} entries, limit is {MAX_CHANGED_PATHS}",
+            paths.len()
+        ));
+    }
+    for path in paths {
         if path.is_empty()
             || path.starts_with('/')
             || path.contains('\\')
@@ -654,7 +669,23 @@ fn normalize_paths(paths: &[String]) -> Result<Vec<String>, String> {
 }
 
 fn read_changed_paths(root: &Path, path: &str) -> Result<Vec<String>, String> {
-    let contents = fs::read(root.join(path)).map_err(|error| error.to_string())?;
+    let path = root.join(path);
+    let size = fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .len();
+    if size > MAX_CHANGED_PATHS_FILE_BYTES {
+        return Err(format!(
+            "changed-path input is {size} bytes, limit is {MAX_CHANGED_PATHS_FILE_BYTES}"
+        ));
+    }
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut contents = Vec::with_capacity(size as usize);
+    file.take(MAX_CHANGED_PATHS_FILE_BYTES + 1)
+        .read_to_end(&mut contents)
+        .map_err(|error| error.to_string())?;
+    if contents.len() as u64 > MAX_CHANGED_PATHS_FILE_BYTES {
+        return Err("changed-path input exceeded its byte bound".to_owned());
+    }
     Ok(parse_changed_paths(&contents))
 }
 
@@ -755,6 +786,7 @@ mod tests {
             event,
             base_revision: Some("base-sha".to_owned()),
             head_revision: "head-sha".to_owned(),
+            source_revision: None,
             schedule: None,
             changed_paths: paths.iter().map(|path| (*path).to_owned()).collect(),
             full_run: false,
@@ -799,13 +831,14 @@ mod tests {
             input(Event::PullRequest, &["docs/testing.md"]),
         )
         .expect("plan");
+        assert!(plan.selected_lanes.iter().all(|lane| {
+            matches!(
+                lane.lane.as_str(),
+                "quality" | "secret-scan" | "product-linux" | "product-macos" | "product-windows"
+            )
+        }));
         assert!(
             plan.selected_lanes
-                .iter()
-                .all(|lane| lane.lane == "quality" || lane.lane == "secret-scan")
-        );
-        assert!(
-            plan.unselected_lanes
                 .iter()
                 .any(|lane| lane.lane == "product-linux")
         );
@@ -987,7 +1020,7 @@ mod tests {
             classify_receipt(
                 &build_plan(
                     &workspace_root(),
-                    input(Event::PullRequest, &["docs/testing.md"])
+                    input(Event::PullRequest, &["scripts/benchmark.sh"])
                 )
                 .expect("documentation plan"),
                 "product-windows",

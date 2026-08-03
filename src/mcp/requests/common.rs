@@ -1,17 +1,22 @@
 use super::*;
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::mcp) const RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS: usize = 128;
 
 pub(in crate::mcp) fn service_call_options(
     max_response_tokens: Option<usize>,
 ) -> ServiceCallOptions {
-    max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
-        ServiceCallOptions::new().with_max_response_tokens(
-            limit
-                .saturating_sub(RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
-                .max(1),
-        )
-    })
+    service_call_options_with_receipt(max_response_tokens, false)
+}
+
+pub(in crate::mcp) fn service_call_options_with_receipt(
+    max_response_tokens: Option<usize>,
+    receipt: bool,
+) -> ServiceCallOptions {
+    let options = max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
+        ServiceCallOptions::new().with_max_response_tokens(limit)
+    });
+    options.with_receipt_resource_reserve(receipt)
 }
 
 pub(in crate::mcp) const fn default_result_option() -> Option<usize> {

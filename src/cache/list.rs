@@ -46,6 +46,16 @@ impl CacheManager {
             .as_deref()
             .map(|cursor| {
                 decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, &filter_hash)
+                    .or_else(|error| {
+                        let legacy =
+                            legacy_cache_list_filter_hash(request, repository_root.as_deref());
+                        decode_cache_list_cursor_with_prefix(
+                            cursor,
+                            CACHE_LIST_CURSOR_PREFIX,
+                            &legacy,
+                        )
+                        .map_err(|_| error)
+                    })
             })
             .transpose()?;
 

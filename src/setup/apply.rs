@@ -1,25 +1,27 @@
 use super::*;
 
-pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
-    let runtime_installed = match plan.runtime.as_ref().map(install_runtime).transpose() {
-        Ok(installed) => installed.unwrap_or(false),
-        Err(error) => return failed_results(&plan.edits, error.to_string()),
+pub(super) struct SetupApplyOutcome {
+    pub(super) results: Vec<ClientSetupResult>,
+    pub(super) error: Option<String>,
+}
+
+pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
+    let mut runtime_installation = match plan.runtime.as_ref().map(install_runtime).transpose() {
+        Ok(installation) => installation,
+        Err(error) => return failed_outcome(plan, error.to_string()),
     };
-    if let Err(error) =
-        preflight_edits(&plan.edits).and_then(|()| preflight_discovery(&plan.discovery_edits))
+    if let Err(error) = preflight_configuration_snapshots(&plan.configuration_snapshots)
+        .and_then(|()| preflight_edits(&plan.edits))
+        .and_then(|()| preflight_discovery(&plan.discovery_edits))
     {
-        if runtime_installed && let Some(runtime) = &plan.runtime {
-            let _ = fs::remove_file(&runtime.destination);
-        }
-        return failed_results(&plan.edits, error.to_string());
+        let message = rollback_runtime_message(error, runtime_installation.as_mut());
+        return failed_outcome(plan, message);
     }
     let transaction = match begin_setup_transaction(plan) {
         Ok(transaction) => transaction,
         Err(error) => {
-            if runtime_installed && let Some(runtime) = &plan.runtime {
-                let _ = fs::remove_file(&runtime.destination);
-            }
-            return failed_results(&plan.edits, error.to_string());
+            let message = rollback_runtime_message(error, runtime_installation.as_mut());
+            return failed_outcome(plan, message);
         }
     };
 
@@ -28,48 +30,67 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> Vec<ClientSetupResult> {
     for edit in &plan.edits {
         if let Err(error) = apply_edit(edit) {
             let rollback = rollback_setup(
-                plan,
-                runtime_installed,
+                runtime_installation.as_mut(),
                 &applied,
                 &applied_discovery,
                 transaction,
             );
-            return failed_results(&plan.edits, rollback_message(error, rollback));
+            return failed_outcome(plan, rollback_message(error, rollback));
         }
         applied.push(edit);
     }
     for edit in &plan.discovery_edits {
         if let Err(error) = apply_discovery_edit(edit) {
             let rollback = rollback_setup(
-                plan,
-                runtime_installed,
+                runtime_installation.as_mut(),
                 &applied,
                 &applied_discovery,
                 transaction,
             );
-            return failed_results(&plan.edits, rollback_message(error, rollback));
+            return failed_outcome(plan, rollback_message(error, rollback));
         }
         applied_discovery.push(edit);
     }
     if let Some(transaction) = transaction
         && let Err(error) = transaction.commit()
     {
-        return failed_results(&plan.edits, error.to_string());
+        return failed_outcome(plan, error.to_string());
     }
-    plan.edits
-        .iter()
-        .map(|edit| ClientSetupResult {
-            client: edit.public.client,
-            path: edit.public.path.clone(),
-            status: edit.status.to_string(),
-            error: None,
-        })
-        .collect()
+    SetupApplyOutcome {
+        results: plan
+            .edits
+            .iter()
+            .map(|edit| ClientSetupResult {
+                client: edit.public.client,
+                path: edit.public.path.clone(),
+                status: edit.status.to_string(),
+                error: None,
+            })
+            .collect(),
+        error: None,
+    }
+}
+
+fn rollback_runtime_message(
+    error: Error,
+    runtime_installation: Option<&mut RuntimeInstallReceipt>,
+) -> String {
+    let Some(runtime_installation) = runtime_installation.filter(|receipt| receipt.installed())
+    else {
+        return error.to_string();
+    };
+    rollback_message(error, rollback_installed_runtime(runtime_installation))
+}
+
+fn failed_outcome(plan: &ResolvedSetupPlan, error: String) -> SetupApplyOutcome {
+    SetupApplyOutcome {
+        results: failed_results(&plan.edits, error.clone()),
+        error: Some(error),
+    }
 }
 
 pub(super) fn rollback_setup(
-    plan: &ResolvedSetupPlan,
-    runtime_installed: bool,
+    runtime_installation: Option<&mut RuntimeInstallReceipt>,
     applied: &[&PlannedClientEdit],
     applied_discovery: &[&PlannedDiscoveryEdit],
     transaction: Option<SetupTransaction>,
@@ -80,8 +101,8 @@ pub(super) fn rollback_setup(
     for edit in applied.iter().rev() {
         restore_edit(edit)?;
     }
-    if runtime_installed && let Some(runtime) = &plan.runtime {
-        let _ = fs::remove_file(&runtime.destination);
+    if let Some(runtime_installation) = runtime_installation {
+        rollback_installed_runtime(runtime_installation)?;
     }
     if let Some(transaction) = transaction {
         transaction.commit()?;
@@ -96,6 +117,20 @@ pub(super) fn rollback_message(error: Error, rollback: Result<()>) -> String {
             "setup transaction failed: {error}; rollback requires recovery: {rollback_error}"
         ),
     }
+}
+
+pub(super) fn preflight_configuration_snapshots(
+    snapshots: &[PlannedConfigurationSnapshot],
+) -> Result<()> {
+    for snapshot in snapshots {
+        if read_optional(&snapshot.path)? != snapshot.original {
+            return Err(Error::SetupFailure(format!(
+                "configuration changed after preflight: {}",
+                snapshot.path.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {

@@ -63,7 +63,7 @@ pub(in crate::mcp) enum JsonMcpOperation {
     /// Select and project one JSON value.
     Query {
         #[schemars(length(min = 1, max = 4096))]
-        path: NonEmptyText,
+        path: RepositoryPath,
         #[serde(default)]
         selector: Option<JsonMcpSelector>,
         #[serde(default)]
@@ -82,7 +82,7 @@ pub(in crate::mcp) enum JsonMcpOperation {
     /// Summarize numeric leaves below one JSON selection.
     NumericSummary {
         #[schemars(length(min = 1, max = 4096))]
-        path: NonEmptyText,
+        path: RepositoryPath,
         #[serde(default)]
         selector: Option<JsonMcpSelector>,
         #[serde(flatten)]
@@ -91,9 +91,9 @@ pub(in crate::mcp) enum JsonMcpOperation {
     /// Compare selected fields between two JSON files.
     DiffFields {
         #[schemars(length(min = 1, max = 4096))]
-        base_path: NonEmptyText,
+        base_path: RepositoryPath,
         #[schemars(length(min = 1, max = 4096))]
-        head_path: NonEmptyText,
+        head_path: RepositoryPath,
         #[schemars(length(min = 1, max = 100))]
         selectors: Vec<JsonMcpSelector>,
         #[serde(default)]
@@ -107,7 +107,7 @@ pub(in crate::mcp) enum JsonMcpOperation {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum JsonMcpOperationWire {
     Query {
-        path: NonEmptyText,
+        path: RepositoryPath,
         #[serde(default)]
         selector: Option<JsonMcpSelector>,
         #[serde(default)]
@@ -126,7 +126,7 @@ enum JsonMcpOperationWire {
         cursor: Option<String>,
     },
     NumericSummary {
-        path: NonEmptyText,
+        path: RepositoryPath,
         #[serde(default)]
         selector: Option<JsonMcpSelector>,
         #[serde(default)]
@@ -139,8 +139,8 @@ enum JsonMcpOperationWire {
         array_sample_size: Option<usize>,
     },
     DiffFields {
-        base_path: NonEmptyText,
-        head_path: NonEmptyText,
+        base_path: RepositoryPath,
+        head_path: RepositoryPath,
         selectors: Vec<JsonMcpSelector>,
         #[serde(default)]
         projection: JsonProjection,

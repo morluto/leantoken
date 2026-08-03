@@ -477,7 +477,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
         schema_version: 8,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
         host_os: std::env::consts::OS,

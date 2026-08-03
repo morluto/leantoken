@@ -416,6 +416,10 @@ impl Services {
             .values()
             .map(|record| record.hash_suppressed_requests)
             .fold(0u64, u64::saturating_add);
+        let classified = useful
+            .saturating_add(incomplete)
+            .saturating_add(unsupported)
+            .saturating_add(hash_suppressed);
         Ok(ObservedTokenSavingsReport {
             observations: TokenSavingsObservations {
                 observation_scope: OBSERVATION_SCOPE.to_owned(),
@@ -429,6 +433,10 @@ impl Services {
                     incomplete,
                     unsupported,
                     hash_suppressed,
+                    unclassified: report
+                        .response_accounting
+                        .tracked_requests
+                        .saturating_sub(classified),
                     failed: failed_service_requests.saturating_sub(unsupported_failures),
                 },
                 failed_by_operation_and_category,

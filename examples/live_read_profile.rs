@@ -229,7 +229,7 @@ async fn run_profile(args: &Args) -> AnyResult<Report> {
 
     Ok(Report {
         schema_version: 1,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
         host_os: std::env::consts::OS,

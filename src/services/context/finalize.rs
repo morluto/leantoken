@@ -388,21 +388,28 @@ impl Services {
                 .as_ref()
                 .and_then(|scope| scope.head_revision.clone())
                 .or_else(|| provenance.commit_revision.clone());
-            let handoff_provenance = handoff_commit_revision.as_ref().map_or_else(
-                || provenance.clone(),
-                |commit_revision| {
-                    let mut scoped = provenance.clone();
-                    scoped.commit_revision = Some(commit_revision.clone());
-                    scoped.status = if scoped.branch.is_some()
-                        && scoped.working_tree_state != RepositoryWorkingTreeState::Unknown
-                    {
-                        RepositoryProvenanceStatus::Available
-                    } else {
-                        RepositoryProvenanceStatus::Unavailable
-                    };
-                    scoped
-                },
-            );
+            let handoff_provenance = if response
+                .diff_scope
+                .as_ref()
+                .and_then(|scope| scope.head_revision.as_ref())
+                .is_some()
+            {
+                // A revision-scoped handoff is not the same snapshot as the
+                // live checkout. Do not copy branch, worktree, or freshness
+                // claims into a hybrid provenance object.
+                RepositoryProvenance {
+                    commit_revision: handoff_commit_revision.clone(),
+                    branch: None,
+                    working_tree_state: RepositoryWorkingTreeState::Unknown,
+                    repository_generation: 0,
+                    // The model has no separate unknown freshness variant;
+                    // status=unavailable is the authoritative signal.
+                    freshness: Freshness::Current,
+                    status: RepositoryProvenanceStatus::Unavailable,
+                }
+            } else {
+                provenance.clone()
+            };
             let commit_revision_available = handoff_commit_revision.is_some();
             response.handoff_manifest = Some(handoff::build(
                 request,

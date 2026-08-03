@@ -102,11 +102,47 @@ fn active_repository_cache_fallback(config: &Config) -> Result<Option<Config>> {
     if !fallback.database_path.exists() {
         return Ok(None);
     }
+    validate_fallback_before_lease(config, &fallback.database_path)?;
     let coordination = IndexCoordination::for_database(&fallback.database_path);
     Ok(coordination
         .try_acquire_prune_lease()?
         .is_none()
         .then_some(fallback))
+}
+
+fn validate_fallback_before_lease(config: &Config, database: &std::path::Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(database)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(Error::InvalidConfiguration(
+            "repository cache fallback database must be a regular file".into(),
+        ));
+    }
+    let parent = database.parent().ok_or_else(|| {
+        Error::InvalidConfiguration("repository cache fallback has no parent".into())
+    })?;
+    let canonical_parent = parent.canonicalize()?;
+    if !canonical_parent.starts_with(&config.root) {
+        return Err(Error::PathOutsideRoot(canonical_parent));
+    }
+    let relative = canonical_parent
+        .strip_prefix(&config.root)
+        .map_err(|_| Error::PathOutsideRoot(canonical_parent.clone()))?;
+    let mut current = config.root.clone();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            return Err(Error::InvalidConfiguration(
+                "repository cache fallback path must be relative".into(),
+            ));
+        };
+        current.push(component);
+        let metadata = std::fs::symlink_metadata(&current)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(Error::InvalidConfiguration(
+                "repository cache fallback must contain only real directories".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn status_response(

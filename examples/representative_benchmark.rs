@@ -729,7 +729,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         evaluation_protocol: manifest.evaluation_protocol,
         reclassification_rule: manifest.reclassification_rule,
         manifest_description: manifest.description,
-        leantoken_version: env!("CARGO_PKG_VERSION"),
+        leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         harness_revision,
         harness_worktree_dirty,
         candidate_runtime_tree_verified,

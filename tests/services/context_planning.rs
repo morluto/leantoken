@@ -274,7 +274,7 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
     let mut conflicting_profile = context_limit_request(100);
     conflicting_profile.explain_diagnostics = true;
     let invalid = services
-        .context_with_workflow_evidence_options_consistency_cancellable(
+        .context_with_workflow_options_consistency_cancellable(
             leantoken::services::ContextWorkflowOptions {
                 request: conflicting_profile,
                 handoff: None,
@@ -305,7 +305,7 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
     );
 
     let invalid = services
-        .context_with_workflow_evidence_options_consistency_cancellable(
+        .context_with_workflow_options_consistency_cancellable(
             leantoken::services::ContextWorkflowOptions {
                 request: context_limit_request(100),
                 handoff: None,

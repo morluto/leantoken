@@ -353,17 +353,21 @@ fn result_modes_emit_only_the_selected_representations() {
 }
 
 #[test]
-fn receipt_results_expose_one_consistent_resource_handoff() {
+fn structured_receipt_results_preserve_materialized_evidence_and_resource_handoff() {
     let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
-            "source_tokens": 0,
+            "source_tokens": 6,
             "protocol_tokens": 0,
             "path_and_metadata_tokens": 0,
             "total_response_tokens": 0,
             "tokenizer": "cl100k_base"
-        }
+        },
+        "fragments": [{
+            "path": "lib.rs",
+            "content": "fn ready() {}"
+        }]
     });
     let result = tool_result(value, McpResultMode::Structured).expect("receipt result");
     let structured = result
@@ -373,6 +377,8 @@ fn receipt_results_expose_one_consistent_resource_handoff() {
     assert_eq!(structured["receipt_resource"]["kind"], "retrieval_receipt");
     assert_eq!(structured["receipt_resource"]["id"], receipt_id);
     assert_eq!(structured["receipt_resource"]["uri"], uri);
+    assert_eq!(structured["fragments"][0]["path"], "lib.rs");
+    assert_eq!(structured["fragments"][0]["content"], "fn ready() {}");
     assert!(result.content.iter().any(|content| {
         content
             .as_text()
@@ -989,8 +995,8 @@ fn assert_search_option_error_mapping() {
                 "projection=occurrences",
             ],
             "examples": {
-                "ranked_symbol": "{\"query\":\"Services\",\"mode\":\"symbol\"}",
-                "exhaustive_text": "{\"query\":\"Services\",\"mode\":\"text\",\"all_occurrences\":true,\"projection\":\"occurrences\"}",
+                "ranked_symbol": "{\"operation\":{\"kind\":\"symbol\",\"query\":\"Services\"}}",
+                "exhaustive_text": "{\"operation\":{\"kind\":\"text\",\"query\":\"Services\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}",
             },
         }))
     );
@@ -1200,7 +1206,7 @@ fn omitted_context_budget_uses_the_runtime_default() {
     .expect("context request with a budget");
     let (request, _, workflow_evidence, _, options, _, _) = request.into_parts(37);
     assert_eq!(request.token_budget, 23);
-    assert_eq!(options.max_response_tokens(), Some(1));
+    assert_eq!(options.max_response_tokens(), Some(47));
     assert_eq!(
         options.context_response_profile(),
         Some(ContextResponseProfile::Explain)
@@ -1455,28 +1461,30 @@ fn tool_descriptions_route_native_discovery_workflows() {
             )
         })
         .collect::<std::collections::HashMap<_, _>>();
+    let description_bytes = descriptions.values().map(String::len).sum::<usize>();
+    assert!(
+        description_bytes <= 5_000,
+        "tool descriptions must stay within the 5,000-byte prompt budget; got {description_bytes}"
+    );
+    assert!(descriptions["files"].starts_with("Preferred over native find, ls, or glob"));
     assert!(descriptions["files"].contains("Discover repository paths"));
     assert!(descriptions["files"].contains("Next: use outline or read"));
+    assert!(descriptions["search"].starts_with("Preferred over native grep or rg"));
     assert!(descriptions["search"].contains("Search indexed source"));
     assert!(descriptions["search"].contains("enclosing_symbol"));
+    assert!(descriptions["outline"].starts_with("Preferred before native whole-file reads"));
     assert!(descriptions["outline"].contains("without reading whole source files"));
     assert!(descriptions["outline"].contains("Next: pass"));
+    assert!(descriptions["read"].starts_with("Preferred over native Read, cat, head, or sed"));
     assert!(descriptions["read"].contains("expected_hash"));
     assert!(descriptions["read"].contains("truncated reads"));
+    assert!(descriptions["history"].starts_with("Preferred over native git show, diff, or log -L"));
+    assert!(descriptions["json"].starts_with("Preferred over native jq or whole-file reads"));
+    assert!(descriptions["context"].starts_with("DEFAULT FIRST CALL"));
     assert!(descriptions["context"].contains("Build a bounded"));
     assert!(descriptions["context"].contains("plan_only previews"));
     assert!(descriptions["savings"].contains("unobserved task outcomes"));
     assert!(descriptions["savings"].contains("not task-success claims"));
-    assert!(
-        descriptions
-            .values()
-            .all(|description| !description.contains("leantoken.search over grep or rg"))
-    );
-    assert!(
-        descriptions
-            .values()
-            .all(|description| !description.contains("DEFAULT FIRST CALL"))
-    );
     assert!(
         descriptions
             .values()
@@ -1772,10 +1780,7 @@ fn receipt_rebase_maps_explicit_exact_only_controls() {
     assert_eq!(request.receipt_id, "r0000000000000001");
     assert_eq!(request.max_samples_per_outcome, Some(0));
     assert_eq!(consistency, IndexConsistency::ReconcileWorkingTree);
-    assert_eq!(
-        options.max_response_tokens(),
-        Some(1_000 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
-    );
+    assert_eq!(options.max_response_tokens(), Some(1_000));
     assert_eq!(expected_repository_id.as_deref(), Some("repository"));
 
     let oversized = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
@@ -1854,10 +1859,7 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("batched history limits");
     let (call, options, _) = request.into_parts().expect("batched history parts");
-    assert_eq!(
-        options.max_response_tokens(),
-        Some(900 - RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS)
-    );
+    assert_eq!(options.max_response_tokens(), Some(900));
     let HistoryMcpCall::DiffSymbols(request) = call else {
         panic!("expected batched-symbol history call");
     };

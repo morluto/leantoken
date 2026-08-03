@@ -82,7 +82,7 @@ fn usage_guide_tracks_runtime_cli_surface() {
     assert_eq!(documented_commands, runtime_commands);
 
     for argument in command.get_arguments() {
-        if matches!(argument.get_id().as_str(), "help" | "version") {
+        if argument.is_hide_set() || matches!(argument.get_id().as_str(), "help" | "version") {
             continue;
         }
         if let Some(long) = argument.get_long() {
@@ -694,17 +694,16 @@ fn cli_context_request() {
         "--test-intent",
         "owner regression",
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
-        panic!("expected context request");
-    };
-    let leantoken::cli::ContextAppRequest {
+    let AppRequest::Context {
         request,
         workflow,
         workflow_evidence,
         handoff,
         max_response_tokens,
         response_profile,
-    } = *context;
+    } = cli.app_request() else {
+        panic!("expected context request");
+    };
     assert!(handoff.is_none());
     assert_eq!(workflow, ContextWorkflow::Contribution);
     assert_eq!(workflow_evidence.failure_traces, vec!["error[E0001]"]);
@@ -750,11 +749,9 @@ fn cli_context_parses_required_evidence_json() {
         "--required-evidence",
         r#"{"path":"paper/**","queries":["failure boundary","disclosure"],"minimum_query_matches":2}"#,
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
+    let AppRequest::Context { request, .. } = cli.app_request() else {
         panic!("expected context request");
     };
-    let request = context.request;
-
     assert_eq!(request.required_evidence.len(), 1);
     assert_eq!(request.required_evidence[0].path, "paper/**");
     assert_eq!(
@@ -771,10 +768,9 @@ fn cli_context_requires_task_and_defaults_budget() {
 
     let no_budget = Cli::try_parse_from(["leantoken", "context", "--task", "x"]);
     assert!(no_budget.is_ok());
-    let AppRequest::Context(context) = no_budget.expect("default budget").app_request() else {
+    let AppRequest::Context { request, .. } = no_budget.expect("default budget").app_request() else {
         panic!("expected context request");
     };
-    let request = context.request;
     assert_eq!(request.token_budget, 3_000);
 }
 
@@ -788,10 +784,9 @@ fn cli_context_maps_opt_in_handoff_summary() {
         "--handoff-summary",
         "bounded executor state",
     ]);
-    let AppRequest::Context(context) = cli.app_request() else {
+    let AppRequest::Context { handoff, .. } = cli.app_request() else {
         panic!("expected context request");
     };
-    let handoff = context.handoff;
     assert_eq!(
         handoff.expect("handoff").summary.as_deref(),
         Some("bounded executor state")
@@ -944,6 +939,7 @@ fn cli_setup_and_remove_select_clients() {
     assert!(request.yes);
     assert!(!request.dry_run);
     assert!(!request.allow_outdated);
+    assert!(!request.force_unmanaged);
 
     let cli = parse(&["remove", "--all", "-y"]);
     let AppRequest::Remove(request) = cli.app_request() else {
@@ -975,26 +971,45 @@ fn cli_setup_and_remove_select_clients() {
         panic!("expected setup request");
     };
     assert!(request.allow_outdated);
+
+    let AppRequest::Setup(request) =
+        parse(&["setup", "--opencode", "--yes", "--force-unmanaged"]).app_request()
+    else {
+        panic!("expected setup request");
+    };
+    assert_eq!(request.clients, vec![SetupClient::OpenCode]);
+    assert!(request.force_unmanaged);
 }
 
 #[test]
 fn cli_doctor_selects_executable_readiness_diagnostic() {
     let cli = parse(&["doctor"]);
-    let AppRequest::Doctor { ready_timeout } = cli.app_request() else {
+    let AppRequest::Doctor {
+        ready_timeout,
+        client,
+    } = cli.app_request()
+    else {
         panic!("expected doctor request");
     };
     assert_eq!(ready_timeout, std::time::Duration::from_secs(120));
+    assert_eq!(client, None);
 
-    let AppRequest::Doctor { ready_timeout } = parse(&[
+    let AppRequest::Doctor {
+        ready_timeout,
+        client,
+    } = parse(&[
         "doctor",
         "--ready-timeout-seconds",
         "240",
+        "--client",
+        "codex",
     ])
     .app_request()
     else {
         panic!("expected doctor request");
     };
     assert_eq!(ready_timeout, std::time::Duration::from_secs(240));
+    assert_eq!(client, Some(SetupClient::Codex));
 }
 
 #[test]
@@ -1131,6 +1146,40 @@ fn cli_cache_prune_resolves_without_repository_configuration() {
     assert!(incompatible.incompatible_with_current);
     assert!(incompatible.dry_run);
     assert!(!incompatible.yes);
+}
+
+#[test]
+fn cli_runtime_lifecycle_is_bounded_and_dry_run_by_default() {
+    assert!(matches!(
+        parse(&["runtime", "list"]).app_request(),
+        AppRequest::RuntimeList
+    ));
+
+    let AppRequest::RuntimePrune(defaults) = parse(&["runtime", "prune"]).app_request() else {
+        panic!("expected runtime prune request");
+    };
+    assert_eq!(defaults.keep_latest, 2);
+    assert!(defaults.dry_run);
+    assert!(!defaults.yes);
+
+    let AppRequest::RuntimePrune(apply) =
+        parse(&["runtime", "prune", "--keep-latest", "0", "--yes"]).app_request()
+    else {
+        panic!("expected runtime prune request");
+    };
+    assert_eq!(apply.keep_latest, 0);
+    assert!(!apply.dry_run);
+    assert!(apply.yes);
+    assert!(
+        Cli::try_parse_from([
+            "leantoken",
+            "runtime",
+            "prune",
+            "--keep-latest",
+            "65"
+        ])
+        .is_err()
+    );
 }
 
 #[test]

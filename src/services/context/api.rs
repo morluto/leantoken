@@ -121,7 +121,7 @@ impl Services {
     }
 
     /// Retrieve context with typed caller-observed workflow evidence.
-    pub async fn context_with_workflow_evidence_options_consistency_cancellable(
+    pub async fn context_with_workflow_options_consistency_cancellable(
         &self,
         params: ContextWorkflowOptions,
     ) -> Result<ContextResponse> {
@@ -143,6 +143,53 @@ impl Services {
             },
             RetrievalExecution::consistent(consistency, options, cancellation),
         )
+        .await
+    }
+
+    /// Retrieve context with workflow selection and serialized-response controls.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn context_with_options_workflow_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        handoff: Option<HandoffManifestRequest>,
+        workflow: ContextWorkflow,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        self.context_with_workflow_options_consistency_cancellable(ContextWorkflowOptions {
+            request,
+            handoff,
+            workflow,
+            workflow_evidence: WorkflowEvidence::default(),
+            consistency,
+            options,
+            cancellation,
+        })
+        .await
+    }
+
+    /// Retrieve context with caller-observed workflow evidence and explicit controls.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn context_with_workflow_evidence_options_consistency_cancellable(
+        &self,
+        request: ContextRequest,
+        handoff: Option<HandoffManifestRequest>,
+        workflow: ContextWorkflow,
+        workflow_evidence: WorkflowEvidence,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ContextResponse> {
+        self.context_with_workflow_options_consistency_cancellable(ContextWorkflowOptions {
+            request,
+            handoff,
+            workflow,
+            workflow_evidence,
+            consistency,
+            options,
+            cancellation,
+        })
         .await
     }
 

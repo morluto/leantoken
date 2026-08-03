@@ -15,13 +15,22 @@ pub(super) struct PlannedDiscoveryEdit {
     pub(super) updated: Option<String>,
 }
 
+#[derive(Debug)]
+pub(super) struct PlannedConfigurationSnapshot {
+    pub(super) path: PathBuf,
+    pub(super) original: Option<String>,
+}
+
 pub(super) struct PlanEnvironment<'a> {
     pub(super) detected: &'a [SetupClient],
     pub(super) home: &'a Path,
     pub(super) launcher: &'a McpLauncher,
     pub(super) persistent_cli: bool,
     pub(super) runtime: Option<RuntimeInstallPlan>,
-    pub(super) manage_discovery: bool,
+    pub(super) discovery_paths: Vec<PathBuf>,
+    pub(super) discovery_cleanup_paths: Vec<PathBuf>,
+    pub(super) configuration_snapshots: Vec<PlannedConfigurationSnapshot>,
+    pub(super) force_unmanaged: bool,
     pub(super) transaction_root: &'a Path,
 }
 
@@ -40,14 +49,39 @@ pub(super) fn resolve_plan(
                 environment.detected,
                 environment.home,
                 environment.launcher,
+                &environment.configuration_snapshots,
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let discovery_edits = if environment.manage_discovery {
-        resolve_discovery_edits(operation, environment.home, Some(environment.launcher))?
-    } else {
-        Vec::new()
-    };
+    for edit in &edits {
+        validate_client_edit_ownership(
+            operation,
+            edit,
+            environment.home,
+            environment.launcher,
+            environment.force_unmanaged,
+        )?;
+        if let Some(updated) = &edit.updated {
+            validate_setup_content_size(&edit.public.path, updated)?;
+        }
+    }
+    let mut discovery_edits = resolve_discovery_edits(
+        operation,
+        &environment.discovery_paths,
+        Some(environment.launcher),
+    )?;
+    if operation == SetupOperation::Setup {
+        let cleanup = resolve_discovery_edits(
+            SetupOperation::Remove,
+            &environment.discovery_cleanup_paths,
+            None,
+        )?;
+        discovery_edits.extend(
+            cleanup
+                .into_iter()
+                .filter(|edit| edit.public.action == ClientPlanAction::Remove),
+        );
+    }
     let launcher = (operation == SetupOperation::Setup)
         .then(|| launcher_plan(environment.launcher, environment.runtime.as_ref()))
         .transpose()?;
@@ -58,8 +92,36 @@ pub(super) fn resolve_plan(
         runtime: environment.runtime,
         edits,
         discovery_edits,
+        configuration_snapshots: environment.configuration_snapshots,
+        ownership_override: environment.force_unmanaged,
         transaction_root: environment.transaction_root.to_path_buf(),
     })
+}
+
+pub(super) fn validate_client_edit_ownership(
+    operation: SetupOperation,
+    edit: &PlannedClientEdit,
+    home: &Path,
+    launcher: &McpLauncher,
+    force_unmanaged: bool,
+) -> Result<()> {
+    let definition = edit.public.client.definition_at(edit.public.path.clone());
+    if let Some(registration) = configured_registration_from_definition(
+        edit.public.client,
+        home,
+        launcher,
+        &definition,
+        edit.original.as_deref(),
+    )? && !registration.managed
+        && !force_unmanaged
+    {
+        return Err(Error::SetupFailure(format!(
+            "refusing to {} unmanaged LeanToken entry in {}; review it, then preview the override with --force-unmanaged --dry-run",
+            operation.action(),
+            registration.path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn launcher_plan(
@@ -79,50 +141,48 @@ pub(super) fn launcher_plan(
 
 pub(super) fn resolve_discovery_edits(
     operation: SetupOperation,
-    home: &Path,
+    paths: &[PathBuf],
     launcher: Option<&McpLauncher>,
 ) -> Result<Vec<PlannedDiscoveryEdit>> {
     let content = launcher.map(discovery_skill).transpose()?;
-    [
-        home.join(".agents/skills/leantoken/SKILL.md"),
-        home.join(".claude/skills/leantoken/SKILL.md"),
-    ]
-    .into_iter()
-    .map(|path| {
-        let original = read_optional(&path)?;
-        let owned = original
-            .as_deref()
-            .is_some_and(|value| value.contains(DISCOVERY_SKILL_MARKER));
-        let (action, updated) = match operation {
-            SetupOperation::Setup => {
-                if original.as_deref() == content.as_deref() {
-                    (ClientPlanAction::AlreadyCurrent, None)
-                } else if original.is_none() || owned {
-                    (
-                        if original.is_none() {
-                            ClientPlanAction::Create
-                        } else {
-                            ClientPlanAction::Update
-                        },
-                        content.clone(),
-                    )
-                } else {
-                    return Err(Error::SetupFailure(format!(
-                        "refusing to overwrite unowned discovery skill {}",
-                        path.display()
-                    )));
+    paths
+        .iter()
+        .cloned()
+        .map(|path| {
+            let original = read_optional(&path)?;
+            let owned = original
+                .as_deref()
+                .is_some_and(|value| value.contains(DISCOVERY_SKILL_MARKER));
+            let (action, updated) = match operation {
+                SetupOperation::Setup => {
+                    if original.as_deref() == content.as_deref() {
+                        (ClientPlanAction::AlreadyCurrent, None)
+                    } else if original.is_none() || owned {
+                        (
+                            if original.is_none() {
+                                ClientPlanAction::Create
+                            } else {
+                                ClientPlanAction::Update
+                            },
+                            content.clone(),
+                        )
+                    } else {
+                        return Err(Error::SetupFailure(format!(
+                            "refusing to overwrite unowned discovery skill {}",
+                            path.display()
+                        )));
+                    }
                 }
-            }
-            SetupOperation::Remove if owned => (ClientPlanAction::Remove, Some(String::new())),
-            SetupOperation::Remove => (ClientPlanAction::NotConfigured, None),
-        };
-        Ok(PlannedDiscoveryEdit {
-            public: DiscoverySetupPlan { path, action },
-            original,
-            updated,
+                SetupOperation::Remove if owned => (ClientPlanAction::Remove, Some(String::new())),
+                SetupOperation::Remove => (ClientPlanAction::NotConfigured, None),
+            };
+            Ok(PlannedDiscoveryEdit {
+                public: DiscoverySetupPlan { path, action },
+                original,
+                updated,
+            })
         })
-    })
-    .collect()
+        .collect()
 }
 
 pub(super) fn discovery_skill(launcher: &McpLauncher) -> Result<String> {
@@ -138,13 +198,28 @@ pub(super) fn resolve_client_edit(
     detected: &[SetupClient],
     home: &Path,
     launcher: &McpLauncher,
+    configuration_snapshots: &[PlannedConfigurationSnapshot],
 ) -> Result<PlannedClientEdit> {
-    let definition = client.definition(home);
+    let definition = client_definition_from_snapshots(client, home, configuration_snapshots);
+    let original = match configuration_snapshots
+        .iter()
+        .find(|snapshot| snapshot.path == definition.path)
+    {
+        Some(snapshot) => snapshot.original.clone(),
+        None => read_optional(&definition.path)?,
+    };
     let (status, original, updated) = match definition.format {
-        ConfigFormat::Json { section, shape } => {
-            resolve_json_edit(operation, &definition.path, section, shape, launcher)?
+        ConfigFormat::Json { section, shape } => resolve_json_edit_from_source(
+            operation,
+            &definition.path,
+            section,
+            shape,
+            launcher,
+            original,
+        )?,
+        ConfigFormat::Toml => {
+            resolve_toml_edit_from_source(operation, &definition.path, launcher, original)?
         }
-        ConfigFormat::Toml => resolve_toml_edit(operation, &definition.path, launcher)?,
     };
     let action = match status {
         EditStatus::Configured if original.is_none() => ClientPlanAction::Create,

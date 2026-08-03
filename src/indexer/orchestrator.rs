@@ -268,8 +268,12 @@ impl Indexer {
             rebuild,
             profiling == StorageProfiling::Collect,
         )?;
+        const MAX_INITIAL_REMOVALS_PER_STAGE: usize = 256;
         for path in &removed_paths {
             staged.stage_removal(path.clone());
+            if staged.pending_removals() >= MAX_INITIAL_REMOVALS_PER_STAGE {
+                staged.flush()?;
+            }
         }
         let preparation = self.prepare_candidate_batches_with_progress(
             &candidates,

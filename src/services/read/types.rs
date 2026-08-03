@@ -68,6 +68,7 @@ pub(super) struct ResolvedReadTarget {
     pub(super) page_start_line: usize,
     pub(super) page_start_byte: usize,
     pub(super) expected_full_hash: Option<String>,
+    pub(super) expected_prefix_hash: Option<String>,
     pub(super) expected_file_size: Option<usize>,
     pub(super) expected_modified_ns: Option<u128>,
     pub(super) cursor_full: bool,
@@ -112,6 +113,9 @@ pub(super) struct ReadCursor {
     pub(super) next_byte: usize,
     /// Full-file hash for `Full` policy cursors; `None` for `Bounded` cursors.
     pub(super) full_hash: Option<String>,
+    /// Hash of the requested target prefix through `next_byte` for bounded
+    /// cursors. Size and mtime alone can miss same-size, same-timestamp edits.
+    pub(super) prefix_hash: Option<String>,
     pub(super) full: bool,
     pub(super) file_size: usize,
     pub(super) modified_ns: Option<u128>,

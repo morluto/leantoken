@@ -777,7 +777,9 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
                 cursor: None,
             },
             ServiceCallOptions::new()
-                .with_max_response_tokens(compact_search.meta.total_response_tokens),
+                // The service response metadata excludes the adapter-only receipt
+                // resource link; leave the documented reserve for that final wire field.
+                .with_max_response_tokens(compact_search.meta.total_response_tokens + 128),
         )
         .await
         .expect("exact grouped response bound");

@@ -122,7 +122,10 @@ clock validation, decisions, append, counters, expiry, and quota eviction.
 The process-local writer mutex and SQLite's database writer lock therefore make
 two processes using one receipt observe a serial order: a duplicate concurrent
 call is returned once and suppressed by the follower, and distinct appends
-cannot lose one another. A receipt remains bound to the generation of the read
+cannot lose one another. Live wall-clock time is sampled only after the
+`IMMEDIATE` transaction acquires that writer order, preventing an older queued
+sample from looking like clock rollback after a newer request commits. A
+receipt remains bound to the generation of the read
 snapshot that produced it even if a newer generation publishes before the
 receipt transaction. A later request on the new generation fails with
 `StaleReceipt`; it never silently creates a new session.
@@ -310,6 +313,13 @@ make the file-backed design a measured memory-and-lock experiment: it is
 retained only when representative profiles show the required transaction-hold
 improvement without a material total-time, RSS, database-size, or
 write-amplification regression.
+
+Reconciliation removal staging is streamed in 256-path initial batches; the
+SQLite stage owns pending removal rows instead of retaining a second
+repository-sized path collection in Rust. CI changed-path input is capped at
+16 MiB and 100,000 paths before topology matching. Bounded live-read cursors
+also carry a fingerprint of the requested target prefix, so continuation
+cannot rely on size and timestamp metadata when a file is replaced in place.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
@@ -559,7 +569,82 @@ read, and the bounded first-retrieval workflow. Repository readiness is capped
 at 30 seconds; fixed per-response doctor deadlines remain 10 seconds. Dropping
 the transport closes stdin and reaps or kills the child, and dropping the
 temporary directory removes its database and source. Setup never fans this
-verification out per configured client.
+verification out per configured client. Before reporting verification success,
+setup revalidates every applied client configuration against its planned
+post-transaction snapshot so a host rewrite during the probe fails closed.
+
+Configured-client doctor probes read at most one 8 MiB host configuration,
+retain only its 32-byte content digest, and require the post-probe diagnostic
+snapshot to contain the same client, path, and digest before reporting success.
+The initialize response deadline remains capped at 10 seconds and is reduced to
+the configured positive Codex `startup_timeout_sec` when that value is smaller;
+clients without an exposed startup timeout retain the 10-second bound.
+Malformed, unreadable, oversized, missing, changed, and explicitly disabled
+selected registrations fail at the registration stage. A release inferred from
+the configured launcher is matched exactly. Known rollback releases use their
+release-specific fingerprint marker, workflow guidance, and exact tool catalog;
+the complete published schema-marker era is `0.1.17` through `0.1.19`. Other
+semantic releases must carry the contract marker, expose unique tool names, and retain
+the eight retrieval and inspection tools named by installed discovery guidance.
+Launchers without an inferable pin may report any release satisfying that same
+bounded compatibility check. Doctor forwards a user-explicit SQLite path, but
+does not turn an implicit versioned managed cache into an explicit path for a
+differently pinned child. The child working directory is the canonical requested
+repository root, so workspace-relative configured commands are exercised with
+the same cwd contract used by supported hosts; path-bearing relative commands
+are resolved against that root before spawn for consistent Windows behavior.
+Each child stdout protocol record
+is limited to 8 MiB before UTF-8 or JSON parsing, and at most four parsed records
+are queued between the stdout reader and doctor consumer. A full queue backpressures the child,
+bounding queued protocol content to 32 MiB; an over-limit unterminated record
+terminates the probe without unbounded allocation.
+
+Private-runtime inventory is repository-free and bounded to 512 entries below
+the application runtime root and eight entries within any recognized semantic
+version directory. Setup and inventory reads are capped at 8 MiB per client
+configuration or discovery file before parsing, and generated replacements are
+validated against that same bound before a plan can apply. Planning retains at
+most nine bounded configuration snapshots: one for five fixed-path clients and
+all four precedence-ordered OpenCode candidates (72 MiB in total). OpenCode
+precedence, registration ownership, and selected edits are derived only from
+that one complete snapshot set, and every candidate is revalidated before any
+client edit, discovery cleanup, or runtime-reference prune decision applies.
+Transaction-wide apply errors remain explicit even
+for plans containing only discovery cleanup and no client-result rows. The
+recovery journal has a
+separate 256 MiB aggregate read and write cap so it can retain up to six
+individually bounded client originals plus both legacy discovery originals
+after JSON escaping. Listing reads at most six configured host registrations
+once to attach canonicalized references. Applied pruning retains the same six
+bounded configuration snapshots and revalidates them immediately before every
+deletion. If a snapshot changes after an earlier deletion, the partial report
+retains every completed decision and the exact remaining-byte count, exposes a
+transaction-wide apply error, and stops before the next deletion. Pruning
+defaults to a non-mutating plan, rejects a symlinked or
+non-directory runtime root before locking, inventory, and each applied
+deletion, serializes applied deletion with setup, retains the active executable
+and every referenced runtime, and deletes only a version directory whose exact
+contents are its one expected native executable. Private installation applies
+the same runtime-root validation. A successful new install retains its pinned
+runtime-root and version-directory handles until the setup transaction commits;
+rollback revalidates both ambient identities and unlinks only through the pinned
+version handle. A retry removes only exact setup staging names
+within the existing eight-entry version-directory bound before accepting an
+already-published executable, so an interrupted staging cleanup cannot make the
+runtime permanently unprunable. Applied deletion compares the current runtime
+root path with the pinned root-handle identity before every removal,
+snapshot-matches the version directory handle, then unlinks the executable
+relative to that handle so a concurrent path swap cannot redirect deletion.
+The setup lock owns the same root handle used for every applied deletion, so
+serialization and mutation cannot be redirected to separate runtime roots. At
+most one version handle is open at a time.
+If unlinking succeeds but a concurrent directory change prevents the final
+directory removal, the report uses a distinct partial-removal action, subtracts
+the removed executable bytes, and returns the cleanup error. Unknown root
+entries, malformed client configuration, unexpected directory contents, and
+interrupted setup journals fail closed or remain untouched. The retention
+request is capped at 64 versions.
+
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable
 without periodic retries. A restart with a narrower root or adjusted limits is
@@ -1373,6 +1458,12 @@ encodings use `tiktoken-rs` singleton vocabularies; the explicit estimate mode
 is marked inexact. Protocol-cost benchmarks serialize the actual tool catalog,
 JSON-RPC requests and responses, result wrappers, and repeated-context handoff
 instead of adding a guessed fixed overhead.
+
+MCP retrieval tools carry concise routing cues in their individual descriptions
+as well as shared initialization instructions. This preserves a standalone
+preference signal when a host ranks tools without using those instructions. A
+catalog test caps aggregate description text at 5,000 bytes so the redundant
+signal remains bounded in recurring prompt cost.
 
 ## Path and data safety
 
