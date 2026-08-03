@@ -34,27 +34,9 @@ use live::*;
 use types::*;
 pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 
-fn normalize_read_request(mut request: ReadRequest) -> Result<ReadRequest> {
-    if let Some(symbol) = request.symbol.take() {
-        let symbol = symbol.trim().to_owned();
-        if symbol.is_empty() {
-            return Err(Error::InvalidInput {
-                field: "symbol",
-                reason: "must not be empty",
-            });
-        }
-        request.symbol = Some(symbol);
-    }
-    Ok(request)
-}
-
 pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-    if request
-        .symbol
-        .as_deref()
-        .is_some_and(|symbol| symbol.trim().is_empty())
-    {
+    if request.symbol.as_deref().is_some_and(str::is_empty) {
         return Err(Error::InvalidInput {
             field: "symbol",
             reason: "must not be empty",
@@ -214,7 +196,6 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let request = self.observe_service_result(operation, normalize_read_request(request))?;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
@@ -249,7 +230,6 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
-        request = normalize_read_request(request)?;
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
@@ -295,19 +275,26 @@ impl Services {
         }
         let mut returned_items = usize::from(!response.not_modified);
         if let Some(limit) = options.max_response_tokens() {
-            let mut reserved =
-                self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+            let mut reserved = self.finalized_response_tokens_with_receipt_reserve(
+                &response,
+                returned_items,
+                options,
+            )?;
             if reserved > limit && request.delta {
                 response = direct_response;
                 returned_items = usize::from(!response.not_modified);
-                reserved =
-                    self.finalized_response_tokens_with_receipt_reserve(&response, returned_items)?;
+                reserved = self.finalized_response_tokens_with_receipt_reserve(
+                    &response,
+                    returned_items,
+                    options,
+                )?;
             }
             if reserved > limit {
                 return Err(self.response_budget_error_with_receipt_reserve(
                     &response,
                     returned_items,
                     limit,
+                    options,
                 )?);
             }
         }
@@ -399,7 +386,11 @@ impl Services {
             let candidate =
                 self.read_at_generation(session, request, generation, candidate_limit)?;
             let returned_items = usize::from(!candidate.response.not_modified);
-            self.finalized_response_tokens_with_receipt_reserve(&candidate.response, returned_items)
+            self.finalized_response_tokens_with_receipt_reserve(
+                &candidate.response,
+                returned_items,
+                options,
+            )
         })?;
         if let Some(candidate_limit) = keep.filter(|keep| *keep > 0) {
             return self.read_at_generation(session, request, generation, candidate_limit);
@@ -410,6 +401,7 @@ impl Services {
             &minimum.response,
             usize::from(!minimum.response.not_modified),
             max_response_tokens,
+            options,
         )?)
     }
 
@@ -456,6 +448,17 @@ impl Services {
         {
             return Err(Error::StaleCursor);
         }
+        if let Some(expected) = target.expected_prefix_hash.as_deref() {
+            let actual = hash_live_range_prefix(
+                &file,
+                target.target_start_line,
+                target.target_end_line,
+                target.page_start_byte,
+            )?;
+            if expected != actual {
+                return Err(Error::StaleCursor);
+            }
+        }
         let observed_target_end_line = target
             .target_end_line
             .unwrap_or(snapshot.end_line)
@@ -495,6 +498,16 @@ impl Services {
                 ));
             }
         }
+        let prefix_hash = (truncated && !full)
+            .then(|| {
+                hash_live_range_prefix(
+                    &file,
+                    target.target_start_line,
+                    target.target_end_line,
+                    next_byte,
+                )
+            })
+            .transpose()?;
         let continuation_cursor = next_start_line.map(|next_start_line| {
             ReadCursor {
                 generation,
@@ -503,6 +516,7 @@ impl Services {
                 next_start_line,
                 next_byte,
                 full_hash: snapshot.content_hash.clone(),
+                prefix_hash: prefix_hash.clone(),
                 full,
                 file_size: snapshot.file_size,
                 modified_ns: snapshot.modified_ns,
@@ -634,43 +648,5 @@ mod tests {
             Some(hash("first\nsecond\n").as_str())
         );
         assert_eq!(snapshot.end_line, 2);
-    }
-
-    fn read_request_with_symbol(symbol: &str) -> ReadRequest {
-        ReadRequest {
-            path: "lib.rs".into(),
-            start_line: None,
-            end_line: None,
-            symbol: Some(symbol.into()),
-            heading: None,
-            heading_occurrence: None,
-            continuation_cursor: None,
-            max_tokens: None,
-            expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: ReadPolicy::default(),
-        }
-    }
-
-    #[test]
-    fn read_symbol_normalization_trims_edges_before_lookup() {
-        let request =
-            normalize_read_request(read_request_with_symbol("  Services.handle_request \n"))
-                .expect("trimmed symbol");
-        assert_eq!(request.symbol.as_deref(), Some("Services.handle_request"));
-    }
-
-    #[test]
-    fn read_symbol_validation_rejects_whitespace_only_values() {
-        let error = validate_read_input(&read_request_with_symbol(" \t\n"))
-            .expect_err("whitespace-only symbol");
-        assert!(matches!(
-            error,
-            Error::InvalidInput {
-                field: "symbol",
-                reason: "must not be empty"
-            }
-        ));
     }
 }

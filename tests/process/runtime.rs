@@ -77,7 +77,10 @@ pub(super) fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
     assert_eq!(report["launcher"]["may_contact_network"], false);
     assert_eq!(report["launcher"]["command"], executable.to_str().unwrap());
-    assert_eq!(report["launcher"]["args"], serde_json::json!(["mcp"]));
+    assert_eq!(
+        report["launcher"]["args"],
+        serde_json::json!(["--managed-by-setup", "mcp"])
+    );
 
     let config: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(temp.path().join(".claude.json")).expect("Claude configuration"),
@@ -89,7 +92,7 @@ pub(super) fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     );
     assert_eq!(
         config["mcpServers"]["leantoken"]["args"],
-        serde_json::json!(["mcp"])
+        serde_json::json!(["--managed-by-setup", "mcp"])
     );
 }
 
@@ -172,7 +175,7 @@ pub(super) fn private_runtime_setup_installs_and_registers_the_verified_native_b
     assert!(runtime_path.exists());
     assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
     assert_eq!(report["launcher"]["may_contact_network"], false);
-    assert_eq!(report["discovery_plan"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["discovery_plan"].as_array().map(Vec::len), Some(1));
 
     let version = Command::new(&runtime_path)
         .arg("--version")
@@ -253,8 +256,10 @@ pub(super) fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
-    assert!(stdout.contains("✓ Launcher verification: MCP ready"));
-    assert!(stdout.contains("Verify from a repository: leantoken doctor"));
+    assert!(stdout.contains("✓ Exact launcher verified: initialize, 9-tool catalog"));
+    assert!(stdout.contains(
+        "Verify the stored Codex launcher from a repository: leantoken doctor --client codex"
+    ));
     assert!(stdout.contains("Update later with: leantoken upgrade"));
     assert!(!stdout.contains("Some selected clients failed"));
     assert!(!stdout.contains("Launcher verification failed"));
