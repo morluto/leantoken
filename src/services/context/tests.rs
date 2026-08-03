@@ -38,6 +38,10 @@ fn revision_ranges_require_two_explicit_endpoints() {
         Some(("main~1", "main"))
     );
     assert_eq!(
+        parse_revision_range(" main~1 .. main ").expect("trimmed range"),
+        Some(("main~1", "main"))
+    );
+    assert_eq!(
         parse_revision_range("origin/main").expect("single revision"),
         None
     );

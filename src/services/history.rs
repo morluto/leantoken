@@ -125,7 +125,7 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
         } => HistoryOperation::ReadSymbol {
             path: normalize_relative(&path)?,
             symbol,
-            revision,
+            revision: normalize_revision(revision, "revision")?,
         },
         HistoryOperation::DiffSymbol {
             path,
@@ -135,8 +135,8 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
         } => HistoryOperation::DiffSymbol {
             path: normalize_relative(&path)?,
             symbol,
-            base_revision,
-            head_revision,
+            base_revision: normalize_revision(base_revision, "base revision")?,
+            head_revision: normalize_revision(head_revision, "head revision")?,
         },
         HistoryOperation::SymbolLog {
             path,
@@ -145,9 +145,22 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
         } => HistoryOperation::SymbolLog {
             path: normalize_relative(&path)?,
             symbol,
-            revision,
+            revision: revision
+                .map(|value| normalize_revision(value, "revision"))
+                .transpose()?,
         },
     })
+}
+
+fn normalize_revision(revision: String, field: &'static str) -> Result<String> {
+    let revision = revision.trim();
+    if revision.is_empty() {
+        return Err(Error::InvalidInput {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    Ok(revision.to_owned())
 }
 
 fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
@@ -203,6 +216,8 @@ fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
 }
 
 fn normalize_diff_symbols_request(mut request: DiffSymbolsRequest) -> Result<DiffSymbolsRequest> {
+    request.base_revision = normalize_revision(request.base_revision, "base revision")?;
+    request.head_revision = normalize_revision(request.head_revision, "head revision")?;
     let mut seen = BTreeSet::new();
     for target in &mut request.targets {
         target.path = normalize_relative(&target.path)?;
@@ -588,7 +603,7 @@ impl Services {
             .min(MAX_DIFF_SYMBOL_RESULTS);
         let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
         let request = normalize_diff_symbols_request(request)?;
-        let generation = self.consistent(|_, generation| Ok(generation))?;
+        let generation = self.consistent(|session| Ok(session.generation()))?;
         let revisions = git_diff_identity(
             &self.config.root,
             &request.base_revision,
@@ -903,7 +918,7 @@ impl Services {
         let max_results = request.max_results.unwrap_or(DEFAULT_HISTORY_RESULTS);
         let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
         let operation = normalize_operation(request.operation)?;
-        let generation = self.consistent(|_, generation| Ok(generation))?;
+        let generation = self.consistent(|session| Ok(session.generation()))?;
         let mut response = match operation {
             HistoryOperation::ReadSymbol {
                 path,
@@ -1414,4 +1429,30 @@ impl Services {
 
 fn returned_end_line(start_line: usize, content: &str) -> usize {
     start_line.saturating_add(content.lines().count().saturating_sub(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalized_history_revisions_are_trimmed_before_git_resolution() {
+        let operation = normalize_operation(HistoryOperation::DiffSymbol {
+            path: "src/lib.rs".into(),
+            symbol: "Config".into(),
+            base_revision: " HEAD~1 ".into(),
+            head_revision: " HEAD ".into(),
+        })
+        .expect("revision normalization");
+
+        assert_eq!(
+            operation,
+            HistoryOperation::DiffSymbol {
+                path: "src/lib.rs".into(),
+                symbol: "Config".into(),
+                base_revision: "HEAD~1".into(),
+                head_revision: "HEAD".into(),
+            }
+        );
+    }
 }

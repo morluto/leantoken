@@ -13,7 +13,7 @@ pub(super) fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)
             reason: "revision range must be BASE..HEAD",
         });
     }
-    Ok(Some((base, head)))
+    Ok(Some((base.trim(), head.trim())))
 }
 
 #[derive(Clone, Copy)]

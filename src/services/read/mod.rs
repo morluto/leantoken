@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
+use super::index_read::IndexReadSnapshot;
 use super::read_delta::ReadDeltaInput;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
@@ -15,7 +16,6 @@ use super::validation::{
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{normalize_relative, resolve_existing, validate_relative};
-use crate::storage::ReadSession;
 use crate::text::{anchored_line_window, hash};
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
@@ -233,7 +233,8 @@ impl Services {
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let materialized = self.consistent(|session, generation| {
+        let materialized = self.consistent(|session| {
+            let generation = session.generation();
             check_cancelled(cancellation)?;
             self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
         })?;
@@ -324,7 +325,6 @@ impl Services {
             response.status = ReadStatus::ReceiptSuppressed;
             response.not_modified = false;
             response.meta.source_tokens = 0;
-            response.meta.source_tokens = 0;
             if let Some(delta_receipt) = response.delta_receipt.as_mut() {
                 delta_receipt.outcome = ReadDeltaOutcome::ReceiptSuppressed;
                 delta_receipt.delta_tokens = Some(0);
@@ -361,7 +361,7 @@ impl Services {
 
     fn read_at_generation_with_options(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &ReadRequest,
         generation: u64,
         max_tokens: usize,
@@ -407,7 +407,7 @@ impl Services {
 
     fn read_at_generation(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &ReadRequest,
         generation: u64,
         max_tokens: usize,
@@ -596,7 +596,6 @@ pub(super) fn prefer_full_if_delta_payload_not_smaller(
     full.status = ReadStatus::Content;
     full.content = Some(current_content.to_owned());
     full.delta = None;
-    full.meta.source_tokens = current_tokens;
     full.meta.source_tokens = current_tokens;
     if let Some(receipt) = full.delta_receipt.as_mut() {
         receipt.outcome = ReadDeltaOutcome::Full;

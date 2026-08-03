@@ -10,13 +10,13 @@ use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
+use super::index_read::{FilePathRecord, IndexReadSnapshot};
 use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{slash_path, validate_relative};
-use crate::storage::{FilePathRecord, ReadSession};
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
@@ -63,7 +63,7 @@ impl FileCursor {
 }
 
 fn tree_entries(
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     root: Option<&str>,
     depth: Option<usize>,
     cursor: Option<FileCursor>,
@@ -113,7 +113,7 @@ fn normalize_tree_root(root: Option<&str>) -> Result<String> {
 }
 
 fn fuzzy_entries(
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     query: Option<&str>,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -179,7 +179,7 @@ fn fuzzy_entries(
 }
 
 fn glob_entries(
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     pattern: Option<&str>,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -304,7 +304,7 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
             request
                 .query
                 .as_deref()
-                .filter(|value| !value.is_empty())
+                .filter(|value| !value.trim().is_empty())
                 .ok_or(Error::InvalidInput {
                     field: "query",
                     reason: "is required for find",
@@ -327,7 +327,7 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
 }
 
 fn for_each_file_path(
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     cancellation: &CancellationToken,
     mut visitor: impl FnMut(FilePathRecord) -> Result<()>,
 ) -> Result<()> {
@@ -651,7 +651,8 @@ impl Services {
         check_cancelled(cancellation)?;
         validate_files_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
-        let mut response = self.consistent(|session, generation| {
+        let mut response = self.consistent(|session| {
+            let generation = session.generation();
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
             let operation = request.operation.clone();
@@ -700,7 +701,8 @@ impl Services {
         check_cancelled(cancellation)?;
         validate_files_input(&request)?;
         let limit = self.result_limit(request.max_results)?;
-        let mut response = self.consistent(|session, generation| {
+        let mut response = self.consistent(|session| {
+            let generation = session.generation();
             let cursor =
                 parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
             let operation = request.operation.clone();

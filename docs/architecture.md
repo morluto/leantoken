@@ -37,6 +37,11 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   cancellation, deadline, and response-profile policies, while the `Services`
   façade composes those policies without duplicating accounting or telemetry
   writes.
+- The retrieval services consume the storage-owned `IndexSnapshot` capability
+  (re-exported locally as `IndexReadSnapshot`), which owns the pinned generation
+  and hides the storage transaction handle. Storage remains responsible for the
+  SQLite `ReadSession` implementation; service modules cannot accidentally
+  separate the snapshot lifetime from the generation they report.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Structured is the

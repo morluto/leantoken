@@ -87,6 +87,7 @@ impl Services {
         startup_timeout: Option<Duration>,
         cache_lease: CacheLease,
     ) -> Result<Self> {
+        reject_symlinked_managed_database_artifacts(config)?;
         let open_storage = || match startup_timeout {
             Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
                 &config.database_path,
@@ -142,6 +143,28 @@ impl Services {
             reconciliation,
         })
     }
+}
+
+fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
+    if !config.database_is_managed_cache {
+        return Ok(());
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut path = config.database_path.as_os_str().to_os_string();
+        path.push(suffix);
+        let path = std::path::PathBuf::from(path);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(Error::InvalidConfiguration(
+                "managed index database artifacts must not be symlinks".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn should_use_repository_cache_fallback(config: &Config, error: &Error) -> bool {
@@ -392,6 +415,29 @@ mod tests {
                 Error::InvalidConfiguration(_) | Error::PathOutsideRoot(_)
             ),
             "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external sentinel").expect("sentinel");
+        let link = root.path().join("index.sqlite");
+        symlink(target.path(), &link).expect("database symlink");
+
+        let mut config = Config::discover(root.path(), Some(link.clone())).expect("config");
+        config.database_path = link;
+        config.database_is_managed_cache = true;
+
+        let error = Services::open(config).expect_err("managed symlink must be rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external sentinel"
         );
     }
 }

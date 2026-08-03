@@ -237,7 +237,11 @@ impl Config {
         let database_is_managed_cache = database_path.is_none();
         let database_path =
             database_path.unwrap_or_else(|| default_database_path_for_scope(&root, &index_scope));
-        let database_path = canonicalize_database_path(database_path);
+        let database_path = if database_is_managed_cache {
+            canonicalize_managed_database_path(database_path)
+        } else {
+            canonicalize_database_path(database_path)
+        };
         let context_exclude_paths = load_context_exclude_paths(&root)?;
         Ok(Self {
             root,
@@ -519,6 +523,17 @@ fn canonicalize_database_path(path: PathBuf) -> PathBuf {
     }
 }
 
+fn canonicalize_managed_database_path(path: PathBuf) -> PathBuf {
+    let path = std::path::absolute(&path).unwrap_or(path);
+    let Some(database_name) = path.file_name() else {
+        return path;
+    };
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+    canonicalize_database_path(parent.to_path_buf()).join(database_name)
+}
+
 pub(crate) fn managed_cache_root() -> Option<PathBuf> {
     directories::ProjectDirs::from("dev", "LeanToken", "leantoken")
         .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
@@ -720,6 +735,23 @@ mod tests {
                     .join("index.sqlite")
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_path_preserves_a_final_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = root.path().join("target.sqlite");
+        let link = root.path().join("index.sqlite");
+        fs::write(&target, b"not sqlite").expect("target");
+        symlink(&target, &link).expect("database symlink");
+
+        assert_eq!(
+            canonicalize_managed_database_path(link),
+            std::path::absolute(root.path().join("index.sqlite")).expect("absolute path")
+        );
     }
 
     #[test]

@@ -4,10 +4,10 @@ use super::super::{
     ServiceCallOptions, Services,
     receipts::{ReceiptDecision, ReceiptEvidence},
 };
+use super::IndexReadSnapshot;
 use crate::{
     Error, Result,
     model::{ContextCoverageReceipt, ContextRequest, ContextResponse, ContextResponseProfile},
-    storage::ReadSession,
 };
 
 pub(super) fn effective_context_response_profile(
@@ -31,7 +31,7 @@ pub(super) fn effective_context_response_profile(
 }
 
 pub(super) struct ContextResponseFinalization<'a> {
-    pub(super) session: &'a ReadSession,
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) options: ServiceCallOptions,
     pub(super) generation: u64,

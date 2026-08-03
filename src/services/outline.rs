@@ -48,7 +48,7 @@ fn outline_signatures_request_class(
     }
 }
 
-fn storage_symbol(symbol: crate::storage::SymbolRecord) -> Symbol {
+fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     Symbol {
         name: symbol.name,
         kind: symbol.kind,
@@ -405,7 +405,8 @@ impl Services {
             .collect::<Result<Vec<_>>>()?;
         let limit = self.result_limit(request.max_results)?;
         let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let (mut response, baseline_source_tokens) = self.consistent(|session, generation| {
+        let (mut response, baseline_source_tokens) = self.consistent(|session| {
+            let generation = session.generation();
             let cursor_projection = (!include_imports).then_some("signatures");
             let offset = parse_outline_cursor(
                 request.cursor.as_deref(),

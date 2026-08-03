@@ -3,6 +3,7 @@ use std::io::Read;
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
+use super::index_read::IndexReadSnapshot;
 use super::read::open_live_file;
 use super::receipts::ReceiptEvidence;
 use super::validation::check_cancelled;
@@ -14,7 +15,6 @@ use crate::model::{
     TokenAccountingOperation, TokenSavingsRequestClass,
 };
 use crate::receipt::{MAX_REBASE_LIVE_BYTES, RECEIPT_ID_RESPONSE_RESERVE, ReceiptRebaseSource};
-use crate::storage::ReadSession;
 use crate::{Error, Result};
 
 #[derive(Debug)]
@@ -108,7 +108,8 @@ impl Services {
         let source = self
             .storage
             .load_receipt_rebase_source(&request.receipt_id)?;
-        let classification = self.consistent(|session, generation| {
+        let classification = self.consistent(|session| {
+            let generation = session.generation();
             if source.repository_generation >= generation {
                 return Err(Error::InvalidInput {
                     field: "receipt_id",
@@ -172,7 +173,7 @@ fn validate_rebase_request(request: &ReceiptRebaseRequest) -> Result<()> {
 
 fn classify_receipt(
     services: &Services,
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     generation: u64,
     source: &ReceiptRebaseSource,
     cancellation: &CancellationToken,

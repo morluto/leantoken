@@ -17,7 +17,7 @@ pub(super) struct CandidateBatch {
 
 #[derive(Clone, Copy)]
 pub(super) struct QueryCandidateExpansion<'a> {
-    pub(super) session: &'a ReadSession,
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) query: &'a ContextQuery,
     pub(super) path_filter: &'a PathFilter,
@@ -29,7 +29,7 @@ pub(super) struct QueryCandidateExpansion<'a> {
 }
 
 pub(super) struct ContextFinalization<'a> {
-    pub(super) session: &'a ReadSession,
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) scoped_request: &'a ContextRequest,
     pub(super) handoff: Option<&'a HandoffManifestRequest>,
@@ -311,7 +311,7 @@ pub(super) fn import_seed_paths(
 }
 
 pub(super) struct ImportExpansion<'a> {
-    pub(super) session: &'a ReadSession,
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) queries: &'a [ContextQuery],
     pub(super) terms: &'a [String],

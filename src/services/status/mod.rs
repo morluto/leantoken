@@ -52,7 +52,8 @@ impl Services {
     }
 
     fn status_sync(&self) -> Result<StatusResponse> {
-        self.consistent_allow_empty(|session, generation| {
+        self.consistent_allow_empty(|session| {
+            let generation = session.generation();
             let counts = session.counts()?;
             let freshness = self.freshness();
             let index_progress = self.initial_index_progress(generation, &freshness);

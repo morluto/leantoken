@@ -912,7 +912,10 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let session = services.storage.begin_read().expect("read session");
+    let generation = session
+        .repository_generation()
+        .expect("snapshot generation");
+    let session = crate::services::index_read::IndexReadSnapshot::new(session, generation);
     let bounded = services
         .adaptive_context_excerpt(
             &session,
@@ -1029,6 +1032,32 @@ async fn cancellable_service_stops_before_blocking_work() {
 }
 
 #[tokio::test]
+async fn files_find_rejects_whitespace_only_queries() {
+    let (_root, services) = indexed_services().await;
+
+    let error = services
+        .files(FilesRequest {
+            operation: FileOperation::Find,
+            path: None,
+            query: Some("   ".into()),
+            pattern: None,
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect_err("whitespace-only query must be rejected");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "query",
+            reason: "is required for find"
+        }
+    ));
+}
+
+#[tokio::test]
 async fn token_savings_uses_the_shared_blocking_executor() {
     let root = tempfile::tempdir().expect("root");
     let config =
@@ -1089,15 +1118,16 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
     // One snapshot assembly must report the generation pinned at open, even
     // if a concurrent publish advances the committed generation mid-request.
     let observed = services
-        .consistent(|session, generation| {
+        .consistent(|session| {
+            let generation = session.generation();
             assert_eq!(generation, first);
-            assert_eq!(session.repository_generation()?, first);
+            assert_eq!(session.generation(), first);
             services
                 .storage
                 .full_reconcile("hash-b", Vec::new())
                 .expect("concurrent publish");
             assert_eq!(
-                session.repository_generation()?,
+                session.generation(),
                 first,
                 "DEFERRED snapshot must not observe the concurrent publish"
             );
@@ -1129,7 +1159,7 @@ fn pinned_snapshot_operation_errors_are_not_retried() {
     let calls = Cell::new(0);
 
     let error = services
-        .consistent(|_, _| {
+        .consistent(|_| {
             calls.set(calls.get() + 1);
             Err::<(), _>(Error::Io(std::io::Error::other("live read failed")))
         })

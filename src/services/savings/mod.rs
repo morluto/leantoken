@@ -326,7 +326,7 @@ impl Services {
 
     fn observed_token_savings_report_sync(&self) -> Result<ObservedTokenSavingsReport> {
         let tokenizer = self.config.tokenizer.name();
-        let session = self.storage.begin_read()?;
+        let session = super::index_read::IndexReadSnapshot::open(&self.storage)?;
         let stored = session.token_savings(tokenizer)?;
         let failures = session.service_failures(tokenizer)?;
         self.observed_token_savings_report_from_records(&stored, failures)
@@ -338,7 +338,7 @@ impl Services {
     ) -> Result<TokenSavingsSnapshotReport> {
         let tokenizer = self.config.tokenizer.name();
         let repository_id = self.repository_id();
-        let session = self.storage.begin_read()?;
+        let session = super::index_read::IndexReadSnapshot::open(&self.storage)?;
         let current_records = session.token_savings(tokenizer)?;
         let current_failures = session.service_failures(tokenizer)?;
         let current_state = savings_snapshot_state(

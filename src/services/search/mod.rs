@@ -9,6 +9,7 @@ use regex_syntax::hir::{
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
+use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
@@ -21,7 +22,6 @@ use crate::query_receipt::{
     ExactQueryPredicate, QUERY_RECEIPT_ID_RESPONSE_RESERVE, QueryReceiptRecord,
     exhaustive_result_digest,
 };
-use crate::storage::{ChunkHit, ReadSession, ReferenceHit, SymbolHit};
 use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
 };
@@ -516,7 +516,8 @@ impl Services {
     ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
         let prepared = self.prepare_search(&request)?;
-        let mut snapshot = self.consistent(|session, generation| {
+        let mut snapshot = self.consistent(|session| {
+            let generation = session.generation();
             self.search_snapshot(
                 execution::SearchSnapshot {
                     session,

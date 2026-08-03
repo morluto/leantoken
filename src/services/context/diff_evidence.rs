@@ -1,7 +1,7 @@
 impl Services {
     pub(super) fn build_diff_evidence(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &ContextRequest,
         scope: &DiffScopeReceipt,
         workflow: ContextWorkflow,

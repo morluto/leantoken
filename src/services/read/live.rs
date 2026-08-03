@@ -19,7 +19,7 @@ pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Re
 }
 
 pub(super) fn resolve_read_target(
-    session: &ReadSession,
+    session: &IndexReadSnapshot,
     file_id: i64,
     request: &ReadRequest,
     generation: u64,

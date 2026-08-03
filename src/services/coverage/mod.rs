@@ -9,7 +9,8 @@ impl Services {
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |_| {
-                this.consistent_allow_empty(|session, generation| {
+                this.consistent_allow_empty(|session| {
+                    let generation = session.generation();
                     Ok(ParserCoverageReport {
                         repository_generation: generation,
                         coverage: parser_coverage_summary(
