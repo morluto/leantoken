@@ -108,7 +108,7 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
             path: "service.rs".into(),
             start_line: None,
             end_line: None,
-            symbol: Some(qualified.into()),
+            symbol: Some(format!("  {qualified} ")),
             heading: None,
             heading_occurrence: None,
             continuation_cursor: None,
@@ -131,8 +131,8 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
         .history(HistoryRequest {
             operation: HistoryOperation::ReadSymbol {
                 path: "service.rs".into(),
-                symbol: qualified.into(),
-                revision: "HEAD".into(),
+                symbol: format!("  {qualified} "),
+                revision: " HEAD ".into(),
             },
             max_results: None,
             max_tokens: Some(1_000),

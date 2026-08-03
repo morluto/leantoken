@@ -1,4 +1,7 @@
 use super::*;
+use crate::coordination::COORDINATION_LOCK_SUFFIXES;
+use cap_std::fs::Dir;
+use std::ffi::OsString;
 
 pub(super) fn validate_prune_request(
     request: &CachePruneRequest,
@@ -129,23 +132,176 @@ pub(super) struct RemovalOutcome {
     pub(super) error: Option<String>,
 }
 
-pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
-    let mut reclaimed_bytes = 0u64;
+fn ensure_real_directory(directory: &Path) -> std::result::Result<(), String> {
+    let metadata = fs::symlink_metadata(directory).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn same_directory_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+fn open_real_directory(directory: &Path) -> std::result::Result<Dir, String> {
+    let parent_path = directory
+        .parent()
+        .ok_or_else(|| "cache directory has no parent".to_owned())?;
+    let name = directory
+        .file_name()
+        .ok_or_else(|| "cache directory has no final component".to_owned())?;
+    let parent = Dir::open_ambient_dir(parent_path, cap_std::ambient_authority())
+        .map_err(|error| error.to_string())?;
+    let parent_file = parent.into_std_file();
+    let file = cap_primitives::fs::open_dir_nofollow(&parent_file, Path::new(name))
+        .map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            directory.display()
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
+
+fn open_real_child(parent: Dir, name: &OsStr) -> std::result::Result<Dir, String> {
+    let parent_file = parent.into_std_file();
+    let file = cap_primitives::fs::open_dir_nofollow(&parent_file, Path::new(name))
+        .map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            name.to_string_lossy()
+        ));
+    }
+    Ok(Dir::from_std_file(file))
+}
+
+fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
+    ensure_real_directory(directory)?;
+    let managed_root = directory
+        .parent()
+        .ok_or_else(|| "cache directory has no managed root".to_owned())?;
+    let cache_name = directory
+        .file_name()
+        .ok_or_else(|| "cache directory has no cache id".to_owned())?;
+    #[cfg(unix)]
+    let expected_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
+    let root_handle = open_real_directory(managed_root)?;
+    if root_handle
+        .symlink_metadata(cache_name)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("cache directory is not a real directory".into());
+    }
+    let handle = open_real_child(root_handle, cache_name)?;
+
+    #[cfg(unix)]
+    let handle = {
+        let opened_file = handle.into_std_file();
+        let opened_metadata = opened_file.metadata().map_err(|error| error.to_string())?;
+        if !same_directory_identity(&expected_metadata, &opened_metadata) {
+            return Err("cache directory changed while opening".into());
+        }
+        Dir::from_std_file(opened_file)
+    };
+    #[cfg(not(unix))]
+    let handle = handle;
+    #[cfg(unix)]
+    {
+        // A path-only check around open_ambient_dir is racy: a directory can
+        // be replaced by a symlink to an external directory for the open, then
+        // restored before the second check. Compare the opened directory's
+        // stable filesystem identity with the directory that was validated
+        // before open; all later removals are anchored to the handle.
+        ensure_real_directory(directory)?;
+        let current_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
+        if !same_directory_identity(&expected_metadata, &current_metadata) {
+            return Err("cache directory changed while opening".into());
+        }
+    }
+
     let database = directory.join(DATABASE_NAME);
-    let paths = PRUNABLE_ARTIFACTS
-        .iter()
-        .map(|artifact| directory.join(artifact))
-        .chain(
-            COORDINATION_LOCK_SUFFIXES
+    let lease_name = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX)
+        .file_name()
+        .expect("database sidecar has a file name")
+        .to_owned();
+    let mut artifacts = BTreeMap::<OsString, u64>::new();
+    for entry in handle.entries().map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let path = directory.join(&name);
+        let known = name
+            .to_str()
+            .is_some_and(|name| PRUNABLE_ARTIFACTS.contains(&name))
+            || COORDINATION_LOCK_SUFFIXES
                 .into_iter()
-                .filter(|suffix| *suffix != LEASE_LOCK_SUFFIX)
-                .map(|suffix| coordination_sidecar_path(&database, suffix)),
-        );
-    for path in paths {
-        let size = fs::symlink_metadata(&path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        match fs::remove_file(path) {
+                .any(|suffix| path == coordination_sidecar_path(&database, suffix));
+        if !known {
+            return Err(format!(
+                "cache directory contains an unexpected entry: {}",
+                path.display()
+            ));
+        }
+        let metadata = handle
+            .symlink_metadata(&name)
+            .map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(format!(
+                "cache directory contains a non-regular artifact: {}",
+                path.display()
+            ));
+        }
+        if name != lease_name {
+            artifacts.insert(name, metadata.len());
+        }
+    }
+    Ok((handle, artifacts.into_iter().collect()))
+}
+
+pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
+    let (directory, artifacts) = match prepare_removal(directory) {
+        Ok(value) => value,
+        Err(error) => {
+            return RemovalOutcome {
+                reclaimed_bytes: 0,
+                error: Some(error),
+            };
+        }
+    };
+    let mut reclaimed_bytes = 0u64;
+    for (name, size) in artifacts {
+        match directory.symlink_metadata(&name) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                return RemovalOutcome {
+                    reclaimed_bytes,
+                    error: Some(format!(
+                        "cache artifact is no longer a regular file: {}",
+                        name.to_string_lossy()
+                    )),
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return RemovalOutcome {
+                    reclaimed_bytes,
+                    error: Some(error.to_string()),
+                };
+            }
+        }
+        match directory.remove_file(&name) {
             Ok(()) => reclaimed_bytes = reclaimed_bytes.saturating_add(size),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {

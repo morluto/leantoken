@@ -38,12 +38,41 @@ fn revision_ranges_require_two_explicit_endpoints() {
         Some(("main~1", "main"))
     );
     assert_eq!(
+        parse_revision_range("  main~1 .. main  ").expect("trimmed valid range"),
+        Some(("main~1", "main"))
+    );
+    assert_eq!(
         parse_revision_range("origin/main").expect("single revision"),
         None
     );
     for invalid in ["..main", "main..", "main...head"] {
         assert!(parse_revision_range(invalid).is_err(), "{invalid}");
     }
+}
+
+#[test]
+fn context_revision_validation_rejects_whitespace_only_values() {
+    let error = validate_revision_field(" \t\n").expect_err("whitespace-only revision");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "base revision",
+            reason: "must not be empty"
+        }
+    ));
+}
+
+#[test]
+fn context_revision_validation_rejects_outer_whitespace() {
+    let error = validate_revision_field(" main~1 ").expect_err("outer whitespace");
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "base revision",
+            reason: "must not have leading or trailing whitespace"
+        }
+    ));
 }
 
 #[test]

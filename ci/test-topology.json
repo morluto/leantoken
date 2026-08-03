@@ -75,7 +75,7 @@
       "id": "examples",
       "owner": "benchmark and example contracts",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["examples/", "crates/benchmarks/", "benchmarks/", "scripts/", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
+      "paths": ["src/", "crates/benchmarks/", "examples/", "benchmarks/", "scripts/", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },

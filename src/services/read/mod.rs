@@ -34,9 +34,33 @@ use live::*;
 use types::*;
 pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 
+fn normalize_read_request(mut request: ReadRequest) -> Result<ReadRequest> {
+    if let Some(symbol) = request.symbol.take() {
+        let symbol = symbol.trim().to_owned();
+        if symbol.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "symbol",
+                reason: "must not be empty",
+            });
+        }
+        request.symbol = Some(symbol);
+    }
+    Ok(request)
+}
+
+fn validate_read_request_bounds(request: &ReadRequest) -> Result<()> {
+    // Validate the caller-owned value before trimming it. Otherwise a large
+    // whitespace prefix can be discarded before the bounded validation runs.
+    validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)
+}
+
 pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-    if request.symbol.as_deref().is_some_and(str::is_empty) {
+    if request
+        .symbol
+        .as_deref()
+        .is_some_and(|symbol| symbol.trim().is_empty())
+    {
         return Err(Error::InvalidInput {
             field: "symbol",
             reason: "must not be empty",
@@ -191,6 +215,8 @@ impl Services {
         execution: RetrievalExecution,
     ) -> Result<ReadResponse> {
         let operation = TokenAccountingOperation::Read;
+        self.observe_service_result(operation, validate_read_request_bounds(&request))?;
+        let request = self.observe_service_result(operation, normalize_read_request(request))?;
         let RetrievalExecution {
             consistency,
             options,
@@ -230,6 +256,8 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
+        validate_read_request_bounds(&request)?;
+        request = normalize_read_request(request)?;
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
@@ -648,5 +676,31 @@ mod tests {
             Some(hash("first\nsecond\n").as_str())
         );
         assert_eq!(snapshot.end_line, 2);
+    }
+
+    #[test]
+    fn raw_symbol_bytes_are_bounded_before_normalization() {
+        let request = ReadRequest {
+            path: "lib.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some(format!("{}symbol", " ".repeat(MAX_PATTERN_BYTES + 1))),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: None,
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: ReadPolicy::Bounded,
+        };
+
+        assert!(matches!(
+            validate_read_request_bounds(&request),
+            Err(Error::InputTooLong {
+                field: "symbol",
+                max_bytes: MAX_PATTERN_BYTES,
+            })
+        ));
     }
 }

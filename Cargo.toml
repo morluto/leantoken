@@ -36,6 +36,7 @@ path = "tests/integration.rs"
 base64 = "0.22.1"
 blake3 = "1.8.2"
 cap-std = "4.0.2"
+cap-primitives = "4.0.2"
 clap = { version = "4.5.51", features = ["derive"] }
 command-group = "5.0.1"
 directories = "6.0.0"
@@ -90,7 +91,6 @@ assert_cmd = "2.1.1"
 insta = { version = "1.43.2", features = ["json"] }
 rmcp = { version = "=3.1.0", default-features = false, features = ["client", "transport-async-rw"] }
 tokio = { version = "1.49.0", features = ["test-util"] }
-swift-diagnostic-grammar = { package = "tree-sitter-swift", version = "=0.7.2" }
 
 [profile.release]
 lto = "thin"
@@ -105,12 +105,6 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 # Dependency frames rarely need source-level debugging during LeanToken work.
 debug = false
-
-# cargo-udeps does not attribute dependencies used only by opt-in examples.
-# Keep the Swift grammar available to `examples/swift_parse_diagnostic.rs`
-# without treating it as a product dependency.
-[package.metadata.cargo-udeps.ignore]
-development = ["swift-diagnostic-grammar"]
 
 # The profile that 'dist' will build with
 [profile.dist]

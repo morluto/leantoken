@@ -1,4 +1,14 @@
 {
-  "is_json_array": true,
-  "contains_context": true
+  "tool_names": [
+    "context",
+    "files",
+    "history",
+    "json",
+    "outline",
+    "read",
+    "receipt_rebase",
+    "savings",
+    "search"
+  ],
+  "all_tools_have_input_schema": true
 }

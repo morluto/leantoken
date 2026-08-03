@@ -4,3 +4,11 @@
 75d66fe88fa7b4e6a9558c82f180970bd8385f3b:benchmarks/reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.json:generic-api-key:5
 # Regex planner trial records the public LeanToken base Git revision.
 cac7e7c9087bde23f24e9b86b9947789b8cba41e:benchmarks/reports/regex-literal-extractor-trial-2026-07-29.md:generic-api-key:12
+# The following findings are historical generated output or deterministic test
+# data. Keep the fingerprints exact so new secrets still fail the scan.
+# Generated cold-index report revision.
+3da772bc83f6251ada4358d0db71c1cd2a3f67fd:benchmarks/reports/dependency-heavy-cold-index-two-worker-follow-up-linux-x86_64-2026-07-29.json:generic-api-key:5
+# Public fixture commit-map value.
+bbc20b4582ab2805b07b98d6bda11c2ce61ba767:benchmarks/fixtures/ranked_regions/swe_explore.commit_map.json:generic-api-key:2
+# Generated gh-pages search bundle, removed from the source branch.
+e9b22ac9f14502dd4e98dc5ccea6ae7c0df91246:api/search.index/root.js:square-access-token:1

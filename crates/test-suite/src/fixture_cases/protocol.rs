@@ -3,13 +3,47 @@ use leantoken_test_support::FixtureCase;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use super::compare_or_bless;
+
 #[derive(Debug, Deserialize)]
 struct ProtocolCatalogRequest {}
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolCatalogExpectation {
-    is_json_array: bool,
-    contains_context: bool,
+    tool_names: Vec<String>,
+    all_tools_have_input_schema: bool,
+}
+
+fn catalog_expectation(tools: &[serde_json::Value]) -> ProtocolCatalogExpectation {
+    // Keep extraction independent from validation. Iterator::all stops at the
+    // first malformed entry, which could otherwise make a broken catalog look
+    // like a shorter valid catalog when a fixture is blessed.
+    let mut tool_names = tools
+        .iter()
+        .filter_map(|tool| {
+            tool.as_object()
+                .and_then(|object| object.get("name"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    tool_names.sort();
+    let all_tools_have_input_schema = tools.iter().all(|tool| {
+        let Some(object) = tool.as_object() else {
+            return false;
+        };
+        object
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+            && object
+                .get("inputSchema")
+                .is_some_and(serde_json::Value::is_object)
+    });
+    ProtocolCatalogExpectation {
+        tool_names,
+        all_tools_have_input_schema,
+    }
 }
 
 pub(crate) fn run(case: &FixtureCase, bless: bool) -> Result<(), String> {
@@ -21,24 +55,30 @@ pub(crate) fn run(case: &FixtureCase, bless: bool) -> Result<(), String> {
         &fs::read(&case.expected).map_err(|error| format!("read expected: {error}"))?,
     )
     .map_err(|error| format!("decode expected: {error}"))?;
-    let catalog = tool_catalog_json();
-    let actual = ProtocolCatalogExpectation {
-        is_json_array: catalog.starts_with('[') && catalog.ends_with(']'),
-        contains_context: catalog.contains("context"),
-    };
-    if bless {
-        let rendered = serde_json::to_string_pretty(&actual).map_err(|error| error.to_string())?;
-        fs::write(&case.expected, format!("{rendered}\n"))
-            .map_err(|error| format!("write blessed expectation: {error}"))?;
-        println!("blessed {}: {:?} -> {:?}", case.identity, expected, actual);
-        return Ok(());
+    let catalog: serde_json::Value = serde_json::from_str(&tool_catalog_json())
+        .map_err(|error| format!("decode catalog: {error}"))?;
+    let tools = catalog
+        .as_array()
+        .ok_or_else(|| "tool catalog is not a JSON array".to_owned())?;
+    let actual = catalog_expectation(tools);
+    compare_or_bless(case, &expected, &actual, bless)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::catalog_expectation;
+
+    #[test]
+    fn malformed_middle_entry_does_not_truncate_catalog_names() {
+        let tools = vec![
+            serde_json::json!({"name": "first", "inputSchema": {}}),
+            serde_json::json!({"name": "malformed"}),
+            serde_json::json!({"name": "last", "inputSchema": {}}),
+        ];
+
+        let actual = catalog_expectation(&tools);
+
+        assert_eq!(actual.tool_names, ["first", "last", "malformed"]);
+        assert!(!actual.all_tools_have_input_schema);
     }
-    if expected != actual {
-        return Err(format!(
-            "semantic fixture mismatch for {}: expected {:?}, actual {:?}",
-            case.identity, expected, actual
-        ));
-    }
-    println!("fixture passed: {}", case.identity);
-    Ok(())
 }
