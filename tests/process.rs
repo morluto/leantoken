@@ -62,6 +62,37 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
 }
 
 #[test]
+fn doctor_can_exercise_the_exact_codex_registration() {
+    doctor::doctor_can_exercise_the_exact_codex_registration();
+}
+
+#[test]
+fn configured_doctor_launches_workspace_relative_commands_from_the_workspace() {
+    doctor::configured_doctor_launches_workspace_relative_commands_from_the_workspace();
+}
+
+#[test]
+fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
+    doctor::configured_doctor_isolates_selected_client_from_unrelated_config_errors();
+}
+
+#[test]
+fn configured_doctor_maps_malformed_client_config_to_registration_stage() {
+    doctor::configured_doctor_maps_malformed_client_config_to_registration_stage();
+}
+
+#[test]
+fn configured_doctor_rejects_a_disabled_opencode_registration() {
+    doctor::configured_doctor_rejects_a_disabled_opencode_registration();
+}
+
+#[cfg(unix)]
+#[test]
+fn configured_doctor_rejects_a_registration_changed_during_the_probe() {
+    doctor::configured_doctor_rejects_a_registration_changed_during_the_probe();
+}
+
+#[test]
 fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     doctor::doctor_surfaces_bounded_redacted_child_diagnostics();
 }
@@ -182,6 +213,10 @@ fn setup_requires_yes_before_non_interactive_mutation() {
 }
 
 #[test]
+#[cfg(not(windows))]
+// Windows ProjectDirs resolves the known cache folder without honoring the
+// fixture's environment override; cache cleanup safety is covered by the
+// platform-independent cache module tests instead of touching a user cache.
 fn cache_list_and_prune_do_not_require_a_repository() {
     repository_free::cache_list_and_prune_do_not_require_a_repository();
 }
@@ -211,7 +246,29 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     runtime::private_runtime_setup_installs_and_registers_the_verified_native_binary();
 }
 
+#[cfg(unix)]
+#[test]
+fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation() {
+    runtime::runtime_commands_refuse_a_symlinked_runtime_root_without_mutation();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
+    runtime::runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default();
+}
+
 #[test]
 fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     runtime::npx_setup_explains_that_it_does_not_install_a_global_cli();
+}
+
+#[test]
+fn ambient_npx_metadata_does_not_replace_the_persistent_setup_launcher() {
+    runtime::ambient_npx_metadata_does_not_replace_the_persistent_setup_launcher();
+}
+
+#[test]
+fn ambient_npx_metadata_keeps_the_persistent_setup_handoff() {
+    runtime::ambient_npx_metadata_keeps_the_persistent_setup_handoff();
 }

@@ -117,6 +117,7 @@ pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
         if response["result"]["structuredContent"]["status"] == "retryable" {
             saw_retryable = true;
             id += 1;
+            std::thread::sleep(Duration::from_millis(50));
             continue;
         }
         assert_eq!(
@@ -293,6 +294,7 @@ pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
             "unsafe root remained hidden behind startup state: {response}"
         );
         id += 1;
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -330,6 +332,7 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
             "limit remained retryable: {response}"
         );
         id += 1;
+        std::thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));

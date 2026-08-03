@@ -13,6 +13,7 @@ pub(crate) use assert_cmd::Command;
 pub(crate) use std::time::{Duration, Instant};
 
 pub(crate) const EXPECTED_INDEX_CONTENT_VERSION: u64 = 13;
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn process_environment(root: &Path) -> Vec<(String, OsString)> {
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
@@ -24,14 +25,24 @@ fn process_environment(root: &Path) -> Vec<(String, OsString)> {
     let home = if host_home.as_deref() == Some(canonical_root.as_path()) {
         root.to_path_buf()
     } else {
-        root.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(std::env::temp_dir)
+        let parent = root.parent().unwrap_or_else(|| Path::new("."));
+        let name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("root");
+        let home = parent.join(format!(".leantoken-process-home-{name}"));
+        std::fs::create_dir_all(&home).expect("create isolated process home");
+        home
     };
-    vec![
+    let mut environment = vec![
         ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
         ("HOME".into(), home.clone().into_os_string()),
         ("USERPROFILE".into(), home.clone().into_os_string()),
+        ("TEMP".into(), home.clone().into_os_string()),
+        ("TMP".into(), home.clone().into_os_string()),
+        ("TMPDIR".into(), home.clone().into_os_string()),
+        ("APPDATA".into(), home.clone().into_os_string()),
+        ("LOCALAPPDATA".into(), home.clone().into_os_string()),
         ("LC_ALL".into(), "C".into()),
         ("LANG".into(), "C".into()),
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
@@ -42,7 +53,28 @@ fn process_environment(root: &Path) -> Vec<(String, OsString)> {
         ("GIT_TERMINAL_PROMPT".into(), "0".into()),
         ("GIT_PAGER".into(), "cat".into()),
         ("PAGER".into(), "cat".into()),
-    ]
+    ];
+
+    // env_clear is deliberate for hermetic fixtures, but Windows child
+    // processes still need the host runtime's launcher variables. Preserve
+    // those values while keeping temp/config roots per fixture.
+    for name in [
+        "SystemRoot",
+        "windir",
+        "COMSPEC",
+        "PATHEXT",
+        "OS",
+        "SystemDrive",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            environment.push((name.into(), value));
+        }
+    }
+    environment
 }
 
 fn apply_hermetic_environment(command: &mut Command, root: &Path) {
@@ -313,6 +345,7 @@ impl McpProcess {
                 return;
             }
             id += 1;
+            std::thread::sleep(POLL_INTERVAL);
         }
         panic!("MCP process did not become ready within {timeout:?}");
     }
@@ -344,6 +377,7 @@ impl McpProcess {
                 "runtime failure remained hidden behind startup state: {response}"
             );
             id += 1;
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 
@@ -397,7 +431,7 @@ impl McpProcess {
             if Instant::now() >= deadline {
                 return Ok(None);
             }
-            std::thread::yield_now();
+            std::thread::sleep(POLL_INTERVAL);
         }
     }
 
@@ -435,7 +469,7 @@ pub(crate) fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool)
         if condition() {
             return;
         }
-        std::thread::yield_now();
+        std::thread::sleep(POLL_INTERVAL);
     }
     panic!("condition not met within {timeout:?}");
 }
