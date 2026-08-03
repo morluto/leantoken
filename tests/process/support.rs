@@ -28,7 +28,7 @@ pub(crate) fn run(
     arguments: &[&str],
 ) -> serde_json::Value {
     let mut command = Command::cargo_bin("leantoken").expect("binary");
-    apply_hermetic_environment(&mut command, root);
+    let _process_home = apply_hermetic_environment(&mut command, root);
     let output = command
         .args([
             "--root",
@@ -48,7 +48,7 @@ pub(crate) fn run(
     serde_json::from_slice(&output.stdout).expect("JSON output")
 }
 
-pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
+fn process_environment(root: &Path) -> (Vec<(String, OsString)>, Option<tempfile::TempDir>) {
     // Keep the synthetic home outside the repository. The product rejects a
     // repository that contains its home directory as an unsafe broad root.
     let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
@@ -57,17 +57,15 @@ pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
             .canonicalize()
             .unwrap_or_else(|_| dirs.home_dir().to_path_buf())
     });
-    let home = if host_home.as_deref() == Some(canonical_root.as_path()) {
-        root.to_path_buf()
+    let (home, process_home) = if host_home.as_deref() == Some(canonical_root.as_path()) {
+        (root.to_path_buf(), None)
     } else {
         let parent = root.parent().unwrap_or_else(|| Path::new("."));
-        let name = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("root");
-        let home = parent.join(format!(".leantoken-process-home-{name}"));
-        std::fs::create_dir_all(&home).expect("create isolated process home");
-        home
+        let process_home = tempfile::Builder::new()
+            .prefix(".leantoken-process-home-")
+            .tempdir_in(parent)
+            .expect("create isolated process home");
+        (process_home.path().to_path_buf(), Some(process_home))
     };
     let mut environment = vec![
         ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
@@ -112,14 +110,16 @@ pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
         }
     }
 
-    environment
+    (environment, process_home)
 }
 
-pub(crate) fn apply_hermetic_environment(command: &mut Command, root: &Path) {
+fn apply_hermetic_environment(command: &mut Command, root: &Path) -> Option<tempfile::TempDir> {
     command.env_clear();
-    for (name, value) in process_environment(root) {
+    let (environment, process_home) = process_environment(root);
+    for (name, value) in environment {
         command.env(name, value);
     }
+    process_home
 }
 
 pub(crate) fn run_error(
@@ -127,8 +127,9 @@ pub(crate) fn run_error(
     database: &std::path::Path,
     arguments: &[&str],
 ) -> serde_json::Value {
-    let output = Command::cargo_bin("leantoken")
-        .expect("binary")
+    let mut command = Command::cargo_bin("leantoken").expect("binary");
+    let _process_home = apply_hermetic_environment(&mut command, root);
+    let output = command
         .args([
             "--root",
             root.to_str().expect("root UTF-8"),
@@ -151,8 +152,12 @@ pub(crate) fn assert_cli_parse_error(arguments: &[&str]) {
     )
     .expect_err("invalid CLI arguments")
     .to_string();
-    let output = Command::cargo_bin("leantoken")
-        .expect("binary")
+    let mut command = Command::cargo_bin("leantoken").expect("binary");
+    let _process_home = apply_hermetic_environment(
+        &mut command,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+    );
+    let output = command
         .args(arguments)
         .output()
         .expect("run CLI parse failure");
@@ -178,6 +183,7 @@ pub(crate) fn leantoken_program_name() -> std::ffi::OsString {
 
 pub(crate) struct McpProcess {
     pub(crate) child: Child,
+    _process_home: Option<tempfile::TempDir>,
     pub(crate) stdin: Option<ChildStdin>,
     pub(crate) lines: mpsc::Receiver<String>,
     pub(crate) stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
@@ -229,8 +235,9 @@ impl McpProcess {
         capture_stderr: bool,
     ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
+        let (environment, process_home) = process_environment(root);
         command.env_clear();
-        for (name, value) in process_environment(root) {
+        for (name, value) in environment {
             command.env(name, value);
         }
         command
@@ -275,6 +282,7 @@ impl McpProcess {
         });
         Self {
             child,
+            _process_home: process_home,
             stdin: Some(stdin),
             lines,
             stderr_task,
