@@ -143,14 +143,50 @@ fn ensure_real_directory(directory: &Path) -> std::result::Result<(), String> {
     Ok(())
 }
 
+fn same_directory_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        left.volume_serial_number() == right.volume_serial_number()
+            && left.file_index() == right.file_index()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        left.file_type() == right.file_type()
+            && left.len() == right.len()
+            && left.modified().ok() == right.modified().ok()
+    }
+}
+
 fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
     ensure_real_directory(directory)?;
+    let expected_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
     let handle = Dir::open_ambient_dir(directory, cap_std::ambient_authority())
         .map_err(|error| error.to_string())?;
-    // Check the path again after opening the handle. If it was replaced by a
-    // symlink, the handle remains anchored to the directory that was opened,
-    // but pruning must still fail closed rather than report success.
+
+    // A path-only check around open_ambient_dir is racy: a directory can be
+    // replaced by a symlink to an external directory for the open, then
+    // restored before the second check. Compare the opened directory's stable
+    // filesystem identity with the directory that was validated before open;
+    // all later removals are then anchored to the verified handle.
+    let opened_file = handle.into_std_file();
+    let opened_metadata = opened_file.metadata().map_err(|error| error.to_string())?;
+    let handle = Dir::from_std_file(opened_file);
+    if !same_directory_identity(&expected_metadata, &opened_metadata) {
+        return Err("cache directory changed while opening".into());
+    }
     ensure_real_directory(directory)?;
+    let current_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
+    if !same_directory_identity(&expected_metadata, &current_metadata) {
+        return Err("cache directory changed while opening".into());
+    }
 
     let database = directory.join(DATABASE_NAME);
     let lease_name = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX)
