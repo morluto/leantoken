@@ -51,18 +51,33 @@ pub(crate) fn run(
 pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
     // Keep the synthetic home outside the repository. The product rejects a
     // repository that contains its home directory as an unsafe broad root.
-    let host_home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
-    let home = if host_home.as_deref() == Some(root) {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let host_home = directories::BaseDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| dirs.home_dir().to_path_buf())
+    });
+    let home = if host_home.as_deref() == Some(canonical_root.as_path()) {
         root.to_path_buf()
     } else {
-        root.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(std::env::temp_dir)
+        let parent = root.parent().unwrap_or_else(|| Path::new("."));
+        let name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("root");
+        let home = parent.join(format!(".leantoken-process-home-{name}"));
+        std::fs::create_dir_all(&home).expect("create isolated process home");
+        home
     };
     let mut environment = vec![
         ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
         ("HOME".into(), home.clone().into_os_string()),
         ("USERPROFILE".into(), home.clone().into_os_string()),
+        ("TEMP".into(), home.clone().into_os_string()),
+        ("TMP".into(), home.clone().into_os_string()),
+        ("TMPDIR".into(), home.clone().into_os_string()),
+        ("APPDATA".into(), home.clone().into_os_string()),
+        ("LOCALAPPDATA".into(), home.clone().into_os_string()),
         ("LC_ALL".into(), "C".into()),
         ("LANG".into(), "C".into()),
         ("GIT_CONFIG_NOSYSTEM".into(), "1".into()),
