@@ -626,10 +626,10 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
       # Rust attributes `include!` bodies to both the physical source and the
       # include-only façade. Count the physical files, but not those duplicate
-      # zero-coverage aliases or the subprocess-only diagnostic entrypoint;
-      # mixed façades with executable logic stay gated.
+      # zero-coverage aliases or the subprocess-only CLI entrypoints; mixed
+      # façades with executable logic stay gated.
       COVERAGE_IGNORE_REGEX: >-
-        concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
+        concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/main/dispatch\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
     steps:
       - uses: actions/checkout@v7
 
