@@ -316,7 +316,7 @@
 <a href=#316 id=316 data-nosnippet>316</a><span class="kw">impl </span>Services {
 <a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>regex_hits(
 <a href=#318 id=318 data-nosnippet>318</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#319 id=319 data-nosnippet>319</a>        session: <span class="kw-2">&amp;</span>ReadSession,
+<a href=#319 id=319 data-nosnippet>319</a>        session: <span class="kw-2">&amp;</span>IndexReadSnapshot,
 <a href=#320 id=320 data-nosnippet>320</a>        request: <span class="kw-2">&amp;</span>SearchRequest,
 <a href=#321 id=321 data-nosnippet>321</a>        regex: <span class="kw-2">&amp;</span>regex::Regex,
 <a href=#322 id=322 data-nosnippet>322</a>        max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
@@ -578,7 +578,7 @@
 <a href=#578 id=578 data-nosnippet>578</a>}
 <a href=#579 id=579 data-nosnippet>579</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#580 id=580 data-nosnippet>580</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RegexCandidateParams&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
-<a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ReadSession,
+<a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
 <a href=#582 id=582 data-nosnippet>582</a>    <span class="kw">pub </span>regex: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>regex::Regex,
 <a href=#583 id=583 data-nosnippet>583</a>    <span class="kw">pub </span>max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">pub </span>cancellation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CancellationToken,

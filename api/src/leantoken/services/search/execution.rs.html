@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>
 <a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reuse_query_receipt(
 <a href=#122 id=122 data-nosnippet>122</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#123 id=123 data-nosnippet>123</a>        session: <span class="kw-2">&amp;</span>ReadSession,
+<a href=#123 id=123 data-nosnippet>123</a>        session: <span class="kw-2">&amp;</span>IndexReadSnapshot,
 <a href=#124 id=124 data-nosnippet>124</a>        generation: u64,
 <a href=#125 id=125 data-nosnippet>125</a>        receipt_id: <span class="kw-2">&amp;</span>str,
 <a href=#126 id=126 data-nosnippet>126</a>        requested_predicate: <span class="kw-2">&amp;</span>ExactQueryPredicate,
@@ -195,7 +195,7 @@
 <a href=#195 id=195 data-nosnippet>195</a>
 <a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>collect_structural_search_hits(
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#198 id=198 data-nosnippet>198</a>        session: <span class="kw-2">&amp;</span>ReadSession,
+<a href=#198 id=198 data-nosnippet>198</a>        session: <span class="kw-2">&amp;</span>IndexReadSnapshot,
 <a href=#199 id=199 data-nosnippet>199</a>        request: <span class="kw-2">&amp;</span>SearchRequest,
 <a href=#200 id=200 data-nosnippet>200</a>        limit: usize,
 <a href=#201 id=201 data-nosnippet>201</a>        context_lines: usize,
@@ -409,7 +409,7 @@
 <a href=#409 id=409 data-nosnippet>409</a>
 <a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>hydrate_lexical_search_hits(
 <a href=#411 id=411 data-nosnippet>411</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#412 id=412 data-nosnippet>412</a>        session: <span class="kw-2">&amp;</span>ReadSession,
+<a href=#412 id=412 data-nosnippet>412</a>        session: <span class="kw-2">&amp;</span>IndexReadSnapshot,
 <a href=#413 id=413 data-nosnippet>413</a>        request: <span class="kw-2">&amp;</span>SearchRequest,
 <a href=#414 id=414 data-nosnippet>414</a>        prepared: <span class="kw-2">&amp;</span>PreparedSearch,
 <a href=#415 id=415 data-nosnippet>415</a>        cancellation: <span class="kw-2">&amp;</span>CancellationToken,
@@ -695,7 +695,7 @@
 <a href=#695 id=695 data-nosnippet>695</a>
 <a href=#696 id=696 data-nosnippet>696</a><span class="attr">#[derive(Clone, Copy)]
 <a href=#697 id=697 data-nosnippet>697</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SearchSnapshot&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#698 id=698 data-nosnippet>698</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ReadSession,
+<a href=#698 id=698 data-nosnippet>698</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
 <a href=#699 id=699 data-nosnippet>699</a>    <span class="kw">pub </span>generation: u64,
 <a href=#700 id=700 data-nosnippet>700</a>    <span class="kw">pub </span>cancellation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CancellationToken,
 <a href=#701 id=701 data-nosnippet>701</a>}

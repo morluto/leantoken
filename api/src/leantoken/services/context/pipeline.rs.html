@@ -17,7 +17,7 @@
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="attr">#[derive(Clone, Copy)]
 <a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>QueryCandidateExpansion&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ReadSession,
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">pub</span>(<span class="kw">super</span>) request: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextRequest,
 <a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">pub</span>(<span class="kw">super</span>) query: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextQuery,
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">pub</span>(<span class="kw">super</span>) path_filter: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PathFilter,
@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>}
 <a href=#30 id=30 data-nosnippet>30</a>
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ContextFinalization&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ReadSession,
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
 <a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">pub</span>(<span class="kw">super</span>) request: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextRequest,
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">pub</span>(<span class="kw">super</span>) scoped_request: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextRequest,
 <a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">pub</span>(<span class="kw">super</span>) handoff: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>HandoffManifestRequest&gt;,
@@ -311,7 +311,7 @@
 <a href=#311 id=311 data-nosnippet>311</a>}
 <a href=#312 id=312 data-nosnippet>312</a>
 <a href=#313 id=313 data-nosnippet>313</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ImportExpansion&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ReadSession,
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">pub</span>(<span class="kw">super</span>) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
 <a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">pub</span>(<span class="kw">super</span>) request: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ContextRequest,
 <a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">pub</span>(<span class="kw">super</span>) queries: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[ContextQuery],
 <a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">pub</span>(<span class="kw">super</span>) terms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[String],
