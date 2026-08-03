@@ -72,7 +72,9 @@ pub(super) fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
     assert_eq!(report["verification"]["status"], "passed");
-    let executable = assert_cmd::cargo::cargo_bin!("leantoken");
+    let executable = assert_cmd::cargo::cargo_bin!("leantoken")
+        .canonicalize()
+        .expect("canonical executable");
     assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
     assert_eq!(report["launcher"]["may_contact_network"], false);
