@@ -149,7 +149,7 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
     if !config.database_is_managed_cache {
         return Ok(());
     }
-    for suffix in ["", "-wal", "-shm"] {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut path = config.database_path.as_os_str().to_os_string();
         path.push(suffix);
         let path = std::path::PathBuf::from(path);
@@ -291,7 +291,7 @@ fn is_database_corruption(error: &Error) -> bool {
 }
 
 fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
-    for suffix in ["", "-wal", "-shm"] {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut path = database.as_os_str().to_os_string();
         path.push(suffix);
         match fs::remove_file(std::path::PathBuf::from(path)) {
@@ -438,6 +438,28 @@ mod tests {
         assert_eq!(
             fs::read(target.path()).expect("sentinel contents"),
             b"external sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_journal_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external journal sentinel").expect("sentinel");
+        symlink(target.path(), root.path().join("index.sqlite-journal")).expect("journal symlink");
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.database_is_managed_cache = true;
+
+        let error = Services::open(config).expect_err("managed journal symlink must be rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external journal sentinel"
         );
     }
 }

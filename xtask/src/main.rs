@@ -798,6 +798,10 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
 
 fn check_service_snapshot_boundary(root: &Path) -> Result<(), XtaskError> {
     let mut rust_files = Vec::new();
+    let facade = root.join("src/services.rs");
+    if facade.is_file() {
+        rust_files.push(facade);
+    }
     collect_rust_files(&root.join("src/services"), &mut rust_files).map_err(XtaskError::Io)?;
     let mut leaked = BTreeSet::new();
     for path in rust_files {
