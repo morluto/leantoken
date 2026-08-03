@@ -260,9 +260,10 @@ from xtask. The process-heavy phase uses three workers on macOS and four on
 Linux or Windows because each test can start several child processes; ordinary
 tests retain the runner's default parallelism. Selected Rust changes also run
 the instrumented coverage gate in parallel (50% line floor; the opt-in
-`concurrency_profile` harness is excluded). The stable Required checks job
-fails if a selected lane fails, cancels, times out, or disappears, while
-intentionally unselected lanes remain conditional.
+`concurrency_profile` harness and subprocess-only diagnostic entrypoint are
+excluded). The stable Required checks job fails if a selected lane fails,
+cancels, times out, or disappears, while intentionally unselected lanes remain
+conditional.
 A pull request is not ready to merge until its required CI checks pass.
 
 Repository rules for `main` should require the CI workflow's `Required checks`
