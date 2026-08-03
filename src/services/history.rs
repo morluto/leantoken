@@ -566,6 +566,7 @@ impl Services {
     ) -> Result<HistoryResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_history_request(&request))?;
         let request = self.observe_service_result(operation, normalize_history_request(request))?;
         self.observe_service_result(operation, validate_history_request(&request))?;
         let this = self.clone();
@@ -628,6 +629,7 @@ impl Services {
     ) -> Result<DiffSymbolsResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, validate_diff_symbols_request(&request))?;
         let request =
             self.observe_service_result(operation, normalize_diff_symbols_request(request))?;
         self.observe_service_result(operation, validate_diff_symbols_request(&request))?;
@@ -648,6 +650,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<DiffSymbolsResponse> {
         check_cancelled(cancellation)?;
+        validate_diff_symbols_request(&request)?;
         let request = normalize_diff_symbols_request(request)?;
         validate_diff_symbols_request(&request)?;
         let max_results = request
@@ -966,6 +969,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<HistoryResponse> {
         check_cancelled(cancellation)?;
+        validate_history_request(&request)?;
         let request = normalize_history_request(request)?;
         validate_history_request(&request)?;
         let max_results = request.max_results.unwrap_or(DEFAULT_HISTORY_RESULTS);
@@ -1574,5 +1578,54 @@ mod tests {
             request.targets[0].head_symbol.as_deref(),
             Some("handle_request")
         );
+    }
+
+    #[test]
+    fn raw_history_symbol_bytes_are_bounded_before_normalization() {
+        let request = HistoryRequest {
+            operation: HistoryOperation::ReadSymbol {
+                path: "lib.rs".into(),
+                symbol: format!("{}symbol", " ".repeat(MAX_PATTERN_BYTES + 1)),
+                revision: "HEAD".into(),
+            },
+            max_results: None,
+            max_tokens: None,
+        };
+
+        assert!(matches!(
+            validate_history_request(&request),
+            Err(Error::InputTooLong {
+                field: "symbol",
+                max_bytes: MAX_PATTERN_BYTES,
+            })
+        ));
+    }
+
+    #[test]
+    fn raw_diff_symbol_target_count_is_bounded_before_normalization() {
+        let target = crate::model::DiffSymbolsTarget {
+            path: "lib.rs".into(),
+            symbol: "answer".into(),
+            head_path: None,
+            head_symbol: None,
+        };
+        let request = DiffSymbolsRequest {
+            targets: vec![target; MAX_DIFF_SYMBOL_TARGETS + 1],
+            base_revision: "HEAD~1".into(),
+            head_revision: "HEAD".into(),
+            max_results: None,
+            max_tokens: None,
+            cursor: None,
+        };
+
+        let error = validate_diff_symbols_request(&request).expect_err("target count limit");
+        assert!(matches!(
+            error,
+            Error::RequestLimitExceeded {
+                field: "targets",
+                requested,
+                limit,
+            } if requested == MAX_DIFF_SYMBOL_TARGETS + 1 && limit == MAX_DIFF_SYMBOL_TARGETS
+        ));
     }
 }
