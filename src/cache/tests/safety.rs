@@ -41,6 +41,39 @@ fn corrupt_and_legacy_caches_are_listed_without_mutation() {
     assert!(legacy.join(DATABASE_NAME).exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn prune_rejects_cache_directory_replaced_with_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let repository = temp.path().join("repository");
+    fs::create_dir(&repository).expect("repository");
+    let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+    let (id, database) = create_current_cache(&manager, &repository, 100);
+    let inspected = manager
+        .inspect_cache(&id, false)
+        .expect("inspect cache before replacement");
+    assert!(inspected.safe_to_prune);
+
+    let external = temp.path().join("external");
+    fs::create_dir(&external).expect("external directory");
+    let external_database = external.join(DATABASE_NAME);
+    fs::write(&external_database, b"must remain").expect("external database");
+    let cache_directory = database.parent().expect("cache directory").to_owned();
+    let displaced_directory = temp.path().join("displaced-cache");
+    fs::rename(&cache_directory, &displaced_directory).expect("displace managed cache directory");
+    symlink(&external, cache_directory).expect("replace cache with symlink");
+
+    let removal = remove_managed_artifacts(&inspected.entry.path);
+
+    assert!(removal.error.is_some());
+    assert_eq!(
+        fs::read(&external_database).expect("external database"),
+        b"must remain"
+    );
+}
+
 #[test]
 fn legacy_wal_list_keeps_file_mtime_access_age_stable() {
     let temp = tempfile::tempdir().expect("temporary directory");

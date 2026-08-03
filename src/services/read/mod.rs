@@ -34,9 +34,27 @@ use live::*;
 use types::*;
 pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 
+fn normalize_read_request(mut request: ReadRequest) -> Result<ReadRequest> {
+    if let Some(symbol) = request.symbol.take() {
+        let symbol = symbol.trim().to_owned();
+        if symbol.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "symbol",
+                reason: "must not be empty",
+            });
+        }
+        request.symbol = Some(symbol);
+    }
+    Ok(request)
+}
+
 pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-    if request.symbol.as_deref().is_some_and(str::is_empty) {
+    if request
+        .symbol
+        .as_deref()
+        .is_some_and(|symbol| symbol.trim().is_empty())
+    {
         return Err(Error::InvalidInput {
             field: "symbol",
             reason: "must not be empty",
@@ -196,6 +214,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let request = self.observe_service_result(operation, normalize_read_request(request))?;
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(operation, validate_read_input(&request))?;
@@ -229,6 +248,7 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
+        request = normalize_read_request(request)?;
         validate_read_input(&request)?;
         request.path = normalize_relative(&request.path)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
@@ -613,5 +633,43 @@ mod tests {
             Some(hash("first\nsecond\n").as_str())
         );
         assert_eq!(snapshot.end_line, 2);
+    }
+
+    fn read_request_with_symbol(symbol: &str) -> ReadRequest {
+        ReadRequest {
+            path: "lib.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: Some(symbol.into()),
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: None,
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: ReadPolicy::default(),
+        }
+    }
+
+    #[test]
+    fn read_symbol_normalization_trims_edges_before_lookup() {
+        let request =
+            normalize_read_request(read_request_with_symbol("  Services.handle_request \n"))
+                .expect("trimmed symbol");
+        assert_eq!(request.symbol.as_deref(), Some("Services.handle_request"));
+    }
+
+    #[test]
+    fn read_symbol_validation_rejects_whitespace_only_values() {
+        let error = validate_read_input(&read_request_with_symbol(" \t\n"))
+            .expect_err("whitespace-only symbol");
+        assert!(matches!(
+            error,
+            Error::InvalidInput {
+                field: "symbol",
+                reason: "must not be empty"
+            }
+        ));
     }
 }

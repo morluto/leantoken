@@ -1,4 +1,7 @@
 use super::*;
+use crate::coordination::COORDINATION_LOCK_SUFFIXES;
+use cap_std::fs::Dir;
+use std::ffi::OsString;
 
 pub(super) fn validate_prune_request(
     request: &CachePruneRequest,
@@ -129,23 +132,96 @@ pub(super) struct RemovalOutcome {
     pub(super) error: Option<String>,
 }
 
-pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
-    let mut reclaimed_bytes = 0u64;
+fn ensure_real_directory(directory: &Path) -> std::result::Result<(), String> {
+    let metadata = fs::symlink_metadata(directory).map_err(|error| error.to_string())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "cache directory is not a real directory: {}",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
+fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
+    ensure_real_directory(directory)?;
+    let handle = Dir::open_ambient_dir(directory, cap_std::ambient_authority())
+        .map_err(|error| error.to_string())?;
+    // Check the path again after opening the handle. If it was replaced by a
+    // symlink, the handle remains anchored to the directory that was opened,
+    // but pruning must still fail closed rather than report success.
+    ensure_real_directory(directory)?;
+
     let database = directory.join(DATABASE_NAME);
-    let paths = PRUNABLE_ARTIFACTS
-        .iter()
-        .map(|artifact| directory.join(artifact))
-        .chain(
-            COORDINATION_LOCK_SUFFIXES
+    let lease_name = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX)
+        .file_name()
+        .expect("database sidecar has a file name")
+        .to_owned();
+    let mut artifacts = BTreeMap::<OsString, u64>::new();
+    for entry in handle.entries().map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        let path = directory.join(&name);
+        let known = name
+            .to_str()
+            .is_some_and(|name| PRUNABLE_ARTIFACTS.contains(&name))
+            || COORDINATION_LOCK_SUFFIXES
                 .into_iter()
-                .filter(|suffix| *suffix != LEASE_LOCK_SUFFIX)
-                .map(|suffix| coordination_sidecar_path(&database, suffix)),
-        );
-    for path in paths {
-        let size = fs::symlink_metadata(&path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        match fs::remove_file(path) {
+                .any(|suffix| path == coordination_sidecar_path(&database, suffix));
+        if !known {
+            return Err(format!(
+                "cache directory contains an unexpected entry: {}",
+                path.display()
+            ));
+        }
+        let metadata = handle
+            .symlink_metadata(&name)
+            .map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
+            return Err(format!(
+                "cache directory contains a non-regular artifact: {}",
+                path.display()
+            ));
+        }
+        if name != lease_name {
+            artifacts.insert(name, metadata.len());
+        }
+    }
+    Ok((handle, artifacts.into_iter().collect()))
+}
+
+pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
+    let (directory, artifacts) = match prepare_removal(directory) {
+        Ok(value) => value,
+        Err(error) => {
+            return RemovalOutcome {
+                reclaimed_bytes: 0,
+                error: Some(error),
+            };
+        }
+    };
+    let mut reclaimed_bytes = 0u64;
+    for (name, size) in artifacts {
+        match directory.symlink_metadata(&name) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                return RemovalOutcome {
+                    reclaimed_bytes,
+                    error: Some(format!(
+                        "cache artifact is no longer a regular file: {}",
+                        name.to_string_lossy()
+                    )),
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return RemovalOutcome {
+                    reclaimed_bytes,
+                    error: Some(error.to_string()),
+                };
+            }
+        }
+        match directory.remove_file(&name) {
             Ok(()) => reclaimed_bytes = reclaimed_bytes.saturating_add(size),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
