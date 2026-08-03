@@ -218,7 +218,7 @@ impl Services {
 
     pub(in crate::services::context) fn finalize_strict_scope_coverage(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &ContextRequest,
         selected_paths: &[String],
         coverage: &mut ContextCoverageReceipt,

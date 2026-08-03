@@ -51,6 +51,7 @@ mod runtime;
 mod schema;
 mod scoped_regex;
 mod session;
+mod snapshot;
 mod staging;
 mod writer;
 
@@ -62,6 +63,7 @@ pub(crate) use runtime::*;
 pub(crate) use rusqlite::params;
 pub(crate) use schema::*;
 pub(crate) use scoped_regex::*;
+pub(crate) use snapshot::IndexSnapshot;
 pub(crate) use staging::PreparedReconciliation;
 
 pub use diagnostics::{

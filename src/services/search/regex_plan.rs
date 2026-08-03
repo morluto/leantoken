@@ -316,7 +316,7 @@ pub(in crate::services) fn compile_literal_regex(
 impl Services {
     pub(super) fn regex_hits(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &SearchRequest,
         regex: &regex::Regex,
         max_candidates: Option<usize>,
@@ -578,7 +578,7 @@ impl Services {
 }
 use super::*;
 pub(super) struct RegexCandidateParams<'a, 'b> {
-    pub session: &'a ReadSession,
+    pub session: &'a IndexReadSnapshot,
     pub regex: &'a regex::Regex,
     pub max_candidates: Option<usize>,
     pub cancellation: &'a CancellationToken,

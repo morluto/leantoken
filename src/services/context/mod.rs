@@ -46,6 +46,9 @@ use validation::*;
 pub(super) use super::change_receipt::{classify_revision_changes, owner_test_coverage};
 pub(super) use super::execution_options::RetrievalExecution;
 pub(super) use super::handoff::{self, HandoffProvenance};
+pub(super) use super::index_read::{
+    ChunkHit, FileRecord, IndexReadSnapshot, SymbolHit, SymbolRecord,
+};
 pub(super) use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 pub(super) use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
 pub(super) use super::validation::{
@@ -60,8 +63,6 @@ pub(super) use crate::repository::{
     git_diff_paths_between, git_head_revision, git_working_tree_status, normalize_relative,
     validate_relative,
 };
-pub(super) use crate::storage::ChunkHit;
-pub(super) use crate::storage::{FileRecord, ReadSession, SymbolHit, SymbolRecord};
 pub(super) use crate::text::{byte_to_line, expand_terms, identifier_words, line_starts};
 pub(super) use crate::tokens::ResponseBudget;
 pub(super) use crate::{Error, Result};

@@ -26,6 +26,7 @@ impl Services {
 
     fn open_managed(config: Config) -> Result<Self> {
         config.validate()?;
+        reject_symlinked_managed_database_artifacts(&config)?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cancellation = CancellationToken::new();
         let cache_lease = coordination.acquire_cache_lease(&cancellation)?;
@@ -53,6 +54,7 @@ impl Services {
 
     fn open_cancellable_managed(config: Config, cancellation: &CancellationToken) -> Result<Self> {
         config.validate()?;
+        reject_symlinked_managed_database_artifacts(&config)?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cache_lease = coordination.acquire_cache_lease(cancellation)?;
         let _initialization = coordination.acquire_initialization(cancellation)?;
@@ -87,6 +89,7 @@ impl Services {
         startup_timeout: Option<Duration>,
         cache_lease: CacheLease,
     ) -> Result<Self> {
+        reject_symlinked_managed_database_artifacts(config)?;
         let open_storage = || match startup_timeout {
             Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
                 &config.database_path,
@@ -142,6 +145,31 @@ impl Services {
             reconciliation,
         })
     }
+}
+
+fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
+    if !config.database_is_managed_cache {
+        return Ok(());
+    }
+    for suffix in ["", "-wal", "-shm", "-journal"]
+        .into_iter()
+        .chain(crate::coordination::COORDINATION_LOCK_SUFFIXES)
+    {
+        let mut path = config.database_path.as_os_str().to_os_string();
+        path.push(suffix);
+        let path = std::path::PathBuf::from(path);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(Error::InvalidConfiguration(
+                "managed index database and coordination artifacts must not be symlinks".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn should_use_repository_cache_fallback(config: &Config, error: &Error) -> bool {
@@ -268,7 +296,7 @@ fn is_database_corruption(error: &Error) -> bool {
 }
 
 fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
-    for suffix in ["", "-wal", "-shm"] {
+    for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut path = database.as_os_str().to_os_string();
         path.push(suffix);
         match fs::remove_file(std::path::PathBuf::from(path)) {
@@ -392,6 +420,73 @@ mod tests {
                 Error::InvalidConfiguration(_) | Error::PathOutsideRoot(_)
             ),
             "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external sentinel").expect("sentinel");
+        let link = root.path().join("index.sqlite");
+        symlink(target.path(), &link).expect("database symlink");
+
+        let mut config = Config::discover(root.path(), Some(link.clone())).expect("config");
+        config.database_path = link;
+        config.database_is_managed_cache = true;
+
+        let error = Services::open(config).expect_err("managed symlink must be rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_journal_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external journal sentinel").expect("sentinel");
+        symlink(target.path(), root.path().join("index.sqlite-journal")).expect("journal symlink");
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.database_is_managed_cache = true;
+
+        let error = Services::open(config).expect_err("managed journal symlink must be rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external journal sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_coordination_symlink_is_rejected_before_acquiring_locks() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external coordination sentinel").expect("sentinel");
+        symlink(target.path(), root.path().join("index.sqlite.lease.lock")).expect("lease symlink");
+
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.database_is_managed_cache = true;
+
+        let error = Services::open(config).expect_err("managed lock symlink must be rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external coordination sentinel"
         );
     }
 }

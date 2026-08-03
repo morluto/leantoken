@@ -124,7 +124,8 @@ impl Services {
                 .map(String::as_str)
                 .collect::<HashSet<_>>()
         });
-        self.consistent(|session, generation| {
+        self.consistent(|session| {
+            let generation = session.generation();
             // Provenance is part of the same snapshot boundary as indexed
             // evidence. Git probes outside this closure can observe a later
             // checkout while the response is still pinned to `generation`.

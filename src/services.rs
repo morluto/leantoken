@@ -19,8 +19,8 @@ use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::storage::{
-    ParserCoverageRows, ReadSession, ServiceFailureRecord, Storage, StorageCounts,
-    TokenSavingsObservation, TokenSavingsRecord,
+    ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
+    TokenSavingsRecord,
 };
 use crate::{Config, Error, Result};
 
@@ -35,6 +35,7 @@ mod executor;
 mod files;
 mod handoff;
 mod history;
+mod index_read;
 mod indexing;
 mod json;
 mod observer;
@@ -383,14 +384,14 @@ impl Services {
 
     pub(super) fn consistent<T>(
         &self,
-        operation: impl Fn(&ReadSession, u64) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(false, operation)
     }
 
     fn consistent_allow_empty<T>(
         &self,
-        operation: impl Fn(&ReadSession, u64) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(true, operation)
     }
@@ -402,14 +403,11 @@ impl Services {
     fn consistent_inner<T>(
         &self,
         allow_empty: bool,
-        operation: impl Fn(&ReadSession, u64) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         for attempt in 0..3 {
-            let snapshot = self.storage.begin_read().and_then(|session| {
-                let generation = session.repository_generation()?;
-                Ok((session, generation))
-            });
-            let (session, generation) = match snapshot {
+            let snapshot = index_read::IndexReadSnapshot::open(&self.storage);
+            let snapshot = match snapshot {
                 Ok(snapshot) => snapshot,
                 Err(error) if is_database_contention(&error) => {
                     if attempt + 1 < 3 {
@@ -419,12 +417,13 @@ impl Services {
                 }
                 Err(error) => return Err(error),
             };
+            let generation = snapshot.generation();
             if generation == 0 && !allow_empty {
                 return Err(Error::IndexNotReady);
             }
             // Do not retry operation errors: after the first read, this session
             // is pinned and concurrent publication cannot have caused them.
-            return operation(&session, generation);
+            return operation(&snapshot);
         }
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }

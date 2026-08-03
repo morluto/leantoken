@@ -122,7 +122,7 @@ impl Services {
 
     pub(in crate::services::context) fn apply_reverse_dependency_boost(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         queries: &[ContextQuery],
         candidates: &mut [Candidate],
     ) -> Result<()> {

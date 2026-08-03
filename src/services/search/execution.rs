@@ -120,7 +120,7 @@ impl Services {
 
     pub(super) fn reuse_query_receipt(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         generation: u64,
         receipt_id: &str,
         requested_predicate: &ExactQueryPredicate,
@@ -195,7 +195,7 @@ impl Services {
 
     pub(super) fn collect_structural_search_hits(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &SearchRequest,
         limit: usize,
         context_lines: usize,
@@ -409,7 +409,7 @@ impl Services {
 
     pub(super) fn hydrate_lexical_search_hits(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         request: &SearchRequest,
         prepared: &PreparedSearch,
         cancellation: &CancellationToken,
@@ -695,7 +695,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchSnapshot<'a> {
-    pub session: &'a ReadSession,
+    pub session: &'a IndexReadSnapshot,
     pub generation: u64,
     pub cancellation: &'a CancellationToken,
 }

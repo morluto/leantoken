@@ -31,6 +31,35 @@ const PRODUCT_PHASE_NAMES: [&str; 4] = [
     "checked-in fixture cases",
 ];
 
+#[derive(Clone, Copy)]
+enum FocusedTestTarget {
+    Suite,
+    Product,
+}
+
+impl FocusedTestTarget {
+    fn package(self) -> &'static str {
+        match self {
+            Self::Suite => SUITE,
+            Self::Product => PRODUCT,
+        }
+    }
+
+    fn target_args(self) -> &'static [&'static str] {
+        match self {
+            Self::Suite => &["--lib"],
+            Self::Product => &["--lib", "--bins", "--test", "integration"],
+        }
+    }
+
+    fn run_tail(self) -> &'static [&'static str] {
+        match self {
+            Self::Suite => &[],
+            Self::Product => &["--", "--test-threads=2"],
+        }
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -89,50 +118,23 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         } else {
             format!("domains::{selector}")
         };
-        if !suite_has_test(root, &filter)? {
+        if !focused_target_has_test(root, FocusedTestTarget::Suite, &filter)? {
             return Err(XtaskError::NoTestsMatched(selector.clone()));
         }
-        cargo_command([
-            "test",
-            "--locked",
-            "--package",
-            SUITE,
-            "--all-features",
-            "--lib",
-            &filter,
-        ])
+        build_focused_test_command(FocusedTestTarget::Suite, &filter, false)
     } else {
-        let suite_match = suite_has_test(root, selector)?;
-        let product_match = product_has_test(root, selector)?;
+        let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+        let product_match = focused_target_has_test(root, FocusedTestTarget::Product, selector)?;
         match (suite_match, product_match) {
             (true, true) => {
                 return Err(XtaskError::Usage(format!(
                     "ambiguous test selector `{selector}` matches both {SUITE} and {PRODUCT}; use a domain-qualified selector or run the owning package directly"
                 )));
             }
-            (true, false) => cargo_command([
-                "test",
-                "--locked",
-                "--package",
-                SUITE,
-                "--all-features",
-                "--lib",
-                selector,
-            ]),
-            (false, true) => cargo_command([
-                "test",
-                "--locked",
-                "--package",
-                PRODUCT,
-                "--all-features",
-                "--lib",
-                "--bins",
-                "--test",
-                "integration",
-                selector,
-                "--",
-                "--test-threads=2",
-            ]),
+            (true, false) => build_focused_test_command(FocusedTestTarget::Suite, selector, false),
+            (false, true) => {
+                build_focused_test_command(FocusedTestTarget::Product, selector, false)
+            }
             (false, false) => {
                 return Err(XtaskError::NoTestsMatched(selector.clone()));
             }
@@ -149,37 +151,44 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
     }
 }
 
-fn suite_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
-    let command = cargo_command([
+fn build_focused_test_command(
+    target: FocusedTestTarget,
+    selector: &str,
+    list: bool,
+) -> Vec<String> {
+    let mut command = cargo_command([
         "test",
         "--locked",
         "--package",
-        SUITE,
+        target.package(),
         "--all-features",
-        "--lib",
-        selector,
-        "--",
-        "--list",
     ]);
-    command_has_test(root, &command)
+    command.extend(
+        target
+            .target_args()
+            .iter()
+            .map(|argument| (*argument).to_owned()),
+    );
+    command.push(selector.to_owned());
+    if list {
+        command.extend(["--", "--list"].into_iter().map(str::to_owned));
+    } else {
+        command.extend(
+            target
+                .run_tail()
+                .iter()
+                .map(|argument| (*argument).to_owned()),
+        );
+    }
+    command
 }
 
-fn product_has_test(root: &Path, selector: &str) -> Result<bool, XtaskError> {
-    let command = cargo_command([
-        "test",
-        "--locked",
-        "--package",
-        PRODUCT,
-        "--all-features",
-        "--lib",
-        "--bins",
-        "--test",
-        "integration",
-        selector,
-        "--",
-        "--list",
-    ]);
-    command_has_test(root, &command)
+fn focused_target_has_test(
+    root: &Path,
+    target: FocusedTestTarget,
+    selector: &str,
+) -> Result<bool, XtaskError> {
+    command_has_test(root, &build_focused_test_command(target, selector, true))
 }
 
 fn command_has_test(root: &Path, command: &[String]) -> Result<bool, XtaskError> {
@@ -780,9 +789,44 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
     check_test_inventory(root)?;
     check_ignored_test_policy(root)?;
     check_organizational_includes(root)?;
+    check_service_snapshot_boundary(root)?;
     println!(
-        "test architecture: ok (workspace resolver 3, one root process target, directed private packages)"
+        "test architecture: ok (workspace resolver 3, one root process target, directed private packages, service snapshot boundary)"
     );
+    Ok(())
+}
+
+fn check_service_snapshot_boundary(root: &Path) -> Result<(), XtaskError> {
+    let mut rust_files = Vec::new();
+    let facade = root.join("src/services.rs");
+    if facade.is_file() {
+        rust_files.push(facade);
+    }
+    collect_rust_files(&root.join("src/services"), &mut rust_files).map_err(XtaskError::Io)?;
+    let mut leaked = BTreeSet::new();
+    for path in rust_files {
+        let source = path
+            .strip_prefix(root)
+            .expect("walked below repository root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let contents = fs::read_to_string(&path).map_err(XtaskError::Io)?;
+        if source.ends_with("/tests.rs") {
+            continue;
+        }
+        if contents
+            .lines()
+            .any(|line| line.contains("ReadSession") || line.contains("begin_read("))
+        {
+            leaked.insert(source);
+        }
+    }
+    if !leaked.is_empty() {
+        return Err(XtaskError::Architecture(format!(
+            "service modules must use the storage-owned IndexSnapshot; raw snapshot reads leaked into {leaked:?}"
+        )));
+    }
+    println!("service snapshot boundary: ok (storage owns the raw read session)");
     Ok(())
 }
 

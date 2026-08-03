@@ -658,7 +658,7 @@ impl Services {
             .unwrap_or(DEFAULT_HISTORY_RESULTS)
             .min(MAX_DIFF_SYMBOL_RESULTS);
         let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
-        let generation = self.consistent(|_, generation| Ok(generation))?;
+        let generation = self.consistent(|snapshot| Ok(snapshot.generation()))?;
         let revisions = git_diff_identity(
             &self.config.root,
             &request.base_revision,
@@ -975,7 +975,7 @@ impl Services {
         let max_results = request.max_results.unwrap_or(DEFAULT_HISTORY_RESULTS);
         let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
         let operation = request.operation;
-        let generation = self.consistent(|_, generation| Ok(generation))?;
+        let generation = self.consistent(|snapshot| Ok(snapshot.generation()))?;
         let mut response = match operation {
             HistoryOperation::ReadSymbol {
                 path,

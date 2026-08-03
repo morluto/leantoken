@@ -237,7 +237,13 @@ impl Config {
         let database_is_managed_cache = database_path.is_none();
         let database_path =
             database_path.unwrap_or_else(|| default_database_path_for_scope(&root, &index_scope));
-        let database_path = canonicalize_database_path(database_path);
+        let database_path = if database_is_managed_cache {
+            let cache_root = managed_cache_root().unwrap_or_else(|| root.clone());
+            reject_symlinked_managed_cache_components(&cache_root, &database_path)?;
+            canonicalize_managed_database_path(database_path)
+        } else {
+            canonicalize_database_path(database_path)
+        };
         let context_exclude_paths = load_context_exclude_paths(&root)?;
         Ok(Self {
             root,
@@ -375,7 +381,7 @@ impl Config {
         if candidate == self.database_path {
             return true;
         }
-        ["-wal", "-shm"].into_iter().any(|suffix| {
+        ["-wal", "-shm", "-journal"].into_iter().any(|suffix| {
             let mut sidecar = self.database_path.as_os_str().to_os_string();
             sidecar.push(suffix);
             candidate.as_os_str() == sidecar
@@ -517,6 +523,48 @@ fn canonicalize_database_path(path: PathBuf) -> PathBuf {
         };
         ancestor = parent;
     }
+}
+
+fn canonicalize_managed_database_path(path: PathBuf) -> PathBuf {
+    let path = std::path::absolute(&path).unwrap_or(path);
+    let Some(database_name) = path.file_name() else {
+        return path;
+    };
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+    canonicalize_database_path(parent.to_path_buf()).join(database_name)
+}
+
+fn reject_symlinked_managed_cache_components(
+    cache_root: &Path,
+    database_path: &Path,
+) -> Result<()> {
+    let cache_root = std::path::absolute(cache_root).unwrap_or_else(|_| cache_root.to_path_buf());
+    let parent = database_path
+        .parent()
+        .ok_or_else(|| Error::InvalidConfiguration("managed database has no parent".into()))?;
+    let parent = std::path::absolute(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let relative = parent.strip_prefix(&cache_root).map_err(|_| {
+        Error::InvalidConfiguration(
+            "managed database must remain beneath its managed cache root".into(),
+        )
+    })?;
+    let mut current = cache_root;
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(Error::InvalidConfiguration(
+                "managed cache directories must not be symlinks".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn managed_cache_root() -> Option<PathBuf> {
@@ -740,6 +788,23 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn managed_database_path_preserves_a_final_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = root.path().join("target.sqlite");
+        let link = root.path().join("index.sqlite");
+        fs::write(&target, b"not sqlite").expect("target");
+        symlink(&target, &link).expect("database symlink");
+
+        let expected = fs::canonicalize(root.path())
+            .expect("canonical repository path")
+            .join("index.sqlite");
+        assert_eq!(canonicalize_managed_database_path(link), expected);
+    }
+
     #[test]
     fn managed_fallback_excludes_current_and_unversioned_cache_artifacts() {
         let root = tempfile::tempdir().expect("repository");
@@ -756,7 +821,27 @@ mod tests {
         assert!(config.is_database_artifact(&current_database));
         assert!(config.is_database_artifact(".leantoken/index.sqlite"));
         assert!(config.is_database_artifact(".leantoken/index.sqlite-wal"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite-journal"));
         assert!(!config.is_database_artifact(".leantoken.toml"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_cache_directory_symlink_is_rejected_before_canonicalization() {
+        use std::os::unix::fs::symlink;
+
+        let cache_root = tempfile::tempdir().expect("cache root");
+        let outside = tempfile::tempdir().expect("external cache");
+        symlink(outside.path(), cache_root.path().join("repository-cache"))
+            .expect("cache directory symlink");
+
+        let database = cache_root
+            .path()
+            .join("repository-cache")
+            .join("index.sqlite");
+        let error = reject_symlinked_managed_cache_components(cache_root.path(), &database)
+            .expect_err("managed cache symlink");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
     }
 
     #[test]

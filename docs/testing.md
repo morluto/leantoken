@@ -24,6 +24,17 @@ suite; CLI parser checks, service composition, reports, and real-binary process
 behavior remain at the root where their seams are owned. Each owner carries its
 fixtures and assertions; no forwarding copies exist.
 
+The process owner is decomposed by semantic boundary under `tests/process/`:
+`cli.rs` owns CLI behavior, `doctor.rs` owns doctor and registration probes,
+`mcp_protocol.rs` owns wire and receipt behavior, `mcp_lifecycle.rs` owns
+startup, readiness, contention, and failover, `repository_free.rs` owns
+repository-independent commands, and `runtime.rs` owns private-runtime setup
+and cache lifecycle behavior. `support.rs` contains only the shared process
+capabilities (hermetic launch, MCP transport, bounded readiness, and fixture
+builders). The root `tests/process.rs` remains a thin test-owner registry so
+the target and its stable test identities do not change when a semantic module
+moves.
+
 ## Commands
 
 The contributor-facing aliases are locked and remain short:

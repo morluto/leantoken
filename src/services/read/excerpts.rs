@@ -1,6 +1,6 @@
 pub(super) fn assemble_stored_excerpt(
     request: ResolvedStoredExcerptRequest,
-    selected: &[crate::storage::ChunkRecord],
+    selected: &[crate::services::index_read::ChunkRecord],
 ) -> Option<StoredExcerpt> {
     let first_chunk = selected.first()?;
     let base_line = first_chunk.start_line;
@@ -21,7 +21,7 @@ pub(super) fn assemble_stored_excerpt(
 impl Services {
     pub(super) fn stored_excerpt(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         file_id: i64,
         start_line: usize,
         end_line: usize,
@@ -47,7 +47,7 @@ impl Services {
 impl Services {
     pub(in crate::services) fn stored_excerpts(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         requests: &[StoredExcerptRequest],
     ) -> Result<Vec<Option<StoredExcerpt>>> {
         let file_ids = requests
@@ -89,7 +89,7 @@ impl Services {
     #[cfg(test)]
     pub(in crate::services) fn adaptive_context_excerpt(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         file_id: i64,
         declaration_start: usize,
         declaration_end: usize,
@@ -133,7 +133,7 @@ impl Services {
 
     pub(in crate::services) fn adaptive_context_excerpts(
         &self,
-        session: &ReadSession,
+        session: &IndexReadSnapshot,
         requests: &[AdaptiveExcerptRequest],
     ) -> Result<Vec<Option<StoredExcerpt>>> {
         let full_requests = requests
