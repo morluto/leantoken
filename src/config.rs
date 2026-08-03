@@ -522,6 +522,24 @@ fn canonicalize_database_path(path: PathBuf) -> PathBuf {
 pub(crate) fn managed_cache_root() -> Option<PathBuf> {
     directories::ProjectDirs::from("dev", "LeanToken", "leantoken")
         .map(|project_dirs| project_dirs.cache_dir().to_path_buf())
+        .or({
+            // Windows runners can have a usable LOCALAPPDATA override while
+            // the known-folder API is unavailable (for example in a service
+            // account). Keep cache commands usable in that environment.
+            #[cfg(windows)]
+            {
+                std::env::var_os("LOCALAPPDATA").map(|root| {
+                    PathBuf::from(root)
+                        .join("LeanToken")
+                        .join("leantoken")
+                        .join("cache")
+                })
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
