@@ -25,6 +25,12 @@ installs the repository's nextest release automatically:
 cargo install cargo-nextest --locked
 ```
 
+Install `cargo-insta` before reviewing intentional snapshot updates:
+
+```bash
+cargo install cargo-insta --locked
+```
+
 An older checkout may still have the retired push-hook wrapper installed. It
 can be removed once with:
 
@@ -121,7 +127,8 @@ tests slower than ten seconds are reported, a deadlocked test is terminated
 after a bounded interval, and retries are disabled.
 
 Run the token-economy contract explicitly when changing retrieval accounting or
-its fixture. CI runs it on every supported OS for every Rust change:
+its fixture. CI selects this lane for its owned source, suite, fixture, and
+manifest paths on every supported OS:
 
 ```bash
 cargo test-contract
@@ -145,8 +152,8 @@ When changing TypeScript grammar integration, extraction on incomplete trees,
 or the manual recovery evaluator, run its focused synthetic contract:
 
 ```bash
-cargo test --locked --example typescript_parse_diagnostic
-cargo run --locked --release --example typescript_parse_diagnostic -- \
+cargo test --locked --package leantoken-benchmarks --bin typescript_parse_diagnostic
+cargo run --locked --release --package leantoken-benchmarks --bin typescript_parse_diagnostic -- \
   verify-fixture
 ```
 
@@ -159,18 +166,18 @@ When changing the Swift evaluation manifest, diagnostic, reports, or its
 development-only grammar pin, run:
 
 ```bash
-cargo test --locked --example swift_parse_diagnostic
 CARGO_TARGET_DIR=target cargo test --locked \
-  --manifest-path benchmarks/swift-grammar-073/Cargo.toml
+  --manifest-path benchmarks/swift-grammar-073/Cargo.toml \
+  --bin swift-parse-diagnostic-073
 ```
 
 The exact external-corpus command, frozen retrieval gate, and no-ship result
 are documented in
 [`../benchmarks/README.md`](../benchmarks/README.md#swift-structural-indexing-evaluation).
-The root target exercises the exact 0.7.2 development dependency; the excluded
-manifest exercises its independent exact 0.7.3 lock. Swift remains unsupported
-by production structural parsing; these targets are an evaluation contract and
-must not be treated as an index-readiness check.
+The excluded manifest owns the runnable 0.7.3 diagnostic and its independent
+lockfile. Swift remains unsupported by production structural parsing; this
+target is an evaluation contract and must not be treated as an index-readiness
+check.
 
 When changing the Kotlin evaluation manifest, diagnostic, reports, or its
 research-only grammar pin, run:
@@ -245,15 +252,17 @@ cargo test-product
 cargo test-contract
 ```
 
-CI also runs benchmark, example, and documentation tests once on Linux. On
-Linux, macOS, and Windows it runs library and binary unit tests, ordinary
-integration behavior, and executable/MCP process behavior with per-lane elapsed
-summaries from xtask. The process-heavy phase uses three workers on macOS and
-four on Linux or Windows because each test can start several child processes;
-ordinary tests retain the runner's default parallelism. Rust changes also run
-the instrumented coverage gate in
-parallel (50% line floor; the opt-in `concurrency_profile` harness is excluded).
-The token-economy contract runs separately on all three operating systems.
+The CI planner selects product, token-economy contract, benchmark/example, and
+coverage lanes independently from their owned paths. Selected benchmark,
+example, and documentation tests run once on Linux. Selected product and
+contract lanes run on Linux, macOS, and Windows with per-lane elapsed summaries
+from xtask. The process-heavy phase uses three workers on macOS and four on
+Linux or Windows because each test can start several child processes; ordinary
+tests retain the runner's default parallelism. Selected Rust changes also run
+the instrumented coverage gate in parallel (50% line floor; the opt-in
+`concurrency_profile` harness is excluded). The stable Required checks job
+fails if a selected lane fails, cancels, times out, or disappears, while
+intentionally unselected lanes remain conditional.
 A pull request is not ready to merge until its required CI checks pass.
 
 Repository rules for `main` should require the CI workflow's `Required checks`
@@ -319,7 +328,8 @@ forwarding:
 node --test npm/npm-install-e2e.mjs
 ```
 
-CI runs the host-native installation test on Linux, macOS, and Windows.
+CI runs the host-native installation test on Linux, macOS, and Windows when the
+planner selects the npm lane.
 
 Merging an `autorelease` PR creates a version tag such as `v0.1.0` and
 dispatches `.github/workflows/release.yml` with that tag. Keep the Cargo package

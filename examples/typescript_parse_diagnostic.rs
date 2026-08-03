@@ -1000,8 +1000,7 @@ fn read_stream_bounded(
 }
 
 fn fixture_report() -> AnyResult<DiagnosticReport> {
-    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("benchmarks/fixtures/typescript_parse_diagnostic");
+    let fixture_root = workspace_benchmarks_root().join("fixtures/typescript_parse_diagnostic");
     let manifest_path = fixture_root.join("manifest.json");
     let manifest_bytes = read_bounded_file(&manifest_path, MAX_MANIFEST_BYTES)?;
     let manifest: FixtureManifest = serde_json::from_slice(&manifest_bytes)?;
@@ -1022,8 +1021,8 @@ fn fixture_report() -> AnyResult<DiagnosticReport> {
 }
 
 fn verify_checked_in_fixture() -> AnyResult<()> {
-    let expected_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("benchmarks/fixtures/typescript_parse_diagnostic/report.json");
+    let expected_path =
+        workspace_benchmarks_root().join("fixtures/typescript_parse_diagnostic/report.json");
     let expected_bytes = read_bounded_file(&expected_path, MAX_MANIFEST_BYTES)?;
     let expected: DiagnosticReport = serde_json::from_slice(&expected_bytes)?;
     let actual = fixture_report()?;
@@ -1034,6 +1033,16 @@ fn verify_checked_in_fixture() -> AnyResult<()> {
         .into());
     }
     Ok(())
+}
+
+fn workspace_benchmarks_root() -> PathBuf {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let direct = manifest_dir.join("benchmarks");
+    if direct.is_dir() {
+        direct
+    } else {
+        manifest_dir.join("../../benchmarks")
+    }
 }
 
 fn write_report(path: &Path, report: &DiagnosticReport) -> AnyResult<()> {

@@ -1062,6 +1062,7 @@ dependencies = [
  "tokio-util",
  "tree-sitter",
  "tree-sitter-python",
+ "tree-sitter-typescript",
  "unidiff",
  "wait-timeout",
 ]
