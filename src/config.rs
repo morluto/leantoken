@@ -748,10 +748,10 @@ mod tests {
         fs::write(&target, b"not sqlite").expect("target");
         symlink(&target, &link).expect("database symlink");
 
-        assert_eq!(
-            canonicalize_managed_database_path(link),
-            std::path::absolute(root.path().join("index.sqlite")).expect("absolute path")
-        );
+        let expected = fs::canonicalize(root.path())
+            .expect("canonical repository path")
+            .join("index.sqlite");
+        assert_eq!(canonicalize_managed_database_path(link), expected);
     }
 
     #[test]

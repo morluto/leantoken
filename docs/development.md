@@ -252,7 +252,8 @@ summaries from xtask. The process-heavy phase uses three workers on macOS and
 four on Linux or Windows because each test can start several child processes;
 ordinary tests retain the runner's default parallelism. Rust changes also run
 the instrumented coverage gate in
-parallel (50% line floor; the opt-in `concurrency_profile` harness is excluded).
+parallel (50% line floor; the opt-in `concurrency_profile` harness and
+subprocess-only CLI entrypoints are excluded).
 The token-economy contract runs separately on all three operating systems.
 A pull request is not ready to merge until its required CI checks pass.
 

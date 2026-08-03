@@ -102,6 +102,7 @@ fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
     doctor::configured_doctor_isolates_selected_client_from_unrelated_config_errors();
 }
 
+#[cfg(not(windows))]
 #[test]
 fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     runtime::runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default();
@@ -137,6 +138,7 @@ fn cli_index_explains_skipped_binary_files_without_returning_paths() {
     cli::cli_index_explains_skipped_binary_files_without_returning_paths();
 }
 
+#[cfg(not(windows))]
 #[test]
 fn cache_list_and_prune_do_not_require_a_repository() {
     repository_free::cache_list_and_prune_do_not_require_a_repository();

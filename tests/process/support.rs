@@ -59,7 +59,7 @@ pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
             .map(Path::to_path_buf)
             .unwrap_or_else(std::env::temp_dir)
     };
-    vec![
+    let mut environment = vec![
         ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
         ("HOME".into(), home.clone().into_os_string()),
         ("USERPROFILE".into(), home.clone().into_os_string()),
@@ -73,7 +73,31 @@ pub(crate) fn process_environment(root: &Path) -> Vec<(String, OsString)> {
         ("GIT_TERMINAL_PROMPT".into(), "0".into()),
         ("GIT_PAGER".into(), "cat".into()),
         ("PAGER".into(), "cat".into()),
-    ]
+    ];
+
+    // env_clear is deliberate for hermetic fixtures, but Windows child
+    // processes still need the host runtime's launcher variables. Preserve
+    // those values while keeping the fixture's home/config roots isolated.
+    for name in [
+        "SystemRoot",
+        "windir",
+        "COMSPEC",
+        "PATHEXT",
+        "OS",
+        "SystemDrive",
+        "ProgramData",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        // cargo-llvm-cov uses this to collect profiles from subprocesses.
+        "LLVM_PROFILE_FILE",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            environment.push((name.into(), value));
+        }
+    }
+
+    environment
 }
 
 pub(crate) fn apply_hermetic_environment(command: &mut Command, root: &Path) {
