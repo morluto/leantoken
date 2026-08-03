@@ -143,49 +143,73 @@ fn ensure_real_directory(directory: &Path) -> std::result::Result<(), String> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn same_directory_identity(left: &fs::Metadata, right: &fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::MetadataExt;
 
-        left.dev() == right.dev() && left.ino() == right.ino()
-    }
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+fn open_real_directory(directory: &Path) -> std::result::Result<Dir, String> {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::fs::OpenOptionsExt;
 
-        left.volume_serial_number() == right.volume_serial_number()
-            && left.file_index() == right.file_index()
+        // Open the final component as a reparse point rather than following a
+        // transient directory junction/symlink. BACKUP_SEMANTICS permits a
+        // directory handle through std::fs::OpenOptions on Windows.
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
+        let file = options.open(directory).map_err(|error| error.to_string())?;
+        let metadata = file.metadata().map_err(|error| error.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(format!(
+                "cache directory is not a real directory: {}",
+                directory.display()
+            ));
+        }
+        Ok(Dir::from_std_file(file))
     }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(windows))]
     {
-        left.file_type() == right.file_type()
-            && left.len() == right.len()
-            && left.modified().ok() == right.modified().ok()
+        Dir::open_ambient_dir(directory, cap_std::ambient_authority())
+            .map_err(|error| error.to_string())
     }
 }
 
 fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
     ensure_real_directory(directory)?;
+    #[cfg(unix)]
     let expected_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
-    let handle = Dir::open_ambient_dir(directory, cap_std::ambient_authority())
-        .map_err(|error| error.to_string())?;
+    let handle = open_real_directory(directory)?;
 
-    // A path-only check around open_ambient_dir is racy: a directory can be
-    // replaced by a symlink to an external directory for the open, then
-    // restored before the second check. Compare the opened directory's stable
-    // filesystem identity with the directory that was validated before open;
-    // all later removals are then anchored to the verified handle.
-    let opened_file = handle.into_std_file();
-    let opened_metadata = opened_file.metadata().map_err(|error| error.to_string())?;
-    let handle = Dir::from_std_file(opened_file);
-    if !same_directory_identity(&expected_metadata, &opened_metadata) {
-        return Err("cache directory changed while opening".into());
-    }
-    ensure_real_directory(directory)?;
-    let current_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
-    if !same_directory_identity(&expected_metadata, &current_metadata) {
-        return Err("cache directory changed while opening".into());
+    #[cfg(unix)]
+    let handle = {
+        let opened_file = handle.into_std_file();
+        let opened_metadata = opened_file.metadata().map_err(|error| error.to_string())?;
+        if !same_directory_identity(&expected_metadata, &opened_metadata) {
+            return Err("cache directory changed while opening".into());
+        }
+        Dir::from_std_file(opened_file)
+    };
+    #[cfg(not(unix))]
+    let handle = handle;
+    #[cfg(unix)]
+    {
+        // A path-only check around open_ambient_dir is racy: a directory can
+        // be replaced by a symlink to an external directory for the open, then
+        // restored before the second check. Compare the opened directory's
+        // stable filesystem identity with the directory that was validated
+        // before open; all later removals are anchored to the handle.
+        ensure_real_directory(directory)?;
+        let current_metadata = fs::metadata(directory).map_err(|error| error.to_string())?;
+        if !same_directory_identity(&expected_metadata, &current_metadata) {
+            return Err("cache directory changed while opening".into());
+        }
     }
 
     let database = directory.join(DATABASE_NAME);
