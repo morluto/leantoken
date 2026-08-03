@@ -15,8 +15,13 @@ pub(crate) use std::time::{Duration, Instant};
 pub(crate) const EXPECTED_INDEX_CONTENT_VERSION: u64 = 13;
 
 fn process_environment(root: &Path) -> Vec<(String, OsString)> {
-    let host_home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
-    let home = if host_home.as_deref() == Some(root) {
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let host_home = directories::BaseDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| dirs.home_dir().to_path_buf())
+    });
+    let home = if host_home.as_deref() == Some(canonical_root.as_path()) {
         root.to_path_buf()
     } else {
         root.parent()
