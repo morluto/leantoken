@@ -3,43 +3,83 @@
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>std::fs;
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a><span class="attr">#[derive(Debug, Deserialize)]
-<a href=#7 id=7 data-nosnippet>7</a></span><span class="kw">struct </span>ProtocolCatalogRequest {}
-<a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="attr">#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-<a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">struct </span>ProtocolCatalogExpectation {
-<a href=#11 id=11 data-nosnippet>11</a>    is_json_array: bool,
-<a href=#12 id=12 data-nosnippet>12</a>    contains_context: bool,
-<a href=#13 id=13 data-nosnippet>13</a>}
-<a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(case: <span class="kw-2">&amp;</span>FixtureCase, bless: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="kw">let _</span>: ProtocolCatalogRequest = serde_json::from_slice(
-<a href=#17 id=17 data-nosnippet>17</a>        <span class="kw-2">&amp;</span>fs::read(<span class="kw-2">&amp;</span>case.request).map_err(|error| <span class="macro">format!</span>(<span class="string">"read request: {error}"</span>))<span class="question-mark">?</span>,
-<a href=#18 id=18 data-nosnippet>18</a>    )
-<a href=#19 id=19 data-nosnippet>19</a>    .map_err(|error| <span class="macro">format!</span>(<span class="string">"decode request: {error}"</span>))<span class="question-mark">?</span>;
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>expected: ProtocolCatalogExpectation = serde_json::from_slice(
-<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw-2">&amp;</span>fs::read(<span class="kw-2">&amp;</span>case.expected).map_err(|error| <span class="macro">format!</span>(<span class="string">"read expected: {error}"</span>))<span class="question-mark">?</span>,
-<a href=#22 id=22 data-nosnippet>22</a>    )
-<a href=#23 id=23 data-nosnippet>23</a>    .map_err(|error| <span class="macro">format!</span>(<span class="string">"decode expected: {error}"</span>))<span class="question-mark">?</span>;
-<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">let </span>catalog = tool_catalog_json();
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">let </span>actual = ProtocolCatalogExpectation {
-<a href=#26 id=26 data-nosnippet>26</a>        is_json_array: catalog.starts_with(<span class="string">'['</span>) &amp;&amp; catalog.ends_with(<span class="string">']'</span>),
-<a href=#27 id=27 data-nosnippet>27</a>        contains_context: catalog.contains(<span class="string">"context"</span>),
-<a href=#28 id=28 data-nosnippet>28</a>    };
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">if </span>bless {
-<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw">let </span>rendered = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>actual).map_err(|error| error.to_string())<span class="question-mark">?</span>;
-<a href=#31 id=31 data-nosnippet>31</a>        fs::write(<span class="kw-2">&amp;</span>case.expected, <span class="macro">format!</span>(<span class="string">"{rendered}\n"</span>))
-<a href=#32 id=32 data-nosnippet>32</a>            .map_err(|error| <span class="macro">format!</span>(<span class="string">"write blessed expectation: {error}"</span>))<span class="question-mark">?</span>;
-<a href=#33 id=33 data-nosnippet>33</a>        <span class="macro">println!</span>(<span class="string">"blessed {}: {:?} -&gt; {:?}"</span>, case.identity, expected, actual);
-<a href=#34 id=34 data-nosnippet>34</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#35 id=35 data-nosnippet>35</a>    }
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">if </span>expected != actual {
-<a href=#37 id=37 data-nosnippet>37</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
-<a href=#38 id=38 data-nosnippet>38</a>            <span class="string">"semantic fixture mismatch for {}: expected {:?}, actual {:?}"</span>,
-<a href=#39 id=39 data-nosnippet>39</a>            case.identity, expected, actual
-<a href=#40 id=40 data-nosnippet>40</a>        ));
-<a href=#41 id=41 data-nosnippet>41</a>    }
-<a href=#42 id=42 data-nosnippet>42</a>    <span class="macro">println!</span>(<span class="string">"fixture passed: {}"</span>, case.identity);
-<a href=#43 id=43 data-nosnippet>43</a>    <span class="prelude-val">Ok</span>(())
-<a href=#44 id=44 data-nosnippet>44</a>}
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span><span class="kw">super</span>::compare_or_bless;
+<a href=#7 id=7 data-nosnippet>7</a>
+<a href=#8 id=8 data-nosnippet>8</a><span class="attr">#[derive(Debug, Deserialize)]
+<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">struct </span>ProtocolCatalogRequest {}
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="attr">#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">struct </span>ProtocolCatalogExpectation {
+<a href=#13 id=13 data-nosnippet>13</a>    tool_names: Vec&lt;String&gt;,
+<a href=#14 id=14 data-nosnippet>14</a>    all_tools_have_input_schema: bool,
+<a href=#15 id=15 data-nosnippet>15</a>}
+<a href=#16 id=16 data-nosnippet>16</a>
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">fn </span>catalog_expectation(tools: <span class="kw-2">&amp;</span>[serde_json::Value]) -&gt; ProtocolCatalogExpectation {
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="comment">// Keep extraction independent from validation. Iterator::all stops at the
+<a href=#19 id=19 data-nosnippet>19</a>    // first malformed entry, which could otherwise make a broken catalog look
+<a href=#20 id=20 data-nosnippet>20</a>    // like a shorter valid catalog when a fixture is blessed.
+<a href=#21 id=21 data-nosnippet>21</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>tool_names = tools
+<a href=#22 id=22 data-nosnippet>22</a>        .iter()
+<a href=#23 id=23 data-nosnippet>23</a>        .filter_map(|tool| {
+<a href=#24 id=24 data-nosnippet>24</a>            tool.as_object()
+<a href=#25 id=25 data-nosnippet>25</a>                .and_then(|object| object.get(<span class="string">"name"</span>))
+<a href=#26 id=26 data-nosnippet>26</a>                .and_then(serde_json::Value::as_str)
+<a href=#27 id=27 data-nosnippet>27</a>                .map(str::to_owned)
+<a href=#28 id=28 data-nosnippet>28</a>        })
+<a href=#29 id=29 data-nosnippet>29</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#30 id=30 data-nosnippet>30</a>    tool_names.sort();
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">let </span>all_tools_have_input_schema = tools.iter().all(|tool| {
+<a href=#32 id=32 data-nosnippet>32</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(object) = tool.as_object() <span class="kw">else </span>{
+<a href=#33 id=33 data-nosnippet>33</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#34 id=34 data-nosnippet>34</a>        };
+<a href=#35 id=35 data-nosnippet>35</a>        object
+<a href=#36 id=36 data-nosnippet>36</a>            .get(<span class="string">"name"</span>)
+<a href=#37 id=37 data-nosnippet>37</a>            .and_then(serde_json::Value::as_str)
+<a href=#38 id=38 data-nosnippet>38</a>            .is_some()
+<a href=#39 id=39 data-nosnippet>39</a>            &amp;&amp; object
+<a href=#40 id=40 data-nosnippet>40</a>                .get(<span class="string">"inputSchema"</span>)
+<a href=#41 id=41 data-nosnippet>41</a>                .is_some_and(serde_json::Value::is_object)
+<a href=#42 id=42 data-nosnippet>42</a>    });
+<a href=#43 id=43 data-nosnippet>43</a>    ProtocolCatalogExpectation {
+<a href=#44 id=44 data-nosnippet>44</a>        tool_names,
+<a href=#45 id=45 data-nosnippet>45</a>        all_tools_have_input_schema,
+<a href=#46 id=46 data-nosnippet>46</a>    }
+<a href=#47 id=47 data-nosnippet>47</a>}
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(case: <span class="kw-2">&amp;</span>FixtureCase, bless: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">let _</span>: ProtocolCatalogRequest = serde_json::from_slice(
+<a href=#51 id=51 data-nosnippet>51</a>        <span class="kw-2">&amp;</span>fs::read(<span class="kw-2">&amp;</span>case.request).map_err(|error| <span class="macro">format!</span>(<span class="string">"read request: {error}"</span>))<span class="question-mark">?</span>,
+<a href=#52 id=52 data-nosnippet>52</a>    )
+<a href=#53 id=53 data-nosnippet>53</a>    .map_err(|error| <span class="macro">format!</span>(<span class="string">"decode request: {error}"</span>))<span class="question-mark">?</span>;
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">let </span>expected: ProtocolCatalogExpectation = serde_json::from_slice(
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw-2">&amp;</span>fs::read(<span class="kw-2">&amp;</span>case.expected).map_err(|error| <span class="macro">format!</span>(<span class="string">"read expected: {error}"</span>))<span class="question-mark">?</span>,
+<a href=#56 id=56 data-nosnippet>56</a>    )
+<a href=#57 id=57 data-nosnippet>57</a>    .map_err(|error| <span class="macro">format!</span>(<span class="string">"decode expected: {error}"</span>))<span class="question-mark">?</span>;
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">let </span>catalog: serde_json::Value = serde_json::from_str(<span class="kw-2">&amp;</span>tool_catalog_json())
+<a href=#59 id=59 data-nosnippet>59</a>        .map_err(|error| <span class="macro">format!</span>(<span class="string">"decode catalog: {error}"</span>))<span class="question-mark">?</span>;
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>tools = catalog
+<a href=#61 id=61 data-nosnippet>61</a>        .as_array()
+<a href=#62 id=62 data-nosnippet>62</a>        .ok_or_else(|| <span class="string">"tool catalog is not a JSON array"</span>.to_owned())<span class="question-mark">?</span>;
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span>actual = catalog_expectation(tools);
+<a href=#64 id=64 data-nosnippet>64</a>    compare_or_bless(case, <span class="kw-2">&amp;</span>expected, <span class="kw-2">&amp;</span>actual, bless)
+<a href=#65 id=65 data-nosnippet>65</a>}
+<a href=#66 id=66 data-nosnippet>66</a>
+<a href=#67 id=67 data-nosnippet>67</a><span class="attr">#[cfg(test)]
+<a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">mod </span>tests {
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">use </span><span class="kw">super</span>::catalog_expectation;
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="attr">#[test]
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">fn </span>malformed_middle_entry_does_not_truncate_catalog_names() {
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span>tools = <span class="macro">vec!</span>[
+<a href=#74 id=74 data-nosnippet>74</a>            <span class="macro">serde_json::json!</span>({<span class="string">"name"</span>: <span class="string">"first"</span>, <span class="string">"inputSchema"</span>: {}}),
+<a href=#75 id=75 data-nosnippet>75</a>            <span class="macro">serde_json::json!</span>({<span class="string">"name"</span>: <span class="string">"malformed"</span>}),
+<a href=#76 id=76 data-nosnippet>76</a>            <span class="macro">serde_json::json!</span>({<span class="string">"name"</span>: <span class="string">"last"</span>, <span class="string">"inputSchema"</span>: {}}),
+<a href=#77 id=77 data-nosnippet>77</a>        ];
+<a href=#78 id=78 data-nosnippet>78</a>
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>actual = catalog_expectation(<span class="kw-2">&amp;</span>tools);
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="macro">assert_eq!</span>(actual.tool_names, [<span class="string">"first"</span>, <span class="string">"last"</span>, <span class="string">"malformed"</span>]);
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="macro">assert!</span>(!actual.all_tools_have_input_schema);
+<a href=#83 id=83 data-nosnippet>83</a>    }
+<a href=#84 id=84 data-nosnippet>84</a>}
 </code></pre></div></section></main></body></html>
