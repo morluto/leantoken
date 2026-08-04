@@ -70,28 +70,53 @@ pub(super) async fn run_mcp_runtime(
 ) -> Result<()> {
     let startup_cancellation = cancellation.clone();
     let startup_state = service_state.clone();
+    let use_background_worker_default = cli.max_index_workers.is_none();
     let context_cli = cli.clone();
-    let (services, approved_contexts) = tokio::task::spawn_blocking(move || {
-        let use_background_worker_default = cli.max_index_workers.is_none();
-        let mut config = cli.config()?;
-        let approved_contexts = config.approved_repository_contexts()?;
-        // MCP indexing is background work. Reserve host capacity for
-        // protocol handling and sibling agents unless the user made
-        // concurrency explicit.
-        config.max_index_workers =
-            mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
+    let mut config = tokio::task::spawn_blocking(move || cli.config()).await??;
+    let approved_contexts = config.approved_repository_contexts()?;
+    let mut approved_contexts = approved_contexts
+        .into_iter()
+        .map(|approved| {
+            let context_state = mcp::McpServices::starting_default();
+            contexts.register(approved.name.clone(), context_state.clone())?;
+            Ok::<_, leantoken::Error>((approved, context_state))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    // MCP indexing is background work. Reserve host capacity for protocol
+    // handling and sibling agents unless the user made concurrency explicit.
+    config.max_index_workers =
+        mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
+    let startup = tokio::task::spawn_blocking(move || {
         startup_state.configure_limits(&config)?;
-        let services = Services::open_cancellable(config, &startup_cancellation)?;
-        Ok::<_, leantoken::Error>((Arc::new(services), approved_contexts))
+        Services::open_cancellable(config, &startup_cancellation)
     })
-    .await??;
+    .await;
+    let services = match startup {
+        Ok(Ok(services)) => Arc::new(services),
+        Ok(Err(error)) => {
+            for (_, context_state) in &approved_contexts {
+                context_state.set_failed(&error);
+            }
+            return Err(error);
+        }
+        Err(error) => {
+            let error: leantoken::Error = error.into();
+            for (_, context_state) in &approved_contexts {
+                context_state.set_failed(&error);
+            }
+            return Err(error);
+        }
+    };
     if cancellation.is_cancelled() {
-        return Err(leantoken::Error::Cancelled);
+        let error = leantoken::Error::Cancelled;
+        for (_, context_state) in &approved_contexts {
+            context_state.set_failed(&error);
+        }
+        return Err(error);
     }
     service_state.set_ready(Arc::clone(&services));
-    for approved in approved_contexts {
-        let context_state = mcp::McpServices::starting_default();
-        contexts.register(approved.name.clone(), context_state.clone())?;
+    for (approved, context_state) in approved_contexts.drain(..) {
         let context_cancellation = cancellation.clone();
         let startup_cancellation = context_cancellation.clone();
         let context_name = approved.name.clone();
