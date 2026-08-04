@@ -615,7 +615,9 @@ Writes that begin concurrently with the call may require another
 immediately before retrieval when they need to reconcile first.
 
 Numeric retrieval limits are inclusive and validated uniformly by the CLI,
-MCP, and direct service APIs. `max_results` must be in `1..=100`;
+MCP, and direct service APIs. `max_results` must be in `1..=100`; the active
+repository cap is `config.max_results` and may be lower. Omitted values use
+`config.default_results`.
 `max_tokens` and `token_budget` must be in `1..=32,000`; `context_lines` may be
 zero and must not exceed 20. Omitted optional values use their documented
 defaults. Values outside these ranges are rejected rather than silently
@@ -1244,6 +1246,21 @@ not indexed by default, including `node_modules`, still require the global
 `--include-generated` indexing override before exact lookup or explicit context
 inclusion can find them. Repository configuration is resolved when LeanToken
 opens the repository.
+
+An MCP server can also serve a bounded set of additional repositories when
+they are explicitly approved in the primary repository configuration:
+
+```toml
+[repository_contexts.docs]
+root = "../docs-repository"
+```
+
+Context names are request-only identifiers; retrieval calls never accept a
+filesystem root. The primary workspace is selected when `repository_context`
+is omitted, while an approved name selects the corresponding repository. A
+maximum of eight additional contexts is accepted. Each context has its own
+index, generation, cache, and admission state; unknown names fail closed, and
+receipts remain bound to the selected repository identity and generation.
 
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,

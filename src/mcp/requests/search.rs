@@ -60,6 +60,10 @@ pub(in crate::mcp) enum SearchMcpProjection {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct SearchMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     pub(in crate::mcp) expected_repository_id: Option<String>,
@@ -147,19 +151,16 @@ pub(in crate::mcp) struct SearchMcpOptions {
     #[schemars(length(max = 256), inner(length(max = 4096)))]
     pub(in crate::mcp) focus_paths: Vec<RepositoryPattern>,
     #[serde(default)]
-    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    #[schemars(schema_with = "result_limit_schema")]
     pub(in crate::mcp) max_results: Option<usize>,
     #[serde(default)]
-    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    #[schemars(schema_with = "token_limit_schema")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     #[serde(default)]
     #[schemars(schema_with = "response_token_limit_schema")]
     pub(in crate::mcp) max_response_tokens: Option<usize>,
     #[serde(default)]
-    #[schemars(
-        schema_with = "context_line_limit_schema",
-        default = "default_context_line_option"
-    )]
+    #[schemars(schema_with = "context_line_limit_schema")]
     pub(in crate::mcp) context_lines: Option<usize>,
     #[serde(default)]
     pub(in crate::mcp) case_sensitive: bool,
@@ -272,6 +273,15 @@ impl SearchMcpRequest {
             return Err(crate::Error::InvalidInput {
                 field: "projection",
                 reason: "occurrences requires all_occurrences=true",
+            });
+        }
+        if options.query_receipt.is_some()
+            && (!options.all_occurrences
+                || !matches!(self.operation.mode(), SearchMode::Text | SearchMode::Regex))
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires all_occurrences=true with text or regex mode",
             });
         }
         if options.query_receipt.is_some()

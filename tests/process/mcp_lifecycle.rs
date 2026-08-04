@@ -4,6 +4,9 @@ use super::support::{
 };
 
 const FAILOVER_LIVENESS_TIMEOUT: Duration = Duration::from_secs(60);
+// Index readiness is a liveness contract, not a ten-second latency contract;
+// the process lane runs several subprocess tests concurrently on Windows.
+const INDEX_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROCESS_FAILURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(super) fn mcp_initialize_precedes_storage_open() {
@@ -39,7 +42,7 @@ pub(super) fn mcp_initialize_precedes_storage_open() {
         "jsonrpc": "2.0",
         "method": "notifications/initialized"
     }));
-    wait_until(Duration::from_secs(10), || {
+    wait_until(INDEX_READY_TIMEOUT, || {
         database_state(&database)
             .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
     });
@@ -156,7 +159,7 @@ pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
     // startup would be permanently unavailable before the lock is released.
     std::thread::sleep(Duration::from_millis(750));
     blocker.execute_batch("ROLLBACK").expect("release database");
-    process.wait_until_ready(Duration::from_secs(10));
+    process.wait_until_ready(INDEX_READY_TIMEOUT);
 }
 
 pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
@@ -421,7 +424,7 @@ pub(super) fn mcp_follower_takes_over_after_leader_exit() {
     let mut leader = McpProcess::spawn(root.path(), &database);
     leader.initialize();
     leader.send_initialized();
-    wait_until(Duration::from_secs(10), || {
+    wait_until(INDEX_READY_TIMEOUT, || {
         database_state(&database)
             .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
     });

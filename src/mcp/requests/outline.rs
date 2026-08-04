@@ -14,6 +14,10 @@ pub(in crate::mcp) enum OutlineMcpProjection {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct OutlineMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -31,11 +35,11 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     pub(in crate::mcp) symbol_kind: Option<String>,
     /// Maximum definitions and imports to return (default 20, maximum 100).
     #[serde(default)]
-    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    #[schemars(schema_with = "result_limit_schema")]
     pub(in crate::mcp) max_results: Option<usize>,
     /// Maximum signature and import tokens (default 8000, maximum 32000).
     #[serde(default)]
-    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    #[schemars(schema_with = "token_limit_schema")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     /// Maximum tokens in the final serialized service response.
     #[serde(default)]

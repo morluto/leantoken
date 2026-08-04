@@ -3,6 +3,10 @@ use super::*;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct JsonMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -15,7 +19,7 @@ pub(in crate::mcp) struct JsonMcpRequest {
 pub(in crate::mcp) struct JsonMcpLimits {
     /// Maximum tokens across selected/projected JSON (default 8000, maximum 32000).
     #[serde(default)]
-    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    #[schemars(schema_with = "token_limit_schema")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     /// Maximum tokens in the final serialized service response.
     #[serde(default)]

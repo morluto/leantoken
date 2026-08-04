@@ -4,6 +4,7 @@ pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result
     const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
     let (server, service_state) = mcp::LeanTokenMcp::pending();
     let server = server.with_result_mode(result_mode);
+    let runtime_contexts = server.context_registry();
     let mut server_task = tokio::spawn(mcp::serve_stdio_server(server));
 
     tokio::select! {
@@ -14,10 +15,9 @@ pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result
     let cancellation = CancellationToken::new();
     let runtime_cancellation = cancellation.clone();
     let runtime_state = service_state.clone();
-    let mut runtime_task =
-        tokio::spawn(
-            async move { run_mcp_runtime(cli, runtime_state, runtime_cancellation).await },
-        );
+    let mut runtime_task = tokio::spawn(async move {
+        run_mcp_runtime(cli, runtime_state, runtime_contexts, runtime_cancellation).await
+    });
     let failure_state = service_state;
 
     tokio::select! {
@@ -65,28 +65,75 @@ pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result
 pub(super) async fn run_mcp_runtime(
     cli: Cli,
     service_state: mcp::McpServices,
+    contexts: mcp::McpContextRegistry,
     cancellation: CancellationToken,
 ) -> Result<()> {
     let startup_cancellation = cancellation.clone();
     let startup_state = service_state.clone();
-    let services = Arc::new(
-        tokio::task::spawn_blocking(move || {
-            let use_background_worker_default = cli.max_index_workers.is_none();
-            let mut config = cli.config()?;
-            // MCP indexing is background work. Reserve host capacity for
-            // protocol handling and sibling agents unless the user made
-            // concurrency explicit.
-            config.max_index_workers =
-                mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
-            startup_state.configure_limits(&config)?;
-            Services::open_cancellable(config, &startup_cancellation)
-        })
-        .await??,
-    );
+    let context_cli = cli.clone();
+    let (services, approved_contexts) = tokio::task::spawn_blocking(move || {
+        let use_background_worker_default = cli.max_index_workers.is_none();
+        let mut config = cli.config()?;
+        let approved_contexts = config.approved_repository_contexts()?;
+        // MCP indexing is background work. Reserve host capacity for
+        // protocol handling and sibling agents unless the user made
+        // concurrency explicit.
+        config.max_index_workers =
+            mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
+        startup_state.configure_limits(&config)?;
+        let services = Services::open_cancellable(config, &startup_cancellation)?;
+        Ok::<_, leantoken::Error>((Arc::new(services), approved_contexts))
+    })
+    .await??;
     if cancellation.is_cancelled() {
         return Err(leantoken::Error::Cancelled);
     }
     service_state.set_ready(Arc::clone(&services));
+    for approved in approved_contexts {
+        let context_state = mcp::McpServices::starting_default();
+        contexts.register(approved.name.clone(), context_state.clone())?;
+        let context_cancellation = cancellation.clone();
+        let startup_cancellation = context_cancellation.clone();
+        let context_name = approved.name.clone();
+        let context_cli = context_cli.clone();
+        tokio::spawn(async move {
+            let startup = tokio::task::spawn_blocking(move || {
+                let mut config = context_cli.config_for_root(approved.root, None)?;
+                config.max_index_workers = mcp_index_worker_limit(
+                    config.max_index_workers,
+                    context_cli.max_index_workers.is_some(),
+                );
+                leantoken::services::Services::open_cancellable(config, &startup_cancellation)
+            })
+            .await;
+            match startup {
+                Ok(Ok(services)) => {
+                    let services = Arc::new(services);
+                    context_state.set_ready(Arc::clone(&services));
+                    if let Err(error) = run_mcp_index_loop(services, context_cancellation).await {
+                        context_state.set_failed(&error);
+                        tracing::error!(context = %context_name, %error, "approved repository context stopped");
+                    }
+                }
+                Ok(Err(error)) => {
+                    context_state.set_failed(&error);
+                    tracing::error!(context = %context_name, %error, "approved repository context failed to start");
+                }
+                Err(error) => {
+                    let error: leantoken::Error = error.into();
+                    context_state.set_failed(&error);
+                    tracing::error!(context = %context_name, %error, "approved repository context startup task failed");
+                }
+            }
+        });
+    }
+    run_mcp_index_loop(services, cancellation).await
+}
+
+async fn run_mcp_index_loop(
+    services: Arc<leantoken::services::Services>,
+    cancellation: CancellationToken,
+) -> Result<()> {
     let mut leadership_backoff =
         RetryBackoff::new(INDEX_RETRY_INITIAL_DELAY, INDEX_RETRY_MAX_DELAY);
     let mut follower_backoff =

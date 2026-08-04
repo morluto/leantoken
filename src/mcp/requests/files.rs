@@ -14,6 +14,10 @@ pub(in crate::mcp) enum FilesMcpProjection {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct FilesMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -34,7 +38,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[serde(default)]
         depth: Option<usize>,
         #[serde(default)]
-        #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+        #[schemars(schema_with = "result_limit_schema")]
         max_results: Option<usize>,
         #[serde(default)]
         #[schemars(schema_with = "response_token_limit_schema")]
@@ -53,7 +57,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(length(min = 1, max = 65536))]
         query: NonEmptyText,
         #[serde(default)]
-        #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+        #[schemars(schema_with = "result_limit_schema")]
         max_results: Option<usize>,
         #[serde(default)]
         #[schemars(schema_with = "response_token_limit_schema")]
@@ -72,7 +76,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(length(min = 1, max = 4096))]
         pattern: RepositoryPattern,
         #[serde(default)]
-        #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+        #[schemars(schema_with = "result_limit_schema")]
         max_results: Option<usize>,
         #[serde(default)]
         #[schemars(schema_with = "response_token_limit_schema")]

@@ -1,5 +1,6 @@
 ---
 source: src/mcp/tests.rs
+assertion_line: 2025
 expression: tools
 ---
 [
@@ -439,6 +440,15 @@ expression: tools
             "null"
           ]
         },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "required_evidence": {
           "default": [],
           "description": "Require matching query evidence within each path-scoped contract.",
@@ -477,7 +487,7 @@ expression: tools
           "type": "string"
         },
         "token_budget": {
-          "default": 3000,
+          "default": null,
           "description": "Maximum source tokens across selected fragments (default 3000, maximum 32000).",
           "format": "uint",
           "maximum": 32000,
@@ -561,7 +571,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -624,7 +635,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -685,7 +697,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -744,6 +757,15 @@ expression: tools
         "operation": {
           "$ref": "#/$defs/FilesMcpOperation",
           "description": "Tagged path operation. Bounds and cursors live on the variant that uses them."
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -779,7 +801,7 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
                   "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
                   "format": "uint",
                   "maximum": 100,
@@ -790,7 +812,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -855,7 +877,7 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
                   "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
                   "format": "uint",
                   "maximum": 100,
@@ -866,7 +888,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -936,7 +958,7 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
                   "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
                   "format": "uint",
                   "maximum": 100,
@@ -947,7 +969,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -994,7 +1016,7 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
                   "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
                   "format": "uint",
                   "maximum": 100,
@@ -1005,7 +1027,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum source or diff tokens to return (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -1119,6 +1141,15 @@ expression: tools
         "operation": {
           "$ref": "#/$defs/HistoryMcpOperation",
           "description": "Git-backed symbol history operation."
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1196,7 +1227,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -1274,7 +1305,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -1358,7 +1389,7 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
                   "description": "Maximum tokens across selected/projected JSON (default 8000, maximum 32000).",
                   "format": "uint",
                   "maximum": 32000,
@@ -1476,6 +1507,15 @@ expression: tools
         "operation": {
           "$ref": "#/$defs/JsonMcpOperation",
           "description": "Structural JSON operation."
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1547,7 +1587,7 @@ expression: tools
           ]
         },
         "max_results": {
-          "default": 20,
+          "default": null,
           "description": "Maximum definitions and imports to return (default 20, maximum 100).",
           "format": "uint",
           "maximum": 100,
@@ -1558,7 +1598,7 @@ expression: tools
           ]
         },
         "max_tokens": {
-          "default": 8000,
+          "default": null,
           "description": "Maximum signature and import tokens (default 8000, maximum 32000).",
           "format": "uint",
           "maximum": 32000,
@@ -1587,6 +1627,15 @@ expression: tools
           "default": null,
           "description": "Suppress evidence already returned under this server-managed receipt.",
           "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
           "type": [
             "string",
             "null"
@@ -1807,7 +1856,7 @@ expression: tools
           ]
         },
         "max_tokens": {
-          "default": 8000,
+          "default": null,
           "description": "Maximum source tokens to return (default 8000, maximum 32000).",
           "format": "uint",
           "maximum": 32000,
@@ -1832,6 +1881,15 @@ expression: tools
           "default": null,
           "description": "Suppress evidence already returned under this server-managed receipt.",
           "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
           "type": [
             "string",
             "null"
@@ -1901,6 +1959,15 @@ expression: tools
           "maxLength": 128,
           "minLength": 1,
           "type": "string"
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -1916,6 +1983,15 @@ expression: tools
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "snapshot": {
           "default": null,
           "description": "Opaque snapshot from an earlier savings response; returns aggregate deltas.",
@@ -1935,7 +2011,7 @@ expression: tools
   },
   {
     "name": "search",
-    "description": "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
+    "description": "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the repository's configured cap (default 100; the active cap may be lower), and requests above it fail with the reported limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
     "inputSchema": {
       "$defs": {
         "QueryReceiptAction": {
@@ -2001,7 +2077,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2064,7 +2141,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2074,7 +2152,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2145,7 +2224,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2208,7 +2288,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2218,7 +2299,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2289,7 +2371,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2352,7 +2435,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2362,7 +2446,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2433,7 +2518,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2496,7 +2582,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2506,7 +2593,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2577,7 +2665,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2640,7 +2729,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2650,7 +2740,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2721,7 +2812,8 @@ expression: tools
                   "type": "string"
                 },
                 "context_lines": {
-                  "default": 2,
+                  "default": null,
+                  "description": "The server's configured context_lines value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 20,
                   "minimum": 0,
@@ -2784,7 +2876,8 @@ expression: tools
                   ]
                 },
                 "max_results": {
-                  "default": 20,
+                  "default": null,
+                  "description": "The server's configured max_results cap may be lower than the protocol ceiling; omitted values use config.default_results.",
                   "format": "uint",
                   "maximum": 100,
                   "minimum": 1,
@@ -2794,7 +2887,8 @@ expression: tools
                   ]
                 },
                 "max_tokens": {
-                  "default": 8000,
+                  "default": null,
+                  "description": "The server's configured default_read_tokens value applies when this field is omitted.",
                   "format": "uint",
                   "maximum": 32000,
                   "minimum": 1,
@@ -2870,6 +2964,15 @@ expression: tools
         "operation": {
           "$ref": "#/$defs/SearchMcpOperation",
           "description": "Search semantics and all bounds are owned by the selected tagged operation."
+        },
+        "repository_context": {
+          "default": null,
+          "description": "Optional name of an approved repository context.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
