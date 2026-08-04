@@ -6,6 +6,10 @@ use super::*;
     description = "Context cross-field relationships remain runtime-validated: strict focus constraints require focus_paths, plan_only cannot combine with receipt_id or handoff, and handoff cannot be combined with plan_only."
 )]
 pub(in crate::mcp) struct ContextMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(length(max = 128))]
@@ -21,10 +25,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     pub(in crate::mcp) task: NonEmptyText,
     /// Maximum source tokens across selected fragments (default 3000, maximum 32000).
     #[serde(default)]
-    #[schemars(
-        schema_with = "context_token_limit_schema",
-        default = "default_context_token_option"
-    )]
+    #[schemars(schema_with = "context_token_limit_schema")]
     pub(in crate::mcp) token_budget: Option<usize>,
     /// Maximum tokens in the final serialized service response.
     #[serde(default)]
@@ -132,7 +133,16 @@ impl ContextMcpRequest {
             "minimum_fragments_per_focus_path",
             self.minimum_fragments_per_focus_path,
             limits.max_results,
-        )
+        )?;
+        if (self.strict_focus_paths || self.minimum_fragments_per_focus_path.is_some())
+            && self.focus_paths.is_empty()
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "focus paths",
+                reason: "must not be empty when focus path constraints are enabled",
+            });
+        }
+        Ok(())
     }
 
     pub(in crate::mcp) fn into_parts(
@@ -182,10 +192,6 @@ impl ContextMcpRequest {
             self.handoff,
         )
     }
-}
-
-pub(in crate::mcp) const fn default_context_token_option() -> Option<usize> {
-    Some(DEFAULT_CONTEXT_TOKENS)
 }
 
 pub(in crate::mcp) const fn default_context_fragment_option() -> Option<usize> {

@@ -2,6 +2,7 @@ use super::*;
 
 pub(in crate::mcp) struct PreparedRetrievalCall {
     pub(in crate::mcp) services: Arc<Services>,
+    pub(in crate::mcp) mcp_services: McpServices,
     pub(in crate::mcp) limits: McpLimitPolicy,
     pub(in crate::mcp) cancellation: CancellationToken,
     pub(in crate::mcp) deadline: tokio::time::Instant,
@@ -55,13 +56,17 @@ impl LeanTokenMcp {
     pub(in crate::mcp) async fn prepare_retrieval_call(
         &self,
         cancellation: CancellationToken,
+        repository_context: Option<&str>,
         validate: impl Fn(McpLimitPolicy) -> crate::Result<()>,
     ) -> Result<RetrievalPreparation, ErrorData> {
         let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let state = self.services.get();
+        let mcp_services = self
+            .contexts
+            .resolve(repository_context)
+            .map_err(into_mcp_error)?;
+        let state = mcp_services.get();
         validate(state.limits()).map_err(into_mcp_error)?;
-        let state = self
-            .services
+        let state = mcp_services
             .wait_for_services(state, cancellation.clone(), deadline)
             .await
             .map_err(into_mcp_error)?;
@@ -73,6 +78,7 @@ impl LeanTokenMcp {
         };
         Ok(RetrievalPreparation::Ready(PreparedRetrievalCall {
             services,
+            mcp_services,
             limits,
             cancellation,
             deadline,
@@ -94,11 +100,11 @@ impl LeanTokenMcp {
     {
         let PreparedRetrievalCall {
             services,
+            mcp_services,
             cancellation,
             deadline,
             ..
         } = prepared;
-        let mcp_services = self.services.clone();
         self.run_admitted_with_limit(
             services,
             expected_repository_id,

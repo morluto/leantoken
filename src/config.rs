@@ -27,6 +27,8 @@ const REPOSITORY_CONFIG_FILE: &str = ".leantoken.toml";
 const MAX_REPOSITORY_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONTEXT_EXCLUDE_PATHS: usize = 256;
 const MAX_CONTEXT_PATH_PATTERN_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_REPOSITORY_CONTEXTS: usize = 8;
+const MAX_REPOSITORY_CONTEXT_NAME_BYTES: usize = 64;
 const MANAGED_CACHE_HASH_BYTES: usize = 16;
 const FALLBACK_CACHE_DIRECTORY: &str = ".leantoken";
 pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
@@ -170,6 +172,15 @@ pub struct Config {
     pub watcher_debounce: Duration,
     /// Tokenizer used for all source and protocol token accounting.
     pub tokenizer: Tokenizer,
+}
+
+/// A repository root explicitly approved by the primary repository's config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovedRepositoryContext {
+    /// Stable request name selected by MCP callers.
+    pub name: String,
+    /// Approved absolute or primary-root-relative repository root.
+    pub root: PathBuf,
 }
 
 impl Config {
@@ -404,31 +415,70 @@ impl Config {
     pub const fn uses_repository_cache_fallback(&self) -> bool {
         self.database_uses_repository_fallback
     }
+
+    /// Return named repository roots approved by this repository's config.
+    ///
+    /// Contexts are names and canonical roots only. Callers must construct a
+    /// normal `Config` for every returned root before opening services.
+    pub fn approved_repository_contexts(&self) -> Result<Vec<ApprovedRepositoryContext>> {
+        let Some(document) = load_repository_config_document(&self.root)? else {
+            return Ok(Vec::new());
+        };
+        let Some(contexts) = document.get("repository_contexts") else {
+            return Ok(Vec::new());
+        };
+        let contexts = contexts.as_table().ok_or_else(|| {
+            Error::InvalidConfiguration(
+                "repository_contexts must be a table of named context tables".into(),
+            )
+        })?;
+        if contexts.len() > MAX_REPOSITORY_CONTEXTS {
+            return Err(Error::InvalidConfiguration(format!(
+                "repository_contexts must not contain more than {MAX_REPOSITORY_CONTEXTS} entries"
+            )));
+        }
+        let mut result = Vec::with_capacity(contexts.len());
+        for (name, item) in contexts {
+            if name == "default"
+                || name.is_empty()
+                || name.trim() != name
+                || name.len() > MAX_REPOSITORY_CONTEXT_NAME_BYTES
+                || name.contains(['/', '\\'])
+            {
+                return Err(Error::InvalidConfiguration(format!(
+                    "repository context name `{name}` is invalid"
+                )));
+            }
+            let table = item.as_table().ok_or_else(|| {
+                Error::InvalidConfiguration(format!("repository_contexts.{name} must be a table"))
+            })?;
+            let root = table
+                .get("root")
+                .and_then(toml_edit::Item::as_str)
+                .ok_or_else(|| {
+                    Error::InvalidConfiguration(format!(
+                        "repository_contexts.{name}.root must be a string"
+                    ))
+                })?;
+            if root.trim().is_empty() {
+                return Err(Error::InvalidConfiguration(format!(
+                    "repository_contexts.{name}.root must not be empty"
+                )));
+            }
+            result.push(ApprovedRepositoryContext {
+                name: name.to_owned(),
+                root: self.root.join(root),
+            });
+        }
+        result.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(result)
+    }
 }
 
 fn load_context_exclude_paths(root: &Path) -> Result<Vec<String>> {
-    let path = root.join(REPOSITORY_CONFIG_FILE);
-    let metadata = match fs::metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(default_context_exclude_paths());
-        }
-        Err(error) => return Err(error.into()),
+    let Some(document) = load_repository_config_document(root)? else {
+        return Ok(default_context_exclude_paths());
     };
-    if metadata.len() > MAX_REPOSITORY_CONFIG_BYTES {
-        return Err(Error::InvalidConfiguration(format!(
-            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
-        )));
-    }
-    let source = fs::read_to_string(path)?;
-    if u64::try_from(source.len()).unwrap_or(u64::MAX) > MAX_REPOSITORY_CONFIG_BYTES {
-        return Err(Error::InvalidConfiguration(format!(
-            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
-        )));
-    }
-    let document = source.parse::<DocumentMut>().map_err(|error| {
-        Error::InvalidConfiguration(format!("invalid {REPOSITORY_CONFIG_FILE}: {error}"))
-    })?;
     let mut patterns = default_context_exclude_paths();
     let Some(context) = document.get("context") else {
         return Ok(patterns);
@@ -458,6 +508,29 @@ fn load_context_exclude_paths(root: &Path) -> Result<Vec<String>> {
     patterns.retain(|pattern| seen.insert(pattern.clone()));
     validate_context_exclude_paths(&patterns)?;
     Ok(patterns)
+}
+
+fn load_repository_config_document(root: &Path) -> Result<Option<DocumentMut>> {
+    let path = root.join(REPOSITORY_CONFIG_FILE);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.len() > MAX_REPOSITORY_CONFIG_BYTES {
+        return Err(Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
+        )));
+    }
+    let source = fs::read_to_string(path)?;
+    if u64::try_from(source.len()).unwrap_or(u64::MAX) > MAX_REPOSITORY_CONFIG_BYTES {
+        return Err(Error::InvalidConfiguration(format!(
+            "{REPOSITORY_CONFIG_FILE} exceeds the {MAX_REPOSITORY_CONFIG_BYTES}-byte limit"
+        )));
+    }
+    source.parse::<DocumentMut>().map(Some).map_err(|error| {
+        Error::InvalidConfiguration(format!("invalid {REPOSITORY_CONFIG_FILE}: {error}"))
+    })
 }
 
 fn validate_context_exclude_paths(patterns: &[String]) -> Result<()> {
@@ -912,6 +985,44 @@ mod tests {
                 .to_string()
                 .contains("context.exclude_paths` must be an array")
         );
+    }
+
+    #[test]
+    fn repository_config_loads_bounded_approved_contexts() {
+        let root = tempfile::tempdir().expect("repository");
+        let sibling = tempfile::tempdir().expect("approved repository");
+        fs::write(
+            root.path().join(REPOSITORY_CONFIG_FILE),
+            format!(
+                "[repository_contexts.docs]\nroot = {:?}\n",
+                sibling.path().to_string_lossy()
+            ),
+        )
+        .expect("repository config");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let contexts = config
+            .approved_repository_contexts()
+            .expect("approved contexts");
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].name, "docs");
+        assert_eq!(contexts[0].root, sibling.path());
+    }
+
+    #[test]
+    fn repository_config_rejects_default_context_name() {
+        let root = tempfile::tempdir().expect("repository");
+        fs::write(
+            root.path().join(REPOSITORY_CONFIG_FILE),
+            "[repository_contexts.default]\nroot = \"../other\"\n",
+        )
+        .expect("repository config");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let error = config
+            .approved_repository_contexts()
+            .expect_err("reserved context name");
+        assert!(matches!(error, Error::InvalidConfiguration(_)));
     }
 
     #[test]

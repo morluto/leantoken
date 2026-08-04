@@ -12,7 +12,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -57,7 +61,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
+        description = "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the repository's configured cap (default 100; the active cap may be lower), and requests above it fail with the reported limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
     )]
     async fn leantoken_search(
         &self,
@@ -65,7 +69,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -132,7 +140,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -185,7 +197,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -226,7 +242,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -272,7 +292,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -312,7 +336,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -368,7 +396,11 @@ impl LeanTokenMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -409,7 +441,11 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let state = self.services.get();
+        let mcp_services = self
+            .contexts
+            .resolve(req.repository_context.as_deref())
+            .map_err(into_mcp_error)?;
+        let state = mcp_services.get();
         let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),

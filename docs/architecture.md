@@ -1273,8 +1273,9 @@ and outline never invent empty successful results at generation zero.
 - Connection capacity remains per process/repository. The bounded established
   pool reuses read-only connections and prepared statements; it is not a global
   multi-repository coordination mechanism. Each process establishes at most
-  eight read connections, so the aggregate bound grows linearly with the
-  number of processes sharing a cache.
+  eight read connections per approved repository context, and the context
+  manifest is capped at eight additional roots, so the aggregate bound is
+  explicit and grows linearly with the configured context count.
 - Response token accounting is best-effort telemetry. Its zero-timeout SQLite
   write can be skipped under cross-process writer contention; retrieval
   correctness and generation publication never wait for that observation.

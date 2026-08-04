@@ -26,6 +26,67 @@ fn request_admission_has_an_exact_fail_fast_boundary() {
 }
 
 #[test]
+fn repository_context_registry_defaults_and_fails_closed() {
+    let primary = McpServices::starting_default();
+    let registry = McpContextRegistry::primary(primary.clone());
+    assert!(registry.resolve(None).is_ok());
+    assert!(registry.resolve(Some("default")).is_ok());
+    assert!(matches!(
+        registry.resolve(Some("unapproved")),
+        Err(crate::Error::InvalidInput {
+            field: "repository_context",
+            ..
+        })
+    ));
+
+    registry
+        .register("docs".into(), McpServices::starting_default())
+        .expect("valid context name");
+    assert!(registry.resolve(Some("docs")).is_ok());
+}
+
+#[tokio::test]
+async fn prepared_retrieval_selects_the_approved_context() {
+    let primary_root = tempfile::tempdir().expect("primary repository");
+    let docs_root = tempfile::tempdir().expect("approved repository");
+    let primary = Arc::new(
+        Services::open(
+            Config::discover(
+                primary_root.path(),
+                Some(primary_root.path().join("index.sqlite")),
+            )
+            .expect("primary config"),
+        )
+        .expect("primary services"),
+    );
+    let docs = Arc::new(
+        Services::open(
+            Config::discover(
+                docs_root.path(),
+                Some(docs_root.path().join("index.sqlite")),
+            )
+            .expect("approved config"),
+        )
+        .expect("approved services"),
+    );
+    let expected_id = docs.repository_id();
+    let server = LeanTokenMcp::new(primary);
+    server
+        .contexts
+        .register("docs".into(), McpServices::ready(docs))
+        .expect("valid context name");
+
+    let prepared = server
+        .prepare_retrieval_call(CancellationToken::new(), Some("docs"), |_| Ok(()))
+        .await
+        .expect("approved context selection");
+    let RetrievalPreparation::Ready(prepared) = prepared else {
+        panic!("approved context should be ready");
+    };
+    assert_eq!(prepared.services.repository_id(), expected_id);
+}
+
+#[test]
 fn cloned_servers_share_admission_but_separate_instances_do_not() {
     let (server, _) = LeanTokenMcp::pending();
     let clone = server.clone();
@@ -232,7 +293,10 @@ async fn savings_is_covered_by_protocol_admission() {
         .collect::<Vec<_>>();
 
     let result = server
-        .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
+        .leantoken_savings(Parameters(SavingsMcpRequest {
+            repository_context: None,
+            snapshot: None,
+        }))
         .await
         .expect("retryable savings response");
     assert_eq!(
@@ -1531,7 +1595,7 @@ fn tool_schemas_are_closed_bounded_and_remove_ambiguous_inputs() {
     }
     assert_eq!(
         tools["context"].pointer("/properties/token_budget/default"),
-        Some(&serde_json::json!(3_000))
+        Some(&serde_json::Value::Null)
     );
     assert!(tools["files"].pointer("/$defs/FilesMcpOperation").is_some());
     assert!(tools["read"].pointer("/properties/symbol").is_none());
@@ -2076,6 +2140,73 @@ fn compact_projections_map_to_service_requests() {
     .expect("signature projection");
     let (_, projection, _, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Signatures);
+}
+
+#[test]
+fn mcp_request_validation_catches_cross_field_constraints() {
+    let context = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({
+        "task": "find answer",
+        "minimum_fragments_per_focus_path": 1
+    }))
+    .expect("structurally valid context request");
+    assert!(matches!(
+        context.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::InvalidInput {
+            field: "focus paths",
+            ..
+        })
+    ));
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "auto",
+            "query": "answer",
+            "query_receipt": {"kind": "record"}
+        }
+    }))
+    .expect("structurally valid search request");
+    assert!(matches!(
+        search.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::InvalidInput {
+            field: "query_receipt",
+            ..
+        })
+    ));
+
+    let read = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "README.md",
+        "target": {"kind": "lines", "start": 20, "end": 10}
+    }))
+    .expect("structurally valid read request");
+    assert!(matches!(
+        read.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::InvalidInput { field: "lines", .. })
+    ));
+}
+
+#[test]
+fn history_mcp_uses_configured_result_cap() {
+    let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "symbol_log",
+            "path": "src/lib.rs",
+            "symbol": {"name": "Services"},
+            "max_results": 3
+        }
+    }))
+    .expect("history request");
+    let limits = McpLimitPolicy {
+        max_results: 2,
+        ..McpLimitPolicy::DEFAULT
+    };
+    assert!(matches!(
+        request.validate_limits(limits),
+        Err(crate::Error::RequestLimitExceeded {
+            field: "max_results",
+            requested: 3,
+            limit: 2
+        })
+    ));
 }
 
 #[test]

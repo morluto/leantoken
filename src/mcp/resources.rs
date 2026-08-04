@@ -158,32 +158,41 @@ impl LeanTokenMcp {
                 })),
             )
         })?;
-        let state = self.services.get();
-        let services = match state {
-            McpServiceState::Ready { services, .. } => services,
-            _ => {
-                return Err(ErrorData::internal_error(
-                    "repository storage is unavailable",
-                    None,
-                ));
-            }
-        };
         let now = now_unix_millis()?;
-        let repository_id = services.repository_id();
-        let receipt =
-            tokio::task::spawn_blocking(move || services.read_stored_receipt(&receipt_id, now))
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "receipt resource read task failed");
-                    ErrorData::internal_error("retrieval receipt read failed", None)
-                })?
-                .map_err(|error| match error {
-                    crate::Error::UnknownReceipt(_) => resource_not_found(&uri),
-                    other => {
-                        tracing::error!(%other, "receipt resource read failed");
-                        ErrorData::internal_error("retrieval receipt read failed", None)
-                    }
-                })?;
+        let mut found = None;
+        for (_, mcp_services) in self.contexts.all() {
+            let state = mcp_services.get();
+            let services = match state {
+                McpServiceState::Ready { services, .. } => services,
+                _ => continue,
+            };
+            let repository_id = services.repository_id();
+            let candidate = tokio::task::spawn_blocking({
+                let services = Arc::clone(&services);
+                let receipt_id = receipt_id.clone();
+                move || services.read_stored_receipt(&receipt_id, now)
+            })
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "receipt resource read task failed");
+                ErrorData::internal_error("retrieval receipt read failed", None)
+            })?;
+            match candidate {
+                Ok(receipt) => {
+                    found = Some((repository_id, receipt));
+                    break;
+                }
+                Err(crate::Error::UnknownReceipt(_)) => {}
+                Err(other) => {
+                    tracing::error!(%other, "receipt resource read failed");
+                    return Err(ErrorData::internal_error(
+                        "retrieval receipt read failed",
+                        None,
+                    ));
+                }
+            }
+        }
+        let (repository_id, receipt) = found.ok_or_else(|| resource_not_found(&uri))?;
         let text = serde_json::to_string(&resource_value(&receipt, &repository_id, &uri)).map_err(
             |error| {
                 tracing::error!(%error, "receipt resource serialization failed");

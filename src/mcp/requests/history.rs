@@ -3,6 +3,10 @@ use super::*;
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct HistoryMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -15,11 +19,11 @@ pub(in crate::mcp) struct HistoryMcpRequest {
 pub(in crate::mcp) struct HistoryMcpLimits {
     /// Maximum results (default 20; service-specific operations may use a lower bound).
     #[serde(default)]
-    #[schemars(schema_with = "result_limit_schema", default = "default_result_option")]
+    #[schemars(schema_with = "result_limit_schema")]
     pub(in crate::mcp) max_results: Option<usize>,
     /// Maximum source or diff tokens to return (default 8000, maximum 32000).
     #[serde(default)]
-    #[schemars(schema_with = "token_limit_schema", default = "default_token_option")]
+    #[schemars(schema_with = "token_limit_schema")]
     pub(in crate::mcp) max_tokens: Option<usize>,
     /// Maximum tokens in the final serialized service response.
     #[serde(default)]
@@ -252,7 +256,7 @@ impl HistoryMcpRequest {
             | HistoryMcpOperation::SymbolLog { limits, .. } => limits,
             HistoryMcpOperation::DiffSymbols { limits, .. } => limits,
         };
-        validate_optional_positive_limit("max_results", options.max_results, MAX_RESULTS)?;
+        validate_optional_positive_limit("max_results", options.max_results, limits.max_results)?;
         validate_optional_positive_limit(
             "max_tokens",
             options.max_tokens,

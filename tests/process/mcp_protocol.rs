@@ -25,6 +25,88 @@ pub(super) fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     }
 }
 
+pub(super) fn mcp_approved_repository_contexts_are_isolated() {
+    let primary_root = tempfile::tempdir().expect("primary repository");
+    let docs_root = tempfile::tempdir().expect("approved repository");
+    std::fs::write(
+        primary_root.path().join("primary.rs"),
+        "pub fn primary_marker() -> u8 { 1 }\n",
+    )
+    .expect("primary source");
+    std::fs::write(
+        docs_root.path().join("docs.rs"),
+        "pub fn docs_marker() -> u8 { 2 }\n",
+    )
+    .expect("approved source");
+    std::fs::write(
+        primary_root.path().join(".leantoken.toml"),
+        format!(
+            "[repository_contexts.docs]\nroot = {:?}\n",
+            docs_root.path().to_string_lossy()
+        ),
+    )
+    .expect("approved context config");
+    let database = primary_root.path().join("index.sqlite");
+    let mut process = McpProcess::spawn(primary_root.path(), &database);
+    process.initialize();
+    process.send_initialized();
+    process.wait_until_ready(Duration::from_secs(30));
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1201,
+        "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {
+                "repository_context": "docs",
+                "operation": {"kind": "tree", "path": ".", "max_results": 10}
+            }
+        }
+    }));
+    let docs_response = process.response(Duration::from_secs(30));
+    assert_eq!(docs_response["id"], 1201);
+    assert!(docs_response.to_string().contains("docs.rs"), "{docs_response}");
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1202,
+        "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {"operation": {"kind": "tree", "path": ".", "max_results": 10}}
+        }
+    }));
+    let primary_response = process.response(Duration::from_secs(30));
+    assert_eq!(primary_response["id"], 1202);
+    assert!(
+        primary_response.to_string().contains("primary.rs"),
+        "{primary_response}"
+    );
+    assert_ne!(
+        docs_response["result"]["structuredContent"]["meta"]["repository_id"],
+        primary_response["result"]["structuredContent"]["meta"]["repository_id"]
+    );
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1203,
+        "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {
+                "repository_context": "unapproved",
+                "operation": {"kind": "find", "query": "docs_marker"}
+            }
+        }
+    }));
+    let rejected = process.response(Duration::from_secs(10));
+    assert_eq!(rejected["id"], 1203);
+    assert_eq!(rejected["error"]["code"], -32602);
+    assert_eq!(rejected["error"]["data"]["category"], "invalid_input");
+    process.stop();
+}
+
 pub(super) fn mcp_survives_malformed_and_invalid_messages() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
