@@ -11,7 +11,7 @@ use super::schema::project_schema_page;
 use super::selection::select_json;
 use super::source::{JsonMeasurementCache, JsonMeasurementKey, json_tokens};
 use super::validation::validate_json_request;
-use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS, DEFAULT_JSON_TOKENS};
+use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS};
 use crate::model::{
     JsonFieldDiff, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonResponse,
     JsonSelector, TokenAccountingOperation,
@@ -110,7 +110,7 @@ impl Services {
         check_cancelled(cancellation)?;
         validate_json_request(&request, execution)?;
         let limits = JsonLimits {
-            max_tokens: self.token_limit(request.max_tokens, DEFAULT_JSON_TOKENS)?,
+            max_tokens: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
             max_items: request.max_items.unwrap_or(DEFAULT_JSON_ITEMS),
             array_sample_size: request
                 .array_sample_size

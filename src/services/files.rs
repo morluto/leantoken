@@ -314,7 +314,7 @@ fn validate_files_input(request: &FilesRequest) -> Result<()> {
             let pattern = request
                 .pattern
                 .as_deref()
-                .filter(|value| !value.is_empty())
+                .filter(|value| !value.trim().is_empty())
                 .ok_or(Error::InvalidInput {
                     field: "pattern",
                     reason: "is required for glob",

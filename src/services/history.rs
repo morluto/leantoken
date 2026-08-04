@@ -26,9 +26,8 @@ use crate::repository::{
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result, parser};
 
-const DEFAULT_HISTORY_RESULTS: usize = 20;
+#[cfg(test)]
 const MAX_HISTORY_RESULTS: usize = 100;
-const DEFAULT_HISTORY_TOKENS: usize = 8_000;
 pub(crate) const MAX_DIFF_SYMBOL_TARGETS: usize = 64;
 pub(crate) const MAX_DIFF_SYMBOL_RESULTS: usize = 32;
 const MAX_DIFF_SYMBOL_PATHS_PER_ENDPOINT: usize = 32;
@@ -74,7 +73,15 @@ fn symbol_diff_buffer(content: &str) -> Cow<'_, str> {
     }
 }
 
+#[cfg(test)]
 fn validate_history_request(request: &HistoryRequest) -> Result<()> {
+    validate_history_request_with_limit(request, MAX_HISTORY_RESULTS)
+}
+
+fn validate_history_request_with_limit(
+    request: &HistoryRequest,
+    max_results_limit: usize,
+) -> Result<()> {
     fn validate_non_empty(value: &str, field: &'static str) -> Result<()> {
         if value.trim().is_empty() {
             return Err(Error::InvalidInput {
@@ -126,7 +133,7 @@ fn validate_history_request(request: &HistoryRequest) -> Result<()> {
         }
     }
     if let Some(max_results) = request.max_results {
-        validate_positive_request_limit("max_results", max_results, MAX_HISTORY_RESULTS)?;
+        validate_positive_request_limit("max_results", max_results, max_results_limit)?;
     }
     Ok(())
 }
@@ -183,7 +190,15 @@ fn normalize_history_request(mut request: HistoryRequest) -> Result<HistoryReque
     Ok(request)
 }
 
+#[cfg(test)]
 fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
+    validate_diff_symbols_request_with_limit(request, MAX_HISTORY_RESULTS)
+}
+
+fn validate_diff_symbols_request_with_limit(
+    request: &DiffSymbolsRequest,
+    max_results_limit: usize,
+) -> Result<()> {
     fn validate_non_empty(value: &str, field: &'static str) -> Result<()> {
         if value.trim().is_empty() {
             return Err(Error::InvalidInput {
@@ -200,7 +215,11 @@ fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
     validate_input(&request.head_revision, "head revision", MAX_PATTERN_BYTES)?;
     validate_non_empty(&request.head_revision, "head revision")?;
     if let Some(max_results) = request.max_results {
-        validate_positive_request_limit("max_results", max_results, MAX_DIFF_SYMBOL_RESULTS)?;
+        validate_positive_request_limit(
+            "max_results",
+            max_results,
+            max_results_limit.min(MAX_DIFF_SYMBOL_RESULTS),
+        )?;
     }
     if request
         .cursor
@@ -566,9 +585,15 @@ impl Services {
     ) -> Result<HistoryResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_history_request(&request))?;
+        self.observe_service_result(
+            operation,
+            validate_history_request_with_limit(&request, self.config.max_results),
+        )?;
         let request = self.observe_service_result(operation, normalize_history_request(request))?;
-        self.observe_service_result(operation, validate_history_request(&request))?;
+        self.observe_service_result(
+            operation,
+            validate_history_request_with_limit(&request, self.config.max_results),
+        )?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -629,10 +654,16 @@ impl Services {
     ) -> Result<DiffSymbolsResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_diff_symbols_request(&request))?;
+        self.observe_service_result(
+            operation,
+            validate_diff_symbols_request_with_limit(&request, self.config.max_results),
+        )?;
         let request =
             self.observe_service_result(operation, normalize_diff_symbols_request(request))?;
-        self.observe_service_result(operation, validate_diff_symbols_request(&request))?;
+        self.observe_service_result(
+            operation,
+            validate_diff_symbols_request_with_limit(&request, self.config.max_results),
+        )?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -650,14 +681,14 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<DiffSymbolsResponse> {
         check_cancelled(cancellation)?;
-        validate_diff_symbols_request(&request)?;
+        validate_diff_symbols_request_with_limit(&request, self.config.max_results)?;
         let request = normalize_diff_symbols_request(request)?;
-        validate_diff_symbols_request(&request)?;
+        validate_diff_symbols_request_with_limit(&request, self.config.max_results)?;
         let max_results = request
             .max_results
-            .unwrap_or(DEFAULT_HISTORY_RESULTS)
+            .unwrap_or(self.config.default_results)
             .min(MAX_DIFF_SYMBOL_RESULTS);
-        let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
+        let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let generation = self.consistent(|snapshot| Ok(snapshot.generation()))?;
         let revisions = git_diff_identity(
             &self.config.root,
@@ -969,11 +1000,11 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<HistoryResponse> {
         check_cancelled(cancellation)?;
-        validate_history_request(&request)?;
+        validate_history_request_with_limit(&request, self.config.max_results)?;
         let request = normalize_history_request(request)?;
-        validate_history_request(&request)?;
-        let max_results = request.max_results.unwrap_or(DEFAULT_HISTORY_RESULTS);
-        let max_tokens = self.token_limit(request.max_tokens, DEFAULT_HISTORY_TOKENS)?;
+        validate_history_request_with_limit(&request, self.config.max_results)?;
+        let max_results = request.max_results.unwrap_or(self.config.default_results);
+        let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let operation = request.operation;
         let generation = self.consistent(|snapshot| Ok(snapshot.generation()))?;
         let mut response = match operation {
@@ -1626,6 +1657,28 @@ mod tests {
                 requested,
                 limit,
             } if requested == MAX_DIFF_SYMBOL_TARGETS + 1 && limit == MAX_DIFF_SYMBOL_TARGETS
+        ));
+    }
+
+    #[test]
+    fn configured_history_result_limit_is_checked_before_git_work() {
+        let request = HistoryRequest {
+            operation: HistoryOperation::SymbolLog {
+                path: "lib.rs".into(),
+                symbol: "answer".into(),
+                revision: None,
+            },
+            max_results: Some(3),
+            max_tokens: None,
+        };
+
+        assert!(matches!(
+            validate_history_request_with_limit(&request, 2),
+            Err(Error::RequestLimitExceeded {
+                field: "max_results",
+                requested: 3,
+                limit: 2,
+            })
         ));
     }
 }

@@ -5,6 +5,7 @@ use super::cursor::decode_json_cursor;
 use super::execution::JsonExecutionOptions;
 use super::{MAX_ARRAY_SAMPLE_SIZE, MAX_JSON_DEPTH, MAX_JSON_ITEMS, MAX_JSON_SELECTORS};
 use crate::model::{JsonOperation, JsonProjection, JsonRequest, JsonSelector};
+use crate::repository::validate_relative;
 use crate::services::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, validate_input};
 use crate::services::{validate_positive_request_limit, validate_request_limit};
 use crate::{Error, Result};
@@ -53,6 +54,7 @@ pub(super) fn validate_json_request(
         JsonOperation::Query { path, selector, .. }
         | JsonOperation::NumericSummary { path, selector } => {
             validate_input(path, "path", MAX_PATH_BYTES)?;
+            validate_relative(path)?;
             if let Some(selector) = selector {
                 validate_selector(selector)?;
             }
@@ -65,6 +67,8 @@ pub(super) fn validate_json_request(
         } => {
             validate_input(base_path, "base path", MAX_PATH_BYTES)?;
             validate_input(head_path, "head path", MAX_PATH_BYTES)?;
+            validate_relative(base_path)?;
+            validate_relative(head_path)?;
             validate_positive_request_limit("selectors", selectors.len(), MAX_JSON_SELECTORS)?;
             for selector in selectors {
                 validate_selector(selector)?;

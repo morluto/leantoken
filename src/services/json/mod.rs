@@ -34,7 +34,6 @@ mod validation;
 
 pub(crate) use execution::{JsonExecutionOptions, MAX_JSON_DEPTH};
 
-const DEFAULT_JSON_TOKENS: usize = 8_000;
 const DEFAULT_JSON_ITEMS: usize = 1_000;
 const MAX_JSON_ITEMS: usize = 10_000;
 const DEFAULT_ARRAY_SAMPLE_SIZE: usize = 3;

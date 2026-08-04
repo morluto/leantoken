@@ -645,7 +645,6 @@ pub(super) fn finalized_serialized_read_tokens(
     finalized.meta.protocol_tokens = 0;
     finalized.meta.path_and_metadata_tokens = 0;
     finalized.meta.total_response_tokens = 0;
-    finalized.meta.total_response_tokens = 0;
     let accounting = crate::tokens::response_token_accounting(
         &finalized,
         finalized.meta.source_tokens,
@@ -653,7 +652,6 @@ pub(super) fn finalized_serialized_read_tokens(
     )?;
     finalized.meta.protocol_tokens = accounting.protocol_tokens;
     finalized.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-    finalized.meta.total_response_tokens = accounting.total_response_tokens;
     finalized.meta.total_response_tokens = accounting.total_response_tokens;
     Ok(tokenizer.count(&serde_json::to_string(&finalized)?))
 }
