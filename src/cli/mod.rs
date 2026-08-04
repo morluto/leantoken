@@ -1,7 +1,7 @@
 use std::{
     ffi::OsString,
     num::{NonZeroU64, NonZeroUsize},
-    path::PathBuf,
+    path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
@@ -365,11 +365,24 @@ impl Cli {
     /// Returns an error when the repository root cannot be canonicalized or is
     /// an unsafe broad root without the explicit override.
     pub fn config(&self) -> Result<Config> {
+        self.config_for_root(&self.root, self.database.clone())
+    }
+
+    /// Resolve a repository configuration using this CLI's global overrides.
+    ///
+    /// The database path is supplied separately so approved MCP contexts can
+    /// inherit safety and accounting policy without sharing the primary
+    /// repository's index storage.
+    pub fn config_for_root(
+        &self,
+        root: impl AsRef<Path>,
+        database_path: Option<PathBuf>,
+    ) -> Result<Config> {
         let index_scope =
             crate::IndexScope::new(self.index_include.clone(), self.index_exclude.clone())?;
         let mut config = Config::discover_scoped_with_broad_root(
-            &self.root,
-            self.database.clone(),
+            root,
+            database_path,
             self.allow_broad_root,
             index_scope,
         )?;

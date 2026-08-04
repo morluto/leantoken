@@ -70,6 +70,7 @@ pub(super) async fn run_mcp_runtime(
 ) -> Result<()> {
     let startup_cancellation = cancellation.clone();
     let startup_state = service_state.clone();
+    let context_cli = cli.clone();
     let (services, approved_contexts) = tokio::task::spawn_blocking(move || {
         let use_background_worker_default = cli.max_index_workers.is_none();
         let mut config = cli.config()?;
@@ -94,10 +95,14 @@ pub(super) async fn run_mcp_runtime(
         let context_cancellation = cancellation.clone();
         let startup_cancellation = context_cancellation.clone();
         let context_name = approved.name.clone();
+        let context_cli = context_cli.clone();
         tokio::spawn(async move {
             let startup = tokio::task::spawn_blocking(move || {
-                let mut config = leantoken::Config::discover(approved.root, None)?;
-                config.max_index_workers = mcp_index_worker_limit(config.max_index_workers, false);
+                let mut config = context_cli.config_for_root(approved.root, None)?;
+                config.max_index_workers = mcp_index_worker_limit(
+                    config.max_index_workers,
+                    context_cli.max_index_workers.is_some(),
+                );
                 leantoken::services::Services::open_cancellable(config, &startup_cancellation)
             })
             .await;
