@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.22] - 2026-08-04
+### Bug Fixes
+
+- **mcp:** Propagate CLI bounds to approved contexts
+- **test:** Allow bounded MCP index readiness
+- **services:** Enforce normalized inputs and configured limits
+### Features
+
+- **mcp:** Isolate approved repository contexts
+### Refactoring
+
+- Isolate index snapshots and decompose process tests (#436) ([#436](https://github.com/morluto/leantoken/pull/436))
+
 ## [0.1.21] - 2026-08-01
 ### Benchmarks
 
