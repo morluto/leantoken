@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::selection::select_json;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">super</span>::source::{JsonMeasurementCache, JsonMeasurementKey, json_tokens};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">super</span>::validation::validate_json_request;
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS, DEFAULT_JSON_TOKENS};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">crate</span>::model::{
 <a href=#16 id=16 data-nosnippet>16</a>    JsonFieldDiff, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonResponse,
 <a href=#17 id=17 data-nosnippet>17</a>    JsonSelector, TokenAccountingOperation,
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>        check_cancelled(cancellation)<span class="question-mark">?</span>;
 <a href=#111 id=111 data-nosnippet>111</a>        validate_json_request(<span class="kw-2">&amp;</span>request, execution)<span class="question-mark">?</span>;
 <a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>limits = JsonLimits {
-<a href=#113 id=113 data-nosnippet>113</a>            max_tokens: <span class="self">self</span>.token_limit(request.max_tokens, DEFAULT_JSON_TOKENS)<span class="question-mark">?</span>,
+<a href=#113 id=113 data-nosnippet>113</a>            max_tokens: <span class="self">self</span>.token_limit(request.max_tokens, <span class="self">self</span>.config.default_read_tokens)<span class="question-mark">?</span>,
 <a href=#114 id=114 data-nosnippet>114</a>            max_items: request.max_items.unwrap_or(DEFAULT_JSON_ITEMS),
 <a href=#115 id=115 data-nosnippet>115</a>            array_sample_size: request
 <a href=#116 id=116 data-nosnippet>116</a>                .array_sample_size

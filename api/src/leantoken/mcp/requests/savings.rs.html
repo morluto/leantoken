@@ -3,9 +3,13 @@
 <a href=#3 id=3 data-nosnippet>3</a><span class="attr">#[derive(Debug, Deserialize, JsonSchema)]
 <a href=#4 id=4 data-nosnippet>4</a>#[serde(deny_unknown_fields)]
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">struct </span>SavingsMcpRequest {
-<a href=#6 id=6 data-nosnippet>6</a>    <span class="doccomment">/// Opaque snapshot from an earlier savings response; returns aggregate deltas.
+<a href=#6 id=6 data-nosnippet>6</a>    <span class="doccomment">/// Optional name of an approved repository context.
 <a href=#7 id=7 data-nosnippet>7</a>    </span><span class="attr">#[serde(default)]
-<a href=#8 id=8 data-nosnippet>8</a>    #[schemars(length(max = <span class="number">32768</span>))]
-<a href=#9 id=9 data-nosnippet>9</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) snapshot: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#10 id=10 data-nosnippet>10</a>}
+<a href=#8 id=8 data-nosnippet>8</a>    #[schemars(schema_with = <span class="string">"repository_context_schema"</span>)]
+<a href=#9 id=9 data-nosnippet>9</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) repository_context: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#10 id=10 data-nosnippet>10</a>    <span class="doccomment">/// Opaque snapshot from an earlier savings response; returns aggregate deltas.
+<a href=#11 id=11 data-nosnippet>11</a>    </span><span class="attr">#[serde(default)]
+<a href=#12 id=12 data-nosnippet>12</a>    #[schemars(length(max = <span class="number">32768</span>))]
+<a href=#13 id=13 data-nosnippet>13</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) snapshot: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#14 id=14 data-nosnippet>14</a>}
 </code></pre></div></section></main></body></html>
