@@ -1,6 +1,13 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.23] - 2026-08-05
+### Bug Fixes
+
+- **setup:** Migrate all generated legacy launchers
+- **setup:** Preserve discovery on empty refresh
+- **mcp:** Register contexts before primary startup
+
 ## [0.1.22] - 2026-08-04
 ### Bug Fixes
 
