@@ -460,7 +460,11 @@ fn is_legacy_node_npx_registration(command: &str, args: &[String]) -> bool {
 fn is_legacy_node_npm_registration(command: &str, args: &[String]) -> bool {
     command_has_stem(command, "node")
         && args.len() == 7
-        && argument_has_file_name(&args[0], "npm-cli.js")
+        // Releases before the direct-npx launcher change could combine the
+        // npx CLI path with npm's `exec` subcommand. Keep that exact shape
+        // refreshable so users can migrate to the current launcher.
+        && (argument_has_file_name(&args[0], "npm-cli.js")
+            || argument_has_file_name(&args[0], "npx-cli.js"))
         && args[1] == "exec"
         && args[2] == "--yes"
         && is_exact_legacy_package(&args[3], "--package=leantoken@")

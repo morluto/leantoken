@@ -972,6 +972,57 @@ fn refresh_updates_only_existing_entries_and_supports_rollback() {
 }
 
 #[test]
+fn refresh_migrates_the_legacy_hybrid_npx_registration() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "2.0.0");
+    let config = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        &config,
+        format!(
+            "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\n",
+            environment.launcher.command().unwrap(),
+            vec![
+                "/usr/lib/node_modules/npm/bin/npx-cli.js",
+                "exec",
+                "--yes",
+                "--package=leantoken@1.2.3",
+                "--",
+                "leantoken",
+                "mcp",
+            ]
+        ),
+    )
+    .unwrap();
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(report.results.len(), 1);
+    assert_eq!(report.results[0].status, "updated");
+    let updated = fs::read_to_string(config).unwrap();
+    assert!(updated.contains("--managed-by-setup"));
+    assert!(!updated.contains("npx-cli.js\", \"exec\""));
+}
+
+#[test]
 fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache() {
     let temp = tempfile::tempdir().unwrap();
     let environment = npx_environment(&temp, "1.2.3");
@@ -1010,6 +1061,47 @@ fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache()
             .iter()
             .all(|argument| !argument.contains("@latest"))
     );
+}
+
+#[test]
+fn empty_refresh_preserves_marker_owned_discovery_without_managed_clients() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    let config = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let original_config =
+        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n";
+    fs::write(&config, original_config).unwrap();
+    let discovery = environment.home.join(".agents/skills/leantoken/SKILL.md");
+    fs::create_dir_all(discovery.parent().unwrap()).unwrap();
+    let original_discovery = format!("{DISCOVERY_SKILL_MARKER}\nlegacy discovery\n");
+    fs::write(&discovery, &original_discovery).unwrap();
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    assert!(report.plan.is_empty());
+    assert!(report.results.is_empty());
+    assert!(report.discovery_plan.is_empty());
+    assert_eq!(fs::read_to_string(config).unwrap(), original_config);
+    assert_eq!(fs::read_to_string(discovery).unwrap(), original_discovery);
 }
 
 #[test]
@@ -2062,7 +2154,7 @@ fn discovery_cleanup_revalidates_unselected_configuration_snapshots() {
 }
 
 #[test]
-fn discovery_only_cleanup_failure_is_reported() {
+fn discovery_cleanup_failure_is_reported() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
     let discovery_path = SetupClient::Codex.discovery_path(&environment.home);
@@ -2076,9 +2168,9 @@ fn discovery_only_cleanup_failure_is_reported() {
     let report = run_with(
         SetupOperation::Setup,
         SetupRequest {
-            clients: Vec::new(),
+            clients: vec![SetupClient::Claude],
             all: false,
-            refresh: true,
+            refresh: false,
             private_runtime: false,
             yes: false,
             dry_run: false,
@@ -2093,7 +2185,6 @@ fn discovery_only_cleanup_failure_is_reported() {
     )
     .unwrap();
 
-    assert!(report.results.is_empty());
     assert!(
         report
             .apply_error
@@ -2144,6 +2235,18 @@ fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
             "/usr/bin/node",
             vec![
                 "/usr/lib/node_modules/npm/bin/npm-cli.js".into(),
+                "exec".into(),
+                "--yes".into(),
+                "--package=leantoken@1.2.3".into(),
+                "--".into(),
+                "leantoken".into(),
+                "mcp".into(),
+            ],
+        ),
+        (
+            "/usr/bin/node",
+            vec![
+                "/usr/lib/node_modules/npm/bin/npx-cli.js".into(),
                 "exec".into(),
                 "--yes".into(),
                 "--package=leantoken@1.2.3".into(),

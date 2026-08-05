@@ -184,13 +184,17 @@ pub(super) fn run_with(
             .map(|registration| registration.client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
         required_paths.extend(selected_discovery_paths.iter().cloned());
-        let cleanup_paths = [
-            environment.home.join(".agents/skills/leantoken/SKILL.md"),
-            environment.home.join(".claude/skills/leantoken/SKILL.md"),
-        ]
-        .into_iter()
-        .filter(|path| !required_paths.contains(path))
-        .collect();
+        let cleanup_paths = if request.refresh && clients.is_empty() {
+            Vec::new()
+        } else {
+            [
+                environment.home.join(".agents/skills/leantoken/SKILL.md"),
+                environment.home.join(".claude/skills/leantoken/SKILL.md"),
+            ]
+            .into_iter()
+            .filter(|path| !required_paths.contains(path))
+            .collect()
+        };
         (
             selected_discovery_paths.into_iter().collect(),
             cleanup_paths,

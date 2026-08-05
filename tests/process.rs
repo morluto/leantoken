@@ -247,6 +247,11 @@ fn setup_refresh_targets_only_existing_mcp_entries() {
 }
 
 #[test]
+fn empty_setup_refresh_reports_unrecognized_clients_without_mutation() {
+    runtime::empty_setup_refresh_reports_unrecognized_clients_without_mutation();
+}
+
+#[test]
 fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     runtime::private_runtime_setup_installs_and_registers_the_verified_native_binary();
 }

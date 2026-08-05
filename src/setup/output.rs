@@ -252,6 +252,11 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 output,
                 "Next: restart or reload the configured clients to connect LeanToken."
             )?;
+        } else if report.results.is_empty() && report.discovery_plan.is_empty() {
+            writeln!(
+                output,
+                "No existing LeanToken client registrations were recognized; no changes were made."
+            )?;
         } else {
             writeln!(output, "No configuration changes were needed.")?;
         }

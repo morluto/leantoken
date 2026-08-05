@@ -146,6 +146,39 @@ pub(super) fn setup_refresh_targets_only_existing_mcp_entries() {
     assert!(!cursor.contains("\"leantoken\""));
 }
 
+pub(super) fn empty_setup_refresh_reports_unrecognized_clients_without_mutation() {
+    let temp = tempfile::tempdir().expect("temporary home");
+    let config = temp.path().join(".codex/config.toml");
+    std::fs::create_dir_all(config.parent().unwrap()).expect("Codex directory");
+    let original_config =
+        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n";
+    std::fs::write(&config, original_config).expect("Codex configuration");
+    let discovery = temp.path().join(".agents/skills/leantoken/SKILL.md");
+    std::fs::create_dir_all(discovery.parent().unwrap()).expect("discovery directory");
+    let original_discovery = "<!-- managed by leantoken setup -->\nlegacy discovery\n";
+    std::fs::write(&discovery, original_discovery).expect("discovery skill");
+
+    let output = Command::cargo_bin("leantoken")
+        .expect("binary")
+        .env("HOME", temp.path())
+        .env("USERPROFILE", temp.path())
+        .env_remove("npm_lifecycle_event")
+        .args(["setup", "--refresh", "--yes"])
+        .output()
+        .expect("run setup refresh");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "No existing LeanToken client registrations were recognized; no changes were made."
+    ));
+    assert_eq!(std::fs::read_to_string(config).unwrap(), original_config);
+    assert_eq!(std::fs::read_to_string(discovery).unwrap(), original_discovery);
+}
+
 pub(super) fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     let temp = tempfile::tempdir().expect("temporary home");
     let data_home = temp.path().join("data");
