@@ -42,8 +42,9 @@ jobs:
         run: |
           version=$(jq -r '.packages[0].version' server.json)
           crate_url="https://crates.io/api/v1/crates/leantoken/$version"
+          user_agent="leantoken-release (+https://github.com/morluto/leantoken)"
           for attempt in {1..30}; do
-            if curl --fail --location --retry 2 --silent --show-error "$crate_url" >/dev/null; then
+            if curl --fail --location --retry 2 --silent --show-error --user-agent "$user_agent" "$crate_url" >/dev/null; then
               echo "leantoken@$version is available on crates.io"
               exit 0
             fi

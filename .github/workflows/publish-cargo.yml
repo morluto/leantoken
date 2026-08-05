@@ -52,7 +52,8 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "leantoken") | .version')
           crate_url="https://crates.io/api/v1/crates/leantoken/$version"
           crate_json_path="$RUNNER_TEMP/leantoken-$version.json"
-          status=$(curl --location --retry 3 --silent --show-error --output "$crate_json_path" --write-out '%{http_code}' "$crate_url" || true)
+          user_agent="leantoken-release (+https://github.com/morluto/leantoken)"
+          status=$(curl --location --retry 3 --silent --show-error --user-agent "$user_agent" --output "$crate_json_path" --write-out '%{http_code}' "$crate_url" || true)
           case "$status" in
             200)
               if jq -e --arg version "$version" '.version.num == $version and (.version.yanked | not)' "$crate_json_path" >/dev/null; then
