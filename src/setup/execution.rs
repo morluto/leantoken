@@ -180,7 +180,6 @@ pub(super) fn run_with(
     let (discovery_paths, discovery_cleanup_paths) = if operation == SetupOperation::Setup {
         let mut required_paths = unselected_registrations
             .into_iter()
-            .filter(|registration| registration.managed)
             .map(|registration| registration.client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
         required_paths.extend(selected_discovery_paths.iter().cloned());

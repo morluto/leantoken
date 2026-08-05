@@ -972,7 +972,7 @@ fn refresh_updates_only_existing_entries_and_supports_rollback() {
 }
 
 #[test]
-fn refresh_migrates_the_legacy_hybrid_npx_registration() {
+fn refresh_migrates_the_legacy_npm_launcher_with_cache_preference() {
     let temp = tempfile::tempdir().unwrap();
     let environment = npx_environment(&temp, "2.0.0");
     let config = environment.home.join(".codex/config.toml");
@@ -983,9 +983,10 @@ fn refresh_migrates_the_legacy_hybrid_npx_registration() {
             "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\n",
             environment.launcher.command().unwrap(),
             vec![
-                "/usr/lib/node_modules/npm/bin/npx-cli.js",
+                "/usr/lib/node_modules/npm/bin/npm-cli.js",
                 "exec",
                 "--yes",
+                "--prefer-offline",
                 "--package=leantoken@1.2.3",
                 "--",
                 "leantoken",
@@ -1102,6 +1103,75 @@ fn empty_refresh_preserves_marker_owned_discovery_without_managed_clients() {
     assert!(report.discovery_plan.is_empty());
     assert_eq!(fs::read_to_string(config).unwrap(), original_config);
     assert_eq!(fs::read_to_string(discovery).unwrap(), original_discovery);
+}
+
+#[test]
+fn refresh_preserves_discovery_for_unmanaged_existing_clients() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "2.0.0");
+    let codex = environment.home.join(".codex/config.toml");
+    fs::create_dir_all(codex.parent().unwrap()).unwrap();
+    fs::write(
+        &codex,
+        format!(
+            "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\nstartup_timeout_sec = 30\n",
+            environment.launcher.command().unwrap(),
+            environment.launcher.args
+        ),
+    )
+    .unwrap();
+    let claude = environment.home.join(".claude.json");
+    fs::write(
+        &claude,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "leantoken": {
+                    "command": "/opt/manual-leantoken",
+                    "args": ["mcp"]
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let original_skill = format!("{DISCOVERY_SKILL_MARKER}\nlegacy Claude discovery\n");
+    fs::write(&skill, &original_skill).unwrap();
+
+    let report = run_with(
+        SetupOperation::Setup,
+        SetupRequest {
+            clients: Vec::new(),
+            all: false,
+            refresh: true,
+            private_runtime: false,
+            yes: true,
+            dry_run: false,
+            allow_outdated: false,
+            force_unmanaged: false,
+        },
+        &environment,
+        &FixedPrompt {
+            selected: None,
+            confirmed: true,
+        },
+    )
+    .unwrap();
+
+    assert!(
+        report
+            .results
+            .iter()
+            .any(|result| result.client == SetupClient::Codex)
+    );
+    assert_eq!(fs::read_to_string(&skill).unwrap(), original_skill);
+    assert!(
+        !report
+            .discovery_plan
+            .iter()
+            .any(|effect| { effect.path == skill && effect.action == ClientPlanAction::Remove })
+    );
 }
 
 #[test]
@@ -2249,6 +2319,19 @@ fn setup_ownership_recognizes_only_explicit_or_exact_legacy_launchers() {
                 "/usr/lib/node_modules/npm/bin/npx-cli.js".into(),
                 "exec".into(),
                 "--yes".into(),
+                "--package=leantoken@1.2.3".into(),
+                "--".into(),
+                "leantoken".into(),
+                "mcp".into(),
+            ],
+        ),
+        (
+            "/usr/bin/node",
+            vec![
+                "/usr/lib/node_modules/npm/bin/npm-cli.js".into(),
+                "exec".into(),
+                "--yes".into(),
+                "--prefer-offline".into(),
                 "--package=leantoken@1.2.3".into(),
                 "--".into(),
                 "leantoken".into(),

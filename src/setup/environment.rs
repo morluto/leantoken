@@ -458,19 +458,27 @@ fn is_legacy_node_npx_registration(command: &str, args: &[String]) -> bool {
 }
 
 fn is_legacy_node_npm_registration(command: &str, args: &[String]) -> bool {
-    command_has_stem(command, "node")
-        && args.len() == 7
+    if !command_has_stem(command, "node")
+        || !matches!(args.len(), 7 | 8)
         // Releases before the direct-npx launcher change could combine the
-        // npx CLI path with npm's `exec` subcommand. Keep that exact shape
+        // npx CLI path with npm's `exec` subcommand. Keep those exact shapes
         // refreshable so users can migrate to the current launcher.
-        && (argument_has_file_name(&args[0], "npm-cli.js")
+        || !(argument_has_file_name(&args[0], "npm-cli.js")
             || argument_has_file_name(&args[0], "npx-cli.js"))
-        && args[1] == "exec"
-        && args[2] == "--yes"
-        && is_exact_legacy_package(&args[3], "--package=leantoken@")
-        && args[4] == "--"
-        && args[5] == "leantoken"
-        && args[6] == "mcp"
+        || args[1] != "exec"
+        || args[2] != "--yes"
+    {
+        return false;
+    }
+    let package_index = match args.len() {
+        7 => 3,
+        8 if args[3] == "--prefer-offline" => 4,
+        _ => return false,
+    };
+    is_exact_legacy_package(&args[package_index], "--package=leantoken@")
+        && args[package_index + 1] == "--"
+        && args[package_index + 2] == "leantoken"
+        && args[package_index + 3] == "mcp"
 }
 
 fn is_legacy_direct_npx_registration(command: &str, args: &[String]) -> bool {
