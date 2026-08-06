@@ -159,6 +159,7 @@ impl LeanTokenMcp {
             )
         })?;
         let now = now_unix_millis()?;
+        let mut last_error = None;
         let mut found = None;
         for (_, mcp_services) in self.contexts.all() {
             let state = mcp_services.get();
@@ -185,14 +186,16 @@ impl LeanTokenMcp {
                 Err(crate::Error::UnknownReceipt(_)) => {}
                 Err(other) => {
                     tracing::error!(%other, "receipt resource read failed");
-                    return Err(ErrorData::internal_error(
-                        "retrieval receipt read failed",
-                        None,
-                    ));
+                    // Continue checking remaining contexts; a storage error in
+                    // one repository should not hide a valid receipt in another.
+                    last_error = Some(other);
                 }
             }
         }
-        let (repository_id, receipt) = found.ok_or_else(|| resource_not_found(&uri))?;
+        let (repository_id, receipt) = found.ok_or_else(|| match last_error {
+            Some(_) => ErrorData::internal_error("retrieval receipt read failed", None),
+            None => resource_not_found(&uri),
+        })?;
         let text = serde_json::to_string(&resource_value(&receipt, &repository_id, &uri)).map_err(
             |error| {
                 tracing::error!(%error, "receipt resource serialization failed");
