@@ -1,6 +1,19 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.24] - 2026-08-06
+### Bug Fixes
+
+- **mcp:** Continue checking remaining contexts on receipt read error
+- Critical bugs in staging, storage, ranking, MCP, and parser
+- **ci:** Grant Cargo recovery OIDC permission
+- **ci:** Identify crates.io availability probes
+### Chores
+
+- **ci:** Remove temporary Cargo recovery path [no-release]
+- **ci:** Add versioned Cargo recovery path [no-release]
+- **ci:** Add temporary Cargo 0.1.23 recovery workflow [no-release]
+
 ## [0.1.23] - 2026-08-05
 ### Bug Fixes
 
