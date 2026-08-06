@@ -237,7 +237,7 @@
 <a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span>starts = line_starts(<span class="kw-2">&amp;</span>hit.content);
 <a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">let </span><span class="kw-2">mut </span>hits = Vec::new();
 <a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">for </span>(start, end) <span class="kw">in </span>ranges {
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">if </span>occurrence_limit.existing_hits.saturating_add(hits.len()) == occurrence_limit.max_hits {
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">if </span>occurrence_limit.existing_hits.saturating_add(hits.len()) &gt;= occurrence_limit.max_hits {
 <a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RetrievalLimitExceeded {
 <a href=#242 id=242 data-nosnippet>242</a>                kind: RetrievalLimitKind::ExhaustiveOccurrences,
 <a href=#243 id=243 data-nosnippet>243</a>                observed: occurrence_limit

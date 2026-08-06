@@ -283,56 +283,54 @@
 <a href=#283 id=283 data-nosnippet>283</a>            sym_idx += <span class="number">1</span>;
 <a href=#284 id=284 data-nosnippet>284</a>        }
 <a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>top) = stack.last() {
-<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">if </span>symbols[top].end_byte &lt; ref_end {
-<a href=#288 id=288 data-nosnippet>288</a>                stack.pop();
-<a href=#289 id=289 data-nosnippet>289</a>            } <span class="kw">else </span>{
-<a href=#290 id=290 data-nosnippet>290</a>                <span class="kw">break</span>;
-<a href=#291 id=291 data-nosnippet>291</a>            }
-<a href=#292 id=292 data-nosnippet>292</a>        }
-<a href=#293 id=293 data-nosnippet>293</a>
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>top) = stack.last() {
-<a href=#295 id=295 data-nosnippet>295</a>            references[ri].enclosing_symbol = <span class="prelude-val">Some</span>(symbols[top].name.clone());
-<a href=#296 id=296 data-nosnippet>296</a>        }
-<a href=#297 id=297 data-nosnippet>297</a>    }
-<a href=#298 id=298 data-nosnippet>298</a>
-<a href=#299 id=299 data-nosnippet>299</a>    references.sort_by(|a, b| {
-<a href=#300 id=300 data-nosnippet>300</a>        a.start_byte
-<a href=#301 id=301 data-nosnippet>301</a>            .cmp(<span class="kw-2">&amp;</span>b.start_byte)
-<a href=#302 id=302 data-nosnippet>302</a>            .then_with(|| a.end_byte.cmp(<span class="kw-2">&amp;</span>b.end_byte))
-<a href=#303 id=303 data-nosnippet>303</a>    });
-<a href=#304 id=304 data-nosnippet>304</a>}
-<a href=#305 id=305 data-nosnippet>305</a>
-<a href=#306 id=306 data-nosnippet>306</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>range_from_node(node: Node) -&gt; (usize, usize, usize, usize) {
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span>start = node.start_position();
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span>end = node.end_position();
-<a href=#309 id=309 data-nosnippet>309</a>    (
-<a href=#310 id=310 data-nosnippet>310</a>        start.row + <span class="number">1</span>,
-<a href=#311 id=311 data-nosnippet>311</a>        end.row + <span class="number">1</span>,
-<a href=#312 id=312 data-nosnippet>312</a>        node.start_byte(),
-<a href=#313 id=313 data-nosnippet>313</a>        node.end_byte(),
-<a href=#314 id=314 data-nosnippet>314</a>    )
-<a href=#315 id=315 data-nosnippet>315</a>}
-<a href=#316 id=316 data-nosnippet>316</a>
-<a href=#317 id=317 data-nosnippet>317</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_text(source: <span class="kw-2">&amp;</span>str, node: Node) -&gt; String {
-<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">let </span>bytes = source.as_bytes();
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">let </span>start = node.start_byte();
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">let </span>end = node.end_byte();
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">if </span>start &lt;= end &amp;&amp; end &lt;= bytes.len() {
-<a href=#322 id=322 data-nosnippet>322</a>        String::from_utf8_lossy(<span class="kw-2">&amp;</span>bytes[start..end]).into_owned()
-<a href=#323 id=323 data-nosnippet>323</a>    } <span class="kw">else </span>{
-<a href=#324 id=324 data-nosnippet>324</a>        String::new()
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>}
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>unquote(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="kw-2">&amp;</span>str {
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">let </span><span class="kw-2">mut </span>chars = s.chars();
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">if let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(last)) = (chars.next(), chars.next_back())
-<a href=#331 id=331 data-nosnippet>331</a>        &amp;&amp; first == last
-<a href=#332 id=332 data-nosnippet>332</a>        &amp;&amp; (first == <span class="string">'"' </span>|| first == <span class="string">'\'' </span>|| first == <span class="string">'`'</span>)
-<a href=#333 id=333 data-nosnippet>333</a>    {
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">return </span>chars.as_str();
-<a href=#335 id=335 data-nosnippet>335</a>    }
-<a href=#336 id=336 data-nosnippet>336</a>    s
-<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="comment">// Find the enclosing symbol by scanning the stack without permanently
+<a href=#287 id=287 data-nosnippet>287</a>        // removing symbols. This prevents a later reference with a smaller
+<a href=#288 id=288 data-nosnippet>288</a>        // end_byte from losing its correct (narrower) enclosing symbol.
+<a href=#289 id=289 data-nosnippet>289</a>        </span><span class="kw">let </span>enclosing = stack
+<a href=#290 id=290 data-nosnippet>290</a>            .iter()
+<a href=#291 id=291 data-nosnippet>291</a>            .rev()
+<a href=#292 id=292 data-nosnippet>292</a>            .find(|&amp;&amp;top| symbols[top].end_byte &gt;= ref_end)
+<a href=#293 id=293 data-nosnippet>293</a>            .map(|<span class="kw-2">&amp;</span>top| symbols[top].name.clone());
+<a href=#294 id=294 data-nosnippet>294</a>        references[ri].enclosing_symbol = enclosing;
+<a href=#295 id=295 data-nosnippet>295</a>    }
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a>    references.sort_by(|a, b| {
+<a href=#298 id=298 data-nosnippet>298</a>        a.start_byte
+<a href=#299 id=299 data-nosnippet>299</a>            .cmp(<span class="kw-2">&amp;</span>b.start_byte)
+<a href=#300 id=300 data-nosnippet>300</a>            .then_with(|| a.end_byte.cmp(<span class="kw-2">&amp;</span>b.end_byte))
+<a href=#301 id=301 data-nosnippet>301</a>    });
+<a href=#302 id=302 data-nosnippet>302</a>}
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>range_from_node(node: Node) -&gt; (usize, usize, usize, usize) {
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">let </span>start = node.start_position();
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span>end = node.end_position();
+<a href=#307 id=307 data-nosnippet>307</a>    (
+<a href=#308 id=308 data-nosnippet>308</a>        start.row + <span class="number">1</span>,
+<a href=#309 id=309 data-nosnippet>309</a>        end.row + <span class="number">1</span>,
+<a href=#310 id=310 data-nosnippet>310</a>        node.start_byte(),
+<a href=#311 id=311 data-nosnippet>311</a>        node.end_byte(),
+<a href=#312 id=312 data-nosnippet>312</a>    )
+<a href=#313 id=313 data-nosnippet>313</a>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_text(source: <span class="kw-2">&amp;</span>str, node: Node) -&gt; String {
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">let </span>bytes = source.as_bytes();
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span>start = node.start_byte();
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">let </span>end = node.end_byte();
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">if </span>start &lt;= end &amp;&amp; end &lt;= bytes.len() {
+<a href=#320 id=320 data-nosnippet>320</a>        String::from_utf8_lossy(<span class="kw-2">&amp;</span>bytes[start..end]).into_owned()
+<a href=#321 id=321 data-nosnippet>321</a>    } <span class="kw">else </span>{
+<a href=#322 id=322 data-nosnippet>322</a>        String::new()
+<a href=#323 id=323 data-nosnippet>323</a>    }
+<a href=#324 id=324 data-nosnippet>324</a>}
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>unquote(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="kw-2">&amp;</span>str {
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">let </span><span class="kw-2">mut </span>chars = s.chars();
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">if let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(last)) = (chars.next(), chars.next_back())
+<a href=#329 id=329 data-nosnippet>329</a>        &amp;&amp; first == last
+<a href=#330 id=330 data-nosnippet>330</a>        &amp;&amp; (first == <span class="string">'"' </span>|| first == <span class="string">'\'' </span>|| first == <span class="string">'`'</span>)
+<a href=#331 id=331 data-nosnippet>331</a>    {
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">return </span>chars.as_str();
+<a href=#333 id=333 data-nosnippet>333</a>    }
+<a href=#334 id=334 data-nosnippet>334</a>    s
+<a href=#335 id=335 data-nosnippet>335</a>}
 </code></pre></div></section></main></body></html>

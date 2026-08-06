@@ -197,87 +197,94 @@
 <a href=#197 id=197 data-nosnippet>197</a>        .iter()
 <a href=#198 id=198 data-nosnippet>198</a>        .map(|candidate| candidate.token_count)
 <a href=#199 id=199 data-nosnippet>199</a>        .sum::&lt;usize&gt;();
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>(additional, omitted) = greedy_select(
-<a href=#201 id=201 data-nosnippet>201</a>        remaining,
-<a href=#202 id=202 data-nosnippet>202</a>        budget.saturating_sub(required_tokens),
-<a href=#203 id=203 data-nosnippet>203</a>        max_per_file,
-<a href=#204 id=204 data-nosnippet>204</a>        max_fragments.saturating_sub(selected.len()),
-<a href=#205 id=205 data-nosnippet>205</a>    );
-<a href=#206 id=206 data-nosnippet>206</a>    selected.extend(additional);
-<a href=#207 id=207 data-nosnippet>207</a>    CandidateSelection {
-<a href=#208 id=208 data-nosnippet>208</a>        result_complete: omitted.is_empty(),
-<a href=#209 id=209 data-nosnippet>209</a>        selected,
-<a href=#210 id=210 data-nosnippet>210</a>        omitted,
-<a href=#211 id=211 data-nosnippet>211</a>        candidate_paths_total,
-<a href=#212 id=212 data-nosnippet>212</a>    }
-<a href=#213 id=213 data-nosnippet>213</a>}
-<a href=#214 id=214 data-nosnippet>214</a>
-<a href=#215 id=215 data-nosnippet>215</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>select_with_options(
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw-2">mut </span>candidates: Vec&lt;Candidate&gt;,
-<a href=#217 id=217 data-nosnippet>217</a>    request: <span class="kw-2">&amp;</span>ContextRequest,
-<a href=#218 id=218 data-nosnippet>218</a>    repository_generation: u64,
-<a href=#219 id=219 data-nosnippet>219</a>    weights: <span class="kw-2">&amp;</span>Weights,
-<a href=#220 id=220 data-nosnippet>220</a>    tokenizer: tokens::Tokenizer,
-<a href=#221 id=221 data-nosnippet>221</a>    context_exclude_paths: <span class="kw-2">&amp;</span>[String],
-<a href=#222 id=222 data-nosnippet>222</a>    prefiltered_path_omissions: <span class="kw-2">&amp;</span>[String],
-<a href=#223 id=223 data-nosnippet>223</a>) -&gt; ContextResponse {
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span>scope = SelectionScope::new(request, context_exclude_paths);
-<a href=#225 id=225 data-nosnippet>225</a>    apply_request_signals(<span class="kw-2">&amp;mut </span>candidates, request, <span class="kw-2">&amp;</span>scope.focus_paths);
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">let </span>generated_focus = request
-<a href=#227 id=227 data-nosnippet>227</a>        .explain_diagnostics
-<a href=#228 id=228 data-nosnippet>228</a>        .then(|| generated_focus_facts(<span class="kw-2">&amp;</span>candidates, request));
-<a href=#229 id=229 data-nosnippet>229</a>    <span class="kw">let </span>partition = partition_candidates(candidates, request, <span class="kw-2">&amp;</span>scope, weights, tokenizer);
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">let </span>selection = select_candidates(partition.eligible, request, weights, tokenizer);
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span><span class="kw-2">mut </span>coverage =
-<a href=#232 id=232 data-nosnippet>232</a>        build_context_coverage(request, <span class="kw-2">&amp;</span>selection.selected, <span class="kw-2">&amp;</span>partition.known_omitted);
-<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(generated_focus) = <span class="kw-2">&amp;</span>generated_focus {
-<a href=#234 id=234 data-nosnippet>234</a>        coverage.focus_path_coverage = build_focus_path_coverage(
-<a href=#235 id=235 data-nosnippet>235</a>            request,
-<a href=#236 id=236 data-nosnippet>236</a>            generated_focus,
-<a href=#237 id=237 data-nosnippet>237</a>            <span class="kw-2">&amp;</span>partition.path_omitted,
-<a href=#238 id=238 data-nosnippet>238</a>            <span class="kw-2">&amp;</span>partition.known_omitted,
-<a href=#239 id=239 data-nosnippet>239</a>            <span class="kw-2">&amp;</span>selection.selected,
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="kw-2">&amp;</span>selection.omitted,
-<a href=#241 id=241 data-nosnippet>241</a>        );
-<a href=#242 id=242 data-nosnippet>242</a>    }
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>estimated_source_tokens = selection
-<a href=#244 id=244 data-nosnippet>244</a>        .selected
-<a href=#245 id=245 data-nosnippet>245</a>        .iter()
-<a href=#246 id=246 data-nosnippet>246</a>        .map(|candidate| candidate.token_count)
-<a href=#247 id=247 data-nosnippet>247</a>        .sum();
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>plan = build_context_plan(
-<a href=#249 id=249 data-nosnippet>249</a>        request,
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw-2">&amp;</span>selection.selected,
-<a href=#251 id=251 data-nosnippet>251</a>        selection.candidate_paths_total,
-<a href=#252 id=252 data-nosnippet>252</a>        estimated_source_tokens,
-<a href=#253 id=253 data-nosnippet>253</a>        partition.generated_artifact_warning,
-<a href=#254 id=254 data-nosnippet>254</a>        selection.result_complete,
-<a href=#255 id=255 data-nosnippet>255</a>    );
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>(fragments, fragment_hashes, emitted_tokens) =
-<a href=#257 id=257 data-nosnippet>257</a>        materialize_context_fragments(request, <span class="kw-2">&amp;</span>selection.selected, estimated_source_tokens);
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>(omission_summary, omitted, warnings) =
-<a href=#259 id=259 data-nosnippet>259</a>        build_context_omissions(<span class="kw">super</span>::omissions::BuildOmissionsParams {
-<a href=#260 id=260 data-nosnippet>260</a>            request,
-<a href=#261 id=261 data-nosnippet>261</a>            path_omitted: partition.path_omitted,
-<a href=#262 id=262 data-nosnippet>262</a>            known_omitted: partition.known_omitted,
-<a href=#263 id=263 data-nosnippet>263</a>            limit_omitted: selection.omitted,
-<a href=#264 id=264 data-nosnippet>264</a>            prefiltered_path_omissions,
-<a href=#265 id=265 data-nosnippet>265</a>            focus_paths: <span class="kw-2">&amp;</span>scope.focus_paths,
-<a href=#266 id=266 data-nosnippet>266</a>            changed_paths: <span class="kw-2">&amp;</span>scope.changed_paths,
-<a href=#267 id=267 data-nosnippet>267</a>            generated_artifact_warning: partition.generated_artifact_warning,
-<a href=#268 id=268 data-nosnippet>268</a>        });
-<a href=#269 id=269 data-nosnippet>269</a>    finalize_context_response(<span class="kw">super</span>::response::FinalizeContextParams {
-<a href=#270 id=270 data-nosnippet>270</a>        request,
-<a href=#271 id=271 data-nosnippet>271</a>        repository_generation,
-<a href=#272 id=272 data-nosnippet>272</a>        tokenizer,
-<a href=#273 id=273 data-nosnippet>273</a>        plan,
-<a href=#274 id=274 data-nosnippet>274</a>        fragments,
-<a href=#275 id=275 data-nosnippet>275</a>        fragment_hashes,
-<a href=#276 id=276 data-nosnippet>276</a>        emitted_tokens,
-<a href=#277 id=277 data-nosnippet>277</a>        omitted,
-<a href=#278 id=278 data-nosnippet>278</a>        omission_summary,
-<a href=#279 id=279 data-nosnippet>279</a>        coverage,
-<a href=#280 id=280 data-nosnippet>280</a>        warnings,
-<a href=#281 id=281 data-nosnippet>281</a>    })
-<a href=#282 id=282 data-nosnippet>282</a>}
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span><span class="kw-2">mut </span>initial_file_counts: HashMap&lt;String, usize&gt; = HashMap::new();
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">for </span>candidate <span class="kw">in </span><span class="kw-2">&amp;</span>selected {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw-2">*</span>initial_file_counts
+<a href=#203 id=203 data-nosnippet>203</a>            .entry(candidate.candidate.path.clone())
+<a href=#204 id=204 data-nosnippet>204</a>            .or_default() += <span class="number">1</span>;
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span>(additional, omitted) = greedy_select(
+<a href=#207 id=207 data-nosnippet>207</a>        remaining,
+<a href=#208 id=208 data-nosnippet>208</a>        budget.saturating_sub(required_tokens),
+<a href=#209 id=209 data-nosnippet>209</a>        max_per_file,
+<a href=#210 id=210 data-nosnippet>210</a>        max_fragments.saturating_sub(selected.len()),
+<a href=#211 id=211 data-nosnippet>211</a>        initial_file_counts,
+<a href=#212 id=212 data-nosnippet>212</a>    );
+<a href=#213 id=213 data-nosnippet>213</a>    selected.extend(additional);
+<a href=#214 id=214 data-nosnippet>214</a>    CandidateSelection {
+<a href=#215 id=215 data-nosnippet>215</a>        result_complete: omitted.is_empty(),
+<a href=#216 id=216 data-nosnippet>216</a>        selected,
+<a href=#217 id=217 data-nosnippet>217</a>        omitted,
+<a href=#218 id=218 data-nosnippet>218</a>        candidate_paths_total,
+<a href=#219 id=219 data-nosnippet>219</a>    }
+<a href=#220 id=220 data-nosnippet>220</a>}
+<a href=#221 id=221 data-nosnippet>221</a>
+<a href=#222 id=222 data-nosnippet>222</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>select_with_options(
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw-2">mut </span>candidates: Vec&lt;Candidate&gt;,
+<a href=#224 id=224 data-nosnippet>224</a>    request: <span class="kw-2">&amp;</span>ContextRequest,
+<a href=#225 id=225 data-nosnippet>225</a>    repository_generation: u64,
+<a href=#226 id=226 data-nosnippet>226</a>    weights: <span class="kw-2">&amp;</span>Weights,
+<a href=#227 id=227 data-nosnippet>227</a>    tokenizer: tokens::Tokenizer,
+<a href=#228 id=228 data-nosnippet>228</a>    context_exclude_paths: <span class="kw-2">&amp;</span>[String],
+<a href=#229 id=229 data-nosnippet>229</a>    prefiltered_path_omissions: <span class="kw-2">&amp;</span>[String],
+<a href=#230 id=230 data-nosnippet>230</a>) -&gt; ContextResponse {
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span>scope = SelectionScope::new(request, context_exclude_paths);
+<a href=#232 id=232 data-nosnippet>232</a>    apply_request_signals(<span class="kw-2">&amp;mut </span>candidates, request, <span class="kw-2">&amp;</span>scope.focus_paths);
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">let </span>generated_focus = request
+<a href=#234 id=234 data-nosnippet>234</a>        .explain_diagnostics
+<a href=#235 id=235 data-nosnippet>235</a>        .then(|| generated_focus_facts(<span class="kw-2">&amp;</span>candidates, request));
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">let </span>partition = partition_candidates(candidates, request, <span class="kw-2">&amp;</span>scope, weights, tokenizer);
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span>selection = select_candidates(partition.eligible, request, weights, tokenizer);
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">let </span><span class="kw-2">mut </span>coverage =
+<a href=#239 id=239 data-nosnippet>239</a>        build_context_coverage(request, <span class="kw-2">&amp;</span>selection.selected, <span class="kw-2">&amp;</span>partition.known_omitted);
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(generated_focus) = <span class="kw-2">&amp;</span>generated_focus {
+<a href=#241 id=241 data-nosnippet>241</a>        coverage.focus_path_coverage = build_focus_path_coverage(
+<a href=#242 id=242 data-nosnippet>242</a>            request,
+<a href=#243 id=243 data-nosnippet>243</a>            generated_focus,
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw-2">&amp;</span>partition.path_omitted,
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw-2">&amp;</span>partition.known_omitted,
+<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw-2">&amp;</span>selection.selected,
+<a href=#247 id=247 data-nosnippet>247</a>            <span class="kw-2">&amp;</span>selection.omitted,
+<a href=#248 id=248 data-nosnippet>248</a>        );
+<a href=#249 id=249 data-nosnippet>249</a>    }
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>estimated_source_tokens = selection
+<a href=#251 id=251 data-nosnippet>251</a>        .selected
+<a href=#252 id=252 data-nosnippet>252</a>        .iter()
+<a href=#253 id=253 data-nosnippet>253</a>        .map(|candidate| candidate.token_count)
+<a href=#254 id=254 data-nosnippet>254</a>        .sum();
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>plan = build_context_plan(
+<a href=#256 id=256 data-nosnippet>256</a>        request,
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw-2">&amp;</span>selection.selected,
+<a href=#258 id=258 data-nosnippet>258</a>        selection.candidate_paths_total,
+<a href=#259 id=259 data-nosnippet>259</a>        estimated_source_tokens,
+<a href=#260 id=260 data-nosnippet>260</a>        partition.generated_artifact_warning,
+<a href=#261 id=261 data-nosnippet>261</a>        selection.result_complete,
+<a href=#262 id=262 data-nosnippet>262</a>    );
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>(fragments, fragment_hashes, emitted_tokens) =
+<a href=#264 id=264 data-nosnippet>264</a>        materialize_context_fragments(request, <span class="kw-2">&amp;</span>selection.selected, estimated_source_tokens);
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>(omission_summary, omitted, warnings) =
+<a href=#266 id=266 data-nosnippet>266</a>        build_context_omissions(<span class="kw">super</span>::omissions::BuildOmissionsParams {
+<a href=#267 id=267 data-nosnippet>267</a>            request,
+<a href=#268 id=268 data-nosnippet>268</a>            path_omitted: partition.path_omitted,
+<a href=#269 id=269 data-nosnippet>269</a>            known_omitted: partition.known_omitted,
+<a href=#270 id=270 data-nosnippet>270</a>            limit_omitted: selection.omitted,
+<a href=#271 id=271 data-nosnippet>271</a>            prefiltered_path_omissions,
+<a href=#272 id=272 data-nosnippet>272</a>            focus_paths: <span class="kw-2">&amp;</span>scope.focus_paths,
+<a href=#273 id=273 data-nosnippet>273</a>            changed_paths: <span class="kw-2">&amp;</span>scope.changed_paths,
+<a href=#274 id=274 data-nosnippet>274</a>            generated_artifact_warning: partition.generated_artifact_warning,
+<a href=#275 id=275 data-nosnippet>275</a>        });
+<a href=#276 id=276 data-nosnippet>276</a>    finalize_context_response(<span class="kw">super</span>::response::FinalizeContextParams {
+<a href=#277 id=277 data-nosnippet>277</a>        request,
+<a href=#278 id=278 data-nosnippet>278</a>        repository_generation,
+<a href=#279 id=279 data-nosnippet>279</a>        tokenizer,
+<a href=#280 id=280 data-nosnippet>280</a>        plan,
+<a href=#281 id=281 data-nosnippet>281</a>        fragments,
+<a href=#282 id=282 data-nosnippet>282</a>        fragment_hashes,
+<a href=#283 id=283 data-nosnippet>283</a>        emitted_tokens,
+<a href=#284 id=284 data-nosnippet>284</a>        omitted,
+<a href=#285 id=285 data-nosnippet>285</a>        omission_summary,
+<a href=#286 id=286 data-nosnippet>286</a>        coverage,
+<a href=#287 id=287 data-nosnippet>287</a>        warnings,
+<a href=#288 id=288 data-nosnippet>288</a>    })
+<a href=#289 id=289 data-nosnippet>289</a>}
 </code></pre></div></section></main></body></html>
