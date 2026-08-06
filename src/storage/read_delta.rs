@@ -61,6 +61,29 @@ impl Storage {
         content_hash: Option<&str>,
         now_unix_millis: i64,
     ) -> Result<Option<(String, ReadDeltaBase)>> {
+        // Fast path: use a reader-pool connection without holding the writer
+        // lock. Only fall back to the writer lock when a mutation is needed.
+        let mut read_conn = self.readers.get()?;
+        let read_tx = read_conn.transaction()?;
+        let row = load_read_delta_base(&read_tx, target_key, content_hash)?;
+        let Some((hash, base, created, last_access)) = row else {
+            return Ok(None);
+        };
+        let needs_stale_delete = created > now_unix_millis || last_access > now_unix_millis;
+        let needs_touch =
+            now_unix_millis.saturating_sub(last_access) < READ_DELTA_TOUCH_INTERVAL_MILLIS;
+        if needs_touch && !needs_stale_delete {
+            if crate::text::hash(&base.content) != hash {
+                return Err(Error::OperationFailure(
+                    "persistent read delta base hash mismatch".into(),
+                ));
+            }
+            return Ok(Some((hash, base)));
+        }
+        drop(read_tx);
+        drop(read_conn);
+
+        // Slow path: acquire the writer lock for mutations.
         let mut connection = self
             .writer
             .lock()
@@ -68,7 +91,7 @@ impl Storage {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         prune_read_delta_bases(&transaction, now_unix_millis)?;
         let row = load_read_delta_base(&transaction, target_key, content_hash)?;
-        let Some((content_hash, base, created, last_access)) = row else {
+        let Some((hash, base, created, last_access)) = row else {
             transaction.commit()?;
             return Ok(None);
         };
@@ -76,12 +99,12 @@ impl Storage {
             transaction.execute(
                 "DELETE FROM read_delta_bases
                  WHERE target_key = ?1 AND content_hash = ?2",
-                params![target_key, content_hash],
+                params![target_key, hash],
             )?;
             transaction.commit()?;
             return Ok(None);
         }
-        if crate::text::hash(&base.content) != content_hash {
+        if crate::text::hash(&base.content) != hash {
             return Err(Error::OperationFailure(
                 "persistent read delta base hash mismatch".into(),
             ));
@@ -99,12 +122,12 @@ impl Storage {
                     now_unix_millis.saturating_add(READ_DELTA_BASE_TTL_MILLIS),
                     sequence,
                     target_key,
-                    content_hash
+                    hash
                 ],
             )?;
         }
         transaction.commit()?;
-        Ok(Some((content_hash, base)))
+        Ok(Some((hash, base)))
     }
 
     pub(crate) fn persist_read_delta_base_at(

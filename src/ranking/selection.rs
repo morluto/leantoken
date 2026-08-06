@@ -197,11 +197,18 @@ pub(in crate::ranking) fn select_candidates(
         .iter()
         .map(|candidate| candidate.token_count)
         .sum::<usize>();
+    let mut initial_file_counts: HashMap<String, usize> = HashMap::new();
+    for candidate in &selected {
+        *initial_file_counts
+            .entry(candidate.candidate.path.clone())
+            .or_default() += 1;
+    }
     let (additional, omitted) = greedy_select(
         remaining,
         budget.saturating_sub(required_tokens),
         max_per_file,
         max_fragments.saturating_sub(selected.len()),
+        initial_file_counts,
     );
     selected.extend(additional);
     CandidateSelection {

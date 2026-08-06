@@ -177,7 +177,9 @@ pub(in crate::ranking) fn build_focus_path_coverage(
     selected: &[ScoredCandidate],
     limit_omitted: &[ScoredCandidate],
 ) -> Vec<ContextFocusPathCoverage> {
-    let minimum_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+    let minimum_fragments = request
+        .minimum_fragments_per_focus_path
+        .unwrap_or(usize::from(request.strict_focus_paths));
     request
         .focus_paths
         .iter()

@@ -8,7 +8,9 @@ pub(in crate::ranking) fn build_context_plan(
     result_complete: bool,
 ) -> Option<ContextQueryPlan> {
     request.plan_only.then(|| {
-        let minimum_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+        let minimum_fragments = request
+            .minimum_fragments_per_focus_path
+            .unwrap_or(usize::from(request.strict_focus_paths));
         let focus_coverage = request
             .focus_paths
             .iter()

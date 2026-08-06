@@ -4,6 +4,7 @@ pub(in crate::ranking) fn greedy_select(
     budget: usize,
     max_per_file: usize,
     max_fragments: usize,
+    initial_file_counts: HashMap<String, usize>,
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
     let mut pool = candidates;
     pool.sort_by(compare_utility);
@@ -15,7 +16,7 @@ pub(in crate::ranking) fn greedy_select(
     let mut deferred = Vec::with_capacity(pool.len());
     let mut omitted: Vec<ScoredCandidate> = Vec::with_capacity(pool.len());
     let mut used_tokens = 0usize;
-    let mut file_counts: HashMap<String, usize> = HashMap::new();
+    let mut file_counts: HashMap<String, usize> = initial_file_counts;
     let mut covered_concepts = HashSet::new();
     let mut concept_representations = HashSet::new();
     let mut concept_paths = HashMap::new();

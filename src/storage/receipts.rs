@@ -591,6 +591,17 @@ impl Storage {
             }
             usage = receipt_usage(&tx)?;
         }
+        // Touch the source receipt so it is not prematurely evicted by LRU.
+        let source_expires_unix_millis = now_unix_millis
+            .checked_add(RECEIPT_TTL_MILLIS)
+            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
+        tx.execute(
+            "UPDATE retrieval_receipts
+             SET last_access_unix_millis = ?1,
+                 expires_unix_millis = ?2
+             WHERE id = ?3",
+            params![now_unix_millis, source_expires_unix_millis, source_row_id],
+        )?;
         let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
         tx.execute(
             "INSERT INTO retrieval_receipts(

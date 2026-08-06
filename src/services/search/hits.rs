@@ -237,7 +237,7 @@ pub(super) fn chunk_search_hits(
     let starts = line_starts(&hit.content);
     let mut hits = Vec::new();
     for (start, end) in ranges {
-        if occurrence_limit.existing_hits.saturating_add(hits.len()) == occurrence_limit.max_hits {
+        if occurrence_limit.existing_hits.saturating_add(hits.len()) >= occurrence_limit.max_hits {
             return Err(Error::RetrievalLimitExceeded {
                 kind: RetrievalLimitKind::ExhaustiveOccurrences,
                 observed: occurrence_limit

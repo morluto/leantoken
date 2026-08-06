@@ -202,14 +202,14 @@ impl Services {
             let requested_minimum = request
                 .minimum_fragments_per_focus_path
                 .unwrap_or(usize::from(request.strict_focus_paths));
-            if retained < requested_minimum {
+            if retained == 0 {
+                warnings.push(format!(
+                    "focus pattern `{pattern}` matched indexed files without bounded chunk evidence"
+                ));
+            } else if retained < requested_minimum {
                 warnings.push(format!(
                     "focus pattern `{pattern}` generated {retained} distinct bounded candidates \
                      for requested minimum {requested_minimum}"
-                ));
-            } else if retained == 0 {
-                warnings.push(format!(
-                    "focus pattern `{pattern}` matched indexed files without bounded chunk evidence"
                 ));
             }
         }

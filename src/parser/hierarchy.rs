@@ -283,17 +283,15 @@ pub(super) fn compute_reference_enclosing(symbols: &[Symbol], references: &mut [
             sym_idx += 1;
         }
 
-        while let Some(&top) = stack.last() {
-            if symbols[top].end_byte < ref_end {
-                stack.pop();
-            } else {
-                break;
-            }
-        }
-
-        if let Some(&top) = stack.last() {
-            references[ri].enclosing_symbol = Some(symbols[top].name.clone());
-        }
+        // Find the enclosing symbol by scanning the stack without permanently
+        // removing symbols. This prevents a later reference with a smaller
+        // end_byte from losing its correct (narrower) enclosing symbol.
+        let enclosing = stack
+            .iter()
+            .rev()
+            .find(|&&top| symbols[top].end_byte >= ref_end)
+            .map(|&top| symbols[top].name.clone());
+        references[ri].enclosing_symbol = enclosing;
     }
 
     references.sort_by(|a, b| {
