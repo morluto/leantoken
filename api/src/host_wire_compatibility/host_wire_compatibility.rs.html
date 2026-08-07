@@ -895,5 +895,46 @@
 <a href=#895 id=895 data-nosnippet>895</a>        <span class="macro">assert_eq!</span>(normalized, canonical);
 <a href=#896 id=896 data-nosnippet>896</a>        <span class="macro">assert_eq!</span>(blake3::hash(<span class="kw-2">&amp;</span>normalized), blake3::hash(<span class="kw-2">&amp;</span>canonical));
 <a href=#897 id=897 data-nosnippet>897</a>    }
-<a href=#898 id=898 data-nosnippet>898</a>}
+<a href=#898 id=898 data-nosnippet>898</a>
+<a href=#899 id=899 data-nosnippet>899</a>    <span class="attr">#[test]
+<a href=#900 id=900 data-nosnippet>900</a>    </span><span class="kw">fn </span>receipt_resource_report_is_bound_to_its_fixture() {
+<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>root = PathBuf::from(<span class="macro">env!</span>(<span class="string">"LEANTOKEN_REPOSITORY_ROOT"</span>));
+<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let </span>fixture_bytes = canonical_json_artifact(
+<a href=#903 id=903 data-nosnippet>903</a>            fs::read(root.join(<span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"</span>))
+<a href=#904 id=904 data-nosnippet>904</a>                .expect(<span class="string">"receipt fixture"</span>),
+<a href=#905 id=905 data-nosnippet>905</a>        )
+<a href=#906 id=906 data-nosnippet>906</a>        .expect(<span class="string">"canonical receipt fixture"</span>);
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>report_bytes = canonical_json_artifact(
+<a href=#908 id=908 data-nosnippet>908</a>            fs::read(
+<a href=#909 id=909 data-nosnippet>909</a>                root.join(<span class="string">"benchmarks/reports/codex-receipt-resource-0.146.0-2026-07-29.json"</span>),
+<a href=#910 id=910 data-nosnippet>910</a>            )
+<a href=#911 id=911 data-nosnippet>911</a>            .expect(<span class="string">"receipt report"</span>),
+<a href=#912 id=912 data-nosnippet>912</a>        )
+<a href=#913 id=913 data-nosnippet>913</a>        .expect(<span class="string">"canonical receipt report"</span>);
+<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>fixture: serde_json::Value =
+<a href=#915 id=915 data-nosnippet>915</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>fixture_bytes).expect(<span class="string">"fixture JSON"</span>);
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>report: serde_json::Value = serde_json::from_slice(<span class="kw-2">&amp;</span>report_bytes).expect(<span class="string">"report JSON"</span>);
+<a href=#917 id=917 data-nosnippet>917</a>
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="macro">assert_eq!</span>(
+<a href=#919 id=919 data-nosnippet>919</a>            report[<span class="string">"fixture"</span>],
+<a href=#920 id=920 data-nosnippet>920</a>            <span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"
+<a href=#921 id=921 data-nosnippet>921</a>        </span>);
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="macro">assert_eq!</span>(
+<a href=#923 id=923 data-nosnippet>923</a>            report[<span class="string">"fixture_blake3"</span>],
+<a href=#924 id=924 data-nosnippet>924</a>            blake3::hash(<span class="kw-2">&amp;</span>fixture_bytes).to_hex().to_string()
+<a href=#925 id=925 data-nosnippet>925</a>        );
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">let </span>production_variant = report[<span class="string">"production_variant"</span>]
+<a href=#927 id=927 data-nosnippet>927</a>            .as_str()
+<a href=#928 id=928 data-nosnippet>928</a>            .expect(<span class="string">"production variant"</span>);
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="macro">assert!</span>(fixture[<span class="string">"variants"</span>].get(production_variant).is_some());
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="macro">assert_eq!</span>(
+<a href=#931 id=931 data-nosnippet>931</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_evidence_count"</span>],
+<a href=#932 id=932 data-nosnippet>932</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence_count"</span>]
+<a href=#933 id=933 data-nosnippet>933</a>        );
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="macro">assert_eq!</span>(
+<a href=#935 id=935 data-nosnippet>935</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_content_hash"</span>],
+<a href=#936 id=936 data-nosnippet>936</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence"</span>][<span class="number">0</span>][<span class="string">"content_hash"</span>]
+<a href=#937 id=937 data-nosnippet>937</a>        );
+<a href=#938 id=938 data-nosnippet>938</a>    }
+<a href=#939 id=939 data-nosnippet>939</a>}
 </code></pre></div></section></main></body></html>

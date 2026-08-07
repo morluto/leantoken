@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["FixtureError","GitError","ProcessError","RepoError","SandboxError"],"struct":["Deadline","DeadlineError","FixtureCase","GitRepository","Normalizer","ProcessHarness","ProcessOutput","RepoBuilder","Sandbox"]};
+window.SIDEBAR_ITEMS = {"enum":["SandboxError"],"struct":["Sandbox"]};

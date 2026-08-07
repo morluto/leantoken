@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["run_fixture"]};
+window.SIDEBAR_ITEMS = {};

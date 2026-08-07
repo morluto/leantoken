@@ -1218,64 +1218,69 @@
 <a href=#1218 id=1218 data-nosnippet>1218</a>
 <a href=#1219 id=1219 data-nosnippet>1219</a>    <span class="attr">#[test]
 <a href=#1220 id=1220 data-nosnippet>1220</a>    </span><span class="kw">fn </span>repository_profile_mutates_only_a_disposable_snapshot() {
-<a href=#1221 id=1221 data-nosnippet>1221</a>        <span class="kw">if </span>Command::new(<span class="string">"git"</span>).arg(<span class="string">"--version"</span>).output().is_err() {
-<a href=#1222 id=1222 data-nosnippet>1222</a>            <span class="kw">return</span>;
-<a href=#1223 id=1223 data-nosnippet>1223</a>        }
-<a href=#1224 id=1224 data-nosnippet>1224</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
-<a href=#1225 id=1225 data-nosnippet>1225</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"init"</span>, <span class="string">"--quiet"</span>]);
-<a href=#1226 id=1226 data-nosnippet>1226</a>        run_git(
-<a href=#1227 id=1227 data-nosnippet>1227</a>            repository.path(),
-<a href=#1228 id=1228 data-nosnippet>1228</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.email"</span>, <span class="string">"test@example.com"</span>],
-<a href=#1229 id=1229 data-nosnippet>1229</a>        );
-<a href=#1230 id=1230 data-nosnippet>1230</a>        run_git(
-<a href=#1231 id=1231 data-nosnippet>1231</a>            repository.path(),
-<a href=#1232 id=1232 data-nosnippet>1232</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.name"</span>, <span class="string">"LeanToken Test"</span>],
-<a href=#1233 id=1233 data-nosnippet>1233</a>        );
-<a href=#1234 id=1234 data-nosnippet>1234</a>        <span class="kw">let </span>first = repository.path().join(<span class="string">"first.rs"</span>);
-<a href=#1235 id=1235 data-nosnippet>1235</a>        <span class="kw">let </span>second = repository.path().join(<span class="string">"second.py"</span>);
-<a href=#1236 id=1236 data-nosnippet>1236</a>        fs::write(<span class="kw-2">&amp;</span>first, <span class="string">"fn first() {}\n"</span>).expect(<span class="string">"first source"</span>);
-<a href=#1237 id=1237 data-nosnippet>1237</a>        fs::write(<span class="kw-2">&amp;</span>second, <span class="string">"def second():\n    return 2\n"</span>).expect(<span class="string">"second source"</span>);
-<a href=#1238 id=1238 data-nosnippet>1238</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"add"</span>, <span class="string">"-A"</span>]);
-<a href=#1239 id=1239 data-nosnippet>1239</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"commit"</span>, <span class="string">"--quiet"</span>, <span class="string">"-m"</span>, <span class="string">"fixture"</span>]);
-<a href=#1240 id=1240 data-nosnippet>1240</a>        <span class="kw">let </span>revision = git_output(repository.path(), [<span class="string">"rev-parse"</span>, <span class="string">"HEAD"</span>]).expect(<span class="string">"revision"</span>);
-<a href=#1241 id=1241 data-nosnippet>1241</a>        <span class="kw">let </span>original = fs::read_to_string(<span class="kw-2">&amp;</span>first).expect(<span class="string">"original source"</span>);
-<a href=#1242 id=1242 data-nosnippet>1242</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
-<a href=#1243 id=1243 data-nosnippet>1243</a>        <span class="kw">let </span>args = Args {
-<a href=#1244 id=1244 data-nosnippet>1244</a>            command: <span class="prelude-val">None</span>,
-<a href=#1245 id=1245 data-nosnippet>1245</a>            repository: <span class="prelude-val">Some</span>(repository.path().to_path_buf()),
-<a href=#1246 id=1246 data-nosnippet>1246</a>            repository_label: <span class="prelude-val">None</span>,
-<a href=#1247 id=1247 data-nosnippet>1247</a>            files: <span class="number">2</span>,
-<a href=#1248 id=1248 data-nosnippet>1248</a>            file_bytes: <span class="number">128</span>,
-<a href=#1249 id=1249 data-nosnippet>1249</a>            iterations: <span class="number">1</span>,
-<a href=#1250 id=1250 data-nosnippet>1250</a>            read_samples: <span class="number">2</span>,
-<a href=#1251 id=1251 data-nosnippet>1251</a>            hot_set: <span class="number">1</span>,
-<a href=#1252 id=1252 data-nosnippet>1252</a>            watcher_debounce_ms: <span class="number">50</span>,
-<a href=#1253 id=1253 data-nosnippet>1253</a>            output: output.path().join(<span class="string">"report.json"</span>),
-<a href=#1254 id=1254 data-nosnippet>1254</a>        };
-<a href=#1255 id=1255 data-nosnippet>1255</a>
-<a href=#1256 id=1256 data-nosnippet>1256</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile repository"</span>);
-<a href=#1257 id=1257 data-nosnippet>1257</a>
-<a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="macro">assert_eq!</span>(report.corpus.source_kind, <span class="string">"git_worktree_snapshot"</span>);
-<a href=#1259 id=1259 data-nosnippet>1259</a>        <span class="macro">assert_eq!</span>(report.corpus.revision.as_deref(), <span class="prelude-val">Some</span>(revision.as_str()));
-<a href=#1260 id=1260 data-nosnippet>1260</a>        <span class="macro">assert_eq!</span>(report.corpus.files, <span class="number">3</span>);
-<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="macro">assert_eq!</span>(report.full_noop.files_seen_per_sample, <span class="number">3</span>);
-<a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="macro">assert!</span>(report.directory_rename_delta.is_none());
-<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"rs"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
-<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"py"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
-<a href=#1265 id=1265 data-nosnippet>1265</a>        <span class="macro">assert_eq!</span>(
-<a href=#1266 id=1266 data-nosnippet>1266</a>            fs::read_to_string(first).expect(<span class="string">"source after profile"</span>),
-<a href=#1267 id=1267 data-nosnippet>1267</a>            original
-<a href=#1268 id=1268 data-nosnippet>1268</a>        );
-<a href=#1269 id=1269 data-nosnippet>1269</a>        <span class="macro">assert!</span>(
-<a href=#1270 id=1270 data-nosnippet>1270</a>            Command::new(<span class="string">"git"</span>)
-<a href=#1271 id=1271 data-nosnippet>1271</a>                .arg(<span class="string">"-C"</span>)
-<a href=#1272 id=1272 data-nosnippet>1272</a>                .arg(repository.path())
-<a href=#1273 id=1273 data-nosnippet>1273</a>                .args([<span class="string">"status"</span>, <span class="string">"--porcelain"</span>])
-<a href=#1274 id=1274 data-nosnippet>1274</a>                .output()
-<a href=#1275 id=1275 data-nosnippet>1275</a>                .expect(<span class="string">"git status"</span>)
-<a href=#1276 id=1276 data-nosnippet>1276</a>                .stdout
-<a href=#1277 id=1277 data-nosnippet>1277</a>                .is_empty()
-<a href=#1278 id=1278 data-nosnippet>1278</a>        );
-<a href=#1279 id=1279 data-nosnippet>1279</a>    }
-<a href=#1280 id=1280 data-nosnippet>1280</a>}
+<a href=#1221 id=1221 data-nosnippet>1221</a>        <span class="kw">let </span>git = Command::new(<span class="string">"git"</span>)
+<a href=#1222 id=1222 data-nosnippet>1222</a>            .arg(<span class="string">"--version"</span>)
+<a href=#1223 id=1223 data-nosnippet>1223</a>            .status()
+<a href=#1224 id=1224 data-nosnippet>1224</a>            .expect(<span class="string">"Git is required for the repository profile test"</span>);
+<a href=#1225 id=1225 data-nosnippet>1225</a>        <span class="macro">assert!</span>(
+<a href=#1226 id=1226 data-nosnippet>1226</a>            git.success(),
+<a href=#1227 id=1227 data-nosnippet>1227</a>            <span class="string">"Git is required for the repository profile test"
+<a href=#1228 id=1228 data-nosnippet>1228</a>        </span>);
+<a href=#1229 id=1229 data-nosnippet>1229</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
+<a href=#1230 id=1230 data-nosnippet>1230</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"init"</span>, <span class="string">"--quiet"</span>]);
+<a href=#1231 id=1231 data-nosnippet>1231</a>        run_git(
+<a href=#1232 id=1232 data-nosnippet>1232</a>            repository.path(),
+<a href=#1233 id=1233 data-nosnippet>1233</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.email"</span>, <span class="string">"test@example.com"</span>],
+<a href=#1234 id=1234 data-nosnippet>1234</a>        );
+<a href=#1235 id=1235 data-nosnippet>1235</a>        run_git(
+<a href=#1236 id=1236 data-nosnippet>1236</a>            repository.path(),
+<a href=#1237 id=1237 data-nosnippet>1237</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.name"</span>, <span class="string">"LeanToken Test"</span>],
+<a href=#1238 id=1238 data-nosnippet>1238</a>        );
+<a href=#1239 id=1239 data-nosnippet>1239</a>        <span class="kw">let </span>first = repository.path().join(<span class="string">"first.rs"</span>);
+<a href=#1240 id=1240 data-nosnippet>1240</a>        <span class="kw">let </span>second = repository.path().join(<span class="string">"second.py"</span>);
+<a href=#1241 id=1241 data-nosnippet>1241</a>        fs::write(<span class="kw-2">&amp;</span>first, <span class="string">"fn first() {}\n"</span>).expect(<span class="string">"first source"</span>);
+<a href=#1242 id=1242 data-nosnippet>1242</a>        fs::write(<span class="kw-2">&amp;</span>second, <span class="string">"def second():\n    return 2\n"</span>).expect(<span class="string">"second source"</span>);
+<a href=#1243 id=1243 data-nosnippet>1243</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"add"</span>, <span class="string">"-A"</span>]);
+<a href=#1244 id=1244 data-nosnippet>1244</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"commit"</span>, <span class="string">"--quiet"</span>, <span class="string">"-m"</span>, <span class="string">"fixture"</span>]);
+<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="kw">let </span>revision = git_output(repository.path(), [<span class="string">"rev-parse"</span>, <span class="string">"HEAD"</span>]).expect(<span class="string">"revision"</span>);
+<a href=#1246 id=1246 data-nosnippet>1246</a>        <span class="kw">let </span>original = fs::read_to_string(<span class="kw-2">&amp;</span>first).expect(<span class="string">"original source"</span>);
+<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
+<a href=#1248 id=1248 data-nosnippet>1248</a>        <span class="kw">let </span>args = Args {
+<a href=#1249 id=1249 data-nosnippet>1249</a>            command: <span class="prelude-val">None</span>,
+<a href=#1250 id=1250 data-nosnippet>1250</a>            repository: <span class="prelude-val">Some</span>(repository.path().to_path_buf()),
+<a href=#1251 id=1251 data-nosnippet>1251</a>            repository_label: <span class="prelude-val">None</span>,
+<a href=#1252 id=1252 data-nosnippet>1252</a>            files: <span class="number">2</span>,
+<a href=#1253 id=1253 data-nosnippet>1253</a>            file_bytes: <span class="number">128</span>,
+<a href=#1254 id=1254 data-nosnippet>1254</a>            iterations: <span class="number">1</span>,
+<a href=#1255 id=1255 data-nosnippet>1255</a>            read_samples: <span class="number">2</span>,
+<a href=#1256 id=1256 data-nosnippet>1256</a>            hot_set: <span class="number">1</span>,
+<a href=#1257 id=1257 data-nosnippet>1257</a>            watcher_debounce_ms: <span class="number">50</span>,
+<a href=#1258 id=1258 data-nosnippet>1258</a>            output: output.path().join(<span class="string">"report.json"</span>),
+<a href=#1259 id=1259 data-nosnippet>1259</a>        };
+<a href=#1260 id=1260 data-nosnippet>1260</a>
+<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile repository"</span>);
+<a href=#1262 id=1262 data-nosnippet>1262</a>
+<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="macro">assert_eq!</span>(report.corpus.source_kind, <span class="string">"git_worktree_snapshot"</span>);
+<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="macro">assert_eq!</span>(report.corpus.revision.as_deref(), <span class="prelude-val">Some</span>(revision.as_str()));
+<a href=#1265 id=1265 data-nosnippet>1265</a>        <span class="macro">assert_eq!</span>(report.corpus.files, <span class="number">3</span>);
+<a href=#1266 id=1266 data-nosnippet>1266</a>        <span class="macro">assert_eq!</span>(report.full_noop.files_seen_per_sample, <span class="number">3</span>);
+<a href=#1267 id=1267 data-nosnippet>1267</a>        <span class="macro">assert!</span>(report.directory_rename_delta.is_none());
+<a href=#1268 id=1268 data-nosnippet>1268</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"rs"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
+<a href=#1269 id=1269 data-nosnippet>1269</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"py"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
+<a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="macro">assert_eq!</span>(
+<a href=#1271 id=1271 data-nosnippet>1271</a>            fs::read_to_string(first).expect(<span class="string">"source after profile"</span>),
+<a href=#1272 id=1272 data-nosnippet>1272</a>            original
+<a href=#1273 id=1273 data-nosnippet>1273</a>        );
+<a href=#1274 id=1274 data-nosnippet>1274</a>        <span class="macro">assert!</span>(
+<a href=#1275 id=1275 data-nosnippet>1275</a>            Command::new(<span class="string">"git"</span>)
+<a href=#1276 id=1276 data-nosnippet>1276</a>                .arg(<span class="string">"-C"</span>)
+<a href=#1277 id=1277 data-nosnippet>1277</a>                .arg(repository.path())
+<a href=#1278 id=1278 data-nosnippet>1278</a>                .args([<span class="string">"status"</span>, <span class="string">"--porcelain"</span>])
+<a href=#1279 id=1279 data-nosnippet>1279</a>                .output()
+<a href=#1280 id=1280 data-nosnippet>1280</a>                .expect(<span class="string">"git status"</span>)
+<a href=#1281 id=1281 data-nosnippet>1281</a>                .stdout
+<a href=#1282 id=1282 data-nosnippet>1282</a>                .is_empty()
+<a href=#1283 id=1283 data-nosnippet>1283</a>        );
+<a href=#1284 id=1284 data-nosnippet>1284</a>    }
+<a href=#1285 id=1285 data-nosnippet>1285</a>}
 </code></pre></div></section></main></body></html>

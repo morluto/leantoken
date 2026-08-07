@@ -1539,249 +1539,286 @@
 <a href=#1539 id=1539 data-nosnippet>1539</a></span><span class="kw">mod </span>tests {
 <a href=#1540 id=1540 data-nosnippet>1540</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#1541 id=1541 data-nosnippet>1541</a>
-<a href=#1542 id=1542 data-nosnippet>1542</a>    <span class="kw">fn </span>fixture_task(style: PathStyle, budget: Budget) -&gt; RankedTask {
-<a href=#1543 id=1543 data-nosnippet>1543</a>        RankedTask {
-<a href=#1544 id=1544 data-nosnippet>1544</a>            schema_version: CONTRACT_SCHEMA_VERSION,
-<a href=#1545 id=1545 data-nosnippet>1545</a>            dataset_kind: <span class="string">"fixture"</span>.into(),
-<a href=#1546 id=1546 data-nosnippet>1546</a>            task_id: <span class="string">"task"</span>.into(),
-<a href=#1547 id=1547 data-nosnippet>1547</a>            repository: RepositorySpec {
-<a href=#1548 id=1548 data-nosnippet>1548</a>                url: <span class="string">"https://example.invalid/repo.git"</span>.into(),
-<a href=#1549 id=1549 data-nosnippet>1549</a>                revision: <span class="string">"0000000000000000000000000000000000000000"</span>.into(),
-<a href=#1550 id=1550 data-nosnippet>1550</a>                path_style: style,
-<a href=#1551 id=1551 data-nosnippet>1551</a>            },
-<a href=#1552 id=1552 data-nosnippet>1552</a>            query: <span class="string">"fix parseValue"</span>.into(),
-<a href=#1553 id=1553 data-nosnippet>1553</a>            language: <span class="string">"rust"</span>.into(),
-<a href=#1554 id=1554 data-nosnippet>1554</a>            strata: Strata {
-<a href=#1555 id=1555 data-nosnippet>1555</a>                repo_size_bucket: <span class="string">"small"</span>.into(),
-<a href=#1556 id=1556 data-nosnippet>1556</a>                exact_identifier: <span class="bool-val">true</span>,
-<a href=#1557 id=1557 data-nosnippet>1557</a>                lexical_overlap_bucket: <span class="string">"high"</span>.into(),
-<a href=#1558 id=1558 data-nosnippet>1558</a>                tags: <span class="macro">vec!</span>[<span class="string">"fixture"</span>.into()],
+<a href=#1542 id=1542 data-nosnippet>1542</a>    <span class="kw">fn </span>checked_in_ranked_fixtures() -&gt; PathBuf {
+<a href=#1543 id=1543 data-nosnippet>1543</a>        Path::new(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>))
+<a href=#1544 id=1544 data-nosnippet>1544</a>            .parent()
+<a href=#1545 id=1545 data-nosnippet>1545</a>            .and_then(Path::parent)
+<a href=#1546 id=1546 data-nosnippet>1546</a>            .expect(<span class="string">"benchmark package is below the workspace root"</span>)
+<a href=#1547 id=1547 data-nosnippet>1547</a>            .join(<span class="string">"benchmarks/fixtures/ranked_regions"</span>)
+<a href=#1548 id=1548 data-nosnippet>1548</a>    }
+<a href=#1549 id=1549 data-nosnippet>1549</a>
+<a href=#1550 id=1550 data-nosnippet>1550</a>    <span class="kw">fn </span>fixture_task(style: PathStyle, budget: Budget) -&gt; RankedTask {
+<a href=#1551 id=1551 data-nosnippet>1551</a>        RankedTask {
+<a href=#1552 id=1552 data-nosnippet>1552</a>            schema_version: CONTRACT_SCHEMA_VERSION,
+<a href=#1553 id=1553 data-nosnippet>1553</a>            dataset_kind: <span class="string">"fixture"</span>.into(),
+<a href=#1554 id=1554 data-nosnippet>1554</a>            task_id: <span class="string">"task"</span>.into(),
+<a href=#1555 id=1555 data-nosnippet>1555</a>            repository: RepositorySpec {
+<a href=#1556 id=1556 data-nosnippet>1556</a>                url: <span class="string">"https://example.invalid/repo.git"</span>.into(),
+<a href=#1557 id=1557 data-nosnippet>1557</a>                revision: <span class="string">"0000000000000000000000000000000000000000"</span>.into(),
+<a href=#1558 id=1558 data-nosnippet>1558</a>                path_style: style,
 <a href=#1559 id=1559 data-nosnippet>1559</a>            },
-<a href=#1560 id=1560 data-nosnippet>1560</a>            budget,
-<a href=#1561 id=1561 data-nosnippet>1561</a>            relevant_files: <span class="macro">vec!</span>[<span class="string">"src/lib.rs"</span>.into()],
-<a href=#1562 id=1562 data-nosnippet>1562</a>            core_regions: <span class="macro">vec!</span>[Region {
-<a href=#1563 id=1563 data-nosnippet>1563</a>                path: <span class="string">"src/lib.rs"</span>.into(),
-<a href=#1564 id=1564 data-nosnippet>1564</a>                start_line: <span class="number">2</span>,
-<a href=#1565 id=1565 data-nosnippet>1565</a>                end_line: <span class="number">3</span>,
-<a href=#1566 id=1566 data-nosnippet>1566</a>            }],
-<a href=#1567 id=1567 data-nosnippet>1567</a>            optional_regions: <span class="macro">vec!</span>[Region {
-<a href=#1568 id=1568 data-nosnippet>1568</a>                path: <span class="string">"tests/lib.rs"</span>.into(),
-<a href=#1569 id=1569 data-nosnippet>1569</a>                start_line: <span class="number">5</span>,
-<a href=#1570 id=1570 data-nosnippet>1570</a>                end_line: <span class="number">5</span>,
-<a href=#1571 id=1571 data-nosnippet>1571</a>            }],
-<a href=#1572 id=1572 data-nosnippet>1572</a>        }
-<a href=#1573 id=1573 data-nosnippet>1573</a>    }
-<a href=#1574 id=1574 data-nosnippet>1574</a>
-<a href=#1575 id=1575 data-nosnippet>1575</a>    <span class="kw">fn </span>fixture_prediction(hash: <span class="kw-2">&amp;</span>str, budget: Budget) -&gt; Prediction {
-<a href=#1576 id=1576 data-nosnippet>1576</a>        Prediction {
-<a href=#1577 id=1577 data-nosnippet>1577</a>            schema_version: CONTRACT_SCHEMA_VERSION,
-<a href=#1578 id=1578 data-nosnippet>1578</a>            task_id: <span class="string">"task"</span>.into(),
-<a href=#1579 id=1579 data-nosnippet>1579</a>            manifest_blake3: hash.into(),
-<a href=#1580 id=1580 data-nosnippet>1580</a>            repository_revision: <span class="string">"0000000000000000000000000000000000000000"</span>.into(),
-<a href=#1581 id=1581 data-nosnippet>1581</a>            budget,
-<a href=#1582 id=1582 data-nosnippet>1582</a>            tokenizer: <span class="prelude-val">Some</span>(<span class="string">"cl100k_base"</span>.into()),
-<a href=#1583 id=1583 data-nosnippet>1583</a>            complete_response_tokens: <span class="prelude-val">Some</span>(<span class="number">100</span>),
-<a href=#1584 id=1584 data-nosnippet>1584</a>            source_tokens: <span class="prelude-val">Some</span>(<span class="number">20</span>),
-<a href=#1585 id=1585 data-nosnippet>1585</a>            latency_ms: <span class="prelude-val">Some</span>(<span class="number">1.0</span>),
-<a href=#1586 id=1586 data-nosnippet>1586</a>            index_generation: <span class="prelude-val">Some</span>(<span class="number">1</span>),
-<a href=#1587 id=1587 data-nosnippet>1587</a>            regions: <span class="macro">vec!</span>[
-<a href=#1588 id=1588 data-nosnippet>1588</a>                PredictedRegion {
-<a href=#1589 id=1589 data-nosnippet>1589</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
-<a href=#1590 id=1590 data-nosnippet>1590</a>                    start_line: <span class="number">1</span>,
-<a href=#1591 id=1591 data-nosnippet>1591</a>                    end_line: <span class="number">3</span>,
-<a href=#1592 id=1592 data-nosnippet>1592</a>                    rank: <span class="number">1</span>,
-<a href=#1593 id=1593 data-nosnippet>1593</a>                    source: <span class="prelude-val">Some</span>(<span class="string">"text"</span>.into()),
-<a href=#1594 id=1594 data-nosnippet>1594</a>                    facet: <span class="prelude-val">None</span>,
-<a href=#1595 id=1595 data-nosnippet>1595</a>                    score: <span class="prelude-val">Some</span>(<span class="number">1.0</span>),
-<a href=#1596 id=1596 data-nosnippet>1596</a>                    token_count: <span class="prelude-val">Some</span>(<span class="number">10</span>),
-<a href=#1597 id=1597 data-nosnippet>1597</a>                },
-<a href=#1598 id=1598 data-nosnippet>1598</a>                PredictedRegion {
-<a href=#1599 id=1599 data-nosnippet>1599</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
-<a href=#1600 id=1600 data-nosnippet>1600</a>                    start_line: <span class="number">3</span>,
-<a href=#1601 id=1601 data-nosnippet>1601</a>                    end_line: <span class="number">4</span>,
-<a href=#1602 id=1602 data-nosnippet>1602</a>                    rank: <span class="number">2</span>,
-<a href=#1603 id=1603 data-nosnippet>1603</a>                    source: <span class="prelude-val">Some</span>(<span class="string">"text"</span>.into()),
-<a href=#1604 id=1604 data-nosnippet>1604</a>                    facet: <span class="prelude-val">None</span>,
-<a href=#1605 id=1605 data-nosnippet>1605</a>                    score: <span class="prelude-val">Some</span>(<span class="number">0.5</span>),
-<a href=#1606 id=1606 data-nosnippet>1606</a>                    token_count: <span class="prelude-val">Some</span>(<span class="number">10</span>),
-<a href=#1607 id=1607 data-nosnippet>1607</a>                },
-<a href=#1608 id=1608 data-nosnippet>1608</a>            ],
-<a href=#1609 id=1609 data-nosnippet>1609</a>        }
-<a href=#1610 id=1610 data-nosnippet>1610</a>    }
-<a href=#1611 id=1611 data-nosnippet>1611</a>
-<a href=#1612 id=1612 data-nosnippet>1612</a>    <span class="attr">#[test]
-<a href=#1613 id=1613 data-nosnippet>1613</a>    </span><span class="kw">fn </span>overlapping_predictions_do_not_double_count_lines_or_budget() {
-<a href=#1614 id=1614 data-nosnippet>1614</a>        <span class="kw">let </span>budget = Budget {
-<a href=#1615 id=1615 data-nosnippet>1615</a>            kind: BudgetKind::Lines,
-<a href=#1616 id=1616 data-nosnippet>1616</a>            amount: <span class="number">4</span>,
-<a href=#1617 id=1617 data-nosnippet>1617</a>        };
-<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
-<a href=#1619 id=1619 data-nosnippet>1619</a>        <span class="kw">let </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget);
-<a href=#1620 id=1620 data-nosnippet>1620</a>        <span class="kw">let </span>metrics = evaluate_task(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction).expect(<span class="string">"metrics"</span>);
-<a href=#1621 id=1621 data-nosnippet>1621</a>        <span class="macro">assert_eq!</span>(metrics.returned_lines, <span class="number">4</span>);
-<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="macro">assert_eq!</span>(metrics.core_lines_hit, <span class="number">2</span>);
-<a href=#1623 id=1623 data-nosnippet>1623</a>        <span class="macro">assert_eq!</span>(metrics.core_lines, <span class="number">2</span>);
-<a href=#1624 id=1624 data-nosnippet>1624</a>        <span class="macro">assert_eq!</span>(metrics.line_recall, <span class="number">1.0</span>);
-<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="macro">assert_eq!</span>(metrics.line_precision, <span class="number">0.5</span>);
-<a href=#1626 id=1626 data-nosnippet>1626</a>        <span class="macro">assert!</span>((metrics.line_f1 - (<span class="number">2.0 </span>/ <span class="number">3.0</span>)).abs() &lt; f64::EPSILON);
-<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="macro">assert_eq!</span>(metrics.predicted_regions, <span class="number">2</span>);
-<a href=#1628 id=1628 data-nosnippet>1628</a>    }
-<a href=#1629 id=1629 data-nosnippet>1629</a>
-<a href=#1630 id=1630 data-nosnippet>1630</a>    <span class="attr">#[test]
-<a href=#1631 id=1631 data-nosnippet>1631</a>    </span><span class="kw">fn </span>ndcg_rewards_core_lines_before_noise() {
-<a href=#1632 id=1632 data-nosnippet>1632</a>        <span class="kw">let </span>core = HashSet::from([(<span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>), (<span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>)]);
-<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="kw">let </span>optional = HashSet::new();
-<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="kw">let </span>ideal = <span class="macro">vec!</span>[
-<a href=#1635 id=1635 data-nosnippet>1635</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>),
-<a href=#1636 id=1636 data-nosnippet>1636</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>),
-<a href=#1637 id=1637 data-nosnippet>1637</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">9</span>),
-<a href=#1638 id=1638 data-nosnippet>1638</a>        ];
-<a href=#1639 id=1639 data-nosnippet>1639</a>        <span class="kw">let </span>noisy = <span class="macro">vec!</span>[
-<a href=#1640 id=1640 data-nosnippet>1640</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">9</span>),
-<a href=#1641 id=1641 data-nosnippet>1641</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>),
-<a href=#1642 id=1642 data-nosnippet>1642</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>),
-<a href=#1643 id=1643 data-nosnippet>1643</a>        ];
-<a href=#1644 id=1644 data-nosnippet>1644</a>        <span class="macro">assert_eq!</span>(line_ndcg(<span class="kw-2">&amp;</span>ideal, <span class="kw-2">&amp;</span>core, <span class="kw-2">&amp;</span>optional), <span class="number">1.0</span>);
-<a href=#1645 id=1645 data-nosnippet>1645</a>        <span class="macro">assert!</span>(line_ndcg(<span class="kw-2">&amp;</span>noisy, <span class="kw-2">&amp;</span>core, <span class="kw-2">&amp;</span>optional) &lt; <span class="number">1.0</span>);
-<a href=#1646 id=1646 data-nosnippet>1646</a>    }
-<a href=#1647 id=1647 data-nosnippet>1647</a>
-<a href=#1648 id=1648 data-nosnippet>1648</a>    <span class="attr">#[test]
-<a href=#1649 id=1649 data-nosnippet>1649</a>    </span><span class="kw">fn </span>windows_paths_normalize_without_changing_posix_backslashes() {
-<a href=#1650 id=1650 data-nosnippet>1650</a>        <span class="macro">assert_eq!</span>(
-<a href=#1651 id=1651 data-nosnippet>1651</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Windows).expect(<span class="string">"windows"</span>),
-<a href=#1652 id=1652 data-nosnippet>1652</a>            <span class="string">"src/lib.rs"
-<a href=#1653 id=1653 data-nosnippet>1653</a>        </span>);
-<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="macro">assert_eq!</span>(
-<a href=#1655 id=1655 data-nosnippet>1655</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Posix).expect(<span class="string">"posix"</span>),
-<a href=#1656 id=1656 data-nosnippet>1656</a>            <span class="string">r"src\lib.rs"
-<a href=#1657 id=1657 data-nosnippet>1657</a>        </span>);
-<a href=#1658 id=1658 data-nosnippet>1658</a>        <span class="macro">assert_ne!</span>(
-<a href=#1659 id=1659 data-nosnippet>1659</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Posix).unwrap(),
-<a href=#1660 id=1660 data-nosnippet>1660</a>            normalize_path(<span class="string">"src/lib.rs"</span>, PathStyle::Posix).unwrap()
-<a href=#1661 id=1661 data-nosnippet>1661</a>        );
-<a href=#1662 id=1662 data-nosnippet>1662</a>    }
-<a href=#1663 id=1663 data-nosnippet>1663</a>
-<a href=#1664 id=1664 data-nosnippet>1664</a>    <span class="attr">#[test]
-<a href=#1665 id=1665 data-nosnippet>1665</a>    </span><span class="kw">fn </span>malformed_ranges_and_unpinned_revisions_are_rejected() {
-<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="macro">assert!</span>(
-<a href=#1667 id=1667 data-nosnippet>1667</a>            validate_region(
-<a href=#1668 id=1668 data-nosnippet>1668</a>                <span class="kw-2">&amp;</span>Region {
-<a href=#1669 id=1669 data-nosnippet>1669</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
-<a href=#1670 id=1670 data-nosnippet>1670</a>                    start_line: <span class="number">3</span>,
-<a href=#1671 id=1671 data-nosnippet>1671</a>                    end_line: <span class="number">2</span>,
-<a href=#1672 id=1672 data-nosnippet>1672</a>                },
-<a href=#1673 id=1673 data-nosnippet>1673</a>                PathStyle::Posix
-<a href=#1674 id=1674 data-nosnippet>1674</a>            )
-<a href=#1675 id=1675 data-nosnippet>1675</a>            .is_err()
-<a href=#1676 id=1676 data-nosnippet>1676</a>        );
-<a href=#1677 id=1677 data-nosnippet>1677</a>        <span class="macro">assert!</span>(validate_revision(<span class="string">"main"</span>).is_err());
-<a href=#1678 id=1678 data-nosnippet>1678</a>    }
-<a href=#1679 id=1679 data-nosnippet>1679</a>
-<a href=#1680 id=1680 data-nosnippet>1680</a>    <span class="attr">#[test]
-<a href=#1681 id=1681 data-nosnippet>1681</a>    </span><span class="kw">fn </span>prediction_rejects_manifest_revision_and_budget_mismatches() {
-<a href=#1682 id=1682 data-nosnippet>1682</a>        <span class="kw">let </span>budget = Budget {
-<a href=#1683 id=1683 data-nosnippet>1683</a>            kind: BudgetKind::Lines,
-<a href=#1684 id=1684 data-nosnippet>1684</a>            amount: <span class="number">4</span>,
-<a href=#1685 id=1685 data-nosnippet>1685</a>        };
-<a href=#1686 id=1686 data-nosnippet>1686</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
-<a href=#1687 id=1687 data-nosnippet>1687</a>        <span class="kw">let </span><span class="kw-2">mut </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget.clone());
-<a href=#1688 id=1688 data-nosnippet>1688</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"other"</span>).is_err());
-<a href=#1689 id=1689 data-nosnippet>1689</a>        prediction.manifest_blake3 = <span class="string">"hash"</span>.into();
-<a href=#1690 id=1690 data-nosnippet>1690</a>        prediction.repository_revision = <span class="string">"1111111111111111111111111111111111111111"</span>.into();
-<a href=#1691 id=1691 data-nosnippet>1691</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
-<a href=#1692 id=1692 data-nosnippet>1692</a>        prediction.repository_revision = task.repository.revision.clone();
-<a href=#1693 id=1693 data-nosnippet>1693</a>        prediction.budget.amount += <span class="number">1</span>;
-<a href=#1694 id=1694 data-nosnippet>1694</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
-<a href=#1695 id=1695 data-nosnippet>1695</a>    }
-<a href=#1696 id=1696 data-nosnippet>1696</a>
-<a href=#1697 id=1697 data-nosnippet>1697</a>    <span class="attr">#[test]
-<a href=#1698 id=1698 data-nosnippet>1698</a>    </span><span class="kw">fn </span>source_token_budget_uses_authoritative_emitted_total() {
-<a href=#1699 id=1699 data-nosnippet>1699</a>        <span class="kw">let </span>budget = Budget {
-<a href=#1700 id=1700 data-nosnippet>1700</a>            kind: BudgetKind::SourceTokens,
-<a href=#1701 id=1701 data-nosnippet>1701</a>            amount: <span class="number">20</span>,
-<a href=#1702 id=1702 data-nosnippet>1702</a>        };
-<a href=#1703 id=1703 data-nosnippet>1703</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
-<a href=#1704 id=1704 data-nosnippet>1704</a>        <span class="kw">let </span><span class="kw-2">mut </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget);
-<a href=#1705 id=1705 data-nosnippet>1705</a>        prediction.regions[<span class="number">1</span>].start_line = <span class="number">2</span>;
-<a href=#1706 id=1706 data-nosnippet>1706</a>        prediction.regions[<span class="number">1</span>].end_line = <span class="number">3</span>;
-<a href=#1707 id=1707 data-nosnippet>1707</a>        prediction.source_tokens = <span class="prelude-val">Some</span>(<span class="number">20</span>);
-<a href=#1708 id=1708 data-nosnippet>1708</a>        validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).expect(<span class="string">"within source budget"</span>);
-<a href=#1709 id=1709 data-nosnippet>1709</a>        prediction.source_tokens = <span class="prelude-val">Some</span>(<span class="number">21</span>);
-<a href=#1710 id=1710 data-nosnippet>1710</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
-<a href=#1711 id=1711 data-nosnippet>1711</a>        prediction.source_tokens = <span class="prelude-val">None</span>;
-<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
-<a href=#1713 id=1713 data-nosnippet>1713</a>    }
-<a href=#1714 id=1714 data-nosnippet>1714</a>
-<a href=#1715 id=1715 data-nosnippet>1715</a>    <span class="attr">#[test]
-<a href=#1716 id=1716 data-nosnippet>1716</a>    </span><span class="kw">fn </span>comparison_rejects_manifest_revision_and_tokenizer_mismatches() {
-<a href=#1717 id=1717 data-nosnippet>1717</a>        <span class="kw">let </span>budget = Budget {
-<a href=#1718 id=1718 data-nosnippet>1718</a>            kind: BudgetKind::Lines,
-<a href=#1719 id=1719 data-nosnippet>1719</a>            amount: <span class="number">4</span>,
-<a href=#1720 id=1720 data-nosnippet>1720</a>        };
-<a href=#1721 id=1721 data-nosnippet>1721</a>        <span class="kw">let </span>report = evaluate(
-<a href=#1722 id=1722 data-nosnippet>1722</a>            <span class="macro">vec!</span>[fixture_task(PathStyle::Posix, budget.clone())],
-<a href=#1723 id=1723 data-nosnippet>1723</a>            <span class="macro">vec!</span>[fixture_prediction(<span class="string">"a"</span>, budget)],
-<a href=#1724 id=1724 data-nosnippet>1724</a>            <span class="string">"a"</span>.into(),
-<a href=#1725 id=1725 data-nosnippet>1725</a>            <span class="string">"p"</span>.into(),
-<a href=#1726 id=1726 data-nosnippet>1726</a>        )
-<a href=#1727 id=1727 data-nosnippet>1727</a>        .expect(<span class="string">"report"</span>);
-<a href=#1728 id=1728 data-nosnippet>1728</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidate = report.clone();
-<a href=#1729 id=1729 data-nosnippet>1729</a>        candidate.manifest_blake3 = <span class="string">"b"</span>.into();
-<a href=#1730 id=1730 data-nosnippet>1730</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
-<a href=#1731 id=1731 data-nosnippet>1731</a>        candidate.manifest_blake3 = <span class="string">"a"</span>.into();
-<a href=#1732 id=1732 data-nosnippet>1732</a>        candidate.tasks[<span class="number">0</span>].repository_revision = <span class="string">"1111111111111111111111111111111111111111"</span>.into();
-<a href=#1733 id=1733 data-nosnippet>1733</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
-<a href=#1734 id=1734 data-nosnippet>1734</a>        candidate.tasks[<span class="number">0</span>].repository_revision = report.tasks[<span class="number">0</span>].repository_revision.clone();
-<a href=#1735 id=1735 data-nosnippet>1735</a>        candidate.tokenizer = <span class="prelude-val">Some</span>(<span class="string">"o200k_base"</span>.into());
-<a href=#1736 id=1736 data-nosnippet>1736</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
-<a href=#1737 id=1737 data-nosnippet>1737</a>    }
-<a href=#1738 id=1738 data-nosnippet>1738</a>
-<a href=#1739 id=1739 data-nosnippet>1739</a>    <span class="attr">#[test]
-<a href=#1740 id=1740 data-nosnippet>1740</a>    </span><span class="kw">fn </span>swe_explore_conversion_uses_official_companion_maps() {
-<a href=#1741 id=1741 data-nosnippet>1741</a>        <span class="kw">let </span>record = <span class="macro">serde_json::json!</span>({
-<a href=#1742 id=1742 data-nosnippet>1742</a>            <span class="string">"instance_id"</span>: <span class="string">"owner__repo-42"</span>,
-<a href=#1743 id=1743 data-nosnippet>1743</a>            <span class="string">"ground_truth"</span>: {
-<a href=#1744 id=1744 data-nosnippet>1744</a>                <span class="string">"read_core_files"</span>: [<span class="string">"src/lib.rs"</span>],
-<a href=#1745 id=1745 data-nosnippet>1745</a>                <span class="string">"read_core_regions"</span>: [{<span class="string">"path"</span>: <span class="string">"src/lib.rs"</span>, <span class="string">"start"</span>: <span class="number">2</span>, <span class="string">"end"</span>: <span class="number">4</span>}],
-<a href=#1746 id=1746 data-nosnippet>1746</a>                <span class="string">"read_optional_regions_map"</span>: {
-<a href=#1747 id=1747 data-nosnippet>1747</a>                    <span class="string">"model"</span>: [{<span class="string">"path"</span>: <span class="string">"tests/lib.rs"</span>, <span class="string">"start"</span>: <span class="number">7</span>, <span class="string">"end"</span>: <span class="number">8</span>}]
-<a href=#1748 id=1748 data-nosnippet>1748</a>                }
-<a href=#1749 id=1749 data-nosnippet>1749</a>            },
-<a href=#1750 id=1750 data-nosnippet>1750</a>            <span class="string">"meta"</span>: {}
-<a href=#1751 id=1751 data-nosnippet>1751</a>        });
-<a href=#1752 id=1752 data-nosnippet>1752</a>        <span class="kw">let </span>issue_map =
-<a href=#1753 id=1753 data-nosnippet>1753</a>            BTreeMap::from([(<span class="string">"owner__repo-42"</span>.into(), <span class="string">"Fix parseValue handling"</span>.into())]);
-<a href=#1754 id=1754 data-nosnippet>1754</a>        <span class="kw">let </span>commit_map = BTreeMap::from([(
-<a href=#1755 id=1755 data-nosnippet>1755</a>            <span class="string">"owner__repo-42"</span>.into(),
-<a href=#1756 id=1756 data-nosnippet>1756</a>            <span class="string">"0123456789abcdef0123456789abcdef01234567"</span>.into(),
-<a href=#1757 id=1757 data-nosnippet>1757</a>        )]);
-<a href=#1758 id=1758 data-nosnippet>1758</a>        <span class="kw">let </span>task =
-<a href=#1759 id=1759 data-nosnippet>1759</a>            convert_swe_record(<span class="kw-2">&amp;</span>record, <span class="number">200</span>, <span class="kw-2">&amp;</span>issue_map, <span class="kw-2">&amp;</span>commit_map).expect(<span class="string">"converted task"</span>);
-<a href=#1760 id=1760 data-nosnippet>1760</a>        <span class="macro">assert_eq!</span>(task.repository.url, <span class="string">"https://github.com/owner/repo.git"</span>);
-<a href=#1761 id=1761 data-nosnippet>1761</a>        <span class="macro">assert_eq!</span>(task.query, <span class="string">"Fix parseValue handling"</span>);
-<a href=#1762 id=1762 data-nosnippet>1762</a>        <span class="macro">assert_eq!</span>(task.core_regions.len(), <span class="number">1</span>);
-<a href=#1763 id=1763 data-nosnippet>1763</a>        <span class="macro">assert_eq!</span>(task.optional_regions.len(), <span class="number">1</span>);
-<a href=#1764 id=1764 data-nosnippet>1764</a>    }
-<a href=#1765 id=1765 data-nosnippet>1765</a>
-<a href=#1766 id=1766 data-nosnippet>1766</a>    <span class="attr">#[test]
-<a href=#1767 id=1767 data-nosnippet>1767</a>    </span><span class="kw">fn </span>zero_baseline_has_no_relative_delta() {
-<a href=#1768 id=1768 data-nosnippet>1768</a>        <span class="kw">let </span>comparison = metric_comparison(<span class="number">0.0</span>, <span class="number">1.0</span>);
-<a href=#1769 id=1769 data-nosnippet>1769</a>        <span class="macro">assert_eq!</span>(comparison.absolute_delta, <span class="number">1.0</span>);
-<a href=#1770 id=1770 data-nosnippet>1770</a>        <span class="macro">assert_eq!</span>(comparison.relative_delta, <span class="prelude-val">None</span>);
-<a href=#1771 id=1771 data-nosnippet>1771</a>    }
-<a href=#1772 id=1772 data-nosnippet>1772</a>
-<a href=#1773 id=1773 data-nosnippet>1773</a>    <span class="attr">#[test]
-<a href=#1774 id=1774 data-nosnippet>1774</a>    </span><span class="kw">fn </span>checked_in_ranked_region_fixture_is_deterministic() {
-<a href=#1775 id=1775 data-nosnippet>1775</a>        <span class="kw">let </span>report: EvaluationReport = serde_json::from_str(<span class="macro">include_str!</span>(
-<a href=#1776 id=1776 data-nosnippet>1776</a>            <span class="string">"../benchmarks/fixtures/ranked_regions/swe_explore.report.json"
-<a href=#1777 id=1777 data-nosnippet>1777</a>        </span>))
-<a href=#1778 id=1778 data-nosnippet>1778</a>        .expect(<span class="string">"checked-in report"</span>);
-<a href=#1779 id=1779 data-nosnippet>1779</a>        <span class="macro">assert_eq!</span>(report.aggregate.task_count, <span class="number">1</span>);
-<a href=#1780 id=1780 data-nosnippet>1780</a>        <span class="macro">assert_eq!</span>(report.aggregate.core_lines_hit, <span class="number">3</span>);
-<a href=#1781 id=1781 data-nosnippet>1781</a>        <span class="macro">assert_eq!</span>(report.aggregate.returned_lines, <span class="number">7</span>);
-<a href=#1782 id=1782 data-nosnippet>1782</a>        <span class="macro">assert_eq!</span>(report.aggregate.complete_response_tokens, <span class="prelude-val">Some</span>(<span class="number">120</span>));
-<a href=#1783 id=1783 data-nosnippet>1783</a>        <span class="macro">assert_eq!</span>(report.aggregate.source_tokens, <span class="prelude-val">Some</span>(<span class="number">35</span>));
-<a href=#1784 id=1784 data-nosnippet>1784</a>        <span class="macro">assert_eq!</span>(report.aggregate.line_f1_macro, <span class="number">0.5</span>);
-<a href=#1785 id=1785 data-nosnippet>1785</a>    }
-<a href=#1786 id=1786 data-nosnippet>1786</a>}
+<a href=#1560 id=1560 data-nosnippet>1560</a>            query: <span class="string">"fix parseValue"</span>.into(),
+<a href=#1561 id=1561 data-nosnippet>1561</a>            language: <span class="string">"rust"</span>.into(),
+<a href=#1562 id=1562 data-nosnippet>1562</a>            strata: Strata {
+<a href=#1563 id=1563 data-nosnippet>1563</a>                repo_size_bucket: <span class="string">"small"</span>.into(),
+<a href=#1564 id=1564 data-nosnippet>1564</a>                exact_identifier: <span class="bool-val">true</span>,
+<a href=#1565 id=1565 data-nosnippet>1565</a>                lexical_overlap_bucket: <span class="string">"high"</span>.into(),
+<a href=#1566 id=1566 data-nosnippet>1566</a>                tags: <span class="macro">vec!</span>[<span class="string">"fixture"</span>.into()],
+<a href=#1567 id=1567 data-nosnippet>1567</a>            },
+<a href=#1568 id=1568 data-nosnippet>1568</a>            budget,
+<a href=#1569 id=1569 data-nosnippet>1569</a>            relevant_files: <span class="macro">vec!</span>[<span class="string">"src/lib.rs"</span>.into()],
+<a href=#1570 id=1570 data-nosnippet>1570</a>            core_regions: <span class="macro">vec!</span>[Region {
+<a href=#1571 id=1571 data-nosnippet>1571</a>                path: <span class="string">"src/lib.rs"</span>.into(),
+<a href=#1572 id=1572 data-nosnippet>1572</a>                start_line: <span class="number">2</span>,
+<a href=#1573 id=1573 data-nosnippet>1573</a>                end_line: <span class="number">3</span>,
+<a href=#1574 id=1574 data-nosnippet>1574</a>            }],
+<a href=#1575 id=1575 data-nosnippet>1575</a>            optional_regions: <span class="macro">vec!</span>[Region {
+<a href=#1576 id=1576 data-nosnippet>1576</a>                path: <span class="string">"tests/lib.rs"</span>.into(),
+<a href=#1577 id=1577 data-nosnippet>1577</a>                start_line: <span class="number">5</span>,
+<a href=#1578 id=1578 data-nosnippet>1578</a>                end_line: <span class="number">5</span>,
+<a href=#1579 id=1579 data-nosnippet>1579</a>            }],
+<a href=#1580 id=1580 data-nosnippet>1580</a>        }
+<a href=#1581 id=1581 data-nosnippet>1581</a>    }
+<a href=#1582 id=1582 data-nosnippet>1582</a>
+<a href=#1583 id=1583 data-nosnippet>1583</a>    <span class="kw">fn </span>fixture_prediction(hash: <span class="kw-2">&amp;</span>str, budget: Budget) -&gt; Prediction {
+<a href=#1584 id=1584 data-nosnippet>1584</a>        Prediction {
+<a href=#1585 id=1585 data-nosnippet>1585</a>            schema_version: CONTRACT_SCHEMA_VERSION,
+<a href=#1586 id=1586 data-nosnippet>1586</a>            task_id: <span class="string">"task"</span>.into(),
+<a href=#1587 id=1587 data-nosnippet>1587</a>            manifest_blake3: hash.into(),
+<a href=#1588 id=1588 data-nosnippet>1588</a>            repository_revision: <span class="string">"0000000000000000000000000000000000000000"</span>.into(),
+<a href=#1589 id=1589 data-nosnippet>1589</a>            budget,
+<a href=#1590 id=1590 data-nosnippet>1590</a>            tokenizer: <span class="prelude-val">Some</span>(<span class="string">"cl100k_base"</span>.into()),
+<a href=#1591 id=1591 data-nosnippet>1591</a>            complete_response_tokens: <span class="prelude-val">Some</span>(<span class="number">100</span>),
+<a href=#1592 id=1592 data-nosnippet>1592</a>            source_tokens: <span class="prelude-val">Some</span>(<span class="number">20</span>),
+<a href=#1593 id=1593 data-nosnippet>1593</a>            latency_ms: <span class="prelude-val">Some</span>(<span class="number">1.0</span>),
+<a href=#1594 id=1594 data-nosnippet>1594</a>            index_generation: <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#1595 id=1595 data-nosnippet>1595</a>            regions: <span class="macro">vec!</span>[
+<a href=#1596 id=1596 data-nosnippet>1596</a>                PredictedRegion {
+<a href=#1597 id=1597 data-nosnippet>1597</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
+<a href=#1598 id=1598 data-nosnippet>1598</a>                    start_line: <span class="number">1</span>,
+<a href=#1599 id=1599 data-nosnippet>1599</a>                    end_line: <span class="number">3</span>,
+<a href=#1600 id=1600 data-nosnippet>1600</a>                    rank: <span class="number">1</span>,
+<a href=#1601 id=1601 data-nosnippet>1601</a>                    source: <span class="prelude-val">Some</span>(<span class="string">"text"</span>.into()),
+<a href=#1602 id=1602 data-nosnippet>1602</a>                    facet: <span class="prelude-val">None</span>,
+<a href=#1603 id=1603 data-nosnippet>1603</a>                    score: <span class="prelude-val">Some</span>(<span class="number">1.0</span>),
+<a href=#1604 id=1604 data-nosnippet>1604</a>                    token_count: <span class="prelude-val">Some</span>(<span class="number">10</span>),
+<a href=#1605 id=1605 data-nosnippet>1605</a>                },
+<a href=#1606 id=1606 data-nosnippet>1606</a>                PredictedRegion {
+<a href=#1607 id=1607 data-nosnippet>1607</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
+<a href=#1608 id=1608 data-nosnippet>1608</a>                    start_line: <span class="number">3</span>,
+<a href=#1609 id=1609 data-nosnippet>1609</a>                    end_line: <span class="number">4</span>,
+<a href=#1610 id=1610 data-nosnippet>1610</a>                    rank: <span class="number">2</span>,
+<a href=#1611 id=1611 data-nosnippet>1611</a>                    source: <span class="prelude-val">Some</span>(<span class="string">"text"</span>.into()),
+<a href=#1612 id=1612 data-nosnippet>1612</a>                    facet: <span class="prelude-val">None</span>,
+<a href=#1613 id=1613 data-nosnippet>1613</a>                    score: <span class="prelude-val">Some</span>(<span class="number">0.5</span>),
+<a href=#1614 id=1614 data-nosnippet>1614</a>                    token_count: <span class="prelude-val">Some</span>(<span class="number">10</span>),
+<a href=#1615 id=1615 data-nosnippet>1615</a>                },
+<a href=#1616 id=1616 data-nosnippet>1616</a>            ],
+<a href=#1617 id=1617 data-nosnippet>1617</a>        }
+<a href=#1618 id=1618 data-nosnippet>1618</a>    }
+<a href=#1619 id=1619 data-nosnippet>1619</a>
+<a href=#1620 id=1620 data-nosnippet>1620</a>    <span class="attr">#[test]
+<a href=#1621 id=1621 data-nosnippet>1621</a>    </span><span class="kw">fn </span>overlapping_predictions_do_not_double_count_lines_or_budget() {
+<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="kw">let </span>budget = Budget {
+<a href=#1623 id=1623 data-nosnippet>1623</a>            kind: BudgetKind::Lines,
+<a href=#1624 id=1624 data-nosnippet>1624</a>            amount: <span class="number">4</span>,
+<a href=#1625 id=1625 data-nosnippet>1625</a>        };
+<a href=#1626 id=1626 data-nosnippet>1626</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
+<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="kw">let </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget);
+<a href=#1628 id=1628 data-nosnippet>1628</a>        <span class="kw">let </span>metrics = evaluate_task(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction).expect(<span class="string">"metrics"</span>);
+<a href=#1629 id=1629 data-nosnippet>1629</a>        <span class="macro">assert_eq!</span>(metrics.returned_lines, <span class="number">4</span>);
+<a href=#1630 id=1630 data-nosnippet>1630</a>        <span class="macro">assert_eq!</span>(metrics.core_lines_hit, <span class="number">2</span>);
+<a href=#1631 id=1631 data-nosnippet>1631</a>        <span class="macro">assert_eq!</span>(metrics.core_lines, <span class="number">2</span>);
+<a href=#1632 id=1632 data-nosnippet>1632</a>        <span class="macro">assert_eq!</span>(metrics.line_recall, <span class="number">1.0</span>);
+<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="macro">assert_eq!</span>(metrics.line_precision, <span class="number">0.5</span>);
+<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="macro">assert!</span>((metrics.line_f1 - (<span class="number">2.0 </span>/ <span class="number">3.0</span>)).abs() &lt; f64::EPSILON);
+<a href=#1635 id=1635 data-nosnippet>1635</a>        <span class="macro">assert_eq!</span>(metrics.predicted_regions, <span class="number">2</span>);
+<a href=#1636 id=1636 data-nosnippet>1636</a>    }
+<a href=#1637 id=1637 data-nosnippet>1637</a>
+<a href=#1638 id=1638 data-nosnippet>1638</a>    <span class="attr">#[test]
+<a href=#1639 id=1639 data-nosnippet>1639</a>    </span><span class="kw">fn </span>ndcg_rewards_core_lines_before_noise() {
+<a href=#1640 id=1640 data-nosnippet>1640</a>        <span class="kw">let </span>core = HashSet::from([(<span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>), (<span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>)]);
+<a href=#1641 id=1641 data-nosnippet>1641</a>        <span class="kw">let </span>optional = HashSet::new();
+<a href=#1642 id=1642 data-nosnippet>1642</a>        <span class="kw">let </span>ideal = <span class="macro">vec!</span>[
+<a href=#1643 id=1643 data-nosnippet>1643</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>),
+<a href=#1644 id=1644 data-nosnippet>1644</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>),
+<a href=#1645 id=1645 data-nosnippet>1645</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">9</span>),
+<a href=#1646 id=1646 data-nosnippet>1646</a>        ];
+<a href=#1647 id=1647 data-nosnippet>1647</a>        <span class="kw">let </span>noisy = <span class="macro">vec!</span>[
+<a href=#1648 id=1648 data-nosnippet>1648</a>            (<span class="number">1</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">9</span>),
+<a href=#1649 id=1649 data-nosnippet>1649</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">2</span>),
+<a href=#1650 id=1650 data-nosnippet>1650</a>            (<span class="number">2</span>, <span class="string">"src/lib.rs"</span>.into(), <span class="number">3</span>),
+<a href=#1651 id=1651 data-nosnippet>1651</a>        ];
+<a href=#1652 id=1652 data-nosnippet>1652</a>        <span class="macro">assert_eq!</span>(line_ndcg(<span class="kw-2">&amp;</span>ideal, <span class="kw-2">&amp;</span>core, <span class="kw-2">&amp;</span>optional), <span class="number">1.0</span>);
+<a href=#1653 id=1653 data-nosnippet>1653</a>        <span class="macro">assert!</span>(line_ndcg(<span class="kw-2">&amp;</span>noisy, <span class="kw-2">&amp;</span>core, <span class="kw-2">&amp;</span>optional) &lt; <span class="number">1.0</span>);
+<a href=#1654 id=1654 data-nosnippet>1654</a>    }
+<a href=#1655 id=1655 data-nosnippet>1655</a>
+<a href=#1656 id=1656 data-nosnippet>1656</a>    <span class="attr">#[test]
+<a href=#1657 id=1657 data-nosnippet>1657</a>    </span><span class="kw">fn </span>windows_paths_normalize_without_changing_posix_backslashes() {
+<a href=#1658 id=1658 data-nosnippet>1658</a>        <span class="macro">assert_eq!</span>(
+<a href=#1659 id=1659 data-nosnippet>1659</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Windows).expect(<span class="string">"windows"</span>),
+<a href=#1660 id=1660 data-nosnippet>1660</a>            <span class="string">"src/lib.rs"
+<a href=#1661 id=1661 data-nosnippet>1661</a>        </span>);
+<a href=#1662 id=1662 data-nosnippet>1662</a>        <span class="macro">assert_eq!</span>(
+<a href=#1663 id=1663 data-nosnippet>1663</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Posix).expect(<span class="string">"posix"</span>),
+<a href=#1664 id=1664 data-nosnippet>1664</a>            <span class="string">r"src\lib.rs"
+<a href=#1665 id=1665 data-nosnippet>1665</a>        </span>);
+<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="macro">assert_ne!</span>(
+<a href=#1667 id=1667 data-nosnippet>1667</a>            normalize_path(<span class="string">r"src\lib.rs"</span>, PathStyle::Posix).unwrap(),
+<a href=#1668 id=1668 data-nosnippet>1668</a>            normalize_path(<span class="string">"src/lib.rs"</span>, PathStyle::Posix).unwrap()
+<a href=#1669 id=1669 data-nosnippet>1669</a>        );
+<a href=#1670 id=1670 data-nosnippet>1670</a>    }
+<a href=#1671 id=1671 data-nosnippet>1671</a>
+<a href=#1672 id=1672 data-nosnippet>1672</a>    <span class="attr">#[test]
+<a href=#1673 id=1673 data-nosnippet>1673</a>    </span><span class="kw">fn </span>malformed_ranges_and_unpinned_revisions_are_rejected() {
+<a href=#1674 id=1674 data-nosnippet>1674</a>        <span class="macro">assert!</span>(
+<a href=#1675 id=1675 data-nosnippet>1675</a>            validate_region(
+<a href=#1676 id=1676 data-nosnippet>1676</a>                <span class="kw-2">&amp;</span>Region {
+<a href=#1677 id=1677 data-nosnippet>1677</a>                    path: <span class="string">"src/lib.rs"</span>.into(),
+<a href=#1678 id=1678 data-nosnippet>1678</a>                    start_line: <span class="number">3</span>,
+<a href=#1679 id=1679 data-nosnippet>1679</a>                    end_line: <span class="number">2</span>,
+<a href=#1680 id=1680 data-nosnippet>1680</a>                },
+<a href=#1681 id=1681 data-nosnippet>1681</a>                PathStyle::Posix
+<a href=#1682 id=1682 data-nosnippet>1682</a>            )
+<a href=#1683 id=1683 data-nosnippet>1683</a>            .is_err()
+<a href=#1684 id=1684 data-nosnippet>1684</a>        );
+<a href=#1685 id=1685 data-nosnippet>1685</a>        <span class="macro">assert!</span>(validate_revision(<span class="string">"main"</span>).is_err());
+<a href=#1686 id=1686 data-nosnippet>1686</a>    }
+<a href=#1687 id=1687 data-nosnippet>1687</a>
+<a href=#1688 id=1688 data-nosnippet>1688</a>    <span class="attr">#[test]
+<a href=#1689 id=1689 data-nosnippet>1689</a>    </span><span class="kw">fn </span>prediction_rejects_manifest_revision_and_budget_mismatches() {
+<a href=#1690 id=1690 data-nosnippet>1690</a>        <span class="kw">let </span>budget = Budget {
+<a href=#1691 id=1691 data-nosnippet>1691</a>            kind: BudgetKind::Lines,
+<a href=#1692 id=1692 data-nosnippet>1692</a>            amount: <span class="number">4</span>,
+<a href=#1693 id=1693 data-nosnippet>1693</a>        };
+<a href=#1694 id=1694 data-nosnippet>1694</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
+<a href=#1695 id=1695 data-nosnippet>1695</a>        <span class="kw">let </span><span class="kw-2">mut </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget.clone());
+<a href=#1696 id=1696 data-nosnippet>1696</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"other"</span>).is_err());
+<a href=#1697 id=1697 data-nosnippet>1697</a>        prediction.manifest_blake3 = <span class="string">"hash"</span>.into();
+<a href=#1698 id=1698 data-nosnippet>1698</a>        prediction.repository_revision = <span class="string">"1111111111111111111111111111111111111111"</span>.into();
+<a href=#1699 id=1699 data-nosnippet>1699</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
+<a href=#1700 id=1700 data-nosnippet>1700</a>        prediction.repository_revision = task.repository.revision.clone();
+<a href=#1701 id=1701 data-nosnippet>1701</a>        prediction.budget.amount += <span class="number">1</span>;
+<a href=#1702 id=1702 data-nosnippet>1702</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
+<a href=#1703 id=1703 data-nosnippet>1703</a>    }
+<a href=#1704 id=1704 data-nosnippet>1704</a>
+<a href=#1705 id=1705 data-nosnippet>1705</a>    <span class="attr">#[test]
+<a href=#1706 id=1706 data-nosnippet>1706</a>    </span><span class="kw">fn </span>source_token_budget_uses_authoritative_emitted_total() {
+<a href=#1707 id=1707 data-nosnippet>1707</a>        <span class="kw">let </span>budget = Budget {
+<a href=#1708 id=1708 data-nosnippet>1708</a>            kind: BudgetKind::SourceTokens,
+<a href=#1709 id=1709 data-nosnippet>1709</a>            amount: <span class="number">20</span>,
+<a href=#1710 id=1710 data-nosnippet>1710</a>        };
+<a href=#1711 id=1711 data-nosnippet>1711</a>        <span class="kw">let </span>task = fixture_task(PathStyle::Posix, budget.clone());
+<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="kw">let </span><span class="kw-2">mut </span>prediction = fixture_prediction(<span class="string">"hash"</span>, budget);
+<a href=#1713 id=1713 data-nosnippet>1713</a>        prediction.regions[<span class="number">1</span>].start_line = <span class="number">2</span>;
+<a href=#1714 id=1714 data-nosnippet>1714</a>        prediction.regions[<span class="number">1</span>].end_line = <span class="number">3</span>;
+<a href=#1715 id=1715 data-nosnippet>1715</a>        prediction.source_tokens = <span class="prelude-val">Some</span>(<span class="number">20</span>);
+<a href=#1716 id=1716 data-nosnippet>1716</a>        validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).expect(<span class="string">"within source budget"</span>);
+<a href=#1717 id=1717 data-nosnippet>1717</a>        prediction.source_tokens = <span class="prelude-val">Some</span>(<span class="number">21</span>);
+<a href=#1718 id=1718 data-nosnippet>1718</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
+<a href=#1719 id=1719 data-nosnippet>1719</a>        prediction.source_tokens = <span class="prelude-val">None</span>;
+<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="macro">assert!</span>(validate_prediction(<span class="kw-2">&amp;</span>task, <span class="kw-2">&amp;</span>prediction, <span class="string">"hash"</span>).is_err());
+<a href=#1721 id=1721 data-nosnippet>1721</a>    }
+<a href=#1722 id=1722 data-nosnippet>1722</a>
+<a href=#1723 id=1723 data-nosnippet>1723</a>    <span class="attr">#[test]
+<a href=#1724 id=1724 data-nosnippet>1724</a>    </span><span class="kw">fn </span>comparison_rejects_manifest_revision_and_tokenizer_mismatches() {
+<a href=#1725 id=1725 data-nosnippet>1725</a>        <span class="kw">let </span>budget = Budget {
+<a href=#1726 id=1726 data-nosnippet>1726</a>            kind: BudgetKind::Lines,
+<a href=#1727 id=1727 data-nosnippet>1727</a>            amount: <span class="number">4</span>,
+<a href=#1728 id=1728 data-nosnippet>1728</a>        };
+<a href=#1729 id=1729 data-nosnippet>1729</a>        <span class="kw">let </span>report = evaluate(
+<a href=#1730 id=1730 data-nosnippet>1730</a>            <span class="macro">vec!</span>[fixture_task(PathStyle::Posix, budget.clone())],
+<a href=#1731 id=1731 data-nosnippet>1731</a>            <span class="macro">vec!</span>[fixture_prediction(<span class="string">"a"</span>, budget)],
+<a href=#1732 id=1732 data-nosnippet>1732</a>            <span class="string">"a"</span>.into(),
+<a href=#1733 id=1733 data-nosnippet>1733</a>            <span class="string">"p"</span>.into(),
+<a href=#1734 id=1734 data-nosnippet>1734</a>        )
+<a href=#1735 id=1735 data-nosnippet>1735</a>        .expect(<span class="string">"report"</span>);
+<a href=#1736 id=1736 data-nosnippet>1736</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidate = report.clone();
+<a href=#1737 id=1737 data-nosnippet>1737</a>        candidate.manifest_blake3 = <span class="string">"b"</span>.into();
+<a href=#1738 id=1738 data-nosnippet>1738</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
+<a href=#1739 id=1739 data-nosnippet>1739</a>        candidate.manifest_blake3 = <span class="string">"a"</span>.into();
+<a href=#1740 id=1740 data-nosnippet>1740</a>        candidate.tasks[<span class="number">0</span>].repository_revision = <span class="string">"1111111111111111111111111111111111111111"</span>.into();
+<a href=#1741 id=1741 data-nosnippet>1741</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
+<a href=#1742 id=1742 data-nosnippet>1742</a>        candidate.tasks[<span class="number">0</span>].repository_revision = report.tasks[<span class="number">0</span>].repository_revision.clone();
+<a href=#1743 id=1743 data-nosnippet>1743</a>        candidate.tokenizer = <span class="prelude-val">Some</span>(<span class="string">"o200k_base"</span>.into());
+<a href=#1744 id=1744 data-nosnippet>1744</a>        <span class="macro">assert!</span>(compare_reports(<span class="kw-2">&amp;</span>report, <span class="kw-2">&amp;</span>candidate).is_err());
+<a href=#1745 id=1745 data-nosnippet>1745</a>    }
+<a href=#1746 id=1746 data-nosnippet>1746</a>
+<a href=#1747 id=1747 data-nosnippet>1747</a>    <span class="attr">#[test]
+<a href=#1748 id=1748 data-nosnippet>1748</a>    </span><span class="kw">fn </span>swe_explore_conversion_uses_official_companion_maps() {
+<a href=#1749 id=1749 data-nosnippet>1749</a>        <span class="kw">let </span>record = <span class="macro">serde_json::json!</span>({
+<a href=#1750 id=1750 data-nosnippet>1750</a>            <span class="string">"instance_id"</span>: <span class="string">"owner__repo-42"</span>,
+<a href=#1751 id=1751 data-nosnippet>1751</a>            <span class="string">"ground_truth"</span>: {
+<a href=#1752 id=1752 data-nosnippet>1752</a>                <span class="string">"read_core_files"</span>: [<span class="string">"src/lib.rs"</span>],
+<a href=#1753 id=1753 data-nosnippet>1753</a>                <span class="string">"read_core_regions"</span>: [{<span class="string">"path"</span>: <span class="string">"src/lib.rs"</span>, <span class="string">"start"</span>: <span class="number">2</span>, <span class="string">"end"</span>: <span class="number">4</span>}],
+<a href=#1754 id=1754 data-nosnippet>1754</a>                <span class="string">"read_optional_regions_map"</span>: {
+<a href=#1755 id=1755 data-nosnippet>1755</a>                    <span class="string">"model"</span>: [{<span class="string">"path"</span>: <span class="string">"tests/lib.rs"</span>, <span class="string">"start"</span>: <span class="number">7</span>, <span class="string">"end"</span>: <span class="number">8</span>}]
+<a href=#1756 id=1756 data-nosnippet>1756</a>                }
+<a href=#1757 id=1757 data-nosnippet>1757</a>            },
+<a href=#1758 id=1758 data-nosnippet>1758</a>            <span class="string">"meta"</span>: {}
+<a href=#1759 id=1759 data-nosnippet>1759</a>        });
+<a href=#1760 id=1760 data-nosnippet>1760</a>        <span class="kw">let </span>issue_map =
+<a href=#1761 id=1761 data-nosnippet>1761</a>            BTreeMap::from([(<span class="string">"owner__repo-42"</span>.into(), <span class="string">"Fix parseValue handling"</span>.into())]);
+<a href=#1762 id=1762 data-nosnippet>1762</a>        <span class="kw">let </span>commit_map = BTreeMap::from([(
+<a href=#1763 id=1763 data-nosnippet>1763</a>            <span class="string">"owner__repo-42"</span>.into(),
+<a href=#1764 id=1764 data-nosnippet>1764</a>            <span class="string">"0123456789abcdef0123456789abcdef01234567"</span>.into(),
+<a href=#1765 id=1765 data-nosnippet>1765</a>        )]);
+<a href=#1766 id=1766 data-nosnippet>1766</a>        <span class="kw">let </span>task =
+<a href=#1767 id=1767 data-nosnippet>1767</a>            convert_swe_record(<span class="kw-2">&amp;</span>record, <span class="number">200</span>, <span class="kw-2">&amp;</span>issue_map, <span class="kw-2">&amp;</span>commit_map).expect(<span class="string">"converted task"</span>);
+<a href=#1768 id=1768 data-nosnippet>1768</a>        <span class="macro">assert_eq!</span>(task.repository.url, <span class="string">"https://github.com/owner/repo.git"</span>);
+<a href=#1769 id=1769 data-nosnippet>1769</a>        <span class="macro">assert_eq!</span>(task.query, <span class="string">"Fix parseValue handling"</span>);
+<a href=#1770 id=1770 data-nosnippet>1770</a>        <span class="macro">assert_eq!</span>(task.core_regions.len(), <span class="number">1</span>);
+<a href=#1771 id=1771 data-nosnippet>1771</a>        <span class="macro">assert_eq!</span>(task.optional_regions.len(), <span class="number">1</span>);
+<a href=#1772 id=1772 data-nosnippet>1772</a>    }
+<a href=#1773 id=1773 data-nosnippet>1773</a>
+<a href=#1774 id=1774 data-nosnippet>1774</a>    <span class="attr">#[test]
+<a href=#1775 id=1775 data-nosnippet>1775</a>    </span><span class="kw">fn </span>zero_baseline_has_no_relative_delta() {
+<a href=#1776 id=1776 data-nosnippet>1776</a>        <span class="kw">let </span>comparison = metric_comparison(<span class="number">0.0</span>, <span class="number">1.0</span>);
+<a href=#1777 id=1777 data-nosnippet>1777</a>        <span class="macro">assert_eq!</span>(comparison.absolute_delta, <span class="number">1.0</span>);
+<a href=#1778 id=1778 data-nosnippet>1778</a>        <span class="macro">assert_eq!</span>(comparison.relative_delta, <span class="prelude-val">None</span>);
+<a href=#1779 id=1779 data-nosnippet>1779</a>    }
+<a href=#1780 id=1780 data-nosnippet>1780</a>
+<a href=#1781 id=1781 data-nosnippet>1781</a>    <span class="attr">#[test]
+<a href=#1782 id=1782 data-nosnippet>1782</a>    </span><span class="kw">fn </span>checked_in_ranked_region_report_matches_its_inputs() {
+<a href=#1783 id=1783 data-nosnippet>1783</a>        <span class="kw">let </span>expected: EvaluationReport = serde_json::from_str(<span class="macro">include_str!</span>(
+<a href=#1784 id=1784 data-nosnippet>1784</a>            <span class="string">"../benchmarks/fixtures/ranked_regions/swe_explore.report.json"
+<a href=#1785 id=1785 data-nosnippet>1785</a>        </span>))
+<a href=#1786 id=1786 data-nosnippet>1786</a>        .expect(<span class="string">"checked-in report"</span>);
+<a href=#1787 id=1787 data-nosnippet>1787</a>        <span class="kw">let </span>fixtures = checked_in_ranked_fixtures();
+<a href=#1788 id=1788 data-nosnippet>1788</a>        <span class="kw">let </span>actual = evaluate_files(
+<a href=#1789 id=1789 data-nosnippet>1789</a>            <span class="kw-2">&amp;</span>fixtures.join(<span class="string">"swe_explore.manifest.jsonl"</span>),
+<a href=#1790 id=1790 data-nosnippet>1790</a>            <span class="kw-2">&amp;</span>fixtures.join(<span class="string">"swe_explore.predictions.jsonl"</span>),
+<a href=#1791 id=1791 data-nosnippet>1791</a>        )
+<a href=#1792 id=1792 data-nosnippet>1792</a>        .expect(<span class="string">"evaluate checked-in inputs"</span>);
+<a href=#1793 id=1793 data-nosnippet>1793</a>
+<a href=#1794 id=1794 data-nosnippet>1794</a>        <span class="macro">assert_eq!</span>(actual.manifest_blake3, expected.manifest_blake3);
+<a href=#1795 id=1795 data-nosnippet>1795</a>        <span class="macro">assert_eq!</span>(actual.predictions_blake3, expected.predictions_blake3);
+<a href=#1796 id=1796 data-nosnippet>1796</a>        <span class="macro">assert_eq!</span>(
+<a href=#1797 id=1797 data-nosnippet>1797</a>            serde_json::to_value(actual).expect(<span class="string">"serialize evaluated report"</span>),
+<a href=#1798 id=1798 data-nosnippet>1798</a>            serde_json::to_value(expected).expect(<span class="string">"serialize checked-in report"</span>)
+<a href=#1799 id=1799 data-nosnippet>1799</a>        );
+<a href=#1800 id=1800 data-nosnippet>1800</a>    }
+<a href=#1801 id=1801 data-nosnippet>1801</a>
+<a href=#1802 id=1802 data-nosnippet>1802</a>    <span class="attr">#[test]
+<a href=#1803 id=1803 data-nosnippet>1803</a>    </span><span class="kw">fn </span>checked_in_swe_explore_conversion_matches_manifest() {
+<a href=#1804 id=1804 data-nosnippet>1804</a>        <span class="kw">let </span>fixtures = checked_in_ranked_fixtures();
+<a href=#1805 id=1805 data-nosnippet>1805</a>        <span class="kw">let </span>temp = tempfile::tempdir().expect(<span class="string">"temporary output"</span>);
+<a href=#1806 id=1806 data-nosnippet>1806</a>        <span class="kw">let </span>output = temp.path().join(<span class="string">"manifest.jsonl"</span>);
+<a href=#1807 id=1807 data-nosnippet>1807</a>
+<a href=#1808 id=1808 data-nosnippet>1808</a>        convert_swe_explore(
+<a href=#1809 id=1809 data-nosnippet>1809</a>            <span class="kw-2">&amp;</span>fixtures.join(<span class="string">"swe_explore.synthetic.jsonl"</span>),
+<a href=#1810 id=1810 data-nosnippet>1810</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fixtures.join(<span class="string">"swe_explore.issue_map.json"</span>)),
+<a href=#1811 id=1811 data-nosnippet>1811</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>fixtures.join(<span class="string">"swe_explore.commit_map.json"</span>)),
+<a href=#1812 id=1812 data-nosnippet>1812</a>            <span class="kw-2">&amp;</span>output,
+<a href=#1813 id=1813 data-nosnippet>1813</a>            <span class="number">8</span>,
+<a href=#1814 id=1814 data-nosnippet>1814</a>            <span class="prelude-val">None</span>,
+<a href=#1815 id=1815 data-nosnippet>1815</a>        )
+<a href=#1816 id=1816 data-nosnippet>1816</a>        .expect(<span class="string">"convert checked-in source fixtures"</span>);
+<a href=#1817 id=1817 data-nosnippet>1817</a>
+<a href=#1818 id=1818 data-nosnippet>1818</a>        <span class="macro">assert_eq!</span>(
+<a href=#1819 id=1819 data-nosnippet>1819</a>            fs::read(output).expect(<span class="string">"converted manifest"</span>),
+<a href=#1820 id=1820 data-nosnippet>1820</a>            fs::read(fixtures.join(<span class="string">"swe_explore.manifest.jsonl"</span>)).expect(<span class="string">"checked-in manifest"</span>)
+<a href=#1821 id=1821 data-nosnippet>1821</a>        );
+<a href=#1822 id=1822 data-nosnippet>1822</a>    }
+<a href=#1823 id=1823 data-nosnippet>1823</a>}
 </code></pre></div></section></main></body></html>
