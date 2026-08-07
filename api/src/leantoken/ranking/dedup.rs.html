@@ -68,74 +68,88 @@
 <a href=#68 id=68 data-nosnippet>68</a>                    <span class="kw">let </span>min_lines = candidate_lines.min(existing.candidate.line_count());
 <a href=#69 id=69 data-nosnippet>69</a>
 <a href=#70 id=70 data-nosnippet>70</a>                    overlap_lines &gt;= min_lines.div_ceil(<span class="number">2</span>)
-<a href=#71 id=71 data-nosnippet>71</a>                })
-<a href=#72 id=72 data-nosnippet>72</a>            });
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = duplicate {
-<a href=#74 id=74 data-nosnippet>74</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
-<a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">continue</span>;
-<a href=#76 id=76 data-nosnippet>76</a>        }
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">let </span>kept_index = kept.len();
-<a href=#79 id=79 data-nosnippet>79</a>        seen_hashes.insert(hash_key, kept_index);
-<a href=#80 id=80 data-nosnippet>80</a>        kept_by_path
-<a href=#81 id=81 data-nosnippet>81</a>            .entry(candidate.candidate.path.clone())
-<a href=#82 id=82 data-nosnippet>82</a>            .or_default()
-<a href=#83 id=83 data-nosnippet>83</a>            .push(kept_index);
-<a href=#84 id=84 data-nosnippet>84</a>        kept.push(candidate);
-<a href=#85 id=85 data-nosnippet>85</a>    }
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a>    kept.sort_by(|a, b| {
-<a href=#88 id=88 data-nosnippet>88</a>        b.score
-<a href=#89 id=89 data-nosnippet>89</a>            .total_cmp(<span class="kw-2">&amp;</span>a.score)
-<a href=#90 id=90 data-nosnippet>90</a>            .then_with(|| a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path))
-<a href=#91 id=91 data-nosnippet>91</a>            .then_with(|| a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line))
-<a href=#92 id=92 data-nosnippet>92</a>    });
-<a href=#93 id=93 data-nosnippet>93</a>    kept
-<a href=#94 id=94 data-nosnippet>94</a>}
-<a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_scored_candidate(
-<a href=#97 id=97 data-nosnippet>97</a>    existing: <span class="kw-2">&amp;mut </span>ScoredCandidate,
-<a href=#98 id=98 data-nosnippet>98</a>    duplicate: <span class="kw-2">&amp;</span>ScoredCandidate,
-<a href=#99 id=99 data-nosnippet>99</a>    weights: <span class="kw-2">&amp;</span>Weights,
-<a href=#100 id=100 data-nosnippet>100</a>) {
-<a href=#101 id=101 data-nosnippet>101</a>    merge_candidate_signals(<span class="kw-2">&amp;mut </span>existing.candidate, <span class="kw-2">&amp;</span>duplicate.candidate);
-<a href=#102 id=102 data-nosnippet>102</a>    existing.score = existing.candidate.score(weights, existing.token_count);
-<a href=#103 id=103 data-nosnippet>103</a>    existing.marginal_score = existing.score / bounded_count_f64(existing.token_count);
-<a href=#104 id=104 data-nosnippet>104</a>}
-<a href=#105 id=105 data-nosnippet>105</a>
-<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_candidate_signals(existing: <span class="kw-2">&amp;mut </span>Candidate, duplicate: <span class="kw-2">&amp;</span>Candidate) {
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">for </span>kind <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.match_kinds {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">if </span>!existing.match_kinds.contains(kind) {
-<a href=#109 id=109 data-nosnippet>109</a>            existing.match_kinds.push(kind.clone());
-<a href=#110 id=110 data-nosnippet>110</a>        }
-<a href=#111 id=111 data-nosnippet>111</a>    }
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">for </span>concept <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.concepts {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">if </span>!existing.concepts.contains(concept) {
-<a href=#114 id=114 data-nosnippet>114</a>            existing.concepts.push(concept.clone());
-<a href=#115 id=115 data-nosnippet>115</a>        }
-<a href=#116 id=116 data-nosnippet>116</a>    }
-<a href=#117 id=117 data-nosnippet>117</a>    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">if </span>existing.target_start_line.is_none() &amp;&amp; duplicate.target_start_line.is_some() {
-<a href=#119 id=119 data-nosnippet>119</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#120 id=120 data-nosnippet>120</a>        existing.target_start_line = duplicate.target_start_line;
-<a href=#121 id=121 data-nosnippet>121</a>        existing.target_end_line = duplicate.target_end_line;
-<a href=#122 id=122 data-nosnippet>122</a>        existing
-<a href=#123 id=123 data-nosnippet>123</a>            .representation
-<a href=#124 id=124 data-nosnippet>124</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
-<a href=#125 id=125 data-nosnippet>125</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
-<a href=#126 id=126 data-nosnippet>126</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#127 id=127 data-nosnippet>127</a>    }
-<a href=#128 id=128 data-nosnippet>128</a>    existing.exact = existing.exact.max(duplicate.exact);
-<a href=#129 id=129 data-nosnippet>129</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
-<a href=#130 id=130 data-nosnippet>130</a>    existing.reference = existing.reference.max(duplicate.reference);
-<a href=#131 id=131 data-nosnippet>131</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
-<a href=#132 id=132 data-nosnippet>132</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
-<a href=#133 id=133 data-nosnippet>133</a>    existing.lexical_frequency_penalty = existing
-<a href=#134 id=134 data-nosnippet>134</a>        .lexical_frequency_penalty
-<a href=#135 id=135 data-nosnippet>135</a>        .min(duplicate.lexical_frequency_penalty);
-<a href=#136 id=136 data-nosnippet>136</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
-<a href=#137 id=137 data-nosnippet>137</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
-<a href=#138 id=138 data-nosnippet>138</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
-<a href=#139 id=139 data-nosnippet>139</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
-<a href=#140 id=140 data-nosnippet>140</a>}
+<a href=#71 id=71 data-nosnippet>71</a>                        &amp;&amp; overlapping_provenance_is_compatible(
+<a href=#72 id=72 data-nosnippet>72</a>                            <span class="kw-2">&amp;</span>existing.candidate,
+<a href=#73 id=73 data-nosnippet>73</a>                            <span class="kw-2">&amp;</span>candidate.candidate,
+<a href=#74 id=74 data-nosnippet>74</a>                        )
+<a href=#75 id=75 data-nosnippet>75</a>                })
+<a href=#76 id=76 data-nosnippet>76</a>            });
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = duplicate {
+<a href=#78 id=78 data-nosnippet>78</a>            merge_scored_candidate(<span class="kw-2">&amp;mut </span>kept[existing], <span class="kw-2">&amp;</span>candidate, weights);
+<a href=#79 id=79 data-nosnippet>79</a>            <span class="kw">continue</span>;
+<a href=#80 id=80 data-nosnippet>80</a>        }
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">let </span>kept_index = kept.len();
+<a href=#83 id=83 data-nosnippet>83</a>        seen_hashes.insert(hash_key, kept_index);
+<a href=#84 id=84 data-nosnippet>84</a>        kept_by_path
+<a href=#85 id=85 data-nosnippet>85</a>            .entry(candidate.candidate.path.clone())
+<a href=#86 id=86 data-nosnippet>86</a>            .or_default()
+<a href=#87 id=87 data-nosnippet>87</a>            .push(kept_index);
+<a href=#88 id=88 data-nosnippet>88</a>        kept.push(candidate);
+<a href=#89 id=89 data-nosnippet>89</a>    }
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a>    kept.sort_by(|a, b| {
+<a href=#92 id=92 data-nosnippet>92</a>        b.score
+<a href=#93 id=93 data-nosnippet>93</a>            .total_cmp(<span class="kw-2">&amp;</span>a.score)
+<a href=#94 id=94 data-nosnippet>94</a>            .then_with(|| a.candidate.path.cmp(<span class="kw-2">&amp;</span>b.candidate.path))
+<a href=#95 id=95 data-nosnippet>95</a>            .then_with(|| a.candidate.start_line.cmp(<span class="kw-2">&amp;</span>b.candidate.start_line))
+<a href=#96 id=96 data-nosnippet>96</a>    });
+<a href=#97 id=97 data-nosnippet>97</a>    kept
+<a href=#98 id=98 data-nosnippet>98</a>}
+<a href=#99 id=99 data-nosnippet>99</a>
+<a href=#100 id=100 data-nosnippet>100</a><span class="kw">fn </span>overlapping_provenance_is_compatible(retained: <span class="kw-2">&amp;</span>Candidate, secondary: <span class="kw-2">&amp;</span>Candidate) -&gt; bool {
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="comment">// Required-evidence markers attest to literals in one fragment's content.
+<a href=#102 id=102 data-nosnippet>102</a>    // Keep both overlapping fragments rather than transferring an unverified marker.
+<a href=#103 id=103 data-nosnippet>103</a>    </span>secondary
+<a href=#104 id=104 data-nosnippet>104</a>        .match_kinds
+<a href=#105 id=105 data-nosnippet>105</a>        .iter()
+<a href=#106 id=106 data-nosnippet>106</a>        .filter(|kind| kind.starts_with(REQUIRED_EVIDENCE_PREFIX))
+<a href=#107 id=107 data-nosnippet>107</a>        .all(|kind| retained.match_kinds.contains(kind))
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_scored_candidate(
+<a href=#111 id=111 data-nosnippet>111</a>    existing: <span class="kw-2">&amp;mut </span>ScoredCandidate,
+<a href=#112 id=112 data-nosnippet>112</a>    duplicate: <span class="kw-2">&amp;</span>ScoredCandidate,
+<a href=#113 id=113 data-nosnippet>113</a>    weights: <span class="kw-2">&amp;</span>Weights,
+<a href=#114 id=114 data-nosnippet>114</a>) {
+<a href=#115 id=115 data-nosnippet>115</a>    merge_candidate_signals(<span class="kw-2">&amp;mut </span>existing.candidate, <span class="kw-2">&amp;</span>duplicate.candidate);
+<a href=#116 id=116 data-nosnippet>116</a>    existing.score = existing.candidate.score(weights, existing.token_count);
+<a href=#117 id=117 data-nosnippet>117</a>    existing.marginal_score = existing.score / bounded_count_f64(existing.token_count);
+<a href=#118 id=118 data-nosnippet>118</a>}
+<a href=#119 id=119 data-nosnippet>119</a>
+<a href=#120 id=120 data-nosnippet>120</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>merge_candidate_signals(existing: <span class="kw-2">&amp;mut </span>Candidate, duplicate: <span class="kw-2">&amp;</span>Candidate) {
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">for </span>kind <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.match_kinds {
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">if </span>!existing.match_kinds.contains(kind) {
+<a href=#123 id=123 data-nosnippet>123</a>            existing.match_kinds.push(kind.clone());
+<a href=#124 id=124 data-nosnippet>124</a>        }
+<a href=#125 id=125 data-nosnippet>125</a>    }
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">for </span>concept <span class="kw">in </span><span class="kw-2">&amp;</span>duplicate.concepts {
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">if </span>!existing.concepts.contains(concept) {
+<a href=#128 id=128 data-nosnippet>128</a>            existing.concepts.push(concept.clone());
+<a href=#129 id=129 data-nosnippet>129</a>        }
+<a href=#130 id=130 data-nosnippet>130</a>    }
+<a href=#131 id=131 data-nosnippet>131</a>    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">if </span>existing.target_start_line.is_none() &amp;&amp; duplicate.target_start_line.is_some() {
+<a href=#133 id=133 data-nosnippet>133</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
+<a href=#134 id=134 data-nosnippet>134</a>        existing.target_start_line = duplicate.target_start_line;
+<a href=#135 id=135 data-nosnippet>135</a>        existing.target_end_line = duplicate.target_end_line;
+<a href=#136 id=136 data-nosnippet>136</a>        existing
+<a href=#137 id=137 data-nosnippet>137</a>            .representation
+<a href=#138 id=138 data-nosnippet>138</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
+<a href=#139 id=139 data-nosnippet>139</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
+<a href=#140 id=140 data-nosnippet>140</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
+<a href=#141 id=141 data-nosnippet>141</a>    }
+<a href=#142 id=142 data-nosnippet>142</a>    existing.exact = existing.exact.max(duplicate.exact);
+<a href=#143 id=143 data-nosnippet>143</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
+<a href=#144 id=144 data-nosnippet>144</a>    existing.reference = existing.reference.max(duplicate.reference);
+<a href=#145 id=145 data-nosnippet>145</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
+<a href=#146 id=146 data-nosnippet>146</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
+<a href=#147 id=147 data-nosnippet>147</a>    existing.lexical_frequency_penalty = existing
+<a href=#148 id=148 data-nosnippet>148</a>        .lexical_frequency_penalty
+<a href=#149 id=149 data-nosnippet>149</a>        .min(duplicate.lexical_frequency_penalty);
+<a href=#150 id=150 data-nosnippet>150</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
+<a href=#151 id=151 data-nosnippet>151</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
+<a href=#152 id=152 data-nosnippet>152</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
+<a href=#153 id=153 data-nosnippet>153</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
+<a href=#154 id=154 data-nosnippet>154</a>}
 </code></pre></div></section></main></body></html>
