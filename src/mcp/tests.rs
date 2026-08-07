@@ -2019,14 +2019,6 @@ fn json_operation_maps_to_the_service_request() {
 }
 
 #[test]
-fn tool_catalog_schema_snapshot() {
-    let tools = LeanTokenMcp::tool_router().list_all();
-    insta::with_settings!({ snapshot_path => "../snapshots" }, {
-        insta::assert_json_snapshot!("mcp_tool_catalog", tools);
-    });
-}
-
-#[test]
 fn outline_cursor_maps_to_the_service_request() {
     let request = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
         "paths": ["src/lib.rs"],

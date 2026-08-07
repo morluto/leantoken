@@ -1218,9 +1218,14 @@ mod tests {
 
     #[test]
     fn repository_profile_mutates_only_a_disposable_snapshot() {
-        if Command::new("git").arg("--version").output().is_err() {
-            return;
-        }
+        let git = Command::new("git")
+            .arg("--version")
+            .status()
+            .expect("Git is required for the repository profile test");
+        assert!(
+            git.success(),
+            "Git is required for the repository profile test"
+        );
         let repository = tempfile::tempdir().expect("repository");
         run_git(repository.path(), &["init", "--quiet"]);
         run_git(

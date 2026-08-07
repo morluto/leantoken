@@ -1510,27 +1510,15 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
-Checked-in fixture inventory is a test-only scan bounded to 10,000 directory
-entries and 64 directory levels. It accepts only the
-`fixtures/<domain>/<case>` contract layout, rejects case directories without a
-manifest, and does not follow directory symlinks. The `fixtures/sample_repo`
-benchmark corpus is excluded before traversal, so its size cannot consume the
-contract-inventory bounds. The shared scanner fails instead of accepting a
-partial inventory when either bound is exceeded and is used by both xtask
-preflight and the fixture test harness.
-Merge tests execute the validated cases through one test-profile aggregate in
-the fixture-runner harness. The parallel unit phase skips that aggregate and a
-separate exact phase runs it after the suite-lib harness completes. Both phases
-use the same workspace feature graph so the exact phase reuses the compiled
-harness; the development-profile fixture binary remains available only for
-targeted run and bless operations.
 The product test orchestrator may overlap exactly two Cargo children: the
 library/binary unit lane and ordinary integration lane, each with two nextest
 workers. It waits for both before starting executable/MCP process behavior,
 whose nextest concurrency uses three workers on macOS and four on Linux or
-Windows, and then runs the fixture aggregate serially. Any
-parallel-lane failure prevents later phases and is reported with its original
-child exit code.
+Windows. Any parallel-lane failure prevents the process phase and is reported
+with its original child exit code. Checked-in corpora and derived benchmark
+reports are verified by their semantic domain, contract, or executable owner;
+small input/output cases stay as ordinary named tests rather than passing
+through a generic fixture interpreter.
 
 The manual TypeScript recovery evaluator is example-only and does not alter
 services, indexing, storage, ranking, or MCP schemas. It accepts at most

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,14 +5,8 @@ use tempfile::Builder;
 
 #[derive(Debug)]
 pub struct Sandbox {
-    id: String,
     root: PathBuf,
     repo: PathBuf,
-    cache: PathBuf,
-    home: PathBuf,
-    config: PathBuf,
-    logs: PathBuf,
-    artifacts: PathBuf,
     rerun: String,
     preservation_id: String,
 }
@@ -64,97 +57,20 @@ impl Sandbox {
             .ok_or_else(|| SandboxError::CreationFailed(root.clone()))?;
 
         let sandbox = Self {
-            id,
             repo: root.join("repo"),
-            cache: root.join("cache"),
-            home: root.join("home"),
-            config: root.join("config"),
-            logs: root.join("logs"),
-            artifacts: root.join("artifacts"),
             root,
             rerun: rerun_command(module, callsite, std::thread::current().name()),
             preservation_id,
         };
-        for path in [
-            &sandbox.repo,
-            &sandbox.cache,
-            &sandbox.home,
-            &sandbox.config,
-            &sandbox.logs,
-            &sandbox.artifacts,
-        ] {
-            fs::create_dir_all(path)?;
-        }
+        fs::create_dir_all(&sandbox.repo)?;
         Ok(sandbox)
     }
 
-    pub fn id(&self) -> &str {
-        &self.id
-    }
     pub fn root(&self) -> &Path {
         &self.root
     }
     pub fn repo(&self) -> &Path {
         &self.repo
-    }
-    pub fn cache(&self) -> &Path {
-        &self.cache
-    }
-    pub fn home(&self) -> &Path {
-        &self.home
-    }
-    pub fn config(&self) -> &Path {
-        &self.config
-    }
-    pub fn logs(&self) -> &Path {
-        &self.logs
-    }
-    pub fn artifacts(&self) -> &Path {
-        &self.artifacts
-    }
-
-    pub fn set_rerun_command(&mut self, command: impl Into<String>) {
-        self.rerun = command.into();
-    }
-
-    /// Environment for child processes. It intentionally starts empty and
-    /// restores only the executable search path plus sandbox-owned locations.
-    pub fn environment(&self) -> BTreeMap<String, String> {
-        let mut environment = BTreeMap::new();
-        if let Some(path) = std::env::var_os("PATH") {
-            environment.insert("PATH".to_owned(), path.to_string_lossy().into_owned());
-        }
-        environment.insert("HOME".to_owned(), self.home.display().to_string());
-        environment.insert("USERPROFILE".to_owned(), self.home.display().to_string());
-        environment.insert(
-            "LEANTOKEN_CACHE_DIR".to_owned(),
-            self.cache.display().to_string(),
-        );
-        environment.insert(
-            "LEANTOKEN_CONFIG_DIR".to_owned(),
-            self.config.display().to_string(),
-        );
-        environment.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
-        environment.insert(
-            "GIT_CONFIG_GLOBAL".to_owned(),
-            self.config.join("global.gitconfig").display().to_string(),
-        );
-        environment.insert("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned());
-        environment.insert("GIT_PAGER".to_owned(), "cat".to_owned());
-        environment.insert("PAGER".to_owned(), "cat".to_owned());
-        environment.insert("GIT_AUTHOR_NAME".to_owned(), "LeanToken Test".to_owned());
-        environment.insert(
-            "GIT_AUTHOR_EMAIL".to_owned(),
-            "leantoken-test@example.invalid".to_owned(),
-        );
-        environment.insert("GIT_COMMITTER_NAME".to_owned(), "LeanToken Test".to_owned());
-        environment.insert(
-            "GIT_COMMITTER_EMAIL".to_owned(),
-            "leantoken-test@example.invalid".to_owned(),
-        );
-        environment.insert("LC_ALL".to_owned(), "C".to_owned());
-        environment.insert("LANG".to_owned(), "C".to_owned());
-        environment
     }
 
     fn preserve(&self) -> bool {
@@ -188,7 +104,7 @@ fn workspace_root() -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
-        .unwrap_or_else(std::env::temp_dir)
+        .expect("test-support manifest is below the workspace root")
 }
 
 fn stable_id(module: &str, callsite: &str) -> String {
@@ -230,13 +146,11 @@ mod tests {
     use super::{Sandbox, rerun_command, stable_id};
 
     #[test]
-    fn creates_isolated_capability_directories() {
+    fn creates_isolated_repository_directories() {
         let sandbox =
-            Sandbox::new(module_path!(), "creates_isolated_capability_directories").unwrap();
+            Sandbox::new(module_path!(), "creates_isolated_repository_directories").unwrap();
+        assert!(sandbox.root().is_dir());
         assert!(sandbox.repo().is_dir());
-        assert!(sandbox.cache().is_dir());
-        assert_eq!(sandbox.environment().get("LC_ALL").unwrap(), "C");
-        assert!(!sandbox.environment().contains_key("RUSTUP_TOOLCHAIN"));
     }
 
     #[test]
@@ -253,7 +167,6 @@ mod tests {
     fn preserved_sandboxes_have_unique_destinations_for_one_stable_id() {
         let first = Sandbox::new(module_path!(), "storage_case").unwrap();
         let second = Sandbox::new(module_path!(), "storage_case").unwrap();
-        assert_eq!(first.id(), second.id());
         assert_ne!(first.preservation_id, second.preservation_id);
     }
 

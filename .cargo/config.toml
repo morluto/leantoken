@@ -7,5 +7,5 @@ test-product = "run --locked --package leantoken-xtask -- test product"
 test-contract = "run --locked --package leantoken-benchmarks --bin benchmark-contract"
 # Less-frequent benchmark and example target group.
 test-extras = "test --locked --package leantoken-benchmarks --bins"
-# Rust orchestration for test selection, fixture cases, and workspace checks.
+# Rust orchestration for test execution plans and workspace checks.
 xtask = "run --locked --package leantoken-xtask --"

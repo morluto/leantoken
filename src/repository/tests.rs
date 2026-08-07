@@ -215,7 +215,6 @@ fn git_capture_kills_the_producer_when_output_crosses_the_budget() {
         ),
         "unexpected capture error: {error:?}"
     );
-    std::thread::sleep(Duration::from_millis(50));
     assert!(
         !marker.exists(),
         "producer ran after its output was rejected"

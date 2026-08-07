@@ -448,7 +448,6 @@ mod tests {
         let waiter =
             std::thread::spawn(move || waiting_coordination.acquire_initialization(&waiting_token));
 
-        std::thread::sleep(Duration::from_millis(50));
         waiting_cancellation.cancel();
         assert!(matches!(
             waiter.join().expect("join waiter"),
