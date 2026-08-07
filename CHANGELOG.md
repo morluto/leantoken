@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.25] - 2026-08-07
+### Bug Fixes
+
+- **search:** Preserve Unicode case-fold matches
+- **read:** Reject zero-progress token pages
+- **context:** Preserve required-evidence provenance
+### Documentation
+
+- Clarify token-bounded code retrieval
+### Refactoring
+
+- **test:** Remove redundant fixture framework
+### Testing
+
+- Eliminate false-green fixture assumptions
+- Bind checked-in fixture evidence
+
 ## [0.1.24] - 2026-08-06
 ### Bug Fixes
 

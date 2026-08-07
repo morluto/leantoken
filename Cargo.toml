@@ -14,7 +14,7 @@ todo = "warn"
 
 [package]
 name = "leantoken"
-version = "0.1.24"
+version = "0.1.25"
 edition = "2024"
 rust-version = "1.95"
 autotests = false
