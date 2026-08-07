@@ -222,6 +222,41 @@ impl Tokenizer {
         }
     }
 
+    /// Truncate a read page and report its smallest byte-progressing source budget.
+    pub(crate) fn truncate_for_read<'a>(
+        &self,
+        text: &'a str,
+        max_tokens: usize,
+    ) -> (&'a str, usize, Option<usize>) {
+        if text.is_empty() {
+            return ("", 0, None);
+        }
+        match self {
+            Self::Cl100kBase => {
+                self.truncate_bpe_for_read(tiktoken_rs::cl100k_base_singleton(), text, max_tokens)
+            }
+            Self::O200kBase => {
+                self.truncate_bpe_for_read(tiktoken_rs::o200k_base_singleton(), text, max_tokens)
+            }
+            Self::O200kHarmony => {
+                self.truncate_bpe_for_read(tiktoken_rs::o200k_harmony_singleton(), text, max_tokens)
+            }
+            Self::P50kBase => {
+                self.truncate_bpe_for_read(tiktoken_rs::p50k_base_singleton(), text, max_tokens)
+            }
+            Self::P50kEdit => {
+                self.truncate_bpe_for_read(tiktoken_rs::p50k_edit_singleton(), text, max_tokens)
+            }
+            Self::R50kBase | Self::Gpt2 => {
+                self.truncate_bpe_for_read(tiktoken_rs::r50k_base_singleton(), text, max_tokens)
+            }
+            Self::Estimate => {
+                let (prefix, tokens) = self.truncate(text, max_tokens);
+                (prefix, tokens, Some(1))
+            }
+        }
+    }
+
     fn truncate_bpe<'a>(
         &self,
         bpe: &tiktoken_rs::CoreBPE,
@@ -229,20 +264,59 @@ impl Tokenizer {
         max_tokens: usize,
     ) -> (&'a str, usize) {
         let tokens = bpe.encode_ordinary(text);
-        if tokens.len() <= max_tokens {
-            return (text, tokens.len());
-        }
-        let selected = &tokens[..tokens.len().min(max_tokens)];
-        let Ok(bytes) = bpe.decode_bytes(selected) else {
-            return ("", 0);
-        };
-        let mut offset = bytes.len().min(text.len());
-        while !text.is_char_boundary(offset) {
-            offset -= 1;
-        }
-        let prefix = &text[..offset];
-        (prefix, bpe.count_ordinary(prefix))
+        truncate_bpe_tokens(bpe, text, &tokens, max_tokens)
     }
+
+    fn truncate_bpe_for_read<'a>(
+        &self,
+        bpe: &tiktoken_rs::CoreBPE,
+        text: &'a str,
+        max_tokens: usize,
+    ) -> (&'a str, usize, Option<usize>) {
+        let tokens = bpe.encode_ordinary(text);
+        let minimum_progress_tokens = minimum_bpe_progress_tokens(bpe, text, &tokens);
+        let (prefix, emitted_tokens) = truncate_bpe_tokens(bpe, text, &tokens, max_tokens);
+        (prefix, emitted_tokens, minimum_progress_tokens)
+    }
+}
+
+fn truncate_bpe_tokens<'a>(
+    bpe: &tiktoken_rs::CoreBPE,
+    text: &'a str,
+    tokens: &[u32],
+    max_tokens: usize,
+) -> (&'a str, usize) {
+    if tokens.len() <= max_tokens {
+        return (text, tokens.len());
+    }
+    let selected = &tokens[..tokens.len().min(max_tokens)];
+    let Some(offset) = decoded_prefix_offset(bpe, text, selected) else {
+        return ("", 0);
+    };
+    let prefix = &text[..offset];
+    (prefix, bpe.count_ordinary(prefix))
+}
+
+fn minimum_bpe_progress_tokens(
+    bpe: &tiktoken_rs::CoreBPE,
+    text: &str,
+    tokens: &[u32],
+) -> Option<usize> {
+    let first_scalar_bytes = text.chars().next()?.len_utf8();
+    // Ordinary BPE tokens each decode at least one byte, so completing the
+    // first scalar cannot require more tokens than that scalar has UTF-8 bytes.
+    (1..=tokens.len().min(first_scalar_bytes)).find(|token_count| {
+        decoded_prefix_offset(bpe, text, &tokens[..*token_count]).is_some_and(|offset| offset > 0)
+    })
+}
+
+fn decoded_prefix_offset(bpe: &tiktoken_rs::CoreBPE, text: &str, tokens: &[u32]) -> Option<usize> {
+    let bytes = bpe.decode_bytes(tokens).ok()?;
+    let mut offset = bytes.len().min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    Some(offset)
 }
 
 fn estimate_boundary(text: &str, max_tokens: usize) -> usize {

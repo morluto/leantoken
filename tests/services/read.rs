@@ -1299,6 +1299,123 @@ async fn token_truncated_read_reports_the_returned_line_range() {
 }
 
 #[tokio::test]
+async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
+    let leading_scalar = "\u{10000}";
+    let first_source = format!("{leading_scalar}tail\n");
+    let continuation_prefix = "ascii prefix\n";
+    let continuation_source = format!("{continuation_prefix}{leading_scalar}tail\n");
+    let exact_tokenizers = [
+        Tokenizer::Cl100kBase,
+        Tokenizer::O200kBase,
+        Tokenizer::O200kHarmony,
+        Tokenizer::P50kBase,
+        Tokenizer::R50kBase,
+        Tokenizer::Gpt2,
+        Tokenizer::P50kEdit,
+    ];
+
+    for tokenizer in exact_tokenizers {
+        assert!(
+            tokenizer.count(leading_scalar) > 1,
+            "fixture scalar must need multiple tokens for {tokenizer:?}"
+        );
+        let continuation_budget = (1..tokenizer.count(&continuation_source))
+            .find(|budget| {
+                tokenizer.truncate(&continuation_source, *budget).0 == continuation_prefix
+            })
+            .unwrap_or_else(|| panic!("fixture must expose a prefix boundary for {tokenizer:?}"));
+
+        let root = tempfile::tempdir().expect("temporary repository");
+        std::fs::write(root.path().join("first.txt"), &first_source).expect("write first page");
+        std::fs::write(root.path().join("continuation.txt"), &continuation_source)
+            .expect("write continuation page");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.tokenizer = tokenizer;
+        let services = Services::open(config).expect("services");
+        services.index(false).await.expect("index source");
+
+        let read_request =
+            |path: &str, continuation_cursor: Option<String>, max_tokens: usize| ReadRequest {
+                path: path.into(),
+                start_line: None,
+                end_line: None,
+                symbol: None,
+                heading: None,
+                heading_occurrence: None,
+                continuation_cursor,
+                max_tokens: Some(max_tokens),
+                expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::Bounded,
+            };
+        let assert_budget_error = |error: &Error, boundary: &str| {
+            assert!(
+                matches!(
+                    error,
+                    Error::InvalidInput {
+                        field: "max_tokens",
+                        reason: "must fit at least one UTF-8 scalar",
+                    }
+                ),
+                "unexpected {boundary} error for {tokenizer:?}: {error:?}"
+            );
+        };
+
+        let first_error = services
+            .read(read_request("first.txt", None, 1))
+            .await
+            .expect_err("budget cannot return the first page's first UTF-8 scalar");
+        assert_budget_error(&first_error, "first-page");
+
+        let response_budget_error = services
+            .read_with_options(
+                read_request("first.txt", None, tokenizer.count(&first_source)),
+                ServiceCallOptions::new().with_max_response_tokens(1),
+            )
+            .await
+            .expect_err("one token cannot fit a read response");
+        let (minimum_response_tokens, _) = assert_response_budget_error(response_budget_error, 1);
+        let minimum_response = services
+            .read_with_options(
+                read_request("first.txt", None, tokenizer.count(&first_source)),
+                ServiceCallOptions::new().with_max_response_tokens(minimum_response_tokens),
+            )
+            .await
+            .unwrap_or_else(|error| {
+                panic!("reported response minimum must work for {tokenizer:?}: {error:?}")
+            });
+        assert!(minimum_response.meta.total_response_tokens <= minimum_response_tokens);
+        assert!(
+            minimum_response
+                .content
+                .as_deref()
+                .is_some_and(|content| !content.is_empty()),
+            "response fitting must not return an empty page for {tokenizer:?}"
+        );
+
+        let first_page = services
+            .read(read_request("continuation.txt", None, continuation_budget))
+            .await
+            .expect("read prefix page");
+        assert_eq!(
+            first_page.content.as_deref(),
+            Some(continuation_prefix),
+            "fixture must stop before the multi-token scalar for {tokenizer:?}"
+        );
+        let cursor = first_page
+            .continuation_cursor
+            .expect("prefix page must have a continuation cursor");
+        let continuation_error = services
+            .read(read_request("continuation.txt", Some(cursor), 1))
+            .await
+            .expect_err("budget cannot return the continuation page's first UTF-8 scalar");
+        assert_budget_error(&continuation_error, "continuation-page");
+    }
+}
+
+#[tokio::test]
 async fn bounded_open_continuation_preserves_the_unbounded_target() {
     let source = (1..=1_400)
         .map(|line| format!("line_{line:04} repeated words for a large bounded read\n"))
