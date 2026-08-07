@@ -47,10 +47,6 @@ cargo test-contract
 cargo test-extras
 cargo xtask check-test-architecture
 cargo xtask test plan --dry-run
-cargo xtask test fixtures
-cargo xtask test list [domain]
-cargo xtask test run <domain>/<case>
-cargo xtask test bless <domain>/<case>
 cargo xtask test stress
 cargo xtask test profile
 ```
@@ -60,14 +56,11 @@ status. Focused selectors for named suite domains build only the owning suite;
 other filters search both product and suite packages. Zero matches and
 cross-package ambiguity are errors. `plan --dry-run` performs no test work. The
 contract benchmark is an explicit `test = false` example and is run only by
-`cargo test-contract`; it is not an ignored default test. Domain fixture
-execution and blessing are owned by the domain module selected by the case
-operation. Required fixture evidence runs as one test-profile aggregate, while
-exact `run` and `bless` operations retain the standalone runner. This avoids a
-second development-profile product build after unit tests. The unit phase
-builds the fixture-runner test harness but skips its aggregate; a separate
-exact phase uses the same workspace feature graph and runs it after the
-parallel suite-lib harness. A generic runner never rewrites expected output.
+`cargo test-contract`; it is not an ignored default test. The product plan has
+three visible owners: library and binary units, ordinary integration, and
+executable or MCP process behavior. Checked-in corpora and generated reports
+run through the domain, contract, or benchmark target that owns their meaning;
+there is no generic fixture runner or blessing path.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their
@@ -109,60 +102,32 @@ only workflow that intentionally changes `Cargo.lock`.
 
 ## Hermetic setup
 
-Tests request only the capability they need:
+`Sandbox` creates one uniquely named tree under `target/test-sandboxes/` and a
+repository directory inside it. Tests create only the additional files and
+directories their scenario needs. On success the sandbox is removed. On panic,
+or when `LEANTOKEN_TEST_KEEP=1` is set, the tree moves to
+`target/test-failures/` and prints its focused rerun command.
 
-- `Sandbox` owns repository, cache, home, configuration, log, and artifact
-  directories. It strips inherited home, Cargo, Rustup, Git, pager, editor,
-  locale, and prompt state from child-process environments.
-- `RepoBuilder` creates typed text, binary, directory, symlink, and nested
-  worktree fixtures while rejecting paths that escape the repository root.
-- `GitRepository` initializes local Git state with a deterministic identity and
-  disables system and global configuration.
-- `ProcessHarness` launches an explicitly supplied binary with bounded stdin,
-  stdout, stderr, timeout, and shutdown behavior.
-- `FixtureCase` validates `schema = 1`, a domain operation, `request.json`,
-  `expected.json`, and the allowed fixture layout.
-- `Normalizer` makes named path, time, protocol, and platform substitutions.
-  It does not normalize semantic counts, statuses, ordering, completeness,
-  evidence identities, or token accounting.
-- `Deadline` is for external readiness and reports the last observed state. It
-  never establishes ordering between in-process participants.
-
-On success a sandbox is removed. On panic, or when
-`LEANTOKEN_TEST_KEEP=1` is set, the complete tree is preserved under
-`target/test-failures/` and the harness prints its stable identifier and exact
-focused rerun command when one is available. Process transcripts are stored
-under the sandbox log directory.
+Real-binary tests keep their process-specific setup in `tests/process/support`:
+that owner supplies hermetic environment construction, bounded streams,
+readiness checks, and shutdown behavior. These capabilities are not exported
+from the general test-support crate until another semantic owner needs them.
 
 ## Fixtures and snapshots
 
-Repeated cases use this layout:
-
-```text
-fixtures/<domain>/<case>/
-├── case.toml
-├── repo/
-├── request.json
-└── expected.json
-```
-
-`case.toml` contains only `schema = 1` and the domain-owned `operation`.
-Requests and expectations are typed by that domain; there is no universal
-field bag. `list` rejects malformed manifests, missing files, unknown contract
-files, duplicate identities, more than 10,000 scanned directory entries, and
-trees deeper than 64 levels. Listing accepts only `<domain>/<case>` directories,
-rejects case directories without a manifest, excludes the `sample_repo`
-benchmark corpus before bounded traversal, and does not follow directory
-symlinks. The xtask preflight and fixture test harness use this same inventory
-source module; xtask includes its std-only source without adding a dependency
-on a workspace product or test package.
-Blessing is exact-case only, never runs in CI, and must leave a reviewable
-semantic diff.
+Checked-in data stays with its semantic verifier. `fixtures/sample_repo` is the
+small multilingual corpus shared by contract and representation tests.
+Benchmark fixtures live under `benchmarks/fixtures`; their owning executable
+parses the inputs, recomputes derived reports where applicable, and verifies
+embedded digests. Behaviors that need only a small request and expected value
+remain ordinary named Rust tests in the owning domain instead of serialized
+case directories.
 
 Snapshots are limited to stable external contracts such as CLI help, MCP
-catalogs, migrations, and intentionally versioned JSON. When output ordering
-is not contractual, compare normalized records or multisets; do not globally
-sort output merely to make a snapshot pass.
+contracts, migrations, and intentionally versioned JSON. The full MCP contract
+has one canonical snapshot rather than a second catalog-only dump. When output
+ordering is not contractual, compare normalized records or multisets; do not
+globally sort output merely to make a snapshot pass.
 
 ## Time, concurrency, and boundaries
 

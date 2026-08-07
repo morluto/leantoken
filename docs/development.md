@@ -105,19 +105,11 @@ tests. CI uses `cargo xtask test product --parallel` to overlap only the
 library/binary unit lane and ordinary integration lane; those phases use
 `cargo-nextest` with two workers each (a maximum of four across the overlap),
 while process-heavy executable/MCP behavior uses three nextest workers on macOS
-and four on Linux or Windows; the exact fixture aggregate remains serial after
-both lanes succeed. Doctests stay on their explicit Cargo command. The runner
-prints per-lane elapsed time and preserves child exit codes. It also owns exact
-fixture selection and the opt-in profile/stress commands.
-
-Checked-in fixtures run as one aggregate in the existing test profile. The unit
-and exact phases use the same workspace feature graph, so the exact phase
-reuses the fixture-runner harness and dependencies already built by unit tests
-instead of linking another test target or rebuilding in the development
-profile. The unit phase skips the aggregate before the exact phase runs it,
-which keeps fixture sandbox work serially isolated from the parallel suite
-library harness. Exact `run` and `bless` commands retain the
-development-profile fixture binary for targeted work.
+and four on Linux or Windows. Doctests stay on their explicit Cargo command.
+The runner prints per-lane elapsed time and preserves child exit codes. It also
+owns the opt-in profile and stress commands. Checked-in corpora and benchmark
+reports execute through their explicit domain, contract, or example owner
+rather than a generic serialized-case phase.
 
 The stress lane accepts `LEANTOKEN_STRESS_REPETITIONS` for scheduled
 repetition. Required checks never retry failures.

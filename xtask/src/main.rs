@@ -1,12 +1,5 @@
 mod ci;
-#[allow(
-    dead_code,
-    reason = "the shared fixture type exposes paths used by the test harness"
-)]
-#[path = "../../crates/test-support/src/fixtures.rs"]
-mod fixture_inventory;
 
-use fixture_inventory::{FixtureCase, FixtureError};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -24,11 +17,10 @@ const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
 const PRODUCT_PARALLEL_LANES: usize = 2;
 const PARALLEL_NEXTTEST_JOBS: &str = "2";
-const PRODUCT_PHASE_NAMES: [&str; 4] = [
+const PRODUCT_PHASE_NAMES: [&str; 3] = [
     "library and binary units",
     "ordinary integration",
     "executable and MCP process behavior",
-    "checked-in fixture cases",
 ];
 
 #[derive(Clone, Copy)]
@@ -224,25 +216,15 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
     match command {
         "product" => {
             if args.len() == 2 && args[1] == "--parallel" {
-                return run_parallel_product_plan(root, TestPlan::for_workspace(root)?);
+                return run_parallel_product_plan(root, TestPlan::product());
             }
             if args.len() != 1 {
                 return Err(XtaskError::Usage(
                     "`test product` accepts only --parallel".to_owned(),
                 ));
             }
-            run_plan(root, TestPlan::for_workspace(root)?)
+            run_plan(root, TestPlan::product())
         }
-        "fixtures" if args.len() == 1 => run_fixtures(root),
-        "fixtures" => Err(XtaskError::Usage(
-            "`test fixtures` does not accept additional arguments".to_owned(),
-        )),
-        "list" if args.len() <= 2 => list_fixtures(root, args.get(1).map(String::as_str)),
-        "list" => Err(XtaskError::Usage(
-            "`test list` accepts at most one domain".to_owned(),
-        )),
-        "run" => exact_fixture_command(root, &args, "run"),
-        "bless" => exact_fixture_command(root, &args, "bless"),
         "stress" if args.len() == 1 => run_plan(root, TestPlan::stress()?),
         "stress" => Err(XtaskError::Usage(
             "`test stress` does not accept additional arguments".to_owned(),
@@ -257,112 +239,10 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
                     "`test plan` accepts only --dry-run".to_owned(),
                 ));
             }
-            TestPlan::for_workspace(root)?.print();
+            TestPlan::product().print();
             Ok(())
         }
         _ => Err(XtaskError::Usage(test_usage())),
-    }
-}
-
-fn list_fixtures(root: &Path, domain: Option<&str>) -> Result<(), XtaskError> {
-    if let Some(domain) = domain {
-        validate_domain(domain)?;
-    }
-    let fixtures = root.join("fixtures");
-    let cases = FixtureCase::list(&fixtures, domain)?;
-    if cases.is_empty() {
-        println!(
-            "No fixture cases found{}.",
-            domain.map_or(String::new(), |domain| format!(" for {domain}"))
-        );
-    }
-    for case in cases {
-        println!("{}  ({})", case.identity, case.operation);
-    }
-    Ok(())
-}
-
-fn exact_fixture_command(root: &Path, args: &[String], action: &str) -> Result<(), XtaskError> {
-    let Some(identity) = args.get(1) else {
-        return Err(XtaskError::Usage(format!(
-            "`cargo xtask test {action}` requires exactly <domain>/<case>"
-        )));
-    };
-    if args.len() != 2 || !valid_fixture_identity(identity) {
-        return Err(XtaskError::Usage(format!(
-            "`cargo xtask test {action}` requires exactly <domain>/<case>"
-        )));
-    }
-    let case_root = root.join("fixtures").join(identity);
-    let mut case = FixtureCase::load(&case_root)?;
-    case.identity = identity.clone();
-    println!(
-        "Exact fixture selected: {} ({})",
-        case.identity, case.operation
-    );
-    let command = fixture_command(identity, action == "bless");
-    let status = print_and_run(root, &command)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::CommandFailed {
-            command: command.join(" "),
-            code: status.code(),
-        })
-    }
-}
-
-fn fixture_command(identity: &str, bless: bool) -> Vec<String> {
-    let mut command = cargo_command([
-        "run",
-        "--locked",
-        "--package",
-        SUITE,
-        "--bin",
-        "fixture-runner",
-        "--",
-        identity,
-    ]);
-    if bless {
-        command.push("--bless".to_owned());
-    }
-    command
-}
-
-fn has_checked_in_fixtures(root: &Path) -> Result<bool, XtaskError> {
-    let cases = FixtureCase::list(root.join("fixtures"), None)?;
-    Ok(!cases.is_empty())
-}
-
-fn fixture_test_command() -> Vec<String> {
-    nextest_command([
-        "--locked",
-        "--workspace",
-        "--exclude",
-        BENCHMARKS,
-        "--all-features",
-        "--lib",
-        "--bins",
-        "tests::checked_in_fixture_cases_match",
-        "--",
-        "--exact",
-    ])
-}
-
-fn run_fixtures(root: &Path) -> Result<(), XtaskError> {
-    if !has_checked_in_fixtures(root)? {
-        println!("No checked-in fixture cases found.");
-        return Ok(());
-    }
-    let command = fixture_test_command();
-    let status = print_and_run(root, &command)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::CommandFailed {
-            command: command.join(" "),
-            code: status.code(),
-        })
     }
 }
 
@@ -385,10 +265,7 @@ fn run_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
 }
 
 fn run_parallel_product_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
-    if plan.repetitions != 1
-        || plan.commands.len() < PRODUCT_PARALLEL_LANES + 1
-        || plan.commands.len() > PRODUCT_PHASE_NAMES.len()
-    {
+    if plan.repetitions != 1 || plan.commands.len() != PRODUCT_PHASE_NAMES.len() {
         return Err(XtaskError::Architecture(
             "parallel product plan shape drifted".to_owned(),
         ));
@@ -485,8 +362,8 @@ struct TestPlan {
 }
 
 impl TestPlan {
-    fn for_workspace(root: &Path) -> Result<Self, XtaskError> {
-        let mut commands = vec![
+    fn product() -> Self {
+        let commands = vec![
             nextest_command([
                 "--locked",
                 "--workspace",
@@ -497,9 +374,6 @@ impl TestPlan {
                 "--bins",
                 "-j",
                 PARALLEL_NEXTTEST_JOBS,
-                "--",
-                "--skip",
-                "tests::checked_in_fixture_cases_match",
             ]),
             nextest_command([
                 "--locked",
@@ -526,13 +400,10 @@ impl TestPlan {
                 process_test_jobs(),
             ]),
         ];
-        if has_checked_in_fixtures(root)? {
-            commands.push(fixture_test_command());
-        }
-        Ok(Self {
+        Self {
             commands,
             repetitions: 1,
-        })
+        }
     }
     fn stress() -> Result<Self, XtaskError> {
         let repetitions = env::var("LEANTOKEN_STRESS_REPETITIONS")
@@ -982,35 +853,6 @@ fn collect_ignored_tests(
     Ok(())
 }
 
-fn validate_domain(domain: &str) -> Result<(), XtaskError> {
-    if domain.is_empty()
-        || domain == "."
-        || domain == ".."
-        || domain.contains('/')
-        || domain.contains('\\')
-    {
-        return Err(XtaskError::Usage(
-            "fixture domain must be one path component".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn valid_fixture_identity(identity: &str) -> bool {
-    let path = Path::new(identity);
-    !identity.starts_with('/')
-        && !identity.starts_with('\\')
-        && path.is_relative()
-        && identity.split('/').count() == 2
-        && identity.split('/').all(|part| {
-            !part.is_empty()
-                && part != "."
-                && part != ".."
-                && !part.contains('\\')
-                && !part.contains(':')
-        })
-}
-
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -1018,10 +860,10 @@ fn workspace_root() -> PathBuf {
         .expect("xtask lives below workspace root")
 }
 fn usage() -> String {
-    "cargo xtask check-test-architecture | test-focused <selector> | test {product [--parallel]|fixtures|list|run|bless|stress|profile|plan}".to_owned()
+    "cargo xtask check-test-architecture | test-focused <selector> | test {product [--parallel]|stress|profile|plan}".to_owned()
 }
 fn test_usage() -> String {
-    "cargo xtask test product [--parallel] | fixtures | list [domain] | run <domain>/<case> | bless <domain>/<case> | stress | profile | plan --dry-run".to_owned()
+    "cargo xtask test product [--parallel] | stress | profile | plan --dry-run".to_owned()
 }
 
 #[derive(Debug)]
@@ -1030,7 +872,6 @@ enum XtaskError {
     NoTestsMatched(String),
     Io(std::io::Error),
     Json(serde_json::Error),
-    Fixture(String),
     Architecture(String),
     CommandFailed { command: String, code: Option<i32> },
 }
@@ -1055,7 +896,6 @@ impl fmt::Display for XtaskError {
             }
             Self::Io(error) => write!(f, "I/O error: {error}"),
             Self::Json(error) => write!(f, "metadata JSON error: {error}"),
-            Self::Fixture(message) => write!(f, "fixture error: {message}"),
             Self::Architecture(message) => write!(f, "test architecture check failed: {message}"),
             Self::CommandFailed { command, code } => {
                 write!(f, "command failed ({code:?}): {command}")
@@ -1064,34 +904,22 @@ impl fmt::Display for XtaskError {
     }
 }
 impl std::error::Error for XtaskError {}
-impl From<FixtureError> for XtaskError {
-    fn from(error: FixtureError) -> Self {
-        Self::Fixture(error.to_string())
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::{
         BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
-        listed_test_count, process_test_jobs_for_os, run_parallel_product_plan,
-        valid_fixture_identity, workspace_root,
+        listed_test_count, process_test_jobs_for_os, run_parallel_product_plan, workspace_root,
     };
-    use std::fs;
 
     #[test]
     fn plan_contains_visible_locked_phases() {
-        let plan = TestPlan::for_workspace(&workspace_root()).expect("workspace plan");
-        assert!(plan.commands.len() >= 3);
+        let plan = TestPlan::product();
+        assert_eq!(plan.commands.len(), 3);
         assert!(
             plan.commands
                 .iter()
                 .all(|command| command.contains(&"--locked".to_owned()))
-        );
-        assert!(
-            plan.commands[0]
-                .windows(2)
-                .any(|args| args == ["--skip", "tests::checked_in_fixture_cases_match"])
         );
         assert_eq!(PRODUCT_PARALLEL_LANES, 2);
         assert!(plan.commands[0].contains(&"--workspace".to_owned()));
@@ -1127,14 +955,6 @@ mod tests {
                     .windows(2)
                     .any(|args| args == ["--exclude", BENCHMARKS]))
         );
-        assert!(plan.commands.iter().any(|command| {
-            command.contains(&"--workspace".to_owned())
-                && command
-                    .windows(2)
-                    .any(|args| args == ["--exclude", BENCHMARKS])
-                && command.contains(&"tests::checked_in_fixture_cases_match".to_owned())
-                && command.contains(&"--exact".to_owned())
-        }));
     }
 
     #[test]
@@ -1212,13 +1032,6 @@ mod tests {
     }
 
     #[test]
-    fn fixture_identity_rejects_windows_absolute_and_drive_relative_paths() {
-        for identity in ["C:/case", "C:case", r"\case", "d:temp/case"] {
-            assert!(!valid_fixture_identity(identity), "accepted {identity}");
-        }
-    }
-
-    #[test]
     fn profile_reports_slow_tests_without_retries() {
         let plan = TestPlan::profile();
         let command = &plan.commands[0];
@@ -1237,22 +1050,5 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--failure-output", "final"])
         );
-    }
-
-    #[test]
-    fn fixture_preflight_rejects_case_directory_without_manifest() {
-        let workspace = std::env::temp_dir().join(format!(
-            "leantoken-xtask-missing-fixture-manifest-test-{}",
-            std::process::id()
-        ));
-        let case = workspace.join("fixtures/storage/missing-manifest");
-        let _ = fs::remove_dir_all(&workspace);
-        fs::create_dir_all(&case).unwrap();
-        fs::write(case.join("request.json"), "{}\n").unwrap();
-        fs::write(case.join("expected.json"), "{}\n").unwrap();
-        let error = super::has_checked_in_fixtures(&workspace)
-            .expect_err("case without a manifest was silently ignored");
-        assert!(error.to_string().contains("case.toml"));
-        let _ = fs::remove_dir_all(workspace);
     }
 }

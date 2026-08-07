@@ -11,11 +11,6 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "fixture-runner"
-path = "src/bin/fixture-runner.rs"
-test = false
-
 [dependencies]
 leantoken = { path = "../.." }
 leantoken-test-support = { path = "../test-support" }
