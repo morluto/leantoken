@@ -4040,9 +4040,11 @@ mod tests {
 
     #[test]
     fn history_lane_uses_one_bounded_pickaxe_for_all_symbols() {
-        if Command::new("git").arg("--version").output().is_err() {
-            return;
-        }
+        let git = Command::new("git")
+            .arg("--version")
+            .status()
+            .expect("Git is required for the history-lane test");
+        assert!(git.success(), "Git is required for the history-lane test");
         let root = tempfile::tempdir().expect("repository");
         let run = |args: &[&str]| {
             let output = Command::new("git")

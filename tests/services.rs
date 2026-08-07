@@ -21,7 +21,6 @@ use leantoken::{
     DiffConfigurationChangeKind, DiffOwnerTestStatus, DiffSymbolChangeKind, DiffSymbolModification,
 };
 use tokio_util::sync::CancellationToken;
-use tokio::sync::OnceCell;
 
 macro_rules! assert_response_token_accounting {
     ($response:expr, $tokenizer:expr) => {{
@@ -50,6 +49,14 @@ macro_rules! assert_response_token_accounting {
 
 async fn fixture() -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("temporary repository");
+    // Keep Git probes scoped to this fixture even when the host places its
+    // temporary directory inside another checkout. Git-specific tests replace
+    // this intentionally invalid marker with a real repository.
+    std::fs::write(
+        root.path().join(".git"),
+        "gitdir: fixture-has-no-repository\n",
+    )
+    .expect("create Git boundary");
     std::fs::create_dir(root.path().join("src")).expect("create src");
     std::fs::write(
         root.path().join("src/lib.rs"),
@@ -61,29 +68,6 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index fixture");
     (root, services)
-}
-
-struct ImmutableIndexedFixture {
-    _root: tempfile::TempDir,
-    services: Services,
-    generation: u64,
-}
-
-static IMMUTABLE_INDEXED_FIXTURE: OnceCell<ImmutableIndexedFixture> = OnceCell::const_new();
-
-/// Return the shared, read-only sample repository for tests that do not mutate
-/// files, generations, cancellation state, or storage schemas.
-async fn immutable_indexed_fixture() -> &'static ImmutableIndexedFixture {
-    IMMUTABLE_INDEXED_FIXTURE
-        .get_or_init(|| async {
-            let (root, services) = fixture().await;
-            ImmutableIndexedFixture {
-                _root: root,
-                services,
-                generation: 1,
-            }
-        })
-        .await
 }
 
 mod budgets;
@@ -322,6 +306,10 @@ fn require_git() {
 }
 
 fn init_git_repo(root: &std::path::Path) {
+    let git_marker = root.join(".git");
+    if git_marker.is_file() {
+        std::fs::remove_file(&git_marker).expect("remove non-repository Git boundary");
+    }
     let run = |args: &[&str]| {
         std::process::Command::new("git")
             .args(args)

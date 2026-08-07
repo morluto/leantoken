@@ -2024,11 +2024,9 @@ mod tests {
         assert_eq!(percentile(&[10.0, 20.0], 0.95), 20.0);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn linux_process_accounting_is_available() {
-        if !cfg!(target_os = "linux") {
-            return;
-        }
         assert!(process_cpu_ticks().is_some());
         assert!(process_write_bytes().is_some());
         assert!(process_rss_bytes().is_some());
@@ -2099,11 +2097,14 @@ mod tests {
         assert_eq!(probes[6]["generation_after_attempt"], 1);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn cold_matrix_smoke_preserves_parity_and_restartability() {
-        if !cfg!(target_os = "linux") || Command::new("git").arg("--version").output().is_err() {
-            return;
-        }
+        let git = Command::new("git")
+            .arg("--version")
+            .status()
+            .expect("Git is required for the cold-matrix test");
+        assert!(git.success(), "Git is required for the cold-matrix test");
         let (repository, revision) = fixture_repository();
         let output = tempfile::tempdir().expect("output");
         let mut args = ColdMatrixArgs {

@@ -161,8 +161,12 @@ async fn ignores_access_only_events() {
         .unwrap();
 
     let _ = tokio::fs::read_to_string(&file).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(rx.try_recv().is_err());
+    assert!(
+        timeout(Duration::from_millis(200), rx.recv())
+            .await
+            .is_err(),
+        "an access-only event reached the watcher channel"
+    );
 
     watcher.shutdown().await.unwrap();
 }
