@@ -77,6 +77,7 @@ mod search_planning;
 mod path_safety;
 mod context_workflow;
 mod context_planning;
+mod context_regressions;
 mod limits;
 mod repository;
 mod smoke;

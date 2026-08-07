@@ -165,6 +165,27 @@ pub(super) fn collect_filtered_hits<T>(
     Ok(selected)
 }
 
+pub(super) fn filter_materialized_hits<T>(
+    request: &SearchRequest,
+    max_candidates: usize,
+    cancellation: &CancellationToken,
+    hits: Vec<T>,
+    path: impl Fn(&T) -> &str,
+) -> Result<Vec<T>> {
+    let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
+    let mut selected = Vec::new();
+    for hit in hits {
+        check_cancelled(cancellation)?;
+        if path_filter.allows(path(&hit)) {
+            selected.push(hit);
+            if selected.len() == max_candidates {
+                break;
+            }
+        }
+    }
+    Ok(selected)
+}
+
 pub(super) fn chunk_search_hit(
     hit: &ChunkHit,
     query: &str,
@@ -361,13 +382,25 @@ impl Services {
         &self,
         hit: SymbolHit,
         query: &str,
+        case_sensitive: bool,
+        literal_matcher: Option<&regex::Regex>,
         excerpt: StoredExcerpt,
     ) -> SearchHit {
-        let exact = crate::symbol_identity::symbol_identity_matches_ignore_ascii_case(
-            query,
-            &hit.symbol.name,
-            hit.symbol.parent.as_deref(),
-        );
+        let exact = if case_sensitive {
+            crate::symbol_identity::symbol_identity_matches(
+                query,
+                &hit.symbol.name,
+                hit.symbol.parent.as_deref(),
+            )
+        } else {
+            literal_matcher.is_some_and(|matcher| {
+                crate::symbol_identity::symbol_identity_matches_case_fold(
+                    matcher,
+                    &hit.symbol.name,
+                    hit.symbol.parent.as_deref(),
+                )
+            })
+        };
         SearchHit {
             path: hit.path,
             start_line: excerpt.start_line,
@@ -394,9 +427,17 @@ impl Services {
         &self,
         hit: ReferenceHit,
         query: &str,
+        case_sensitive: bool,
+        literal_matcher: Option<&regex::Regex>,
         excerpt: StoredExcerpt,
     ) -> SearchHit {
-        let exact = hit.reference.name == query || hit.reference.name.eq_ignore_ascii_case(query);
+        let exact = if case_sensitive {
+            hit.reference.name == query
+        } else {
+            literal_matcher.is_some_and(|matcher| {
+                crate::symbol_identity::literal_match_is_entire(matcher, &hit.reference.name)
+            })
+        };
         SearchHit {
             path: hit.path,
             start_line: excerpt.start_line,

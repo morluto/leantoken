@@ -107,6 +107,43 @@ fn dedup_keeps_overlapping_highest_score() {
 }
 
 #[test]
+fn dedup_keeps_overlapping_content_with_distinct_required_evidence() {
+    let marker = required_evidence_marker(0, 0);
+    let retained =
+        Candidate::new("paper.tex", 1, 10, "stronger content without the literal").exact(2.0);
+    let verified = Candidate::new("paper.tex", 5, 15, "REQUIRED_LITERAL appears here")
+        .match_kind(marker.clone())
+        .exact(1.0);
+
+    let deduped = deduplicate(rank(vec![retained, verified], &Weights::default()));
+
+    assert_eq!(deduped.len(), 2);
+    let retained = deduped
+        .iter()
+        .find(|candidate| !candidate.candidate.content.contains("REQUIRED_LITERAL"))
+        .expect("stronger overlapping candidate");
+    assert!(!retained.candidate.match_kinds.contains(&marker));
+    assert!(deduped.iter().any(|candidate| {
+        candidate.candidate.content.contains("REQUIRED_LITERAL")
+            && candidate.candidate.match_kinds.contains(&marker)
+    }));
+}
+
+#[test]
+fn dedup_merges_required_evidence_for_content_identical_candidates() {
+    let marker = required_evidence_marker(0, 0);
+    let retained = Candidate::new("paper.tex", 1, 1, "REQUIRED_LITERAL").exact(2.0);
+    let verified = Candidate::new("paper.tex", 10, 10, "REQUIRED_LITERAL")
+        .match_kind(marker.clone())
+        .exact(1.0);
+
+    let deduped = deduplicate(rank(vec![retained, verified], &Weights::default()));
+
+    assert_eq!(deduped.len(), 1);
+    assert!(deduped[0].candidate.match_kinds.contains(&marker));
+}
+
+#[test]
 fn dedup_keeps_non_overlapping_same_file() {
     let a = Candidate::new("a.rs", 1, 5, "first").exact(1.0);
     let b = Candidate::new("a.rs", 7, 10, "second").exact(0.9);

@@ -407,3 +407,110 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
     assert!(hit.excerpt.contains("first_line();\n    second_line();"));
     assert_eq!(hit.enclosing_symbol.as_deref(), Some("multiline_owner"));
 }
+
+#[tokio::test]
+async fn case_insensitive_search_uses_the_verifier_unicode_case_folding() {
+    let source = "const LABEL: &str = \"Აbc\";\nfn Აbc() {}\nfn caller() { Აbc(); }\n";
+    let (root, services) = indexed_source("unicode.rs", source.as_bytes()).await;
+
+    for (mode, expected_kind) in [
+        (SearchMode::Text, "text"),
+        (SearchMode::Identifier, "symbol"),
+        (SearchMode::Symbol, "symbol"),
+        (SearchMode::Reference, "reference"),
+    ] {
+        let response = services
+            .search(SearchRequest {
+                query: "აbc".into(),
+                mode,
+                include_paths: vec!["unicode.rs".into()],
+                exclude_paths: Vec::new(),
+                focus_paths: Vec::new(),
+                max_results: Some(10),
+                max_tokens: Some(1_000),
+                context_lines: Some(1),
+                case_sensitive: false,
+                all_occurrences: false,
+                prefer_structural: false,
+                receipt_id: None,
+                query_receipt: None,
+                cursor: None,
+            })
+            .await
+            .expect("Unicode case-insensitive search");
+
+        let hit = response
+            .hits
+            .iter()
+            .find(|hit| hit.match_kind == expected_kind)
+            .unwrap_or_else(|| panic!("missing {expected_kind} hit in {mode:?}"));
+        assert_eq!(hit.path, "unicode.rs");
+        assert!(
+            hit.excerpt.contains("Აbc"),
+            "{mode:?} returned unrelated content: {:?}",
+            hit.excerpt
+        );
+        if matches!(mode, SearchMode::Symbol | SearchMode::Reference) {
+            assert!(
+                hit.score_reasons
+                    .iter()
+                    .any(|reason| reason.starts_with("exact ")),
+                "Unicode-equivalent structural identity was not scored as exact: {:?}",
+                hit.score_reasons
+            );
+        }
+        if mode == SearchMode::Identifier {
+            assert!(
+                response
+                    .hits
+                    .iter()
+                    .any(|hit| hit.match_kinds.iter().any(|kind| kind == "text")),
+                "identifier word-FTS omitted the Unicode-equivalent lexical hit: {:?}",
+                response.hits
+            );
+        }
+    }
+
+    std::fs::write(
+        root.path().join("unicode.txt"),
+        "plain text contains Აbc without structural records\n",
+    )
+    .expect("write plain-text Unicode fixture");
+    services
+        .index(false)
+        .await
+        .expect("index plain-text Unicode fixture");
+    let context = services
+        .context(ContextRequest {
+            task: "აbc".into(),
+            token_budget: 400,
+            include_paths: vec!["unicode.txt".into()],
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
+            max_fragments: Some(4),
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
+        })
+        .await
+        .expect("Unicode case-insensitive context");
+    assert!(
+        context
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "unicode.txt" && fragment.content.contains("Აbc")),
+        "context omitted Unicode-equivalent source: {:?}",
+        context.fragments
+    );
+}

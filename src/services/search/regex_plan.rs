@@ -313,7 +313,60 @@ pub(in crate::services) fn compile_literal_regex(
     ))
 }
 
+pub(in crate::services) struct LiteralFullScan<'a> {
+    pub(in crate::services) session: &'a IndexReadSnapshot,
+    pub(in crate::services) query: &'a str,
+    pub(in crate::services) matcher: &'a regex::Regex,
+    pub(in crate::services) include_paths: &'a [String],
+    pub(in crate::services) exclude_paths: &'a [String],
+    pub(in crate::services) max_candidates: usize,
+    pub(in crate::services) max_tokens: usize,
+    pub(in crate::services) cancellation: &'a CancellationToken,
+}
+
 impl Services {
+    pub(in crate::services) fn full_scan_literal_hits(
+        &self,
+        scan: LiteralFullScan<'_>,
+    ) -> Result<Vec<ChunkHit>> {
+        let LiteralFullScan {
+            session,
+            query,
+            matcher,
+            include_paths,
+            exclude_paths,
+            max_candidates,
+            max_tokens,
+            cancellation,
+        } = scan;
+        let request = SearchRequest {
+            query: query.to_owned(),
+            mode: SearchMode::Text,
+            include_paths: include_paths.to_vec(),
+            exclude_paths: exclude_paths.to_vec(),
+            focus_paths: Vec::new(),
+            max_results: Some(max_candidates),
+            max_tokens: Some(max_tokens),
+            context_lines: Some(2),
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        };
+        Ok(self
+            .regex_hits(
+                session,
+                &request,
+                matcher,
+                Some(max_candidates),
+                cancellation,
+                RegexPlanning::Disabled,
+            )?
+            .hits)
+    }
+
     pub(super) fn regex_hits(
         &self,
         session: &IndexReadSnapshot,

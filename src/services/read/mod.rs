@@ -395,7 +395,8 @@ impl Services {
         max_tokens: usize,
         options: ServiceCallOptions,
     ) -> Result<MaterializedRead> {
-        let materialized = self.read_at_generation(session, request, generation, max_tokens)?;
+        let (materialized, minimum_progress_tokens) =
+            self.read_at_generation(session, request, generation, max_tokens)?;
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
             &materialized.response,
@@ -409,9 +410,10 @@ impl Services {
             .max_response_tokens()
             .expect("fitting only runs with a response limit");
         let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
-        let keep = budget.largest_fitting_prefix(max_tokens, |candidate_limit| {
-            let candidate_limit = candidate_limit.max(1);
-            let candidate =
+        let additional_tokens = max_tokens.saturating_sub(minimum_progress_tokens);
+        let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
+            let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
+            let (candidate, _) =
                 self.read_at_generation(session, request, generation, candidate_limit)?;
             let returned_items = usize::from(!candidate.response.not_modified);
             self.finalized_response_tokens_with_receipt_reserve(
@@ -420,11 +422,15 @@ impl Services {
                 options,
             )
         })?;
-        if let Some(candidate_limit) = keep.filter(|keep| *keep > 0) {
-            return self.read_at_generation(session, request, generation, candidate_limit);
+        if let Some(additional_tokens) = keep {
+            let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
+            return self
+                .read_at_generation(session, request, generation, candidate_limit)
+                .map(|(materialized, _)| materialized);
         }
 
-        let minimum = self.read_at_generation(session, request, generation, 1)?;
+        let (minimum, _) =
+            self.read_at_generation(session, request, generation, minimum_progress_tokens)?;
         Err(self.response_budget_error_with_receipt_reserve(
             &minimum.response,
             usize::from(!minimum.response.not_modified),
@@ -439,7 +445,7 @@ impl Services {
         request: &ReadRequest,
         generation: u64,
         max_tokens: usize,
-    ) -> Result<MaterializedRead> {
+    ) -> Result<(MaterializedRead, usize)> {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
@@ -500,11 +506,23 @@ impl Services {
             return Err(Error::StaleCursor);
         }
         let baseline_source_tokens = self.config.tokenizer.count(&range.content);
-        let (content, emitted_tokens) = self.config.tokenizer.truncate(&range.content, max_tokens);
-        let returned_start_line = range.page_start_line;
-        let returned_end_line = returned_end_line(returned_start_line, content);
+        let (content, emitted_tokens, minimum_progress_tokens) = self
+            .config
+            .tokenizer
+            .truncate_for_read(&range.content, max_tokens);
+        let minimum_progress_tokens = minimum_progress_tokens.unwrap_or(1);
         let next_byte = target.page_start_byte.saturating_add(content.len());
         let truncated = next_byte < range.target_bytes;
+        // Exact BPE tokens can split a leading UTF-8 scalar. Reject a budget
+        // that cannot complete it instead of issuing a cursor at the same byte.
+        if truncated && next_byte == target.page_start_byte {
+            return Err(Error::InvalidInput {
+                field: "max_tokens",
+                reason: "must fit at least one UTF-8 scalar",
+            });
+        }
+        let returned_start_line = range.page_start_line;
+        let returned_end_line = returned_end_line(returned_start_line, content);
         let next_start_line = truncated.then(|| {
             if content.ends_with('\n') {
                 returned_end_line.saturating_add(1)
@@ -577,7 +595,7 @@ impl Services {
             ReadStatus::Content
         };
 
-        Ok(MaterializedRead {
+        let materialized = MaterializedRead {
             response: ReadResponse {
                 path: request.path.clone(),
                 status,
@@ -606,7 +624,8 @@ impl Services {
             baseline_source_tokens,
             current_content: content.to_owned(),
             current_tokens: emitted_tokens,
-        })
+        };
+        Ok((materialized, minimum_progress_tokens))
     }
 }
 

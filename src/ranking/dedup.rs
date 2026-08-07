@@ -68,6 +68,10 @@ pub(crate) fn deduplicate_with_options(
                     let min_lines = candidate_lines.min(existing.candidate.line_count());
 
                     overlap_lines >= min_lines.div_ceil(2)
+                        && overlapping_provenance_is_compatible(
+                            &existing.candidate,
+                            &candidate.candidate,
+                        )
                 })
             });
         if let Some(existing) = duplicate {
@@ -91,6 +95,16 @@ pub(crate) fn deduplicate_with_options(
             .then_with(|| a.candidate.start_line.cmp(&b.candidate.start_line))
     });
     kept
+}
+
+fn overlapping_provenance_is_compatible(retained: &Candidate, secondary: &Candidate) -> bool {
+    // Required-evidence markers attest to literals in one fragment's content.
+    // Keep both overlapping fragments rather than transferring an unverified marker.
+    secondary
+        .match_kinds
+        .iter()
+        .filter(|kind| kind.starts_with(REQUIRED_EVIDENCE_PREFIX))
+        .all(|kind| retained.match_kinds.contains(kind))
 }
 
 pub(in crate::ranking) fn merge_scored_candidate(

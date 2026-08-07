@@ -29,6 +29,23 @@ impl ReadSession {
         self.search_fts(FtsTable::Trigram, &quoted, max_results, offset)
     }
 
+    pub(crate) fn search_trigram_expression_page(
+        &self,
+        expression: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        self.search_fts(FtsTable::Trigram, expression, max_results, offset)
+    }
+
+    pub(crate) fn search_trigram_expression(
+        &self,
+        expression: &str,
+        max_results: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        self.search_trigram_expression_page(expression, max_results, 0)
+    }
+
     pub(crate) fn search_regex_candidates_page(
         &self,
         query: &str,
@@ -166,11 +183,24 @@ impl ReadSession {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<SymbolHit>> {
+        let folded = if case_sensitive {
+            None
+        } else {
+            let Some(variants) = crate::symbol_identity::case_fold_literal_variants(query) else {
+                return self.search_symbols_unicode_page(query, max_results, offset);
+            };
+            Some(variants)
+        };
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let qualified = crate::symbol_identity::split_qualified_symbol(query);
         let candidate_query = qualified.map_or(query, |(_, name)| name);
         let indexed = candidate_query.chars().count() >= 3;
+        let folded_json = folded
+            .as_ref()
+            .filter(|variants| variants.expanded)
+            .map(|variants| serde_json::to_string(&variants.values))
+            .transpose()?;
         let sql = if indexed {
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols_fts_trigram
@@ -180,14 +210,28 @@ impl ReadSession {
                    AND CASE WHEN ?2
                        THEN instr(s.name, ?1) > 0
                            OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
-                       ELSE instr(lower(s.name), lower(?1)) > 0
-                           OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                       ELSE CASE WHEN ?7 IS NULL
+                           THEN instr(lower(s.name), lower(?1)) > 0
+                               OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                           ELSE EXISTS (
+                               SELECT 1 FROM json_each(?7) AS folded
+                               WHERE instr(lower(s.name), lower(CAST(folded.value AS TEXT))) > 0
+                                  OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(CAST(folded.value AS TEXT))) > 0)
+                           )
+                       END
                    END
                  ORDER BY CASE WHEN CASE WHEN ?2
                               THEN s.name = ?1
                                   OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
-                              ELSE lower(s.name) = lower(?1)
-                                  OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                              ELSE CASE WHEN ?7 IS NULL
+                                  THEN lower(s.name) = lower(?1)
+                                      OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                                  ELSE EXISTS (
+                                      SELECT 1 FROM json_each(?7) AS folded
+                                      WHERE lower(s.name) = lower(CAST(folded.value AS TEXT))
+                                         OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(CAST(folded.value AS TEXT)))
+                                  )
+                              END
                           END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
                  LIMIT ?3 OFFSET ?4"
@@ -198,19 +242,42 @@ impl ReadSession {
                    AND CASE WHEN ?2
                        THEN instr(s.name, ?1) > 0
                            OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
-                       ELSE instr(lower(s.name), lower(?1)) > 0
-                           OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                       ELSE CASE WHEN ?7 IS NULL
+                           THEN instr(lower(s.name), lower(?1)) > 0
+                               OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                           ELSE EXISTS (
+                               SELECT 1 FROM json_each(?7) AS folded
+                               WHERE instr(lower(s.name), lower(CAST(folded.value AS TEXT))) > 0
+                                  OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(CAST(folded.value AS TEXT))) > 0)
+                           )
+                       END
                    END
                  ORDER BY CASE WHEN CASE WHEN ?2
                               THEN s.name = ?1
                                   OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
-                              ELSE lower(s.name) = lower(?1)
-                                  OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                              ELSE CASE WHEN ?7 IS NULL
+                                  THEN lower(s.name) = lower(?1)
+                                      OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                                  ELSE EXISTS (
+                                      SELECT 1 FROM json_each(?7) AS folded
+                                      WHERE lower(s.name) = lower(CAST(folded.value AS TEXT))
+                                         OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(CAST(folded.value AS TEXT)))
+                                  )
+                              END
                           END THEN 0 ELSE 1 END,
                           length(s.name), f.path, s.start_byte
                  LIMIT ?3 OFFSET ?4"
         };
-        let quoted = indexed.then(|| quoted_fts_phrase(candidate_query));
+        let candidate_folded = folded
+            .as_ref()
+            .and_then(|_| crate::symbol_identity::case_fold_literal_variants(candidate_query));
+        let quoted = indexed.then(|| {
+            candidate_folded
+                .as_ref()
+                .filter(|variants| variants.expanded)
+                .map(crate::symbol_identity::case_fold_fts_query)
+                .unwrap_or_else(|| quoted_fts_phrase(candidate_query))
+        });
         let mut stmt = self.conn.prepare_cached(sql)?;
         let rows = stmt.query_map(
             params![
@@ -219,11 +286,76 @@ impl ReadSession {
                 limit,
                 offset,
                 quoted,
-                qualified.is_some()
+                qualified.is_some(),
+                folded_json
             ],
             Storage::map_symbol_hit,
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    fn search_symbols_unicode_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<SymbolHit>> {
+        let matcher = unicode_literal_matcher(query)?;
+        let scan_limit = i64::try_from(HARD_MAX_RESULTS.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
+             FROM symbols s JOIN files f ON f.id = s.file_id
+             ORDER BY f.path, s.start_byte, s.id
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![scan_limit], Storage::map_symbol_hit)?;
+        let scanned = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        if scanned.len() > HARD_MAX_RESULTS {
+            return Err(Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::UnicodeCaseFoldRows,
+                observed: scanned.len(),
+                limit: HARD_MAX_RESULTS,
+            });
+        }
+        let mut matches = scanned
+            .into_iter()
+            .filter(|hit| {
+                crate::symbol_identity::symbol_identity_contains_case_fold(
+                    query,
+                    &matcher,
+                    &hit.symbol.name,
+                    hit.symbol.parent.as_deref(),
+                )
+            })
+            .map(|hit| {
+                let exact = crate::symbol_identity::symbol_identity_matches_case_fold(
+                    &matcher,
+                    &hit.symbol.name,
+                    hit.symbol.parent.as_deref(),
+                );
+                (exact, hit)
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|(left_exact, left), (right_exact, right)| {
+            right_exact
+                .cmp(left_exact)
+                .then_with(|| {
+                    left.symbol
+                        .name
+                        .chars()
+                        .count()
+                        .cmp(&right.symbol.name.chars().count())
+                })
+                .then_with(|| left.path.cmp(&right.path))
+                .then_with(|| left.symbol.start_byte.cmp(&right.symbol.start_byte))
+                .then_with(|| left.symbol.id.cmp(&right.symbol.id))
+        });
+        Ok(matches
+            .into_iter()
+            .skip(offset)
+            .take(max_results.clamp(1, HARD_MAX_RESULTS))
+            .map(|(_, hit)| hit)
+            .collect())
     }
 
     pub(crate) fn find_symbols_exact_batch(
@@ -306,35 +438,144 @@ impl ReadSession {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ReferenceHit>> {
+        let folded = if case_sensitive {
+            None
+        } else {
+            let Some(variants) = crate::symbol_identity::case_fold_literal_variants(query) else {
+                return self.search_references_unicode_page(query, max_results, offset);
+            };
+            Some(variants)
+        };
         let limit = bounded_limit(max_results);
         let offset = i64::try_from(offset).unwrap_or(i64::MAX);
         let indexed = query.chars().count() >= 3;
+        let folded_json = folded
+            .as_ref()
+            .filter(|variants| variants.expanded)
+            .map(|variants| serde_json::to_string(&variants.values))
+            .transpose()?;
         let sql = if indexed {
             "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
                  FROM symbol_refs_fts_trigram
                  JOIN symbol_refs r ON r.rowid = symbol_refs_fts_trigram.rowid
                  JOIN files f ON f.id = r.file_id
                  WHERE symbol_refs_fts_trigram MATCH ?5
-                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
+                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0
+                       ELSE CASE WHEN ?6 IS NULL THEN instr(lower(r.name), lower(?1)) > 0
+                           ELSE EXISTS (
+                               SELECT 1 FROM json_each(?6) AS folded
+                               WHERE instr(lower(r.name), lower(CAST(folded.value AS TEXT))) > 0
+                           )
+                       END
+                   END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1
+                              ELSE CASE WHEN ?6 IS NULL THEN lower(r.name) = lower(?1)
+                                  ELSE EXISTS (
+                                      SELECT 1 FROM json_each(?6) AS folded
+                                      WHERE lower(r.name) = lower(CAST(folded.value AS TEXT))
+                                  )
+                              END
+                          END THEN 0 ELSE 1 END,
                           length(r.name), f.path, r.start_byte
                  LIMIT ?3 OFFSET ?4"
         } else {
             "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
                  FROM symbol_refs r JOIN files f ON f.id = r.file_id
                  WHERE ?5 IS NULL
-                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0 ELSE instr(lower(r.name), lower(?1)) > 0 END
-                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1 ELSE lower(r.name) = lower(?1) END THEN 0 ELSE 1 END,
+                   AND CASE WHEN ?2 THEN instr(r.name, ?1) > 0
+                       ELSE CASE WHEN ?6 IS NULL THEN instr(lower(r.name), lower(?1)) > 0
+                           ELSE EXISTS (
+                               SELECT 1 FROM json_each(?6) AS folded
+                               WHERE instr(lower(r.name), lower(CAST(folded.value AS TEXT))) > 0
+                           )
+                       END
+                   END
+                 ORDER BY CASE WHEN CASE WHEN ?2 THEN r.name = ?1
+                              ELSE CASE WHEN ?6 IS NULL THEN lower(r.name) = lower(?1)
+                                  ELSE EXISTS (
+                                      SELECT 1 FROM json_each(?6) AS folded
+                                      WHERE lower(r.name) = lower(CAST(folded.value AS TEXT))
+                                  )
+                              END
+                          END THEN 0 ELSE 1 END,
                           length(r.name), f.path, r.start_byte
                  LIMIT ?3 OFFSET ?4"
         };
-        let quoted = indexed.then(|| quoted_fts_phrase(query));
+        let quoted = indexed.then(|| {
+            folded
+                .as_ref()
+                .filter(|variants| variants.expanded)
+                .map(crate::symbol_identity::case_fold_fts_query)
+                .unwrap_or_else(|| quoted_fts_phrase(query))
+        });
         let mut stmt = self.conn.prepare_cached(sql)?;
         let rows = stmt.query_map(
-            params![query, case_sensitive, limit, offset, quoted],
+            params![query, case_sensitive, limit, offset, quoted, folded_json],
             Storage::map_reference_hit,
         )?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
+
+    fn search_references_unicode_page(
+        &self,
+        query: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ReferenceHit>> {
+        let matcher = unicode_literal_matcher(query)?;
+        let scan_limit = i64::try_from(HARD_MAX_RESULTS.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.path, f.content_hash, f.generation, r.id, r.file_id, r.name, r.kind, r.role, r.enclosing_symbol, r.start_line, r.end_line, r.start_byte, r.end_byte
+             FROM symbol_refs r JOIN files f ON f.id = r.file_id
+             ORDER BY f.path, r.start_byte, r.id
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![scan_limit], Storage::map_reference_hit)?;
+        let scanned = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        if scanned.len() > HARD_MAX_RESULTS {
+            return Err(Error::RetrievalLimitExceeded {
+                kind: RetrievalLimitKind::UnicodeCaseFoldRows,
+                observed: scanned.len(),
+                limit: HARD_MAX_RESULTS,
+            });
+        }
+        let mut matches = scanned
+            .into_iter()
+            .filter(|hit| matcher.is_match(&hit.reference.name))
+            .map(|hit| {
+                let exact =
+                    crate::symbol_identity::literal_match_is_entire(&matcher, &hit.reference.name);
+                (exact, hit)
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|(left_exact, left), (right_exact, right)| {
+            right_exact
+                .cmp(left_exact)
+                .then_with(|| {
+                    left.reference
+                        .name
+                        .chars()
+                        .count()
+                        .cmp(&right.reference.name.chars().count())
+                })
+                .then_with(|| left.path.cmp(&right.path))
+                .then_with(|| left.reference.start_byte.cmp(&right.reference.start_byte))
+                .then_with(|| left.reference.id.cmp(&right.reference.id))
+        });
+        Ok(matches
+            .into_iter()
+            .skip(offset)
+            .take(max_results.clamp(1, HARD_MAX_RESULTS))
+            .map(|(_, hit)| hit)
+            .collect())
+    }
+}
+
+fn unicode_literal_matcher(query: &str) -> Result<regex::Regex> {
+    Ok(regex::RegexBuilder::new(&regex::escape(query))
+        .case_insensitive(true)
+        .size_limit(1 << 20)
+        .dfa_size_limit(1 << 20)
+        .build()?)
 }
 use super::*;

@@ -865,6 +865,8 @@ claims.
 | Regex candidate-plan terms | 32 |
 | Regex candidate-plan aggregate term bytes | 256 |
 | Regex prefix/suffix literal alternatives | 16 |
+| Unicode simple-case-fold literal alternatives | 32 complete FTS variants per query |
+| Unicode structural full-scan fallback | 10000 admitted symbol or reference rows plus one overflow sentinel |
 | File scan page size | 1000 for find (path projection) and globset fallback; tree/glob SQL-page `max_results + 1` projected paths |
 | Opt-in compact projection materialization | At most the 100 selected files, symbols, groups, or hits already admitted by `max_results`; no additional repository scan |
 | Exhaustive occurrence grouping | At most 100 selected occurrence coordinates and 100 group-map entries per response page; the existing 100,000-occurrence fail-closed scan cap is unchanged |
@@ -1377,6 +1379,16 @@ ASCII-only. Evaluation counters expose only fixed plan-source and fallback
 enums plus bounded counts; they never retain regex text, literals, paths, or
 repository identity. Differential tests compare planned results with a forced
 full scan before a new HIR shape is admitted.
+
+Non-regex literal search uses the same Unicode simple-case-fold table as the
+Rust verifier. It expands each scalar into at most 32 complete literal
+combinations, submits those combinations as one deterministic FTS disjunction,
+and applies the same alternatives to structural SQL verification. Ordinary
+ASCII queries retain their single indexed literal. If the Cartesian product
+would cross the bound, lexical retrieval uses the existing bounded full-scan
+oracle and structural retrieval admits at most 10,000 rows, inspecting one
+additional sentinel before returning a typed incomplete-work error; neither
+path silently accepts a partial candidate set.
 
 Ranking combines exactness, structural role, FTS relevance, path evidence,
 fragment size, lexical frequency, optional focus, import proximity, change
