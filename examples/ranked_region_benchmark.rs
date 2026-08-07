@@ -1539,6 +1539,14 @@ fn has_exact_identifier(query: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn checked_in_ranked_fixtures() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("benchmark package is below the workspace root")
+            .join("benchmarks/fixtures/ranked_regions")
+    }
+
     fn fixture_task(style: PathStyle, budget: Budget) -> RankedTask {
         RankedTask {
             schema_version: CONTRACT_SCHEMA_VERSION,
@@ -1771,16 +1779,45 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_ranked_region_fixture_is_deterministic() {
-        let report: EvaluationReport = serde_json::from_str(include_str!(
+    fn checked_in_ranked_region_report_matches_its_inputs() {
+        let expected: EvaluationReport = serde_json::from_str(include_str!(
             "../benchmarks/fixtures/ranked_regions/swe_explore.report.json"
         ))
         .expect("checked-in report");
-        assert_eq!(report.aggregate.task_count, 1);
-        assert_eq!(report.aggregate.core_lines_hit, 3);
-        assert_eq!(report.aggregate.returned_lines, 7);
-        assert_eq!(report.aggregate.complete_response_tokens, Some(120));
-        assert_eq!(report.aggregate.source_tokens, Some(35));
-        assert_eq!(report.aggregate.line_f1_macro, 0.5);
+        let fixtures = checked_in_ranked_fixtures();
+        let actual = evaluate_files(
+            &fixtures.join("swe_explore.manifest.jsonl"),
+            &fixtures.join("swe_explore.predictions.jsonl"),
+        )
+        .expect("evaluate checked-in inputs");
+
+        assert_eq!(actual.manifest_blake3, expected.manifest_blake3);
+        assert_eq!(actual.predictions_blake3, expected.predictions_blake3);
+        assert_eq!(
+            serde_json::to_value(actual).expect("serialize evaluated report"),
+            serde_json::to_value(expected).expect("serialize checked-in report")
+        );
+    }
+
+    #[test]
+    fn checked_in_swe_explore_conversion_matches_manifest() {
+        let fixtures = checked_in_ranked_fixtures();
+        let temp = tempfile::tempdir().expect("temporary output");
+        let output = temp.path().join("manifest.jsonl");
+
+        convert_swe_explore(
+            &fixtures.join("swe_explore.synthetic.jsonl"),
+            Some(&fixtures.join("swe_explore.issue_map.json")),
+            Some(&fixtures.join("swe_explore.commit_map.json")),
+            &output,
+            8,
+            None,
+        )
+        .expect("convert checked-in source fixtures");
+
+        assert_eq!(
+            fs::read(output).expect("converted manifest"),
+            fs::read(fixtures.join("swe_explore.manifest.jsonl")).expect("checked-in manifest")
+        );
     }
 }

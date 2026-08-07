@@ -8,6 +8,7 @@
   "candidate_result_mode": "structured",
   "candidate_default_result_mode": "dual",
   "fixture": "benchmarks/fixtures/codex-receipt-resource-v1.json",
+  "fixture_blake3": "965081e892634d1750f952ed194fc2faa1ea711a00a9ea9f74316e37afc838cd",
   "prompt_requires": [
     "evidence_count",
     "src/receipt.rs content_hash"

@@ -30,6 +30,8 @@
     "reviewed_on": "2026-07-29",
     "tool_catalog_digest": "d2b3193e3686c0a77a77fb48cecacc8b",
     "snapshot_path": "src/snapshots/leantoken__mcp__tests__mcp_tool_catalog.snap",
+    "snapshot_revision": "1800f7020da9be38a9bebb56114a54e3e3dfb21e",
+    "current_contract_snapshot_path": "src/mcp/snapshots/leantoken__mcp__tests__mcp_contract_snapshot.snap",
     "change_kind": "additive_search_query_receipt",
     "input_schema_changed": true,
     "result_projection_changed": true,
