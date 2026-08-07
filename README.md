@@ -2,10 +2,7 @@
 
 <h1>LeanToken</h1>
 
-**Make every AI coding token go further**
-
-Local-first code intelligence for coding agents. Search code, inspect structure,
-read exact ranges, and explore Git history through a CLI and MCP server.
+**Code intelligence for agents: find the code that matters and keep your context window and tokens lean.**
 
 **Language:** English · [简体中文](docs/i18n/zh-CN/README.md) · [日本語](docs/i18n/ja-JP/README.md) · [한국어](docs/i18n/ko-KR/README.md)
 
