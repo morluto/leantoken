@@ -243,6 +243,25 @@ impl IndexSnapshot {
         self.session.search_trigram(query, max_results)
     }
 
+    pub(crate) fn search_trigram_expression_page(
+        &self,
+        expression: &str,
+        max_results: usize,
+        offset: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        self.session
+            .search_trigram_expression_page(expression, max_results, offset)
+    }
+
+    pub(crate) fn search_trigram_expression(
+        &self,
+        expression: &str,
+        max_results: usize,
+    ) -> Result<Vec<ChunkHit>> {
+        self.session
+            .search_trigram_expression(expression, max_results)
+    }
+
     pub(crate) fn search_symbols_page(
         &self,
         query: &str,

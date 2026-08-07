@@ -39,6 +39,8 @@ pub enum RetrievalLimitKind {
     RegexScopedRows,
     /// Regex-matching chunks retained for occurrence hydration.
     RegexRetainedChunks,
+    /// Structural rows inspected by the Unicode case-fold full-scan fallback.
+    UnicodeCaseFoldRows,
     /// Individual occurrences materialized for an exhaustive search.
     ExhaustiveOccurrences,
 }
@@ -92,6 +94,7 @@ impl RetrievalLimitKind {
             Self::RegexCandidateChunks => "regex_candidate_chunks",
             Self::RegexScopedRows => "regex_scoped_rows",
             Self::RegexRetainedChunks => "regex_retained_chunks",
+            Self::UnicodeCaseFoldRows => "unicode_case_fold_rows",
             Self::ExhaustiveOccurrences => "exhaustive_occurrences",
         }
     }
@@ -108,6 +111,9 @@ impl RetrievalLimitKind {
             }
             Self::RegexCandidateChunks => "make the regex more selective",
             Self::RegexScopedRows => "narrow the path scope or make the regex more selective",
+            Self::UnicodeCaseFoldRows => {
+                "use case-sensitive search or index a smaller repository scope"
+            }
             Self::RegexRetainedChunks | Self::ExhaustiveOccurrences => {
                 "narrow the expression or requested scope"
             }

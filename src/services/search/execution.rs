@@ -93,6 +93,7 @@ impl Services {
         let mut hits = self.collect_structural_search_hits(
             session,
             request,
+            prepared,
             prepared.limit,
             prepared.context_lines,
             cancellation,
@@ -197,6 +198,7 @@ impl Services {
         &self,
         session: &IndexReadSnapshot,
         request: &SearchRequest,
+        prepared: &PreparedSearch,
         limit: usize,
         context_lines: usize,
         cancellation: &CancellationToken,
@@ -206,20 +208,33 @@ impl Services {
             request.mode,
             SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
         ) {
-            let symbol_hits = collect_filtered_hits(
-                request,
-                limit.saturating_mul(4),
-                cancellation,
-                |offset, page_limit| {
-                    session.search_symbols_page(
-                        &request.query,
-                        request.case_sensitive,
-                        page_limit,
-                        offset,
-                    )
-                },
-                |hit: &SymbolHit| &hit.path,
-            )?;
+            let max_candidates = limit.saturating_mul(4);
+            let unicode_full_scan = !request.case_sensitive
+                && crate::symbol_identity::case_fold_literal_variants(&request.query).is_none();
+            let symbol_hits = if unicode_full_scan {
+                filter_materialized_hits(
+                    request,
+                    max_candidates,
+                    cancellation,
+                    session.search_symbols_page(&request.query, false, MAX_FILTER_SCAN_ROWS, 0)?,
+                    |hit: &SymbolHit| &hit.path,
+                )?
+            } else {
+                collect_filtered_hits(
+                    request,
+                    max_candidates,
+                    cancellation,
+                    |offset, page_limit| {
+                        session.search_symbols_page(
+                            &request.query,
+                            request.case_sensitive,
+                            page_limit,
+                            offset,
+                        )
+                    },
+                    |hit: &SymbolHit| &hit.path,
+                )?
+            };
             let excerpt_requests = symbol_hits
                 .iter()
                 .map(|hit| StoredExcerptRequest {
@@ -242,7 +257,13 @@ impl Services {
                         end_line: hit.symbol.end_line,
                     };
                     hits.push(CandidateSearchHit {
-                        hit: self.symbol_search_hit(hit, &request.query, excerpt),
+                        hit: self.symbol_search_hit(
+                            hit,
+                            &request.query,
+                            request.case_sensitive,
+                            prepared.literal_regex.as_ref(),
+                            excerpt,
+                        ),
                         definition: Some(definition),
                     });
                 }
@@ -252,20 +273,38 @@ impl Services {
             request.mode,
             SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
         ) {
-            let reference_hits = collect_filtered_hits(
-                request,
-                limit.saturating_mul(4),
-                cancellation,
-                |offset, page_limit| {
+            let max_candidates = limit.saturating_mul(4);
+            let unicode_full_scan = !request.case_sensitive
+                && crate::symbol_identity::case_fold_literal_variants(&request.query).is_none();
+            let reference_hits = if unicode_full_scan {
+                filter_materialized_hits(
+                    request,
+                    max_candidates,
+                    cancellation,
                     session.search_references_page(
                         &request.query,
-                        request.case_sensitive,
-                        page_limit,
-                        offset,
-                    )
-                },
-                |hit: &ReferenceHit| &hit.path,
-            )?;
+                        false,
+                        MAX_FILTER_SCAN_ROWS,
+                        0,
+                    )?,
+                    |hit: &ReferenceHit| &hit.path,
+                )?
+            } else {
+                collect_filtered_hits(
+                    request,
+                    max_candidates,
+                    cancellation,
+                    |offset, page_limit| {
+                        session.search_references_page(
+                            &request.query,
+                            request.case_sensitive,
+                            page_limit,
+                            offset,
+                        )
+                    },
+                    |hit: &ReferenceHit| &hit.path,
+                )?
+            };
             let excerpt_requests = reference_hits
                 .iter()
                 .map(|hit| StoredExcerptRequest {
@@ -287,7 +326,13 @@ impl Services {
             {
                 if let Some(excerpt) = excerpt {
                     hits.push(CandidateSearchHit {
-                        hit: self.reference_search_hit(hit, &request.query, excerpt),
+                        hit: self.reference_search_hit(
+                            hit,
+                            &request.query,
+                            request.case_sensitive,
+                            prepared.literal_regex.as_ref(),
+                            excerpt,
+                        ),
                         definition: None,
                     });
                 }
@@ -380,10 +425,39 @@ impl Services {
                 phases = scan.phases;
                 scan.hits
             }
+            SearchMode::Text | SearchMode::Auto | SearchMode::Identifier
+                if !request.case_sensitive
+                    && crate::symbol_identity::case_fold_literal_variants(&request.query)
+                        .is_none() =>
+            {
+                let scan = self.regex_hits(
+                    session,
+                    request,
+                    prepared
+                        .literal_regex
+                        .as_ref()
+                        .expect("case-insensitive literal search compiles a matcher"),
+                    Some(prepared.limit.saturating_mul(20)),
+                    cancellation,
+                    RegexPlanning::Disabled,
+                )?;
+                phases = scan.phases;
+                scan.hits
+            }
             SearchMode::Text | SearchMode::Auto | SearchMode::Identifier => {
+                let folded = (!request.case_sensitive)
+                    .then(|| crate::symbol_identity::case_fold_literal_variants(&request.query))
+                    .flatten()
+                    .filter(|variants| variants.expanded);
+                let indexed_query = folded
+                    .as_ref()
+                    .map(crate::symbol_identity::case_fold_fts_query)
+                    .unwrap_or_else(|| fts_quote(&request.query));
                 let fetch_page = |offset, page_limit| {
                     if matches!(request.mode, SearchMode::Identifier) {
-                        session.search_word_page(&fts_quote(&request.query), page_limit, offset)
+                        session.search_word_page(&indexed_query, page_limit, offset)
+                    } else if folded.is_some() {
+                        session.search_trigram_expression_page(&indexed_query, page_limit, offset)
                     } else {
                         session.search_trigram_page(&request.query, page_limit, offset)
                     }

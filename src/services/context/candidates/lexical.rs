@@ -24,6 +24,7 @@ impl Services {
         } = batch;
         let term = &query.value;
         let concept = query.fusion_key.as_str();
+        let term_regex = compile_literal_regex(term, false)?;
         check_cancelled(cancellation)?;
         let symbol_results = phases.measure(ContextTimedPhase::SymbolSearch, || {
             session.search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)
@@ -65,7 +66,13 @@ impl Services {
         for ((rank, hit), excerpt) in symbol_hits.into_iter().zip(symbol_excerpts) {
             check_cancelled(cancellation)?;
             let Some(excerpt) = excerpt else { continue };
-            let exact = f64::from(hit.symbol.name.eq_ignore_ascii_case(term));
+            let exact = f64::from(term_regex.as_ref().is_some_and(|matcher| {
+                crate::symbol_identity::symbol_identity_matches_case_fold(
+                    matcher,
+                    &hit.symbol.name,
+                    hit.symbol.parent.as_deref(),
+                )
+            }));
             let qualified = qualified_symbol_match(
                 concept,
                 &hit.symbol.name,
@@ -230,19 +237,17 @@ impl Services {
             .change_boost(change_boost);
             candidates.push(annotate_candidate(candidate, query, "reference", rank));
         }
-        let term_regex = compile_literal_regex(term, false)?;
-        let lexical = phases.measure(ContextTimedPhase::LexicalSearch, || {
-            if term.chars().count() >= 3 {
-                session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)
-            } else {
-                session.search_word(&fts_quote(term), MAX_CONTEXT_LEXICAL_HITS)
-            }
+        let (lexical, lexical_kind) = phases.measure(ContextTimedPhase::LexicalSearch, || {
+            self.context_lexical_hits(
+                session,
+                request,
+                term,
+                term_regex
+                    .as_ref()
+                    .expect("case-insensitive context term compiles a matcher"),
+                cancellation,
+            )
         })?;
-        let lexical_kind = if term.chars().count() >= 3 {
-            "trigram"
-        } else {
-            "word"
-        };
         phases.record_primitive(lexical_kind, || {
             format!("limit:{MAX_CONTEXT_LEXICAL_HITS}:query:{term}")
         });
@@ -342,6 +347,57 @@ impl Services {
             candidates.push(annotate_candidate(candidate, query, "text", rank));
         }
         Ok(())
+    }
+
+    fn context_lexical_hits(
+        &self,
+        session: &IndexReadSnapshot,
+        request: &ContextRequest,
+        term: &str,
+        term_regex: &regex::Regex,
+        cancellation: &CancellationToken,
+    ) -> Result<(Vec<ChunkHit>, &'static str)> {
+        let folded = crate::symbol_identity::case_fold_literal_variants(term);
+        let folded_query = folded
+            .as_ref()
+            .filter(|variants| variants.expanded)
+            .map(crate::symbol_identity::case_fold_fts_query);
+        if folded.is_none() {
+            return Ok((
+                self.full_scan_literal_hits(LiteralFullScan {
+                    session,
+                    query: term,
+                    matcher: term_regex,
+                    include_paths: &request.include_paths,
+                    exclude_paths: &request.exclude_paths,
+                    max_candidates: MAX_CONTEXT_LEXICAL_HITS,
+                    max_tokens: request.token_budget,
+                    cancellation,
+                })?,
+                "unicode_case_fold_full_scan",
+            ));
+        }
+        if term.chars().count() < 3 {
+            let query = folded_query.unwrap_or_else(|| fts_quote(term));
+            return Ok((
+                session.search_word(&query, MAX_CONTEXT_LEXICAL_HITS)?,
+                if folded.is_some_and(|variants| variants.expanded) {
+                    "unicode_case_fold_word"
+                } else {
+                    "word"
+                },
+            ));
+        }
+        if let Some(expression) = folded_query {
+            return Ok((
+                session.search_trigram_expression(&expression, MAX_CONTEXT_LEXICAL_HITS)?,
+                "unicode_case_fold_trigram",
+            ));
+        }
+        Ok((
+            session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?,
+            "trigram",
+        ))
     }
 }
 use super::*;

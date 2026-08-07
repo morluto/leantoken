@@ -5,6 +5,127 @@ mod read_delta;
 mod receipts;
 
 #[test]
+pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    let mut file = sample_file("unicode.rs", "fn Აbc() { ſſſſſſ(); }\n");
+    file.symbols = vec![
+        SymbolInput {
+            name: "Აbc".into(),
+            kind: "function".into(),
+            parent: None,
+            signature: None,
+            start_line: 1,
+            end_line: 1,
+            start_byte: 3,
+            end_byte: 8,
+        },
+        SymbolInput {
+            name: "ſſſſſſ".into(),
+            kind: "function".into(),
+            parent: None,
+            signature: None,
+            start_line: 1,
+            end_line: 1,
+            start_byte: 13,
+            end_byte: 25,
+        },
+    ];
+    file.references = vec![
+        ReferenceInput {
+            name: "Აbc".into(),
+            kind: "call".into(),
+            role: ReferenceRole::Reference,
+            enclosing_symbol: None,
+            start_line: 1,
+            end_line: 1,
+            start_byte: 3,
+            end_byte: 8,
+        },
+        ReferenceInput {
+            name: "ſſſſſſ".into(),
+            kind: "call".into(),
+            role: ReferenceRole::Reference,
+            enclosing_symbol: None,
+            start_line: 1,
+            end_line: 1,
+            start_byte: 13,
+            end_byte: 25,
+        },
+    ];
+    storage
+        .full_reconcile("config", vec![file])
+        .expect("index fixture");
+
+    assert_eq!(
+        storage
+            .search_symbols("აbc", false, 10)
+            .expect("expanded Unicode symbol search")[0]
+            .symbol
+            .name,
+        "Აbc"
+    );
+    assert_eq!(
+        storage
+            .search_references("აbc", false, 10)
+            .expect("expanded Unicode reference search")[0]
+            .reference
+            .name,
+        "Აbc"
+    );
+    assert_eq!(
+        storage
+            .search_symbols("ssssss", false, 10)
+            .expect("bounded variant-overflow fallback")[0]
+            .symbol
+            .name,
+        "ſſſſſſ"
+    );
+    assert_eq!(
+        storage
+            .search_references("ssssss", false, 10)
+            .expect("bounded reference variant-overflow fallback")[0]
+            .reference
+            .name,
+        "ſſſſſſ"
+    );
+}
+
+#[test]
+pub(crate) fn unicode_case_fold_fallback_fails_before_truncating_structural_rows() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    let mut file = sample_file("many.rs", "fn placeholder() {}\n");
+    file.symbols = (0..=HARD_MAX_RESULTS)
+        .map(|index| SymbolInput {
+            name: format!("ordinary_{index}"),
+            kind: "function".into(),
+            parent: None,
+            signature: None,
+            start_line: 1,
+            end_line: 1,
+            start_byte: 0,
+            end_byte: 1,
+        })
+        .collect();
+    storage
+        .full_reconcile("config", vec![file])
+        .expect("index bounded fixture");
+
+    let error = storage
+        .search_symbols("ssssss", false, 10)
+        .expect_err("variant-overflow fallback must not truncate its structural scan");
+    assert!(matches!(
+        error,
+        Error::RetrievalLimitExceeded {
+            kind: RetrievalLimitKind::UnicodeCaseFoldRows,
+            observed: 10_001,
+            limit: HARD_MAX_RESULTS,
+        }
+    ));
+}
+
+#[test]
 pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");

@@ -50,7 +50,9 @@ pub(super) use super::index_read::{
     ChunkHit, FileRecord, IndexReadSnapshot, SymbolHit, SymbolRecord,
 };
 pub(super) use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
-pub(super) use super::search::{chunk_search_hit_for_range, compile_literal_regex, fts_quote};
+pub(super) use super::search::{
+    LiteralFullScan, chunk_search_hit_for_range, compile_literal_regex, fts_quote,
+};
 pub(super) use super::validation::{
     MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher,
     check_cancelled, validate_glob_patterns, validate_input,

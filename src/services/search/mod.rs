@@ -37,8 +37,8 @@ use execution::*;
 use hits::*;
 pub(super) use hits::{chunk_search_hit_for_range, fts_quote};
 use projection::*;
-pub(super) use regex_plan::compile_literal_regex;
 use regex_plan::*;
+pub(super) use regex_plan::{LiteralFullScan, compile_literal_regex};
 use types::*;
 pub(super) use types::{
     MAX_REGEX_CANDIDATE_CHUNKS, MAX_REGEX_CANDIDATES, MAX_REGEX_CHUNKS_PER_FILE,
