@@ -127,8 +127,9 @@
 <a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">for </span>file_id <span class="kw">in </span>file_ids {
 <a href=#128 id=128 data-nosnippet>128</a>            update_generation.execute(<span class="macro">params!</span>[<span class="self">self</span>.generation, file_id])<span class="question-mark">?</span>;
 <a href=#129 id=129 data-nosnippet>129</a>        }
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="prelude-val">Ok</span>(())
-<a href=#131 id=131 data-nosnippet>131</a>    }
-<a href=#132 id=132 data-nosnippet>132</a>}
-<a href=#133 id=133 data-nosnippet>133</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="self">self</span>.projection_refreshes = <span class="self">self</span>.projection_refreshes.saturating_add(projections.len());
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="prelude-val">Ok</span>(())
+<a href=#132 id=132 data-nosnippet>132</a>    }
+<a href=#133 id=133 data-nosnippet>133</a>}
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

@@ -303,18 +303,19 @@
 <a href=#303 id=303 data-nosnippet>303</a>
 <a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// Return whether the on-disk file still matches the indexed content hash.
 <a href=#305 id=305 data-nosnippet>305</a>///
-<a href=#306 id=306 data-nosnippet>306</a>/// Used when size and mtime look unchanged so full reconcile cannot skip a
-<a href=#307 id=307 data-nosnippet>307</a>/// content rewrite that preserved those metadata fields.
-<a href=#308 id=308 data-nosnippet>308</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>content_unchanged(
-<a href=#309 id=309 data-nosnippet>309</a>    root: <span class="kw-2">&amp;</span>Dir,
-<a href=#310 id=310 data-nosnippet>310</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#311 id=311 data-nosnippet>311</a>    expected_hash: <span class="kw-2">&amp;</span>str,
-<a href=#312 id=312 data-nosnippet>312</a>    max_file_bytes: u64,
-<a href=#313 id=313 data-nosnippet>313</a>) -&gt; bool {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">match </span>read_bounded(root, path, max_file_bytes) {
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; hash_bytes(<span class="kw-2">&amp;</span>bytes) == expected_hash,
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>,
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
-<a href=#318 id=318 data-nosnippet>318</a>    }
-<a href=#319 id=319 data-nosnippet>319</a>}
+<a href=#306 id=306 data-nosnippet>306</a>/// Size is checked by the caller before this bounded read. The content hash is
+<a href=#307 id=307 data-nosnippet>307</a>/// authoritative both when mtime is stable and when metadata churned without a
+<a href=#308 id=308 data-nosnippet>308</a>/// repository-content change.
+<a href=#309 id=309 data-nosnippet>309</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>content_unchanged(
+<a href=#310 id=310 data-nosnippet>310</a>    root: <span class="kw-2">&amp;</span>Dir,
+<a href=#311 id=311 data-nosnippet>311</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#312 id=312 data-nosnippet>312</a>    expected_hash: <span class="kw-2">&amp;</span>str,
+<a href=#313 id=313 data-nosnippet>313</a>    max_file_bytes: u64,
+<a href=#314 id=314 data-nosnippet>314</a>) -&gt; bool {
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">match </span>read_bounded(root, path, max_file_bytes) {
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; hash_bytes(<span class="kw-2">&amp;</span>bytes) == expected_hash,
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>}
 </code></pre></div></section></main></body></html>
