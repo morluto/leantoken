@@ -243,6 +243,7 @@ pub(in crate::mcp) fn retryable_tool_result(
         tool_unavailable(
             "response_serialization",
             "repository retrieval is temporarily unavailable; retry shortly",
+            mode,
         )
     })
 }

@@ -570,14 +570,58 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
         .rebase_receipt_with_options(
             ReceiptRebaseRequest {
                 receipt_id: source_receipt.clone(),
-                max_samples_per_outcome: Some(4),
+                max_samples_per_outcome: Some(0),
             },
-            ServiceCallOptions::new().with_max_response_tokens(1),
+            ServiceCallOptions::new()
+                .with_max_response_tokens(1)
+                .with_receipt_resource_reserve(true),
         )
         .await
         .expect_err("one token cannot fit");
-    assert!(matches!(budget_error, Error::ResponseBudgetExceeded { .. }));
+    let minimum_response_tokens = match budget_error {
+        Error::ResponseBudgetExceeded {
+            minimum_required_response_tokens,
+            ..
+        } => minimum_required_response_tokens,
+        other => panic!("expected response budget error, got {other}"),
+    };
     assert_eq!(receipt_header_count(&database), before);
+
+    let below_boundary = services
+        .rebase_receipt_with_options(
+            ReceiptRebaseRequest {
+                receipt_id: source_receipt.clone(),
+                max_samples_per_outcome: Some(0),
+            },
+            ServiceCallOptions::new()
+                .with_max_response_tokens(minimum_response_tokens - 1)
+                .with_receipt_resource_reserve(true),
+        )
+        .await
+        .expect_err("receipt decoration must fit before persistence");
+    assert!(matches!(
+        below_boundary,
+        Error::ResponseBudgetExceeded {
+            minimum_required_response_tokens: minimum,
+            ..
+        } if minimum == minimum_response_tokens
+    ));
+    assert_eq!(receipt_header_count(&database), before);
+
+    let boundary_response = services
+        .rebase_receipt_with_options(
+            ReceiptRebaseRequest {
+                receipt_id: source_receipt.clone(),
+                max_samples_per_outcome: Some(0),
+            },
+            ServiceCallOptions::new()
+                .with_max_response_tokens(minimum_response_tokens)
+                .with_receipt_resource_reserve(true),
+        )
+        .await
+        .expect("exact receipt-decoration boundary");
+    assert!(boundary_response.meta.receipt_id.is_some());
+    assert_eq!(receipt_header_count(&database), before + 1);
 
     let response = services
         .rebase_receipt(ReceiptRebaseRequest {
@@ -597,7 +641,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     assert!(response.samples_complete);
     assert_eq!(response.outcomes_blake3.len(), 64);
     assert_response_token_accounting!(response, services.config().tokenizer);
-    assert_eq!(receipt_header_count(&database), before + 1);
+    assert_eq!(receipt_header_count(&database), before + 2);
     let rebased_receipt = response.meta.receipt_id.clone().expect("rebased receipt");
 
     let unchanged = services

@@ -121,7 +121,7 @@ impl Services {
         let mut selected = None;
         for sample_limit in (0..=requested_samples).rev() {
             let response = build_response(self, &source, &classification, sample_limit);
-            if self.response_fits(&response, options)? {
+            if self.response_fits_with_receipt_reserve(&response, 0, options)? {
                 selected = Some(response);
                 break;
             }
@@ -133,7 +133,9 @@ impl Services {
             let limit = options
                 .max_response_tokens()
                 .expect("response fitting fails only with a configured limit");
-            return Err(self.response_budget_error(&response, limit, options)?);
+            return Err(
+                self.response_budget_error_with_receipt_reserve(&response, 0, limit, options)?
+            );
         };
         check_cancelled(cancellation)?;
         let receipt_id = self.storage.persist_rebased_receipt(

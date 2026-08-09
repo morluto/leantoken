@@ -277,7 +277,7 @@ impl LeanTokenMcp {
         let max_response_tokens = req.max_response_tokens();
         let (call, options, expected_repository_id) = match req.into_parts() {
             Ok(parts) => parts,
-            Err(error) => return into_tool_error(error),
+            Err(error) => return into_tool_error(error, self.result_mode),
         };
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
@@ -483,7 +483,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let mcp_services = match self.contexts.resolve(req.repository_context.as_deref()) {
             Ok(services) => services,
-            Err(error) => return into_tool_error(error),
+            Err(error) => return into_tool_error(error, self.result_mode),
         };
         let state = mcp_services.get();
         let services = match self.services(&state) {

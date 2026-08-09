@@ -335,15 +335,25 @@ async fn savings_is_covered_by_protocol_admission() {
 fn startup_failures_expose_only_allowlisted_guidance() {
     let marker = "/secret/repository";
     let failure = StartupFailure::from_error(&crate::Error::UnsafeRepositoryRoot(marker.into()));
-    let result = tool_unavailable(failure.reason, failure.message);
-    assert_eq!(
-        result
-            .structured_content
-            .as_ref()
-            .and_then(|value| value["reason"].as_str()),
-        Some("unsafe_repository_root")
-    );
-    assert!(!serde_json::to_string(&result).unwrap().contains(marker));
+    for mode in [
+        McpResultMode::Dual,
+        McpResultMode::Text,
+        McpResultMode::Structured,
+    ] {
+        let result = tool_unavailable(failure.reason, failure.message, mode);
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.content.is_empty(), mode == McpResultMode::Structured);
+        assert_eq!(
+            result.structured_content.is_some(),
+            mode != McpResultMode::Text
+        );
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("unsafe_repository_root")
+        );
+        assert!(!serde_json::to_string(&result).unwrap().contains(marker));
+    }
 }
 
 #[test]
@@ -422,24 +432,38 @@ fn result_modes_emit_only_the_selected_representations() {
 
 #[test]
 fn semantic_failures_use_native_model_visible_tool_errors() {
-    let result = into_tool_error(crate::Error::InputTooLong {
-        field: "search query",
-        max_bytes: 64,
-    })
-    .expect("semantic failure should be a tool result");
-    assert_eq!(result.result_type, Some(rmcp::model::ResultType::COMPLETE));
-    assert_eq!(result.is_error, Some(true));
-    assert!(!result.content.is_empty());
-    assert_eq!(
-        result
-            .structured_content
-            .as_ref()
-            .and_then(|value| value["category"].as_str()),
-        Some("input_too_long")
-    );
+    for mode in [
+        McpResultMode::Dual,
+        McpResultMode::Text,
+        McpResultMode::Structured,
+    ] {
+        let result = into_tool_error(
+            crate::Error::InputTooLong {
+                field: "search query",
+                max_bytes: 64,
+            },
+            mode,
+        )
+        .expect("semantic failure should be a tool result");
+        assert_eq!(result.result_type, Some(rmcp::model::ResultType::COMPLETE));
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.content.is_empty(), mode == McpResultMode::Structured);
+        assert_eq!(
+            result.structured_content.is_some(),
+            mode != McpResultMode::Text
+        );
+        assert!(
+            serde_json::to_string(&result)
+                .unwrap()
+                .contains("input_too_long")
+        );
+    }
 
-    let internal = into_tool_error(crate::Error::OperationFailure("failed".into()))
-        .expect_err("internal failures remain protocol errors");
+    let internal = into_tool_error(
+        crate::Error::OperationFailure("failed".into()),
+        McpResultMode::Dual,
+    )
+    .expect_err("internal failures remain protocol errors");
     assert_eq!(internal.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
 }
 
