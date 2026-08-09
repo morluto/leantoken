@@ -3666,7 +3666,9 @@ mod tests {
 
     #[test]
     fn structural_reports_preserve_manifest_bindings() {
-        let swift_manifest = include_bytes!("../benchmarks/swift_structural_validation.json");
+        let swift_manifest = include_str!("../benchmarks/swift_structural_validation.json");
+        let swift: Manifest = serde_json::from_str(swift_manifest).expect("Swift manifest");
+        validate_manifest(&swift).expect("valid Swift manifest");
         for report in [
             include_str!("../benchmarks/reports/swift-retrieval-control-run1.json"),
             include_str!("../benchmarks/reports/swift-retrieval-control-run2.json"),
@@ -3674,17 +3676,19 @@ mod tests {
             include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run1.json"),
             include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run2.json"),
         ] {
-            report_preserves_manifest_binding(report, swift_manifest);
+            report_preserves_manifest_binding(report, swift_manifest.as_bytes());
         }
 
-        let kotlin_manifest = include_bytes!("../benchmarks/kotlin_structural_validation.json");
+        let kotlin_manifest = include_str!("../benchmarks/kotlin_structural_validation.json");
+        let kotlin: Manifest = serde_json::from_str(kotlin_manifest).expect("Kotlin manifest");
+        validate_manifest(&kotlin).expect("valid Kotlin manifest");
         for report in [
             include_str!("../benchmarks/reports/kotlin-retrieval-control-run1.json"),
             include_str!("../benchmarks/reports/kotlin-retrieval-control-run2.json"),
             include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run1.json"),
             include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run2.json"),
         ] {
-            report_preserves_manifest_binding(report, kotlin_manifest);
+            report_preserves_manifest_binding(report, kotlin_manifest.as_bytes());
         }
     }
 
