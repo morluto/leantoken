@@ -889,4 +889,45 @@ mod tests {
         assert_eq!(normalized, canonical);
         assert_eq!(blake3::hash(&normalized), blake3::hash(&canonical));
     }
+
+    #[test]
+    fn receipt_resource_report_is_bound_to_its_fixture() {
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
+        let fixture_bytes = canonical_json_artifact(
+            fs::read(root.join("benchmarks/fixtures/codex-receipt-resource-v1.json"))
+                .expect("receipt fixture"),
+        )
+        .expect("canonical receipt fixture");
+        let report_bytes = canonical_json_artifact(
+            fs::read(
+                root.join("benchmarks/reports/codex-receipt-resource-0.146.0-2026-07-29.json"),
+            )
+            .expect("receipt report"),
+        )
+        .expect("canonical receipt report");
+        let fixture: serde_json::Value =
+            serde_json::from_slice(&fixture_bytes).expect("fixture JSON");
+        let report: serde_json::Value = serde_json::from_slice(&report_bytes).expect("report JSON");
+
+        assert_eq!(
+            report["fixture"],
+            "benchmarks/fixtures/codex-receipt-resource-v1.json"
+        );
+        assert_eq!(
+            report["fixture_blake3"],
+            blake3::hash(&fixture_bytes).to_hex().to_string()
+        );
+        let production_variant = report["production_variant"]
+            .as_str()
+            .expect("production variant");
+        assert!(fixture["variants"].get(production_variant).is_some());
+        assert_eq!(
+            report["production_gate"]["expected_evidence_count"],
+            fixture["receipt"]["evidence_count"]
+        );
+        assert_eq!(
+            report["production_gate"]["expected_content_hash"],
+            fixture["receipt"]["evidence"][0]["content_hash"]
+        );
+    }
 }

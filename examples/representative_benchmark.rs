@@ -3646,10 +3646,47 @@ fn finalize_aggregate(aggregate: &mut AggregateReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn checkout_independent_hash(bytes: &[u8]) -> String {
+        let normalized = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+        blake3::hash(normalized.as_bytes()).to_hex().to_string()
+    }
+
+    fn report_preserves_manifest_binding(report: &str, manifest: &[u8]) {
+        let report: serde_json::Value = serde_json::from_str(report).expect("retrieval report");
+        assert_eq!(
+            report["manifest_blake3"],
+            checkout_independent_hash(manifest)
+        );
+    }
     use leantoken::{
         ContextCoverageReceipt, ContextOmissionSummary, ContextResponseProfile, ContextWorkflow,
         EvidenceReceipt, Freshness, IndexScopeMode, ResponseMeta,
     };
+
+    #[test]
+    fn structural_reports_preserve_manifest_bindings() {
+        let swift_manifest = include_bytes!("../benchmarks/swift_structural_validation.json");
+        for report in [
+            include_str!("../benchmarks/reports/swift-retrieval-control-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-control-run2.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.2-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run2.json"),
+        ] {
+            report_preserves_manifest_binding(report, swift_manifest);
+        }
+
+        let kotlin_manifest = include_bytes!("../benchmarks/kotlin_structural_validation.json");
+        for report in [
+            include_str!("../benchmarks/reports/kotlin-retrieval-control-run1.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-control-run2.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run1.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run2.json"),
+        ] {
+            report_preserves_manifest_binding(report, kotlin_manifest);
+        }
+    }
 
     fn external_manifest() -> Manifest {
         serde_json::from_value(serde_json::json!({
