@@ -104,6 +104,52 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     );
 }
 
+pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn projection_target() {}\npub fn caller() { projection_target(); }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    let compact = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "projection_target",
+            "--mode",
+            "identifier",
+            "--projection",
+            "compact",
+        ],
+    );
+    assert_eq!(compact["meta"]["source_tokens"], 0);
+    assert!(compact["hits"][0].get("excerpt").is_none());
+    assert!(compact["hits"][0].get("score").is_none());
+    assert!(compact["hits"][0].get("content_hash").is_none());
+
+    let coordinates = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "projection_target",
+            "--mode",
+            "text",
+            "--all-occurrences",
+            "--projection",
+            "coordinates",
+        ],
+    );
+    assert_eq!(coordinates["coordinates_only"], true);
+    assert_eq!(coordinates["occurrences_total"], 2);
+    assert!(coordinates["groups"][0].get("excerpt").is_none());
+    assert!(coordinates["groups"][0].get("content_hash").is_none());
+}
+
 pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("source directory");

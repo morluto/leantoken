@@ -215,6 +215,98 @@ impl Services {
         self.observe_service_result(operation, result)
     }
 
+    /// Search with source-free ranked hits.
+    pub async fn search_compact(&self, request: SearchRequest) -> Result<SearchCompactResponse> {
+        self.search_compact_with_options(request, ServiceCallOptions::new())
+            .await
+    }
+
+    /// Search with source-free ranked hits under an exact serialized-response bound.
+    pub async fn search_compact_with_options(
+        &self,
+        request: SearchRequest,
+        options: ServiceCallOptions,
+    ) -> Result<SearchCompactResponse> {
+        self.search_compact_execute(
+            request,
+            RetrievalExecution::direct(options, CancellationToken::new()),
+        )
+        .await
+    }
+
+    /// Search with source-free ranked hits after applying a consistency boundary.
+    pub async fn search_compact_with_options_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        consistency: IndexConsistency,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<SearchCompactResponse> {
+        self.search_compact_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
+    }
+
+    async fn search_compact_execute(
+        &self,
+        request: SearchRequest,
+        execution: RetrievalExecution,
+    ) -> Result<SearchCompactResponse> {
+        let operation = TokenAccountingOperation::Search;
+        let RetrievalExecution {
+            consistency,
+            options,
+            cancellation,
+        } = execution;
+        let options = options.with_receipt_resource_reserve(true);
+        self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.apply_search_consistency(
+            &request,
+            false,
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
+        let this = self.clone();
+        let result = self
+            .blocking_executor
+            .run(cancellation, move |cancellation| {
+                let response = this
+                    .search_sync(
+                        request,
+                        cancellation,
+                        RegexPlanning::Enabled,
+                        SearchDiagnostics::Omit,
+                        SearchExecutionOptions {
+                            output_shape: SearchOutputShape::Compact,
+                            response_options: ServiceCallOptions::new(),
+                            record_savings: false,
+                        },
+                    )?
+                    .response;
+                let hits = response
+                    .hits
+                    .iter()
+                    .map(compact_search_hit)
+                    .collect::<Vec<_>>();
+                let mut compact = SearchCompactResponse {
+                    hits_returned: hits.len(),
+                    hits,
+                    coverage: response.coverage,
+                    occurrences_total: response.occurrences_total,
+                    meta: response.meta,
+                };
+                this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
+                Ok(compact)
+            })
+            .await;
+        self.observe_service_result(operation, result)
+    }
+
     /// Search with hits grouped by matched symbol or enclosing scope.
     pub async fn search_grouped(&self, request: SearchRequest) -> Result<SearchGroupedResponse> {
         self.search_grouped_with_options(request, ServiceCallOptions::new())

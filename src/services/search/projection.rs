@@ -41,6 +41,19 @@ pub(super) fn grouped_search_key(hit: &SearchHit) -> String {
     format!("range:{}:{}:{}", hit.path, hit.start_line, hit.end_line)
 }
 
+pub(super) fn compact_search_hit(hit: &SearchHit) -> SearchCompactHit {
+    SearchCompactHit {
+        path: hit.path.clone(),
+        start_line: hit.start_line,
+        end_line: hit.end_line,
+        match_kind: hit.match_kind.clone(),
+        role: hit.role,
+        symbol: hit.symbol.clone(),
+        enclosing_symbol: hit.enclosing_symbol.clone(),
+        occurrence: hit.occurrence.clone(),
+    }
+}
+
 pub(super) fn grouped_search_evidence(hit: &SearchHit) -> SearchGroupEvidence {
     SearchGroupEvidence {
         path: hit.path.clone(),
@@ -205,12 +218,14 @@ pub(super) fn select_search_page(
                 coordinates_only: false,
             } => Some(occurrence_group_key(&candidate.hit, false)),
             SearchOutputShape::Full
+            | SearchOutputShape::Compact
             | SearchOutputShape::OccurrenceGroups {
                 coordinates_only: true,
             } => None,
         };
         let count = match output_shape {
             SearchOutputShape::Full => tokenizer.count(&candidate.hit.excerpt),
+            SearchOutputShape::Compact => 0,
             SearchOutputShape::OccurrenceGroups {
                 coordinates_only: true,
             } => 0,
@@ -260,6 +275,7 @@ pub(super) fn selected_search_source_tokens(
             .iter()
             .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
             .sum(),
+        SearchOutputShape::Compact => 0,
         SearchOutputShape::OccurrenceGroups {
             coordinates_only: true,
         } => 0,

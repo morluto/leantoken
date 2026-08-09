@@ -432,11 +432,13 @@ impl Cli {
             Commands::Search(args) => {
                 let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
+                let projection = args.projection;
                 let request: SearchRequest = args.clone().into();
                 AppRequest::Search {
                     request,
                     consistency,
                     max_response_tokens,
+                    projection,
                 }
             }
             Commands::Outline(args) => {
@@ -542,6 +544,7 @@ pub enum AppRequest {
         request: SearchRequest,
         consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
+        projection: SearchProjectionArg,
     },
     Outline {
         request: OutlineRequest,
@@ -700,7 +703,8 @@ use outline::*;
 use read::*;
 use retrieval::*;
 use runtime::*;
-use search::*;
+use search::SearchArgs;
+pub use search::SearchProjectionArg;
 mod episode;
 mod files;
 mod history;

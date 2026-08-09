@@ -111,6 +111,7 @@ pub(super) enum SearchDiagnostics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SearchOutputShape {
     Full,
+    Compact,
     OccurrenceGroups { coordinates_only: bool },
 }
 

@@ -228,6 +228,7 @@ impl_retrieval_response!(
     DiffSymbolsResponse,
     JsonResponse,
     SearchResponse,
+    SearchCompactResponse,
     SearchGroupedResponse,
     SearchOccurrencesResponse,
     OutlineResponse,

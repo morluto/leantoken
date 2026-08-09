@@ -1411,6 +1411,15 @@ applies only when a path matches multiple independent explicit terms; variants
 of one identifier do not count as separate evidence. Signals change ordering;
 absent structural evidence never removes a lexical match.
 
+The opt-in compact search projection performs the same candidate generation,
+ranking, pagination, receipt suppression, and coverage accounting inside one
+pinned read snapshot. Only after selection does it retain path, line range,
+match kind, role, symbol identity, and optional exhaustive coordinates while
+dropping excerpts, scores, reasons, and hashes. Hidden excerpts consume no
+source-token budget, the projected response still receives exact serialized
+token accounting and its own response-bound check, and materialization remains
+bounded by the already selected `max_results` page.
+
 Strict focus expansion stays inside the existing per-pattern bounds: at most
 four eligible files are inspected, with at most 256 chunks and 128 symbols per
 file, and at most eight distinct ranges retained per focus pattern. An exact
