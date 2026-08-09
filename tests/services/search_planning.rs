@@ -504,12 +504,18 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             "{pattern}"
         );
         assert_eq!(
-            optimized.phases.regex_planning.strategy(), expected_strategy,
+            optimized.phases.regex_planning.strategy(),
+            expected_strategy,
             "{pattern}"
         );
-        assert_eq!(optimized.phases.regex_planning.source(), expected_source, "{pattern}");
         assert_eq!(
-            optimized.phases.regex_planning.fallback_reason(), expected_fallback,
+            optimized.phases.regex_planning.source(),
+            expected_source,
+            "{pattern}"
+        );
+        assert_eq!(
+            optimized.phases.regex_planning.fallback_reason(),
+            expected_fallback,
             "{pattern}"
         );
         assert!(optimized.phases.regex_plan_nodes > 0, "{pattern}");

@@ -587,7 +587,10 @@ fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out
         );
     }
 
-    assert!(matches!(parse(&["status"]).app_request(), AppRequest::Status));
+    assert!(matches!(
+        parse(&["status"]).app_request(),
+        AppRequest::Status
+    ));
 }
 
 fn request_consistency(request: AppRequest) -> IndexConsistency {
@@ -698,7 +701,8 @@ fn cli_context_request() {
         max_response_tokens,
         response_profile,
         ..
-    } = cli.app_request() else {
+    } = cli.app_request()
+    else {
         panic!("expected context request");
     };
     assert!(handoff.is_none());
