@@ -504,25 +504,22 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             "{pattern}"
         );
         assert_eq!(
-            optimized.phases.regex_candidate_strategy, expected_strategy,
+            optimized.phases.regex_planning.strategy(), expected_strategy,
             "{pattern}"
         );
+        assert_eq!(optimized.phases.regex_planning.source(), expected_source, "{pattern}");
         assert_eq!(
-            optimized.phases.regex_plan_source, expected_source,
-            "{pattern}"
-        );
-        assert_eq!(
-            optimized.phases.regex_plan_fallback_reason, expected_fallback,
+            optimized.phases.regex_planning.fallback_reason(), expected_fallback,
             "{pattern}"
         );
         assert!(optimized.phases.regex_plan_nodes > 0, "{pattern}");
         assert_eq!(
-            full_scan.phases.regex_candidate_strategy,
+            full_scan.phases.regex_planning.strategy(),
             leantoken::RegexCandidateStrategy::FullScan,
             "{pattern}"
         );
         assert_eq!(
-            full_scan.phases.regex_plan_fallback_reason,
+            full_scan.phases.regex_planning.fallback_reason(),
             Some(leantoken::RegexPlanFallbackReason::PlanningDisabled),
             "{pattern}"
         );
@@ -578,7 +575,7 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
         .await
         .expect("case-insensitive fallback");
     assert_eq!(
-        case_insensitive.phases.regex_plan_fallback_reason,
+        case_insensitive.phases.regex_planning.fallback_reason(),
         Some(leantoken::RegexPlanFallbackReason::CaseInsensitiveUnicode)
     );
     assert_eq!(case_insensitive.phases.regex_plan_nodes, 0);
@@ -594,7 +591,7 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
         .await
         .expect("term-limit fallback");
     assert_eq!(
-        term_limited.phases.regex_plan_fallback_reason,
+        term_limited.phases.regex_planning.fallback_reason(),
         Some(leantoken::RegexPlanFallbackReason::PlanTermLimit)
     );
     assert_eq!(term_limited.phases.regex_plan_terms, 33);
@@ -605,7 +602,7 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
         .await
         .expect("term-bytes fallback");
     assert_eq!(
-        bytes_limited.phases.regex_plan_fallback_reason,
+        bytes_limited.phases.regex_planning.fallback_reason(),
         Some(leantoken::RegexPlanFallbackReason::PlanTermBytesLimit)
     );
     assert_eq!(bytes_limited.phases.regex_plan_terms, 1);
@@ -617,7 +614,7 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
         .await
         .expect("node-limit fallback");
     assert_eq!(
-        node_limited.phases.regex_plan_fallback_reason,
+        node_limited.phases.regex_planning.fallback_reason(),
         Some(leantoken::RegexPlanFallbackReason::PlanNodeLimit)
     );
     assert_eq!(node_limited.phases.regex_plan_nodes, 257);
@@ -861,7 +858,7 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
         .expect("sound candidate plan should not scan the file inventory");
     assert_eq!(optimized.response.hits.len(), 1);
     assert_eq!(
-        optimized.phases.regex_candidate_strategy,
+        optimized.phases.regex_planning.strategy(),
         leantoken::RegexCandidateStrategy::Trigram
     );
     assert_eq!(optimized.phases.regex_files_considered, 10_001);

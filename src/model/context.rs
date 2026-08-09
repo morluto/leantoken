@@ -101,6 +101,41 @@ pub struct ContextRequest {
     pub explain_diagnostics: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ContextFocusPolicy {
+    Advisory,
+    Minimum { minimum_fragments: usize },
+    Strict { minimum_fragments: usize },
+}
+
+impl ContextFocusPolicy {
+    pub(crate) fn parse(request: &ContextRequest) -> Self {
+        match (
+            request.strict_focus_paths,
+            request.minimum_fragments_per_focus_path,
+        ) {
+            (true, minimum_fragments) => Self::Strict {
+                minimum_fragments: minimum_fragments.unwrap_or(1),
+            },
+            (false, Some(minimum_fragments)) => Self::Minimum { minimum_fragments },
+            (false, None) => Self::Advisory,
+        }
+    }
+
+    pub(crate) const fn minimum_fragments(self) -> Option<usize> {
+        match self {
+            Self::Advisory => None,
+            Self::Minimum { minimum_fragments } | Self::Strict { minimum_fragments } => {
+                Some(minimum_fragments)
+            }
+        }
+    }
+
+    pub(crate) const fn is_strict(self) -> bool {
+        matches!(self, Self::Strict { .. })
+    }
+}
+
 /// Optional host-supplied state carried into a compact context handoff manifest.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

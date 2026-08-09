@@ -10,6 +10,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use serde::ser::SerializeStruct;
 use serde_json::Value;
 
 use crate::{Error, Result};
@@ -87,35 +88,59 @@ pub enum MetricCoverage {
     Unavailable,
 }
 
-/// Nullable count with an explicit evidence-coverage boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct AuditCount {
-    /// Count observed by the source analyzer, or `null` when unavailable.
-    pub value: Option<u64>,
-    /// Completeness of the count within the imported report.
-    pub coverage: MetricCoverage,
+/// Count whose availability and evidence coverage cannot contradict each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditCount {
+    /// Count covering the complete imported episode.
+    Complete(u64),
+    /// Count covering only the subset exposed by the source analyzer.
+    ReportedSubset(u64),
+    /// The source analyzer did not expose this measurement.
+    Unavailable,
 }
 
 impl AuditCount {
     const fn complete(value: u64) -> Self {
-        Self {
-            value: Some(value),
-            coverage: MetricCoverage::Complete,
-        }
+        Self::Complete(value)
     }
 
     const fn subset(value: u64) -> Self {
-        Self {
-            value: Some(value),
-            coverage: MetricCoverage::ReportedSubset,
-        }
+        Self::ReportedSubset(value)
     }
 
     const fn unavailable() -> Self {
-        Self {
-            value: None,
-            coverage: MetricCoverage::Unavailable,
+        Self::Unavailable
+    }
+
+    /// Return the observed count, if the source exposed it.
+    #[must_use]
+    pub const fn value(self) -> Option<u64> {
+        match self {
+            Self::Complete(value) | Self::ReportedSubset(value) => Some(value),
+            Self::Unavailable => None,
         }
+    }
+
+    /// Return the evidence boundary carried by this count.
+    #[must_use]
+    pub const fn coverage(self) -> MetricCoverage {
+        match self {
+            Self::Complete(_) => MetricCoverage::Complete,
+            Self::ReportedSubset(_) => MetricCoverage::ReportedSubset,
+            Self::Unavailable => MetricCoverage::Unavailable,
+        }
+    }
+}
+
+impl Serialize for AuditCount {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AuditCount", 2)?;
+        state.serialize_field("value", &self.value())?;
+        state.serialize_field("coverage", &self.coverage())?;
+        state.end()
     }
 }
 
@@ -304,11 +329,11 @@ impl EpisodeAuditReport {
         ));
         for (name, metric) in self.summary_rows() {
             let value = metric
-                .value
+                .value()
                 .map_or_else(|| "null".to_owned(), |value| value.to_string());
             output.push_str(&format!(
                 "| {name} | {value} | {} |\n",
-                coverage_name(metric.coverage)
+                coverage_name(metric.coverage())
             ));
         }
 
@@ -1616,11 +1641,11 @@ mod tests {
         let host = audit_episode_bytes(EpisodeAdapter::CodexHostReceiptV1, HOST).expect("host");
         assert_eq!(wire.schema_version, host.schema_version);
         assert_eq!(wire.report_kind, host.report_kind);
-        assert_eq!(wire.summary.provider_input_tokens.value, None);
-        assert_eq!(wire.summary.mcp_source_tokens.value, Some(21));
-        assert_eq!(host.summary.provider_input_tokens.value, Some(70_904));
+        assert_eq!(wire.summary.provider_input_tokens.value(), None);
+        assert_eq!(wire.summary.mcp_source_tokens.value(), Some(21));
+        assert_eq!(host.summary.provider_input_tokens.value(), Some(70_904));
         assert_eq!(finding(&wire, "dual_result_duplication").occurrences, 1);
-        assert_eq!(host.summary.tool_calls.value, Some(3));
+        assert_eq!(host.summary.tool_calls.value(), Some(3));
         assert_eq!(
             classifier(&wire, "dual_result_duplication").evidence,
             ClassifierEvidence::Exact
@@ -1777,8 +1802,8 @@ mod tests {
             &serde_json::to_vec(&input).expect("serialize"),
         )
         .expect("audit");
-        assert_eq!(report.summary.successful_episodes.value, None);
-        assert_eq!(report.summary.downstream_signal_ranges.value, Some(1));
+        assert_eq!(report.summary.successful_episodes.value(), None);
+        assert_eq!(report.summary.downstream_signal_ranges.value(), Some(1));
         assert_eq!(
             finding(&report, "no_observed_downstream_signal").evidence,
             FindingEvidence::Proxy

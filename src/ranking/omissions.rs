@@ -149,6 +149,7 @@ pub(in crate::ranking) struct BuildOmissionsParams<'a> {
     pub focus_paths: &'a PathMatcher,
     pub changed_paths: &'a HashSet<&'a str>,
     pub generated_artifact_warning: bool,
+    pub policy: ContextSelectionPolicy,
 }
 
 pub(in crate::ranking) fn build_context_omissions(
@@ -163,6 +164,7 @@ pub(in crate::ranking) fn build_context_omissions(
         focus_paths,
         changed_paths,
         generated_artifact_warning,
+        policy,
     } = params;
     let omission_summary = summarize_omissions(
         &path_omitted,
@@ -207,7 +209,7 @@ pub(in crate::ranking) fn build_context_omissions(
     if omitted_count > 0 {
         warnings.push(format!("{omitted_count} omitted"));
     }
-    if request.plan_only && generated_artifact_warning {
+    if policy.is_plan() && generated_artifact_warning {
         warnings.push(
             "generated-artifact candidates matched context exclusion defaults; review their explicit inclusion before materializing source"
                 .into(),

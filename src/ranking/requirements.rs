@@ -2,6 +2,7 @@ use super::*;
 pub(in crate::ranking) fn select_required_candidates(
     mut candidates: Vec<ScoredCandidate>,
     request: &ContextRequest,
+    policy: ContextSelectionPolicy,
     budget: usize,
     max_fragments: usize,
 ) -> (Vec<ScoredCandidate>, Vec<ScoredCandidate>) {
@@ -87,10 +88,7 @@ pub(in crate::ranking) fn select_required_candidates(
         selected.push(candidate);
     }
 
-    let minimum_focus_fragments = request
-        .minimum_fragments_per_focus_path
-        .unwrap_or(usize::from(request.strict_focus_paths));
-    if minimum_focus_fragments > 0 {
+    if let Some(minimum_focus_fragments) = policy.focus_minimum().filter(|minimum| *minimum > 0) {
         for pattern in &request.focus_paths {
             while selected
                 .iter()
@@ -127,8 +125,7 @@ pub(in crate::ranking) fn required_symbol_matches(candidate: &Candidate, symbol:
         .symbol_name
         .as_deref()
         .is_some_and(|name| name == symbol)
-        && candidate.target_start_line.is_some()
-        && candidate.target_end_line.is_some()
+        && candidate.target_range.is_some()
 }
 
 pub(in crate::ranking) fn required_symbol_satisfied(candidate: &Candidate, symbol: &str) -> bool {

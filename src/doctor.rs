@@ -869,7 +869,7 @@ fn launcher_arguments(
     let mut launch_args = args.iter().map(OsString::from).collect::<Vec<_>>();
     let mut global_args = vec!["--root".into(), config.root.as_os_str().to_owned()];
     if matches!(database_forwarding, DatabaseForwarding::Resolved)
-        || !config.database_is_managed_cache
+        || !config.database_is_managed_cache()
     {
         global_args.extend([
             "--database".into(),

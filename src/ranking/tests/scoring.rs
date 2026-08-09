@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn candidate_target_ranges_are_complete_and_one_based() {
+    assert!(CandidateTargetRange::new(0, 1).is_none());
+    assert!(CandidateTargetRange::new(3, 2).is_none());
+    assert_eq!(
+        CandidateTargetRange::new(2, 3).map(|range| range.lines()),
+        Some((2, 3))
+    );
+}
+
+#[test]
 fn score_is_finite_and_non_negative() {
     let candidate = Candidate::new("a.rs", 1, 2, "fn main() {}")
         .exact(1.0)

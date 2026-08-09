@@ -1,4 +1,23 @@
 // Private request, cursor, and materialization state shared by read stages.
+#[derive(Debug, Clone)]
+pub(super) enum ParsedReadTarget {
+    Symbol(String),
+    Heading {
+        name: String,
+        occurrence: std::num::NonZeroUsize,
+    },
+    Lines {
+        start: std::num::NonZeroUsize,
+        end: Option<usize>,
+    },
+    Continuation(ReadCursor),
+}
+
+pub(super) struct ParsedReadRequest {
+    pub(super) request: ReadRequest,
+    pub(super) target: ParsedReadTarget,
+}
+
 #[derive(Clone)]
 pub(in crate::services) struct StoredExcerpt {
     pub(in crate::services) content: String,
@@ -102,7 +121,7 @@ pub(super) struct MaterializedRead {
     pub(super) current_tokens: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct ReadCursor {
     pub(super) generation: u64,
     pub(super) target_start_line: usize,

@@ -43,7 +43,7 @@ fn incompatible_prune_is_dry_run_first_and_fail_closed() {
             .iter()
             .find(|result| &result.id == id)
             .expect("incompatible result");
-        assert_eq!(result.action, CachePruneAction::WouldDelete);
+        assert_eq!(result.outcome.action(), CachePruneAction::WouldDelete);
         assert_eq!(result.reasons.len(), 1);
         assert!(result.reasons[0].starts_with("incompatible_with_current:"));
     }
@@ -51,7 +51,7 @@ fn incompatible_prune_is_dry_run_first_and_fail_closed() {
         plan.results
             .iter()
             .filter(|result| result.id != older_id && result.id != legacy_id)
-            .all(|result| result.action == CachePruneAction::Kept)
+            .all(|result| result.outcome.action() == CachePruneAction::Kept)
     );
     for database in [
         &current_database,
@@ -78,7 +78,8 @@ fn incompatible_prune_is_dry_run_first_and_fail_closed() {
                 .iter()
                 .find(|result| &result.id == id)
                 .expect("deleted incompatible result")
-                .action,
+                .outcome
+                .action(),
             CachePruneAction::Deleted
         );
     }
@@ -118,12 +119,18 @@ fn incompatible_prune_never_projects_an_active_cache_as_reclaimable() {
     assert_eq!(listed.safely_reclaimable_incompatible_bytes, 0);
 
     let active = manager.prune(&request).expect("active prune plan");
-    assert_eq!(active.results[0].action, CachePruneAction::SkippedActive);
+    assert_eq!(
+        active.results[0].outcome.action(),
+        CachePruneAction::SkippedActive
+    );
     assert!(database.exists());
 
     drop(services);
     let inactive = manager.prune(&request).expect("inactive prune plan");
-    assert_eq!(inactive.results[0].action, CachePruneAction::WouldDelete);
+    assert_eq!(
+        inactive.results[0].outcome.action(),
+        CachePruneAction::WouldDelete
+    );
     assert!(database.exists());
 }
 
@@ -146,7 +153,7 @@ fn stale_cache_is_deleted_after_age_and_confirmation() {
         .iter()
         .find(|result| result.id == id)
         .expect("stale result");
-    assert_eq!(result.action, CachePruneAction::Deleted);
+    assert_eq!(result.outcome.action(), CachePruneAction::Deleted);
     assert_eq!(result.reasons, ["older_than"]);
     assert!(!database.exists());
     assert!(database.with_extension("sqlite.lease.lock").exists());
@@ -166,7 +173,7 @@ fn explicit_database_outside_managed_root_is_never_considered() {
         manager
             .list_with(&CacheListRequest::default())
             .expect("cache list")
-            .entries
+            .entries()
             .is_empty()
     );
     let mut prune = request();

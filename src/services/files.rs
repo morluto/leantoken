@@ -28,6 +28,7 @@ struct FilePage {
     next: Option<FileCursor>,
 }
 
+#[derive(Clone)]
 enum FileCursor {
     Path {
         operation: PathOperation,
@@ -43,6 +44,85 @@ enum FileCursor {
 enum PathOperation {
     Tree,
     Glob,
+}
+
+struct FilesInput {
+    query: FilesQuery,
+    max_results: Option<usize>,
+    cursor: Option<(u64, FileCursor)>,
+}
+
+enum FilesQuery {
+    Tree { root: String, depth: Option<usize> },
+    Find { query: String },
+    Glob { pattern: String },
+}
+
+impl FilesInput {
+    fn parse(request: FilesRequest) -> Result<Self> {
+        let FilesRequest {
+            operation,
+            path,
+            query,
+            pattern,
+            max_results,
+            cursor,
+            depth,
+        } = request;
+        validate_optional_input(path.as_deref(), "path", MAX_PATH_BYTES)?;
+        validate_optional_input(query.as_deref(), "query", MAX_QUERY_BYTES)?;
+        validate_optional_input(pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
+        let cursor = decode_files_cursor(cursor.as_deref(), &operation)?;
+        let query = match operation {
+            FileOperation::Tree => FilesQuery::Tree {
+                root: normalize_tree_root(path.as_deref())?,
+                depth,
+            },
+            FileOperation::Find => FilesQuery::Find {
+                query: query.filter(|value| !value.trim().is_empty()).ok_or(
+                    Error::InvalidInput {
+                        field: "query",
+                        reason: "is required for find",
+                    },
+                )?,
+            },
+            FileOperation::Glob => {
+                let pattern = pattern.filter(|value| !value.trim().is_empty()).ok_or(
+                    Error::InvalidInput {
+                        field: "pattern",
+                        reason: "is required for glob",
+                    },
+                )?;
+                crate::repository::RepositoryPattern::parse(&pattern)?;
+                FilesQuery::Glob { pattern }
+            }
+        };
+        Ok(Self {
+            query,
+            max_results,
+            cursor,
+        })
+    }
+
+    fn cursor(&self, generation: u64) -> Result<Option<FileCursor>> {
+        let Some((cursor_generation, cursor)) = &self.cursor else {
+            return Ok(None);
+        };
+        if *cursor_generation != generation {
+            return Err(Error::StaleCursor);
+        }
+        Ok(Some(cursor.clone()))
+    }
+}
+
+impl FilesQuery {
+    const fn operation(&self) -> FileOperation {
+        match self {
+            Self::Tree { .. } => FileOperation::Tree,
+            Self::Find { .. } => FileOperation::Find,
+            Self::Glob { .. } => FileOperation::Glob,
+        }
+    }
 }
 
 impl FileCursor {
@@ -64,18 +144,17 @@ impl FileCursor {
 
 fn tree_entries(
     session: &IndexReadSnapshot,
-    root: Option<&str>,
+    root: &str,
     depth: Option<usize>,
     cursor: Option<FileCursor>,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<FilePage> {
-    let root = normalize_tree_root(root)?;
     let max_depth = depth.unwrap_or(usize::MAX);
     let after = cursor_path(cursor)?;
     check_cancelled(cancellation)?;
     let projected =
-        session.list_tree_paths(&root, max_depth, after.as_deref(), limit.saturating_add(1))?;
+        session.list_tree_paths(root, max_depth, after.as_deref(), limit.saturating_add(1))?;
     let has_more = projected.len() > limit;
     let entries = projected
         .into_iter()
@@ -114,17 +193,11 @@ fn normalize_tree_root(root: Option<&str>) -> Result<String> {
 
 fn fuzzy_entries(
     session: &IndexReadSnapshot,
-    query: Option<&str>,
+    query: &str,
     cursor: Option<FileCursor>,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<FilePage> {
-    let query = query
-        .filter(|value| !value.is_empty())
-        .ok_or(Error::InvalidInput {
-            field: "query",
-            reason: "is required for find",
-        })?;
     let pattern = Pattern::new(
         query,
         CaseMatching::Ignore,
@@ -180,17 +253,11 @@ fn fuzzy_entries(
 
 fn glob_entries(
     session: &IndexReadSnapshot,
-    pattern: Option<&str>,
+    pattern: &str,
     cursor: Option<FileCursor>,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<FilePage> {
-    let pattern = pattern
-        .filter(|value| !value.is_empty())
-        .ok_or(Error::InvalidInput {
-            field: "pattern",
-            reason: "is required for glob",
-        })?;
     let normalized_pattern = crate::repository::RepositoryPattern::parse(pattern)?;
     // Validate with globset even when SQL owns matching, so invalid patterns fail
     // the same way as before.
@@ -290,40 +357,6 @@ fn sql_glob_patterns(pattern: &str) -> Option<(String, Option<String>)> {
         return Some((format!("{left}/{right}"), Some(format!("{left}/*/{right}"))));
     }
     None
-}
-
-fn validate_files_input(request: &FilesRequest) -> Result<()> {
-    validate_optional_input(request.path.as_deref(), "path", MAX_PATH_BYTES)?;
-    validate_optional_input(request.query.as_deref(), "query", MAX_QUERY_BYTES)?;
-    validate_optional_input(request.pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
-    match request.operation {
-        FileOperation::Tree => {
-            normalize_tree_root(request.path.as_deref())?;
-        }
-        FileOperation::Find => {
-            request
-                .query
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or(Error::InvalidInput {
-                    field: "query",
-                    reason: "is required for find",
-                })?;
-        }
-        FileOperation::Glob => {
-            let pattern = request
-                .pattern
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or(Error::InvalidInput {
-                    field: "pattern",
-                    reason: "is required for glob",
-                })?;
-            crate::repository::RepositoryPattern::parse(pattern)?;
-        }
-    }
-    validate_files_cursor(request.cursor.as_deref(), &request.operation)?;
-    Ok(())
 }
 
 fn for_each_file_path(
@@ -427,24 +460,6 @@ fn decode_files_cursor(
     Ok(Some((cursor_generation, cursor)))
 }
 
-fn validate_files_cursor(cursor: Option<&str>, operation: &FileOperation) -> Result<()> {
-    decode_files_cursor(cursor, operation).map(drop)
-}
-
-fn parse_files_cursor(
-    cursor: Option<&str>,
-    generation: u64,
-    operation: &FileOperation,
-) -> Result<Option<FileCursor>> {
-    let Some((cursor_generation, cursor)) = decode_files_cursor(cursor, operation)? else {
-        return Ok(None);
-    };
-    if cursor_generation != generation {
-        return Err(Error::StaleCursor);
-    }
-    Ok(Some(cursor))
-}
-
 fn hex_encode(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(value.len().saturating_mul(2));
@@ -477,6 +492,26 @@ fn hex_nibble(value: u8) -> Result<u8> {
         b'a'..=b'f' => Ok(value - b'a' + 10),
         _ => Err(Error::StaleCursor),
     }
+}
+
+fn files_page(
+    input: &FilesInput,
+    session: &IndexReadSnapshot,
+    limit: usize,
+    cancellation: &CancellationToken,
+) -> Result<(FilePage, FileOperation)> {
+    let cursor = input.cursor(session.generation())?;
+    let operation = input.query.operation();
+    let page = match &input.query {
+        FilesQuery::Tree { root, depth } => {
+            tree_entries(session, root, *depth, cursor, limit, cancellation)?
+        }
+        FilesQuery::Find { query } => fuzzy_entries(session, query, cursor, limit, cancellation)?,
+        FilesQuery::Glob { pattern } => {
+            glob_entries(session, pattern, cursor, limit, cancellation)?
+        }
+    };
+    Ok((page, operation))
 }
 
 impl Services {
@@ -586,9 +621,10 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, check_cancelled(&cancellation))?;
+        let input = self.observe_service_result(operation, FilesInput::parse(request))?;
+        let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, validate_files_input(&request))?;
-            self.observe_service_result(operation, self.result_limit(request.max_results))?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -602,7 +638,7 @@ impl Services {
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.files_paths_sync(request, options, cancellation)
+                this.files_paths_sync(input, limit, options, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -620,9 +656,10 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        self.observe_service_result(operation, check_cancelled(&cancellation))?;
+        let input = self.observe_service_result(operation, FilesInput::parse(request))?;
+        let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, validate_files_input(&request))?;
-            self.observe_service_result(operation, self.result_limit(request.max_results))?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -636,7 +673,7 @@ impl Services {
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.files_sync(request, options, cancellation)
+                this.files_sync(input, limit, options, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -644,42 +681,15 @@ impl Services {
 
     fn files_sync(
         &self,
-        request: FilesRequest,
+        input: FilesInput,
+        limit: usize,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<FilesResponse> {
         check_cancelled(cancellation)?;
-        validate_files_input(&request)?;
-        let limit = self.result_limit(request.max_results)?;
         let mut response = self.consistent(|session| {
+            let (page, operation) = files_page(&input, session, limit, cancellation)?;
             let generation = session.generation();
-            let cursor =
-                parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
-            let operation = request.operation.clone();
-            let page = match request.operation {
-                FileOperation::Tree => tree_entries(
-                    session,
-                    request.path.as_deref(),
-                    request.depth,
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-                FileOperation::Find => fuzzy_entries(
-                    session,
-                    request.query.as_deref(),
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-                FileOperation::Glob => glob_entries(
-                    session,
-                    request.pattern.as_deref(),
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-            };
             let mut response = FilesResponse {
                 entries: page.entries,
                 meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
@@ -694,42 +704,15 @@ impl Services {
 
     fn files_paths_sync(
         &self,
-        request: FilesRequest,
+        input: FilesInput,
+        limit: usize,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<FilesPathsResponse> {
         check_cancelled(cancellation)?;
-        validate_files_input(&request)?;
-        let limit = self.result_limit(request.max_results)?;
         let mut response = self.consistent(|session| {
+            let (page, operation) = files_page(&input, session, limit, cancellation)?;
             let generation = session.generation();
-            let cursor =
-                parse_files_cursor(request.cursor.as_deref(), generation, &request.operation)?;
-            let operation = request.operation.clone();
-            let page = match request.operation {
-                FileOperation::Tree => tree_entries(
-                    session,
-                    request.path.as_deref(),
-                    request.depth,
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-                FileOperation::Find => fuzzy_entries(
-                    session,
-                    request.query.as_deref(),
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-                FileOperation::Glob => glob_entries(
-                    session,
-                    request.pattern.as_deref(),
-                    cursor,
-                    limit,
-                    cancellation,
-                )?,
-            };
             let entries = page.entries;
             let mut response = FilesPathsResponse {
                 paths: entries.iter().map(|entry| entry.path.clone()).collect(),

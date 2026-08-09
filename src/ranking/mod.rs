@@ -24,14 +24,50 @@ use std::path::Path;
 use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, default_context_exclude_paths};
 use crate::model::{
     ContextCoverageReceipt, ContextFocusCapacityBlocker, ContextFocusPathCoverage,
-    ContextFocusPathDiagnostics, ContextFocusSuppression, ContextFocusSuppressionBoundary,
-    ContextFragment, ContextOmissionFacet, ContextOmissionSummary, ContextPlanCandidate,
-    ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest, ContextRequiredEvidenceCoverage,
-    ContextResponse, ContextResponseProfile, EvidenceReceipt, Freshness, OmittedCandidate,
-    ResponseMeta,
+    ContextFocusPathDiagnostics, ContextFocusPolicy, ContextFocusSuppression,
+    ContextFocusSuppressionBoundary, ContextFragment, ContextOmissionFacet, ContextOmissionSummary,
+    ContextPlanCandidate, ContextPlanFocusCoverage, ContextQueryPlan, ContextRequest,
+    ContextRequiredEvidenceCoverage, ContextResponse, ContextResponseProfile, EvidenceReceipt,
+    Freshness, OmittedCandidate, ResponseMeta,
 };
 use crate::services::validation::{PathMatcher, path_matches};
 use crate::tokens;
+
+#[derive(Clone, Copy)]
+pub(in crate::ranking) struct ContextSelectionPolicy {
+    output: ContextSelectionOutput,
+    focus: ContextFocusPolicy,
+}
+
+#[derive(Clone, Copy)]
+enum ContextSelectionOutput {
+    Plan,
+    Fragments,
+}
+
+impl ContextSelectionPolicy {
+    fn parse(request: &ContextRequest) -> Self {
+        let output = if request.plan_only {
+            ContextSelectionOutput::Plan
+        } else {
+            ContextSelectionOutput::Fragments
+        };
+        let focus = ContextFocusPolicy::parse(request);
+        Self { output, focus }
+    }
+
+    const fn is_plan(self) -> bool {
+        matches!(self.output, ContextSelectionOutput::Plan)
+    }
+
+    const fn strict_focus(self) -> bool {
+        self.focus.is_strict()
+    }
+
+    const fn focus_minimum(self) -> Option<usize> {
+        self.focus.minimum_fragments()
+    }
+}
 
 mod candidate;
 mod coverage;
@@ -45,7 +81,7 @@ mod response;
 mod scored;
 mod selection;
 
-pub use candidate::{Candidate, Weights};
+pub use candidate::{Candidate, CandidateTargetRange, Weights};
 use coverage::*;
 pub use dedup::deduplicate;
 pub(crate) use dedup::deduplicate_with_options;

@@ -4,8 +4,7 @@ use notify::event::RenameMode;
 #[test]
 fn paired_rename_event_coalesces_both_paths() {
     let root = tempfile::tempdir().unwrap();
-    let mut pending = BTreeSet::new();
-    let mut reconcile = false;
+    let mut pending = PendingReconciliation::empty();
     let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
         .add_path(root.path().join("a.txt"))
         .add_path(root.path().join("b.txt"));
@@ -15,14 +14,9 @@ fn paired_rename_event_coalesces_both_paths() {
         root.path(),
         &DiscoveryPolicy::default(),
         &mut pending,
-        &mut reconcile,
     );
 
-    assert!(reconcile);
-    assert!(
-        pending.is_empty(),
-        "unknown renames trigger bounded reconciliation instead of queuing stale paths"
-    );
+    assert!(pending.is_full());
 }
 
 #[test]
@@ -110,19 +104,16 @@ fn rename_shapes_with_missing_endpoints_fail_closed_to_reconciliation() {
             raw_event_is_relevant(&Ok(event.clone()), root.path(), &DiscoveryPolicy::default()),
             "{platform} rename must be admitted even when an endpoint is missing"
         );
-        let mut pending = BTreeSet::new();
-        let mut reconcile = false;
+        let mut pending = PendingReconciliation::empty();
         process_raw_event(
             Ok(event),
             root.path(),
             &DiscoveryPolicy::default(),
             &mut pending,
-            &mut reconcile,
         );
-        assert!(reconcile, "{platform} rename must request reconciliation");
         assert!(
-            pending.is_empty(),
-            "{platform} rename must not queue stale paths"
+            pending.is_full(),
+            "{platform} rename must request full reconciliation without stale paths"
         );
     }
 }
@@ -132,19 +123,16 @@ fn generated_directory_rename_cannot_bypass_process_reconciliation() {
     let root = tempfile::tempdir().unwrap();
     let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
         .add_path(root.path().join("node_modules/pkg/new.js"));
-    let mut pending = BTreeSet::new();
-    let mut reconcile = false;
+    let mut pending = PendingReconciliation::empty();
 
     process_raw_event(
         Ok(event),
         root.path(),
         &DiscoveryPolicy::default(),
         &mut pending,
-        &mut reconcile,
     );
 
-    assert!(reconcile);
-    assert!(pending.is_empty());
+    assert!(pending.is_full());
 }
 
 #[test]
@@ -187,8 +175,7 @@ fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
         &policy,
     ));
 
-    let mut pending = BTreeSet::new();
-    let mut reconcile = false;
+    let mut pending = PendingReconciliation::empty();
     process_raw_event(
         Ok(
             Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
@@ -198,13 +185,11 @@ fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
         root.path(),
         &policy,
         &mut pending,
-        &mut reconcile,
     );
     assert!(
-        reconcile,
+        pending.is_full(),
         "cross-scope rename requires a full scoped reconciliation"
     );
-    assert!(pending.is_empty());
 }
 
 #[test]
@@ -218,14 +203,14 @@ fn watch_count_includes_ignored_and_generated_directories() {
     let complete = inspect_watch_admission(root.path(), 100, 100, &cancellation);
     assert_eq!(complete.entries, 6);
     assert_eq!(complete.directories, 5);
-    assert!(complete.complete);
-    assert_eq!(complete.fallback_reason, None);
+    assert!(complete.complete());
+    assert_eq!(complete.fallback_reason(), None);
 
     let directory_limited = inspect_watch_admission(root.path(), 2, 100, &cancellation);
     assert_eq!(directory_limited.directories, 3);
-    assert!(!directory_limited.complete);
+    assert!(!directory_limited.complete());
     assert_eq!(
-        directory_limited.fallback_reason,
+        directory_limited.fallback_reason(),
         Some(WatcherFallbackReason::AdmissionDirectoryLimit)
     );
 }
@@ -239,18 +224,18 @@ fn watch_admission_is_bounded_by_entries_and_cancellation() {
     let cancellation = CancellationToken::new();
     let entry_limited = inspect_watch_admission(root.path(), 100, 4, &cancellation);
     assert_eq!(entry_limited.entries, 4);
-    assert!(!entry_limited.complete);
+    assert!(!entry_limited.complete());
     assert_eq!(
-        entry_limited.fallback_reason,
+        entry_limited.fallback_reason(),
         Some(WatcherFallbackReason::AdmissionEntryLimit)
     );
 
     cancellation.cancel();
     let cancelled = inspect_watch_admission(root.path(), 100, 100, &cancellation);
     assert_eq!(cancelled.entries, 0);
-    assert!(!cancelled.complete);
+    assert!(!cancelled.complete());
     assert_eq!(
-        cancelled.fallback_reason,
+        cancelled.fallback_reason(),
         Some(WatcherFallbackReason::AdmissionCancelled)
     );
 }
@@ -262,20 +247,18 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
         paths: vec!["occupied.txt".into()],
     })
     .unwrap();
-    let mut pending = BTreeSet::from(["changed.txt".to_string()]);
-    let mut reconcile = false;
+    let mut pending = PendingReconciliation::Paths(BTreeSet::from(["changed.txt".to_string()]));
     let counters = WatcherCounters::default();
 
-    assert!(flush(&mut pending, &mut reconcile, &tx, &counters,));
-    assert!(pending.is_empty());
-    assert!(reconcile);
+    assert!(flush(&mut pending, &tx, &counters,));
+    assert!(pending.is_full());
 
     assert!(matches!(
         rx.try_recv(),
         Ok(WatcherMessage::Changed { paths }) if paths == ["occupied.txt"]
     ));
-    assert!(flush(&mut pending, &mut reconcile, &tx, &counters,));
-    assert!(!reconcile);
+    assert!(flush(&mut pending, &tx, &counters,));
+    assert!(pending.is_empty());
     assert_eq!(
         counters
             .full_reconciliation_deliveries
@@ -290,16 +273,18 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
 
 #[test]
 fn retained_path_state_overflow_becomes_one_sticky_reconciliation() {
-    let mut pending = BTreeSet::from(["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()]);
-    let mut reconcile = false;
+    let mut pending = PendingReconciliation::Paths(BTreeSet::from([
+        "a.rs".to_string(),
+        "b.rs".to_string(),
+        "c.rs".to_string(),
+    ]));
     pending.insert("old.rs".into());
 
-    bound_pending_state(&mut pending, &mut reconcile, 3);
+    bound_pending_state(&mut pending, 3);
 
-    assert!(reconcile);
-    assert!(pending.is_empty());
+    assert!(pending.is_full());
 
     pending.insert("later.rs".into());
-    bound_pending_state(&mut pending, &mut reconcile, 3);
-    assert!(pending.is_empty());
+    bound_pending_state(&mut pending, 3);
+    assert!(pending.is_full());
 }

@@ -5,6 +5,101 @@ pub(super) struct ContextSignals {
     pub(super) caller: bool,
 }
 
+pub(super) struct ContextPolicy {
+    delivery: ContextDelivery,
+    focus: ContextFocusPolicy,
+}
+
+enum ContextDelivery {
+    Plan,
+    Fragments {
+        receipt_id: Option<String>,
+        handoff: Option<HandoffManifestRequest>,
+    },
+}
+
+impl ContextPolicy {
+    pub(super) fn parse(
+        request: &ContextRequest,
+        handoff: Option<HandoffManifestRequest>,
+    ) -> Result<Self> {
+        let mut violations = Vec::with_capacity(3);
+        if (request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some())
+            && request.focus_paths.is_empty()
+        {
+            violations.push(crate::InputViolation::new(
+                "focus paths",
+                "must not be empty when focus path constraints are enabled",
+            ));
+        }
+        if request.plan_only && request.receipt_id.is_some() {
+            violations.push(crate::InputViolation::new(
+                "receipt_id",
+                "must be omitted when plan_only is true",
+            ));
+        }
+        if request.plan_only && handoff.is_some() {
+            violations.push(crate::InputViolation::new(
+                "plan_only",
+                "cannot be combined with a handoff manifest",
+            ));
+        }
+        match violations.len() {
+            0 => {}
+            1 => {
+                let violation = violations[0];
+                return Err(Error::InvalidInput {
+                    field: violation.field,
+                    reason: violation.reason,
+                });
+            }
+            _ => {
+                return Err(Error::InvalidInputConstraints(crate::InputViolations::new(
+                    violations,
+                )));
+            }
+        }
+
+        let handoff = handoff.map(handoff::parse_request).transpose()?;
+        let delivery = if request.plan_only {
+            ContextDelivery::Plan
+        } else {
+            ContextDelivery::Fragments {
+                receipt_id: request.receipt_id.clone(),
+                handoff,
+            }
+        };
+        let focus = ContextFocusPolicy::parse(request);
+        Ok(Self { delivery, focus })
+    }
+
+    pub(super) const fn is_plan(&self) -> bool {
+        matches!(self.delivery, ContextDelivery::Plan)
+    }
+
+    pub(super) const fn focus(&self) -> ContextFocusPolicy {
+        self.focus
+    }
+
+    pub(super) const fn focus_minimum(&self) -> Option<usize> {
+        self.focus.minimum_fragments()
+    }
+
+    pub(super) fn receipt_id(&self) -> Option<&str> {
+        match &self.delivery {
+            ContextDelivery::Plan => None,
+            ContextDelivery::Fragments { receipt_id, .. } => receipt_id.as_deref(),
+        }
+    }
+
+    pub(super) fn handoff(&self) -> Option<&HandoffManifestRequest> {
+        match &self.delivery {
+            ContextDelivery::Plan => None,
+            ContextDelivery::Fragments { handoff, .. } => handoff.as_ref(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct CandidateBatch {
     pub(super) candidates: Vec<Candidate>,
@@ -32,9 +127,10 @@ pub(super) struct ContextFinalization<'a> {
     pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) scoped_request: &'a ContextRequest,
-    pub(super) handoff: Option<&'a HandoffManifestRequest>,
+    pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
     pub(super) response_profile: ContextResponseProfile,
+    pub(super) immutable_diff_scope: bool,
     pub(super) cancellation: &'a CancellationToken,
     pub(super) diagnostics: CandidateDiagnostics,
     pub(super) generation: u64,

@@ -6,7 +6,8 @@ pub(super) fn edit_toml_config(
     path: &Path,
     launcher: &McpLauncher,
 ) -> Result<EditStatus> {
-    let (status, original, updated) = resolve_toml_edit(operation, path, launcher)?;
+    let resolution = resolve_toml_edit(operation, path, launcher)?;
+    let status = resolution.status();
     let edit = PlannedClientEdit {
         public: ClientSetupPlan {
             client: SetupClient::Codex,
@@ -14,9 +15,7 @@ pub(super) fn edit_toml_config(
             action: ClientPlanAction::Update,
             detected: false,
         },
-        status,
-        original,
-        updated,
+        resolution,
     };
     apply_edit(&edit)?;
     Ok(status)
@@ -27,7 +26,7 @@ pub(super) fn resolve_toml_edit(
     operation: SetupOperation,
     path: &Path,
     launcher: &McpLauncher,
-) -> Result<(EditStatus, Option<String>, Option<String>)> {
+) -> Result<ResolvedEdit> {
     let original = read_optional(path)?;
     resolve_toml_edit_from_source(operation, path, launcher, original)
 }
@@ -37,7 +36,7 @@ pub(super) fn resolve_toml_edit_from_source(
     path: &Path,
     launcher: &McpLauncher,
     original: Option<String>,
-) -> Result<(EditStatus, Option<String>, Option<String>)> {
+) -> Result<ResolvedEdit> {
     let source = original.clone().unwrap_or_default();
     let mut document = if source.trim().is_empty() {
         DocumentMut::new()
@@ -47,14 +46,14 @@ pub(super) fn resolve_toml_edit_from_source(
             .map_err(|error| invalid_config(path, error))?
     };
 
-    let status = match operation {
+    match operation {
         SetupOperation::Setup => {
             let command = launcher.command()?;
             let servers = ensure_toml_table(&mut document, "mcp_servers", path)?;
             if let Some(existing) = servers.get(SERVER_NAME)
                 && toml_entry_matches(existing, command, &launcher.args)
             {
-                return Ok((EditStatus::AlreadyConfigured, original, None));
+                return Ok(ResolvedEdit::AlreadyConfigured { original });
             }
             let existed = servers.contains_key(SERVER_NAME);
             let mut server = Table::new();
@@ -67,30 +66,39 @@ pub(super) fn resolve_toml_edit_from_source(
             server["args"] = value(args);
             server["startup_timeout_sec"] = value(CODEX_STARTUP_TIMEOUT_SECONDS as i64);
             servers.insert(SERVER_NAME, Item::Table(server));
+            let updated = document.to_string();
             if existed {
-                EditStatus::Updated
+                Ok(ResolvedEdit::Updated { original, updated })
             } else {
-                EditStatus::Configured
+                Ok(ResolvedEdit::Configured { original, updated })
             }
         }
         SetupOperation::Remove => {
+            let Some(original) = original else {
+                return Ok(ResolvedEdit::NotConfigured { original: None });
+            };
             let Some(servers_item) = document.get_mut("mcp_servers") else {
-                return Ok((EditStatus::NotConfigured, original, None));
+                return Ok(ResolvedEdit::NotConfigured {
+                    original: Some(original),
+                });
             };
             let servers = servers_item
                 .as_table_mut()
                 .ok_or_else(|| invalid_config(path, "mcp_servers must be a table"))?;
             if servers.remove(SERVER_NAME).is_none() {
-                return Ok((EditStatus::NotConfigured, original, None));
+                return Ok(ResolvedEdit::NotConfigured {
+                    original: Some(original),
+                });
             }
             if servers.is_empty() {
                 document.remove("mcp_servers");
             }
-            EditStatus::Removed
+            Ok(ResolvedEdit::Removed {
+                original,
+                updated: document.to_string(),
+            })
         }
-    };
-
-    Ok((status, original, Some(document.to_string())))
+    }
 }
 
 pub(super) fn ensure_toml_table<'a>(

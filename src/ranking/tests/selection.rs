@@ -73,7 +73,7 @@ fn context_honors_caller_fragment_limit_above_the_default() {
 fn must_cover_candidate_precedes_higher_scored_general_evidence() {
     let required = Candidate::new("src/required.rs", 1, 1, "required")
         .symbol_name("required_symbol")
-        .target_range(1, 1)
+        .target_range(CandidateTargetRange::new(1, 1).unwrap())
         .exact(0.1);
     let general = Candidate::new("src/general.rs", 1, 1, "general").exact(10.0);
     let mut request = request_with_budget(100);
@@ -155,7 +155,7 @@ fn uncovered_must_cover_requirements_are_explicit() {
 fn known_hash_satisfies_must_cover_without_resending_source() {
     let required = Candidate::new("src/required.rs", 1, 1, "required")
         .symbol_name("required_symbol")
-        .target_range(1, 1)
+        .target_range(CandidateTargetRange::new(1, 1).unwrap())
         .exact(1.0);
     let known_hash = required.content_hash();
     let mut request = request_with_budget(100);
@@ -197,6 +197,23 @@ fn focus_diagnostics_explain_soft_production_displacement() {
     // the default minimum is 0, so 0 selected fragments is satisfied and no
     // suppression diagnostics are generated.
     assert!(coverage.satisfied);
+}
+
+#[test]
+fn public_ranking_api_treats_malformed_focus_patterns_as_empty_matchers() {
+    let candidate = Candidate::new("src/owner.rs", 1, 2, "production evidence").exact(1.0);
+    let mut request = request_focused(100, "[");
+    request.explain_diagnostics = true;
+    request.plan_only = true;
+
+    let response = select(vec![candidate], &request, 1);
+
+    let coverage = &response.coverage.focus_path_coverage[0];
+    assert_eq!(coverage.pattern, "[");
+    assert_eq!(coverage.selected_fragments, 0);
+    let plan = response.plan.expect("plan-only response");
+    assert_eq!(plan.focus_coverage[0].pattern, "[");
+    assert_eq!(plan.focus_coverage[0].candidate_fragments, 0);
 }
 
 #[test]
@@ -314,7 +331,7 @@ fn focus_diagnostics_distinguish_hash_token_and_dedup_suppression() {
 fn partial_required_symbol_is_selected_but_not_reported_as_complete() {
     let required = Candidate::new("src/required.rs", 10, 20, "partial definition")
         .symbol_name("required_symbol")
-        .target_range(10, 40)
+        .target_range(CandidateTargetRange::new(10, 40).unwrap())
         .exact(1.0);
     let mut request = request_with_budget(100);
     request.must_include_symbols = vec!["required_symbol".into()];
@@ -341,7 +358,7 @@ fn dedup_preserves_required_symbol_target_metadata() {
     let required = Candidate::new("src/required.rs", 10, 20, "same excerpt")
         .representation("required_symbol")
         .symbol_name("required_symbol")
-        .target_range(10, 40)
+        .target_range(CandidateTargetRange::new(10, 40).unwrap())
         .exact(1.0);
     let mut request = request_with_budget(100);
     request.must_include_symbols = vec!["required_symbol".into()];

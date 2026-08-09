@@ -1,20 +1,30 @@
+pub(super) struct DiffEvidenceInput<'a> {
+    pub(super) session: &'a IndexReadSnapshot,
+    pub(super) request: &'a ContextRequest,
+    pub(super) scope: &'a DiffScopeReceipt,
+    pub(super) workflow: ContextWorkflow,
+    pub(super) policy: &'a ContextPolicy,
+    pub(super) immutable_range: bool,
+    pub(super) cancellation: &'a CancellationToken,
+}
+
 impl Services {
     pub(super) fn build_diff_evidence(
         &self,
-        session: &IndexReadSnapshot,
-        request: &ContextRequest,
-        scope: &DiffScopeReceipt,
-        workflow: ContextWorkflow,
-        cancellation: &CancellationToken,
+        input: DiffEvidenceInput<'_>,
     ) -> Result<DiffEvidenceReceipt> {
+        let DiffEvidenceInput {
+            session,
+            request,
+            scope,
+            workflow,
+            policy,
+            immutable_range,
+            cancellation,
+        } = input;
         let mut changed_symbols = Vec::new();
         let mut relationships = BTreeSet::new();
         let mut gaps = Vec::new();
-        let immutable_range = request
-            .base_revision
-            .as_deref()
-            .and_then(|revision| parse_revision_range(revision).ok().flatten())
-            .is_some();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
             let head_revision = if immutable_range {
                 Some(scope.head_revision.as_deref().ok_or_else(|| {
@@ -152,7 +162,7 @@ impl Services {
             gaps.push("owner_test_scan_truncated".into());
         }
 
-        let semantic_change = if workflow == ContextWorkflow::Review && !request.plan_only {
+        let semantic_change = if workflow == ContextWorkflow::Review && !policy.is_plan() {
             let semantic_paths = scoped_paths
                 .iter()
                 .map(|path| (*path).clone())

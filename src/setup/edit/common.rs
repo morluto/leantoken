@@ -25,6 +25,81 @@ impl fmt::Display for EditStatus {
     }
 }
 
+impl From<EditStatus> for ClientSetupOutcome {
+    fn from(status: EditStatus) -> Self {
+        match status {
+            EditStatus::Configured => Self::Configured,
+            EditStatus::Updated => Self::Updated,
+            EditStatus::AlreadyConfigured => Self::AlreadyConfigured,
+            EditStatus::Removed => Self::Removed,
+            EditStatus::NotConfigured => Self::NotConfigured,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum ResolvedEdit {
+    Configured {
+        original: Option<String>,
+        updated: String,
+    },
+    Updated {
+        original: Option<String>,
+        updated: String,
+    },
+    AlreadyConfigured {
+        original: Option<String>,
+    },
+    Removed {
+        original: String,
+        updated: String,
+    },
+    NotConfigured {
+        original: Option<String>,
+    },
+}
+
+impl ResolvedEdit {
+    pub(super) const fn status(&self) -> EditStatus {
+        match self {
+            Self::Configured { .. } => EditStatus::Configured,
+            Self::Updated { .. } => EditStatus::Updated,
+            Self::AlreadyConfigured { .. } => EditStatus::AlreadyConfigured,
+            Self::Removed { .. } => EditStatus::Removed,
+            Self::NotConfigured { .. } => EditStatus::NotConfigured,
+        }
+    }
+
+    pub(super) fn original(&self) -> Option<&str> {
+        match self {
+            Self::Configured { original, .. }
+            | Self::Updated { original, .. }
+            | Self::AlreadyConfigured { original }
+            | Self::NotConfigured { original } => original.as_deref(),
+            Self::Removed { original, .. } => Some(original),
+        }
+    }
+
+    pub(super) fn updated(&self) -> Option<&str> {
+        match self {
+            Self::Configured { updated, .. }
+            | Self::Updated { updated, .. }
+            | Self::Removed { updated, .. } => Some(updated),
+            Self::AlreadyConfigured { .. } | Self::NotConfigured { .. } => None,
+        }
+    }
+
+    pub(super) const fn action(&self) -> ClientPlanAction {
+        match self {
+            Self::Configured { original: None, .. } => ClientPlanAction::Create,
+            Self::Configured { .. } | Self::Updated { .. } => ClientPlanAction::Update,
+            Self::AlreadyConfigured { .. } => ClientPlanAction::AlreadyCurrent,
+            Self::Removed { .. } => ClientPlanAction::Remove,
+            Self::NotConfigured { .. } => ClientPlanAction::NotConfigured,
+        }
+    }
+}
+
 pub(super) fn read_optional(path: &Path) -> Result<Option<String>> {
     read_optional_with_limit(path, MAX_SETUP_FILE_BYTES)
 }

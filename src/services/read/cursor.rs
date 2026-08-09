@@ -95,12 +95,11 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     Ok(cursor)
 }
 
-pub(super) fn parse_read_cursor(cursor: &str, generation: u64, path: &str) -> Result<ReadCursor> {
-    let cursor = decode_read_cursor(cursor)?;
+pub(super) fn validate_read_cursor(cursor: &ReadCursor, generation: u64, path: &str) -> Result<()> {
     if cursor.generation != generation || cursor.path_hash != read_path_hash(path) {
         return Err(Error::StaleCursor);
     }
-    Ok(cursor)
+    Ok(())
 }
 
 pub(super) fn read_path_hash(path: &str) -> String {

@@ -39,6 +39,7 @@ pub(crate) use constants::{
 };
 use constraint_types::*;
 use diagnostics::*;
+use diff_evidence::DiffEvidenceInput;
 use pipeline::*;
 use scope_helpers::*;
 use validation::*;
@@ -59,7 +60,7 @@ pub(super) use super::validation::{
 };
 pub(super) use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 pub(super) use crate::model::*;
-pub(super) use crate::ranking::{self, Candidate};
+pub(super) use crate::ranking::{self, Candidate, CandidateTargetRange};
 pub(super) use crate::repository::{
     git_branch_name, git_diff_hunks_scoped, git_diff_identity, git_diff_paths,
     git_diff_paths_between, git_head_revision, git_working_tree_status, normalize_relative,

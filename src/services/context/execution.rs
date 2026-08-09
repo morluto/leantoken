@@ -1,7 +1,15 @@
 pub(super) struct ContextSyncRequest<'a> {
-    pub request: ContextRequest,
-    pub context: ContextExecution,
+    pub parsed: ParsedContextRequest,
     pub retrieval: ContextRetrieval<'a>,
+}
+
+pub(super) struct ParsedContextRequest {
+    pub(super) request: ContextRequest,
+    policy: ContextPolicy,
+    workflow: ContextWorkflow,
+    workflow_evidence: WorkflowEvidence,
+    response_profile: ContextResponseProfile,
+    revision: Option<ContextRevision>,
 }
 
 pub(super) struct ContextRetrieval<'a> {
@@ -14,8 +22,11 @@ pub(super) struct ContextRetrieval<'a> {
 struct PreparedContext {
     request: ContextRequest,
     scoped_request: ContextRequest,
-    context: ContextExecution,
+    policy: ContextPolicy,
+    workflow: ContextWorkflow,
+    workflow_evidence: WorkflowEvidence,
     response_profile: ContextResponseProfile,
+    immutable_diff_scope: bool,
     diff_scope: Option<DiffScopeReceipt>,
     changed_paths: HashSet<String>,
     working_tree_state: HandoffWorkingTreeState,
@@ -26,42 +37,66 @@ struct PreparedContext {
 }
 
 impl Services {
+    pub(super) fn parse_context_input(
+        &self,
+        mut request: ContextRequest,
+        mut context: ContextExecution,
+        options: ServiceCallOptions,
+    ) -> Result<ParsedContextRequest> {
+        self.validate_call_options(options)?;
+        let response_profile = response::effective_context_response_profile(&request, options)?;
+        request.explain_diagnostics = response_profile == ContextResponseProfile::Explain;
+        let policy = self.validate_context_request(&request, context.handoff.take())?;
+        for path in &mut request.changed_paths {
+            validate_input(path, "changed path", MAX_PATH_BYTES)?;
+            *path = normalize_relative(path)?;
+        }
+        let revision = parse_context_revision(request.base_revision.as_deref())?;
+        self.validate_workflow_evidence(&context.workflow_evidence)?;
+        Ok(ParsedContextRequest {
+            request,
+            policy,
+            workflow: context.workflow,
+            workflow_evidence: context.workflow_evidence,
+            response_profile,
+            revision,
+        })
+    }
+
     fn prepare_context<'a>(
         &self,
         input: ContextSyncRequest<'a>,
     ) -> Result<(PreparedContext, ContextRetrieval<'a>)> {
-        let ContextSyncRequest {
-            mut request,
-            context,
-            retrieval,
-        } = input;
+        let ContextSyncRequest { parsed, retrieval } = input;
+        let ParsedContextRequest {
+            request,
+            policy,
+            workflow,
+            workflow_evidence,
+            response_profile,
+            revision,
+        } = parsed;
         check_cancelled(retrieval.cancellation)?;
-        self.validate_call_options(retrieval.options)?;
-        let response_profile =
-            response::effective_context_response_profile(&request, retrieval.options)?;
-        request.explain_diagnostics = response_profile == ContextResponseProfile::Explain;
-        self.validate_context_request(&request, context.handoff.as_ref())?;
-        self.validate_workflow_evidence(&context.workflow_evidence)?;
-        request.changed_paths = request
-            .changed_paths
-            .iter()
-            .map(|path| normalize_relative(path))
-            .collect::<Result<Vec<_>>>()?;
-        let (
+        let DiffScopeResolution {
             diff_scope,
-            mut changed_paths,
-            working_tree_state_available,
-            working_tree_modified,
-            working_tree_untracked,
-        ) = self.resolve_diff_scope(&request)?;
-        let working_tree_state = if !working_tree_state_available {
+            working_tree,
+        } = self.resolve_diff_scope(&request, revision.as_ref())?;
+        let immutable_diff_scope = revision.as_ref().is_some_and(ContextRevision::is_range);
+        let working_tree_state = if !working_tree.is_available() {
             HandoffWorkingTreeState::Unknown
-        } else if changed_paths.is_empty() {
+        } else if working_tree.changed_paths.is_empty() {
             HandoffWorkingTreeState::Clean
         } else {
             HandoffWorkingTreeState::Dirty
         };
-        let working_tree_paths = changed_paths.iter().cloned().collect::<Vec<_>>();
+        let working_tree_modified = working_tree.has_modified();
+        let working_tree_untracked = working_tree.has_untracked();
+        let working_tree_paths = working_tree
+            .changed_paths
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut changed_paths = working_tree.changed_paths;
         let mut scoped_request = request.clone();
         if let Some(scope) = &diff_scope {
             scoped_request.changed_paths = scope.changed_paths.clone();
@@ -74,8 +109,11 @@ impl Services {
             PreparedContext {
                 request,
                 scoped_request,
-                context,
+                policy,
+                workflow,
+                workflow_evidence,
                 response_profile,
+                immutable_diff_scope,
                 diff_scope,
                 changed_paths,
                 working_tree_state,
@@ -96,8 +134,11 @@ impl Services {
         let PreparedContext {
             request,
             scoped_request,
-            context,
+            policy,
+            workflow,
+            workflow_evidence,
             response_profile,
+            immutable_diff_scope,
             diff_scope,
             changed_paths,
             working_tree_state,
@@ -106,11 +147,6 @@ impl Services {
             working_tree_untracked,
             path_filter,
         } = prepared;
-        let ContextExecution {
-            workflow,
-            handoff,
-            workflow_evidence,
-        } = context;
         let ContextRetrieval {
             options,
             cancellation,
@@ -157,6 +193,7 @@ impl Services {
                     queries: &queries,
                     path_scorer: &path_scorer,
                     cancellation,
+                    focus: policy.focus(),
                 },
                 &mut batch.candidates,
                 &mut phases,
@@ -170,6 +207,7 @@ impl Services {
                     path_scorer: &path_scorer,
                     resolutions: &constraint_expansion.focus_paths,
                     cancellation,
+                    focus: policy.focus(),
                 },
                 &mut batch.candidates,
                 &mut phases,
@@ -256,9 +294,10 @@ impl Services {
                     session,
                     request: &request,
                     scoped_request: &scoped_request,
-                    handoff: handoff.as_ref(),
+                    policy: &policy,
                     options,
                     response_profile,
+                    immutable_diff_scope,
                     cancellation,
                     diagnostics,
                     generation,
@@ -277,4 +316,5 @@ impl Services {
         })
     }
 }
+use super::scope::DiffScopeResolution;
 use super::*;

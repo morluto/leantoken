@@ -3,46 +3,63 @@ use crate::coordination::COORDINATION_LOCK_SUFFIXES;
 use cap_std::fs::Dir;
 use std::ffi::OsString;
 
-pub(super) fn validate_prune_request(
-    request: &CachePruneRequest,
-    incompatible_with_current: bool,
-) -> Result<()> {
-    if request.older_than_days.is_none()
-        && request.max_total_bytes.is_none()
-        && !request.remove_missing_roots
-        && !incompatible_with_current
-    {
-        return Err(Error::InvalidRequest(
-            "cache prune requires --older-than, --max-total-bytes, \
+pub(super) struct CachePrunePlan {
+    pub(super) older_than_days: Option<NonZeroU64>,
+    pub(super) max_total_bytes: Option<u64>,
+    pub(super) remove_missing_roots: bool,
+    pub(super) incompatible_with_current: bool,
+    pub(super) execution: MutationMode,
+}
+
+impl TryFrom<&CachePruneRequest> for CachePrunePlan {
+    type Error = Error;
+
+    fn try_from(request: &CachePruneRequest) -> Result<Self> {
+        let older_than_days = request
+            .older_than_days
+            .map(|days| {
+                NonZeroU64::new(days).ok_or_else(|| {
+                    Error::InvalidRequest("--older-than must be at least one day".into())
+                })
+            })
+            .transpose()?;
+        if older_than_days.is_none()
+            && request.max_total_bytes.is_none()
+            && !request.remove_missing_roots
+            && !request.incompatible_with_current
+        {
+            return Err(Error::InvalidRequest(
+                "cache prune requires --older-than, --max-total-bytes, \
              --remove-missing-roots, or --incompatible-with-current"
-                .into(),
-        ));
+                    .into(),
+            ));
+        }
+        let execution = MutationMode::parse(
+            request.dry_run,
+            request.yes,
+            "cache prune requires --yes unless --dry-run is used",
+        )?;
+        Ok(Self {
+            older_than_days,
+            max_total_bytes: request.max_total_bytes,
+            remove_missing_roots: request.remove_missing_roots,
+            incompatible_with_current: request.incompatible_with_current,
+            execution,
+        })
     }
-    if request.older_than_days == Some(0) {
-        return Err(Error::InvalidRequest(
-            "--older-than must be at least one day".into(),
-        ));
-    }
-    if !request.dry_run && !request.yes {
-        return Err(Error::InvalidRequest(
-            "cache prune requires --yes unless --dry-run is used".into(),
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn select_prune_candidates(
     entries: &[InspectedCache],
-    request: &CachePruneRequest,
+    plan: &CachePrunePlan,
     total_bytes: u64,
-    incompatible_with_current: bool,
 ) -> BTreeMap<String, Vec<String>> {
     let mut selected = BTreeMap::<String, Vec<String>>::new();
-    let minimum_age = request
+    let minimum_age = plan
         .older_than_days
-        .map(|days| days.saturating_mul(SECONDS_PER_DAY));
+        .map(|days| days.get().saturating_mul(SECONDS_PER_DAY));
     for cache in entries {
-        if incompatible_with_current && cache.compatibility.safely_incompatible() {
+        if plan.incompatible_with_current && cache.compatibility.safely_incompatible() {
             selected
                 .entry(cache.entry.id.clone())
                 .or_default()
@@ -58,7 +75,7 @@ pub(super) fn select_prune_candidates(
                 .or_default()
                 .push("older_than".into());
         }
-        if request.remove_missing_roots && cache.entry.repository_available == Some(false) {
+        if plan.remove_missing_roots && cache.entry.repository_available == Some(false) {
             selected
                 .entry(cache.entry.id.clone())
                 .or_default()
@@ -66,7 +83,7 @@ pub(super) fn select_prune_candidates(
         }
     }
 
-    let Some(max_total_bytes) = request.max_total_bytes else {
+    let Some(max_total_bytes) = plan.max_total_bytes else {
         return selected;
     };
     let mut projected = total_bytes;
@@ -103,27 +120,15 @@ pub(super) fn select_prune_candidates(
 
 pub(super) fn prune_result(
     cache: &InspectedCache,
-    action: CachePruneAction,
+    outcome: CachePruneOutcome,
     reasons: Vec<String>,
-    error: Option<String>,
 ) -> CachePruneResult {
-    let detail = match action {
-        CachePruneAction::SkippedActive => Some("cache lease is held by a running process".into()),
-        CachePruneAction::SkippedUnsafe => cache
-            .entry
-            .detail
-            .clone()
-            .or_else(|| Some("cache metadata is not safe to prune".into())),
-        _ => None,
-    };
     CachePruneResult {
         id: cache.entry.id.clone(),
         path: cache.entry.path.clone(),
-        action,
+        outcome,
         reasons,
         size_bytes: cache.entry.size_bytes,
-        detail,
-        error,
     }
 }
 

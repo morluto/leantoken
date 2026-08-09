@@ -196,8 +196,13 @@ pub struct PublicationDiagnostics {
 }
 
 pub(crate) struct DatabaseTriggerGuard<'connection> {
-    pub(crate) connection: &'connection Connection,
-    pub(crate) previous: Option<bool>,
+    connection: &'connection Connection,
+    state: DatabaseTriggerState,
+}
+
+enum DatabaseTriggerState {
+    Armed { triggers_were_enabled: bool },
+    Restored,
 }
 
 impl<'connection> DatabaseTriggerGuard<'connection> {
@@ -206,7 +211,9 @@ impl<'connection> DatabaseTriggerGuard<'connection> {
         connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
         Ok(Self {
             connection,
-            previous: Some(previous),
+            state: DatabaseTriggerState::Armed {
+                triggers_were_enabled: previous,
+            },
         })
     }
 
@@ -215,12 +222,15 @@ impl<'connection> DatabaseTriggerGuard<'connection> {
     }
 
     pub(crate) fn restore_inner(&mut self) -> rusqlite::Result<()> {
-        let Some(previous) = self.previous else {
-            return Ok(());
+        let previous = match self.state {
+            DatabaseTriggerState::Armed {
+                triggers_were_enabled,
+            } => triggers_were_enabled,
+            DatabaseTriggerState::Restored => return Ok(()),
         };
         self.connection
             .set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, previous)?;
-        self.previous = None;
+        self.state = DatabaseTriggerState::Restored;
         Ok(())
     }
 }

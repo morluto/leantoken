@@ -18,11 +18,11 @@ impl CacheManager {
                 ignored += 1;
                 continue;
             };
-            if !file_type.is_dir() || !is_cache_id(&id) {
+            let Some(identity) = parse_managed_cache_id(&id).filter(|_| file_type.is_dir()) else {
                 ignored += 1;
                 continue;
-            }
-            let cache = self.inspect_cache(&id, true)?;
+            };
+            let cache = self.inspect_managed_cache(&id, identity, true)?;
             if cache.entry.size_bytes == 0 && cache.entry.state == CacheState::Incomplete {
                 continue;
             }
@@ -32,17 +32,30 @@ impl CacheManager {
         Ok((entries, ignored))
     }
 
+    #[cfg(test)]
     pub(super) fn inspect_cache(&self, id: &str, probe_active: bool) -> Result<InspectedCache> {
+        let identity = parse_managed_cache_id(id).ok_or_else(|| Error::InvalidInput {
+            field: "cache id",
+            reason: "must be a managed cache identity",
+        })?;
+        self.inspect_managed_cache(id, identity, probe_active)
+    }
+
+    pub(super) fn inspect_managed_cache(
+        &self,
+        id: &str,
+        identity: ManagedCacheIdentity,
+        probe_active: bool,
+    ) -> Result<InspectedCache> {
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
-        let identity = parse_managed_cache_id(id).expect("validated managed cache identity");
-        let (index_content_version, index_scope_digest) = match identity {
+        let (index_content_version, index_scope_digest) = match &identity {
             ManagedCacheIdentity::Unversioned => (None, None),
             ManagedCacheIdentity::Versioned {
                 version,
                 scope_digest,
                 ..
-            } => (Some(version), scope_digest),
+            } => (Some(*version), scope_digest.clone()),
         };
         let initial_scan = scan_artifacts(&path)?;
         let latest_access_mtime = initial_scan.latest_access_mtime;
@@ -93,17 +106,17 @@ impl CacheManager {
                         entry.access_time_source = Some(AccessTimeSource::Database);
                         entry.age_seconds = Some(self.now.saturating_sub(accessed));
                     }
-                    entry.state = if metadata.future_schema {
-                        metadata_safe = false;
-                        entry.detail = Some("cache uses a newer unsupported schema".into());
-                        CacheState::Unsupported
-                    } else if metadata.current {
-                        CacheState::Current
-                    } else {
-                        CacheState::OlderSchema
+                    entry.state = match metadata.schema {
+                        DatabaseSchema::Current => CacheState::Current,
+                        DatabaseSchema::Older => CacheState::OlderSchema,
+                        DatabaseSchema::Future => {
+                            metadata_safe = false;
+                            entry.detail = Some("cache uses a newer unsupported schema".into());
+                            CacheState::Unsupported
+                        }
                     };
                     if let Some(repository_root) = &entry.repository_root
-                        && !managed_cache_id_matches_root(id, repository_root)
+                        && !managed_cache_identity_matches_root(&identity, id, repository_root)
                     {
                         metadata_safe = false;
                         entry.state = CacheState::Unsupported;
@@ -133,6 +146,7 @@ impl CacheManager {
         let compatibility = CacheCompatibility::classify(&entry);
 
         Ok(InspectedCache {
+            identity,
             safe_to_prune: final_scan.has_artifacts && !unexpected && metadata_safe,
             entry,
             compatibility,

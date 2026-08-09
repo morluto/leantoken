@@ -1,16 +1,14 @@
 use super::*;
 
 pub(super) fn flush(
-    pending: &mut BTreeSet<String>,
-    reconcile: &mut bool,
+    pending: &mut PendingReconciliation,
     tx: &mpsc::Sender<WatcherMessage>,
     counters: &WatcherCounters,
 ) -> bool {
-    if *reconcile {
+    if pending.is_full() {
         match tx.try_send(WatcherMessage::ReconcileRequired) {
             Ok(()) => {
-                *reconcile = false;
-                pending.clear();
+                *pending = PendingReconciliation::empty();
                 counters
                     .full_reconciliation_deliveries
                     .fetch_add(1, Ordering::Relaxed);
@@ -20,18 +18,21 @@ pub(super) fn flush(
         }
     }
 
-    if !pending.is_empty() {
-        let paths = pending.iter().cloned().collect();
-        match tx.try_send(WatcherMessage::Changed { paths }) {
+    if let PendingReconciliation::Paths(paths) = pending
+        && !paths.is_empty()
+    {
+        let message_paths = paths.iter().cloned().collect();
+        match tx.try_send(WatcherMessage::Changed {
+            paths: message_paths,
+        }) {
             Ok(()) => {
-                pending.clear();
+                paths.clear();
                 counters
                     .changed_path_deliveries
                     .fetch_add(1, Ordering::Relaxed);
             }
             Err(TrySendError::Full(_)) => {
-                *reconcile = true;
-                pending.clear();
+                pending.require_full();
             }
             Err(TrySendError::Closed(_)) => return false,
         }

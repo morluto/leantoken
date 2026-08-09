@@ -20,16 +20,16 @@ fn active_service_clones_block_prune_until_every_lease_is_dropped() {
     prune.yes = true;
 
     let first = manager.prune(&prune).expect("active prune");
-    assert_eq!(first.results[0].action, CachePruneAction::Kept);
+    assert_eq!(first.results[0].outcome.action(), CachePruneAction::Kept);
     assert!(database.exists());
     drop(services);
     let second = manager.prune(&prune).expect("follower prune");
-    assert_eq!(second.results[0].action, CachePruneAction::Kept);
+    assert_eq!(second.results[0].outcome.action(), CachePruneAction::Kept);
     drop(follower);
 
     let deleted = manager.prune(&prune).expect("inactive prune");
     assert_eq!(
-        deleted.results[0].action,
+        deleted.results[0].outcome.action(),
         CachePruneAction::Deleted,
         "unexpected prune report: {deleted:#?}"
     );
@@ -39,7 +39,7 @@ fn active_service_clones_block_prune_until_every_lease_is_dropped() {
         manager
             .list_with(&CacheListRequest::default())
             .expect("empty list")
-            .entries
+            .entries()
             .is_empty()
     );
 }
@@ -56,11 +56,14 @@ fn missing_repository_requires_age_or_explicit_override() {
     let mut age_only = request();
     age_only.older_than_days = Some(30);
     let kept = manager.prune(&age_only).expect("age plan");
-    assert_eq!(kept.results[0].action, CachePruneAction::Kept);
+    assert_eq!(kept.results[0].outcome.action(), CachePruneAction::Kept);
 
     age_only.remove_missing_roots = true;
     let selected = manager.prune(&age_only).expect("missing-root plan");
-    assert_eq!(selected.results[0].action, CachePruneAction::WouldDelete);
+    assert_eq!(
+        selected.results[0].outcome.action(),
+        CachePruneAction::WouldDelete
+    );
     assert_eq!(selected.results[0].reasons, ["missing_repository"]);
 }
 
@@ -78,7 +81,7 @@ fn lru_budget_selects_oldest_cache_and_dry_run_preserves_files() {
         .list_with(&CacheListRequest::default())
         .expect("cache list");
     let oldest_size = listed
-        .entries
+        .entries()
         .iter()
         .find(|entry| entry.entry.id == first_id)
         .expect("oldest cache")
@@ -100,9 +103,9 @@ fn lru_budget_selects_oldest_cache_and_dry_run_preserves_files() {
         .iter()
         .find(|result| result.id == second_id)
         .expect("newest result");
-    assert_eq!(first_result.action, CachePruneAction::WouldDelete);
+    assert_eq!(first_result.outcome.action(), CachePruneAction::WouldDelete);
     assert_eq!(first_result.reasons, ["max_total_bytes"]);
-    assert_eq!(second_result.action, CachePruneAction::Kept);
+    assert_eq!(second_result.outcome.action(), CachePruneAction::Kept);
     assert_eq!(report.reclaimed_bytes, oldest_size);
     assert!(first.exists());
     assert!(second.exists());

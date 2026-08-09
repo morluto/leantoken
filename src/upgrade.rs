@@ -29,6 +29,30 @@ pub struct UpgradeOptions {
     pub json: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum UpgradeExecution {
+    ReportOnly,
+    Install(UpgradeConfirmation),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UpgradeConfirmation {
+    Prompt,
+    Confirmed,
+}
+
+impl UpgradeOptions {
+    fn execution(self) -> UpgradeExecution {
+        if self.check || (!self.yes && (!std::io::stdin().is_terminal() || self.json)) {
+            UpgradeExecution::ReportOnly
+        } else if self.yes {
+            UpgradeExecution::Install(UpgradeConfirmation::Confirmed)
+        } else {
+            UpgradeExecution::Install(UpgradeConfirmation::Prompt)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum InstallContext {
@@ -107,6 +131,7 @@ enum UpgradeStatus {
 /// Returns an error when confirmation cannot be read or the selected package
 /// manager fails to install the release.
 pub fn run(options: UpgradeOptions) -> Result<()> {
+    let execution = options.execution();
     let executable = env::current_exe()?.canonicalize()?;
     let context = detect_current_context(&executable);
     let latest = latest_version(context);
@@ -183,40 +208,44 @@ pub fn run(options: UpgradeOptions) -> Result<()> {
         );
     };
 
-    if options.check || (!options.yes && (!std::io::stdin().is_terminal() || options.json)) {
-        return print_report(
-            UpgradeReport {
-                status: UpgradeStatus::UpdateAvailable,
-                context,
-                current_version: env!("CARGO_PKG_VERSION"),
-                latest_version: Some(latest),
-                command: Some(command.display()),
-                mcp_refresh_command: None,
-            },
-            options.json,
-        );
+    match execution {
+        UpgradeExecution::ReportOnly => {
+            return print_report(
+                UpgradeReport {
+                    status: UpgradeStatus::UpdateAvailable,
+                    context,
+                    current_version: env!("CARGO_PKG_VERSION"),
+                    latest_version: Some(latest),
+                    command: Some(command.display()),
+                    mcp_refresh_command: None,
+                },
+                options.json,
+            );
+        }
+        UpgradeExecution::Install(UpgradeConfirmation::Prompt)
+            if !Confirm::new()
+                .with_prompt(format!("Run `{}` now?", command.display()))
+                .default(true)
+                .interact()
+                .map_err(|error| {
+                    Error::SetupFailure(format!("update confirmation failed: {error}"))
+                })? =>
+        {
+            return print_report(
+                UpgradeReport {
+                    status: UpgradeStatus::Skipped,
+                    context,
+                    current_version: env!("CARGO_PKG_VERSION"),
+                    latest_version: Some(latest),
+                    command: Some(command.display()),
+                    mcp_refresh_command: None,
+                },
+                options.json,
+            );
+        }
+        UpgradeExecution::Install(UpgradeConfirmation::Prompt | UpgradeConfirmation::Confirmed) => {
+        }
     }
-
-    if !options.yes
-        && !Confirm::new()
-            .with_prompt(format!("Run `{}` now?", command.display()))
-            .default(true)
-            .interact()
-            .map_err(|error| Error::SetupFailure(format!("update confirmation failed: {error}")))?
-    {
-        return print_report(
-            UpgradeReport {
-                status: UpgradeStatus::Skipped,
-                context,
-                current_version: env!("CARGO_PKG_VERSION"),
-                latest_version: Some(latest),
-                command: Some(command.display()),
-                mcp_refresh_command: None,
-            },
-            options.json,
-        );
-    }
-
     run_command(&command, options.json)?;
     print_report(updated_report(context, latest, &command), options.json)
 }

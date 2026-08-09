@@ -4,18 +4,17 @@ pub(super) fn process_raw_event(
     raw: notify::Result<Event>,
     root: &Path,
     policy: &DiscoveryPolicy,
-    pending: &mut BTreeSet<String>,
-    reconcile: &mut bool,
+    pending: &mut PendingReconciliation,
 ) {
     let event = match raw {
         Ok(e) if !e.need_rescan() => e,
         Ok(_) => {
-            *reconcile = true;
+            pending.require_full();
             return;
         }
         Err(err) => {
             tracing::warn!(%err, "notify error");
-            *reconcile = true;
+            pending.require_full();
             return;
         }
     };
@@ -29,7 +28,7 @@ pub(super) fn process_raw_event(
         // Do this before generated-directory policy is applied by
         // `relative_path`; a missing rename endpoint cannot be classified
         // from filesystem metadata.
-        *reconcile = true;
+        pending.require_full();
         // The full reconciliation supersedes path-level rename bookkeeping.
         // In particular, do not let a generated-directory rename become a
         // stale per-path update merely because one endpoint disappeared.
@@ -48,7 +47,7 @@ pub(super) fn process_raw_event(
                 );
             }
             Err(()) => {
-                *reconcile = true;
+                pending.require_full();
                 tracing::warn!("non-UTF-8 watcher path requires full reconciliation");
             }
         }
@@ -62,15 +61,8 @@ pub(super) fn process_raw_event(
     }
 }
 
-pub(super) fn bound_pending_state(
-    pending: &mut BTreeSet<String>,
-    reconcile: &mut bool,
-    limit: usize,
-) {
-    if *reconcile || pending.len() > limit {
-        *reconcile = true;
-        pending.clear();
-    }
+pub(super) fn bound_pending_state(pending: &mut PendingReconciliation, limit: usize) {
+    pending.bound(limit);
 }
 
 pub(super) fn raw_event_is_relevant(

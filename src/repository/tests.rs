@@ -110,12 +110,12 @@ fn diff_name_parser_stops_after_collecting_max_paths() {
 fn git_status_with_non_utf8_path_marks_the_signal_unavailable() {
     let input = Cursor::new(b"?? \x80.rs\0".to_vec());
 
-    let (changed, available, modified, untracked) = parse_git_status_observation(input, 10, "");
+    let observation = parse_git_status_observation(input, 10, "");
 
-    assert!(changed.is_empty());
-    assert!(!available);
-    assert!(!modified);
-    assert!(untracked);
+    assert!(observation.changed_paths.is_empty());
+    assert!(!observation.is_available());
+    assert!(!observation.has_modified());
+    assert!(observation.has_untracked());
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn git_changed_paths_kills_a_timed_out_process() {
         git_working_tree_status_with(root.path(), 64, &program, Duration::from_millis(50));
 
     assert!(observation.changed_paths.is_empty());
-    assert!(!observation.available);
+    assert!(!observation.is_available());
     assert!(started.elapsed() < Duration::from_secs(1));
 }
 

@@ -91,6 +91,7 @@ pub fn select_with_weights_and_tokenizer(
 
 pub(in crate::ranking) struct SelectionScope<'request> {
     pub(in crate::ranking) focus_paths: PathMatcher,
+    pub(in crate::ranking) focus_path_matchers: Vec<PathMatcher>,
     pub(in crate::ranking) include_paths: PathMatcher,
     pub(in crate::ranking) exclude_paths: PathMatcher,
     pub(in crate::ranking) context_exclude_paths: PathMatcher,
@@ -105,6 +106,14 @@ impl<'request> SelectionScope<'request> {
             // request, independently of adapter admission validation.
             focus_paths: PathMatcher::new(&request.focus_paths)
                 .unwrap_or_else(|_| PathMatcher::empty()),
+            focus_path_matchers: request
+                .focus_paths
+                .iter()
+                .map(|pattern| {
+                    PathMatcher::new(std::slice::from_ref(pattern))
+                        .unwrap_or_else(|_| PathMatcher::empty())
+                })
+                .collect(),
             include_paths: PathMatcher::new(&request.include_paths)
                 .unwrap_or_else(|_| PathMatcher::empty()),
             exclude_paths: PathMatcher::new(&request.exclude_paths)
@@ -129,6 +138,7 @@ pub(in crate::ranking) fn partition_candidates(
     scope: &SelectionScope<'_>,
     weights: &Weights,
     tokenizer: tokens::Tokenizer,
+    policy: ContextSelectionPolicy,
 ) -> CandidatePartition {
     let known_hashes = request.known_hashes.iter().collect::<HashSet<_>>();
     let mut partition = CandidatePartition {
@@ -146,7 +156,7 @@ pub(in crate::ranking) fn partition_candidates(
             && !scope.include_paths.is_match(&candidate.path))
             || scope.exclude_paths.is_match(&candidate.path)
             || (scope.context_exclude_paths.is_match(&candidate.path) && !explicitly_included)
-            || (request.strict_focus_paths && !scope.focus_paths.is_match(&candidate.path))
+            || (policy.strict_focus() && !scope.focus_paths.is_match(&candidate.path))
             || (request.strict_changed_paths
                 && !scope.changed_paths.contains(candidate.path.as_str()));
         if path_excluded {
@@ -180,6 +190,7 @@ pub(in crate::ranking) fn select_candidates(
     request: &ContextRequest,
     weights: &Weights,
     tokenizer: tokens::Tokenizer,
+    policy: ContextSelectionPolicy,
 ) -> CandidateSelection {
     let ranked = rank_with_tokenizer(candidates, weights, tokenizer);
     let deduped = deduplicate_with_options(ranked, weights);
@@ -192,7 +203,7 @@ pub(in crate::ranking) fn select_candidates(
     let max_per_file = (budget / DIVERSITY_DIVISOR).clamp(1, 3);
     let max_fragments = request.max_fragments.unwrap_or(DEFAULT_CONTEXT_FRAGMENTS);
     let (mut selected, remaining) =
-        select_required_candidates(deduped, request, budget, max_fragments);
+        select_required_candidates(deduped, request, policy, budget, max_fragments);
     let required_tokens = selected
         .iter()
         .map(|candidate| candidate.token_count)
@@ -228,13 +239,14 @@ pub(in crate::ranking) fn select_with_options(
     context_exclude_paths: &[String],
     prefiltered_path_omissions: &[String],
 ) -> ContextResponse {
+    let policy = ContextSelectionPolicy::parse(request);
     let scope = SelectionScope::new(request, context_exclude_paths);
     apply_request_signals(&mut candidates, request, &scope.focus_paths);
     let generated_focus = request
         .explain_diagnostics
-        .then(|| generated_focus_facts(&candidates, request));
-    let partition = partition_candidates(candidates, request, &scope, weights, tokenizer);
-    let selection = select_candidates(partition.eligible, request, weights, tokenizer);
+        .then(|| generated_focus_facts(&candidates, &scope.focus_path_matchers));
+    let partition = partition_candidates(candidates, request, &scope, weights, tokenizer, policy);
+    let selection = select_candidates(partition.eligible, request, weights, tokenizer, policy);
     let mut coverage =
         build_context_coverage(request, &selection.selected, &partition.known_omitted);
     if let Some(generated_focus) = &generated_focus {
@@ -245,6 +257,7 @@ pub(in crate::ranking) fn select_with_options(
             &partition.known_omitted,
             &selection.selected,
             &selection.omitted,
+            policy,
         );
     }
     let estimated_source_tokens = selection
@@ -252,16 +265,18 @@ pub(in crate::ranking) fn select_with_options(
         .iter()
         .map(|candidate| candidate.token_count)
         .sum();
-    let plan = build_context_plan(
+    let plan = build_context_plan(BuildContextPlanParams {
         request,
-        &selection.selected,
-        selection.candidate_paths_total,
+        focus_path_matchers: &scope.focus_path_matchers,
+        selected: &selection.selected,
+        candidate_paths_total: selection.candidate_paths_total,
         estimated_source_tokens,
-        partition.generated_artifact_warning,
-        selection.result_complete,
-    );
+        generated_artifact_warning: partition.generated_artifact_warning,
+        result_complete: selection.result_complete,
+        policy,
+    });
     let (fragments, fragment_hashes, emitted_tokens) =
-        materialize_context_fragments(request, &selection.selected, estimated_source_tokens);
+        materialize_context_fragments(&selection.selected, estimated_source_tokens, policy);
     let (omission_summary, omitted, warnings) =
         build_context_omissions(super::omissions::BuildOmissionsParams {
             request,
@@ -272,6 +287,7 @@ pub(in crate::ranking) fn select_with_options(
             focus_paths: &scope.focus_paths,
             changed_paths: &scope.changed_paths,
             generated_artifact_warning: partition.generated_artifact_warning,
+            policy,
         });
     finalize_context_response(super::response::FinalizeContextParams {
         request,

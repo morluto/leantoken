@@ -58,20 +58,27 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
             )?;
         }
     }
-    if matches!(request.mode, SearchMode::Regex) {
-        compile_regex(request)?;
-    } else {
-        compile_literal_regex(&request.query, request.case_sensitive)?;
-    }
     Ok(())
 }
 
-pub(super) fn validate_occurrence_group_input(request: &SearchRequest) -> Result<()> {
-    validate_search_input(request)?;
-    if !request.all_occurrences {
+pub(super) fn validate_search_output(
+    request: &SearchRequest,
+    output_shape: SearchOutputShape,
+) -> Result<()> {
+    if matches!(output_shape, SearchOutputShape::OccurrenceGroups { .. })
+        && !request.all_occurrences
+    {
         return Err(Error::InvalidInput {
             field: "occurrence projection",
             reason: "requires all_occurrences=true",
+        });
+    }
+    if request.query_receipt.is_some()
+        && !matches!(output_shape, SearchOutputShape::OccurrenceGroups { .. })
+    {
+        return Err(Error::InvalidInput {
+            field: "query_receipt",
+            reason: "requires the occurrences projection",
         });
     }
     Ok(())

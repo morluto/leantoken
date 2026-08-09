@@ -112,20 +112,11 @@ impl WatcherReconciliationScheduler {
     }
 
     pub(super) fn merge_paths(&mut self, paths: impl IntoIterator<Item = String>) {
-        if matches!(self.pending, Some(PendingReconciliation::Full)) {
-            return;
-        }
-        let mut pending = match self.pending.take() {
-            Some(PendingReconciliation::Paths(pending)) => pending,
-            Some(PendingReconciliation::Full) => unreachable!("full handled above"),
-            None => BTreeSet::new(),
-        };
+        let pending = self
+            .pending
+            .get_or_insert_with(PendingReconciliation::empty);
         pending.extend(paths);
-        self.pending = if pending.len() > self.policy.max_pending_paths {
-            Some(PendingReconciliation::Full)
-        } else {
-            Some(PendingReconciliation::Paths(pending))
-        };
+        pending.bound(self.policy.max_pending_paths);
     }
 
     pub(super) fn reset_full_backoff_after_stability(&mut self, now: Instant) {

@@ -165,6 +165,12 @@ pub enum IndexProgressPhase {
     Cancelled,
 }
 
+impl IndexProgressPhase {
+    pub(crate) const fn is_active(self) -> bool {
+        !matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+}
+
 /// Bounded, read-only progress for an initial repository reconciliation.
 ///
 /// Detailed fields are absent when this process is only following an index

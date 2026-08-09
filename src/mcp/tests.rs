@@ -2093,17 +2093,15 @@ fn compact_projections_map_to_service_requests() {
         "operation": {"kind": "auto", "query": "Services"}
     }))
     .expect("default search projection");
-    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-    assert_eq!(projection, SearchMcpProjection::Full);
-    assert!(!coordinates_only);
+    let (_, output, _, _, _) = search.into_parts();
+    assert_eq!(output, SearchMcpOutput::Full);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "auto", "query": "Services", "projection": "grouped"}
     }))
     .expect("grouped projection");
-    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-    assert_eq!(projection, SearchMcpProjection::Grouped);
-    assert!(!coordinates_only);
+    let (_, output, _, _, _) = search.into_parts();
+    assert_eq!(output, SearchMcpOutput::Grouped);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {
@@ -2117,9 +2115,13 @@ fn compact_projections_map_to_service_requests() {
     search
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("valid occurrence projection");
-    let (_, projection, coordinates_only, _, _, _) = search.into_parts();
-    assert_eq!(projection, SearchMcpProjection::Occurrences);
-    assert!(coordinates_only);
+    let (_, output, _, _, _) = search.into_parts();
+    assert_eq!(
+        output,
+        SearchMcpOutput::Occurrences {
+            coordinates_only: true
+        }
+    );
 
     let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "text", "query": "Services", "coordinates_only": true}
@@ -2247,7 +2249,7 @@ fn search_query_preserves_significant_whitespace() {
         "operation": {"kind": "text", "query": "  exact text  "}
     }))
     .expect("whitespace-surrounded search query");
-    let (request, _, _, _, _, _) = request.into_parts();
+    let (request, _, _, _, _) = request.into_parts();
 
     assert_eq!(request.query, "  exact text  ");
 }

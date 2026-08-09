@@ -169,16 +169,14 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
             })?;
             sync_capability_directory(&version_directory)?;
             Ok(if installed {
-                RuntimeInstallReceipt {
-                    installed: Some(InstalledRuntimeCapability {
-                        runtime_root: plan.runtime_root.clone(),
-                        version: version.to_path_buf(),
-                        executable_name: executable_name.to_path_buf(),
-                        digest: plan.digest.clone(),
-                        runtime_root_handle: runtime_root,
-                        version_directory,
-                    }),
-                }
+                RuntimeInstallReceipt::Installed(InstalledRuntimeCapability {
+                    runtime_root: plan.runtime_root.clone(),
+                    version: version.to_path_buf(),
+                    executable_name: executable_name.to_path_buf(),
+                    digest: plan.digest.clone(),
+                    runtime_root_handle: runtime_root,
+                    version_directory,
+                })
             } else {
                 RuntimeInstallReceipt::unchanged()
             })
@@ -191,12 +189,13 @@ static RUNTIME_INSTALL_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Debug)]
-pub(super) struct RuntimeInstallReceipt {
-    installed: Option<InstalledRuntimeCapability>,
+pub(super) enum RuntimeInstallReceipt {
+    Installed(InstalledRuntimeCapability),
+    Unchanged,
 }
 
 #[derive(Debug)]
-struct InstalledRuntimeCapability {
+pub(super) struct InstalledRuntimeCapability {
     runtime_root: PathBuf,
     version: PathBuf,
     executable_name: PathBuf,
@@ -206,17 +205,13 @@ struct InstalledRuntimeCapability {
 }
 
 impl RuntimeInstallReceipt {
-    fn unchanged() -> Self {
-        Self { installed: None }
-    }
-
-    pub(super) fn installed(&self) -> bool {
-        self.installed.is_some()
+    const fn unchanged() -> Self {
+        Self::Unchanged
     }
 }
 
-pub(super) fn rollback_installed_runtime(receipt: &mut RuntimeInstallReceipt) -> Result<()> {
-    let Some(installed) = receipt.installed.as_ref() else {
+pub(super) fn rollback_installed_runtime(receipt: RuntimeInstallReceipt) -> Result<()> {
+    let RuntimeInstallReceipt::Installed(installed) = receipt else {
         return Ok(());
     };
     validate_runtime_root_handle(&installed.runtime_root, &installed.runtime_root_handle)?;
@@ -252,10 +247,6 @@ pub(super) fn rollback_installed_runtime(receipt: &mut RuntimeInstallReceipt) ->
         .version_directory
         .remove_file(&installed.executable_name)?;
     sync_capability_directory(&installed.version_directory)?;
-    let installed = receipt
-        .installed
-        .take()
-        .expect("validated installed runtime capability remains available");
     installed.version_directory.remove_open_dir()?;
     sync_capability_directory(&installed.runtime_root_handle)
 }
@@ -453,6 +444,32 @@ pub fn prune_runtimes(request: RuntimePruneRequest) -> Result<RuntimePruneReport
     prune_runtimes_at(request, &home, runtime_root, || {}, || {})
 }
 
+struct RuntimePrunePlan {
+    keep_latest: usize,
+    execution: crate::mutation::MutationMode,
+}
+
+impl TryFrom<RuntimePruneRequest> for RuntimePrunePlan {
+    type Error = Error;
+
+    fn try_from(request: RuntimePruneRequest) -> Result<Self> {
+        if request.keep_latest > MAX_RUNTIME_RETENTION {
+            return Err(Error::InvalidRequest(format!(
+                "runtime keep-latest must not exceed {MAX_RUNTIME_RETENTION}"
+            )));
+        }
+        let execution = crate::mutation::MutationMode::parse(
+            request.dry_run,
+            request.yes,
+            "runtime prune requires --yes or --dry-run",
+        )?;
+        Ok(Self {
+            keep_latest: request.keep_latest,
+            execution,
+        })
+    }
+}
+
 pub(super) fn prune_runtimes_at(
     request: RuntimePruneRequest,
     home: &Path,
@@ -460,22 +477,13 @@ pub(super) fn prune_runtimes_at(
     mut after_lock: impl FnMut(),
     mut after_removal: impl FnMut(),
 ) -> Result<RuntimePruneReport> {
-    if request.keep_latest > MAX_RUNTIME_RETENTION {
-        return Err(Error::InvalidRequest(format!(
-            "runtime keep-latest must not exceed {MAX_RUNTIME_RETENTION}"
-        )));
-    }
-    if !request.dry_run && !request.yes {
-        return Err(Error::InvalidRequest(
-            "runtime prune requires --yes or --dry-run".into(),
-        ));
-    }
+    let plan = RuntimePrunePlan::try_from(request)?;
     validate_runtime_root(&runtime_root)?;
-    let setup_lock = (!request.dry_run)
+    let setup_lock = (!plan.execution.is_dry_run())
         .then(|| acquire_setup_lock(&runtime_root))
         .transpose()?;
     let runtime_root_handle = setup_lock.as_ref().map(SetupLock::runtime_root);
-    if !request.dry_run {
+    if !plan.execution.is_dry_run() {
         recover_interrupted_transaction(&runtime_root)?;
     }
     after_lock();
@@ -503,7 +511,7 @@ pub(super) fn prune_runtimes_at(
             Some("active_process")
         } else if !entry.report.safely_prunable {
             Some("unrecognized_directory_contents")
-        } else if unreferenced_retained < request.keep_latest {
+        } else if unreferenced_retained < plan.keep_latest {
             unreferenced_retained += 1;
             Some("retention")
         } else {
@@ -514,21 +522,19 @@ pub(super) fn prune_runtimes_at(
                 version: entry.report.version,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
-                action: "retained".into(),
+                outcome: RuntimePruneOutcome::Retained,
                 reason: reason.into(),
-                error: None,
             });
             continue;
         }
-        if request.dry_run {
+        if plan.execution.is_dry_run() {
             total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
             results.push(RuntimePruneResult {
                 version: entry.report.version,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
-                action: "would_remove".into(),
+                outcome: RuntimePruneOutcome::WouldRemove,
                 reason: "outside_retention".into(),
-                error: None,
             });
             continue;
         }
@@ -549,9 +555,8 @@ pub(super) fn prune_runtimes_at(
                     version: entry.report.version,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
-                    action: "retained".into(),
+                    outcome: RuntimePruneOutcome::Retained,
                     reason: "directory_changed_after_inventory".into(),
-                    error: None,
                 });
                 continue;
             }
@@ -560,9 +565,10 @@ pub(super) fn prune_runtimes_at(
                     version: entry.report.version,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
-                    action: "failed".into(),
+                    outcome: RuntimePruneOutcome::Failed {
+                        error: error.to_string(),
+                    },
                     reason: "directory_revalidation_failed".into(),
-                    error: Some(error.to_string()),
                 });
                 continue;
             }
@@ -575,9 +581,11 @@ pub(super) fn prune_runtimes_at(
                     version: entry.report.version,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
-                    action: "removed".into(),
+                    outcome: RuntimePruneOutcome::Removed {
+                        sync_error: sync_error
+                            .map(|error| format!("directory sync failed: {error}")),
+                    },
                     reason: "outside_retention".into(),
-                    error: sync_error.map(|error| format!("directory sync failed: {error}")),
                 });
                 after_removal();
             }
@@ -591,9 +599,8 @@ pub(super) fn prune_runtimes_at(
                     version: entry.report.version,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
-                    action: "partially_removed".into(),
+                    outcome: RuntimePruneOutcome::PartiallyRemoved { error },
                     reason: "executable_removed_directory_retained".into(),
-                    error: Some(error),
                 });
                 after_removal();
             }
@@ -601,15 +608,16 @@ pub(super) fn prune_runtimes_at(
                 version: entry.report.version,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
-                action: "failed".into(),
+                outcome: RuntimePruneOutcome::Failed {
+                    error: error.to_string(),
+                },
                 reason: "outside_retention".into(),
-                error: Some(error.to_string()),
             }),
         }
     }
     Ok(RuntimePruneReport {
         runtime_root,
-        dry_run: request.dry_run,
+        dry_run: plan.execution.is_dry_run(),
         total_bytes_before: total_bytes,
         total_bytes_after,
         results,
@@ -986,13 +994,13 @@ pub fn print_runtime_prune(report: &RuntimePruneReport, json_output: bool) -> Re
         writeln!(
             output,
             "{}  {}  {} bytes  {}{}",
-            result.action,
+            result.outcome.action(),
             result.version,
             result.size_bytes,
             result.reason,
             result
-                .error
-                .as_deref()
+                .outcome
+                .error()
                 .map_or_else(String::new, |error| format!("  {error}"))
         )?;
     }

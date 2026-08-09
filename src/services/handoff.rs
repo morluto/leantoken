@@ -28,7 +28,7 @@ pub(super) struct HandoffProvenance {
     pub(super) provenance: Option<crate::model::RepositoryProvenance>,
 }
 
-pub(super) fn validate_request(request: &HandoffManifestRequest) -> Result<()> {
+pub(super) fn parse_request(mut request: HandoffManifestRequest) -> Result<HandoffManifestRequest> {
     validate_optional_input(
         request.summary.as_deref(),
         "handoff.summary",
@@ -80,7 +80,25 @@ pub(super) fn validate_request(request: &HandoffManifestRequest) -> Result<()> {
             ));
         }
     }
-    Ok(())
+    request.summary = request.summary.map(|summary| summary.trim().to_owned());
+    for values in [
+        &mut request.assumptions,
+        &mut request.open_questions,
+        &mut request.negative_evidence,
+        &mut request.avoid_rules,
+    ] {
+        for value in values {
+            *value = value.trim().to_owned();
+        }
+    }
+    for validation in &mut request.validations {
+        validation.command = validation.command.trim().to_owned();
+        validation.summary = validation
+            .summary
+            .take()
+            .map(|summary| summary.trim().to_owned());
+    }
+    Ok(request)
 }
 
 pub(super) fn build(
@@ -335,7 +353,7 @@ mod tests {
             ..HandoffManifestRequest::default()
         };
         assert!(matches!(
-            validate_request(&request),
+            parse_request(request),
             Err(Error::RequestLimitExceeded {
                 field: "handoff.assumptions",
                 requested,

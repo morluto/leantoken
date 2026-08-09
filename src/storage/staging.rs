@@ -110,9 +110,9 @@ pub(crate) struct StagingDiagnostics {
 /// the production transaction is open. The production database remains the
 /// sole database mutated by the generation publication transaction.
 pub(crate) struct PreparedReconciliation {
+    connection: Connection,
     _directory: TempDir,
     path: PathBuf,
-    connection: Option<Connection>,
     replacements: Vec<(IndexedFile, usize)>,
     removals: Vec<String>,
     tokenizer: String,
@@ -121,8 +121,17 @@ pub(crate) struct PreparedReconciliation {
     rebuild: bool,
     next_ordinal: i64,
     diagnostics: StagingDiagnostics,
-    finished: bool,
     profile: bool,
+}
+
+pub(crate) struct FinalizedReconciliation {
+    _directory: TempDir,
+    path: PathBuf,
+    tokenizer: String,
+    baseline_generation: u64,
+    config_hash: String,
+    rebuild: bool,
+    diagnostics: StagingDiagnostics,
 }
 
 impl PreparedReconciliation {
@@ -169,9 +178,9 @@ impl PreparedReconciliation {
         )?;
 
         Ok(Self {
+            connection,
             _directory: directory,
             path,
-            connection: Some(connection),
             replacements: Vec::new(),
             removals: Vec::new(),
             tokenizer: tokenizer.to_string(),
@@ -180,7 +189,6 @@ impl PreparedReconciliation {
             rebuild,
             next_ordinal: 0,
             diagnostics: StagingDiagnostics::default(),
-            finished: false,
             profile,
         })
     }
@@ -202,18 +210,9 @@ impl PreparedReconciliation {
         if self.replacements.is_empty() && self.removals.is_empty() {
             return Ok(());
         }
-        if self.finished {
-            return Err(Error::OperationFailure(
-                "reconciliation stage was written after finalization".into(),
-            ));
-        }
-
         let write_before = self.profile.then(process_write_bytes).flatten();
         let started = Instant::now();
-        let connection = self.connection.as_mut().ok_or_else(|| {
-            Error::OperationFailure("reconciliation stage connection is closed".into())
-        })?;
-        let tx = connection.transaction()?;
+        let tx = self.connection.transaction()?;
         let mut removals = std::mem::take(&mut self.removals);
         removals.sort();
         let mut replacements = std::mem::take(&mut self.replacements);
@@ -228,7 +227,13 @@ impl PreparedReconciliation {
                 ordinal = ordinal.saturating_add(1);
             }
             for (file, source_token_count) in &replacements {
-                Self::insert_stage_file(&tx, file, *source_token_count, &self.tokenizer, ordinal)?;
+                FinalizedReconciliation::insert_stage_file(
+                    &tx,
+                    file,
+                    *source_token_count,
+                    &self.tokenizer,
+                    ordinal,
+                )?;
                 ordinal = ordinal.saturating_add(1);
             }
             tx.commit()?;
@@ -260,19 +265,25 @@ impl PreparedReconciliation {
     }
 
     /// Finish writes and close the mutable stage connection before publication.
-    pub(crate) fn finish(&mut self) -> Result<()> {
-        if self.finished {
-            return Ok(());
-        }
+    pub(crate) fn finish(mut self) -> Result<FinalizedReconciliation> {
         self.flush()?;
-        self.connection.take();
+        drop(self.connection);
         self.diagnostics.database_bytes = fs::metadata(&self.path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
-        self.finished = true;
-        Ok(())
+        Ok(FinalizedReconciliation {
+            _directory: self._directory,
+            path: self.path,
+            tokenizer: self.tokenizer,
+            baseline_generation: self.baseline_generation,
+            config_hash: self.config_hash,
+            rebuild: self.rebuild,
+            diagnostics: self.diagnostics,
+        })
     }
+}
 
+impl FinalizedReconciliation {
     pub(crate) fn diagnostics(&self) -> StagingDiagnostics {
         self.diagnostics.clone()
     }
@@ -282,8 +293,7 @@ impl PreparedReconciliation {
     /// The read connection is opened only after stage writes finish. It streams
     /// one file and its child rows at a time, so publication does not reconstruct
     /// the complete prepared generation in memory.
-    pub(crate) fn apply(&mut self, writer: &mut ReconciliationWriter<'_, '_>) -> Result<()> {
-        self.finish()?;
+    pub(crate) fn apply(&self, writer: &mut ReconciliationWriter<'_, '_>) -> Result<()> {
         let connection = Connection::open_with_flags(
             &self.path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -594,14 +604,6 @@ struct StageFileRow {
     source_tokenizer: String,
 }
 
-impl Drop for PreparedReconciliation {
-    fn drop(&mut self) {
-        // Close SQLite before TempDir removes the directory. This is required
-        // for Windows and also makes cleanup of any journal sidecars explicit.
-        self.connection.take();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,8 +626,6 @@ mod tests {
         stage.stage_removal("old.rs".into());
         stage
             .connection
-            .as_ref()
-            .expect("open stage connection")
             .execute_batch("DROP TABLE stage_removals")
             .expect("break stage fixture");
 
@@ -694,8 +694,7 @@ mod tests {
             stage_path.exists(),
             "stage database should exist before publish"
         );
-        assert_eq!(stage.diagnostics().database_bytes, 0);
-        stage.finish().expect("finish stage");
+        let stage = stage.finish().expect("finish stage");
         assert!(stage.diagnostics().database_bytes > 0);
 
         let (generation, ()) = storage

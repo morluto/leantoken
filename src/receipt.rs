@@ -32,8 +32,13 @@ pub(crate) struct ReceiptEvidence {
     pub start_line: usize,
     pub end_line: usize,
     pub content_hash: String,
-    pub semantic_signature: Option<u64>,
-    pub exact_only: bool,
+    match_policy: ReceiptMatchPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiptMatchPolicy {
+    ExactOnly,
+    Overlap { semantic_signature: Option<u64> },
 }
 
 impl ReceiptEvidence {
@@ -49,9 +54,47 @@ impl ReceiptEvidence {
             start_line,
             end_line,
             content_hash: content_hash.into(),
-            semantic_signature: content.and_then(semantic_signature),
-            exact_only: false,
+            match_policy: ReceiptMatchPolicy::Overlap {
+                semantic_signature: content.and_then(semantic_signature),
+            },
         }
+    }
+
+    pub(crate) fn from_stored(
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        content_hash: String,
+        semantic_signature: Option<u64>,
+        exact_only: bool,
+    ) -> Self {
+        Self {
+            path,
+            start_line,
+            end_line,
+            content_hash,
+            match_policy: if exact_only {
+                ReceiptMatchPolicy::ExactOnly
+            } else {
+                ReceiptMatchPolicy::Overlap { semantic_signature }
+            },
+        }
+    }
+
+    pub(crate) const fn exact_only(&self) -> bool {
+        matches!(self.match_policy, ReceiptMatchPolicy::ExactOnly)
+    }
+
+    pub(crate) const fn semantic_signature(&self) -> Option<u64> {
+        match self.match_policy {
+            ReceiptMatchPolicy::ExactOnly => None,
+            ReceiptMatchPolicy::Overlap { semantic_signature } => semantic_signature,
+        }
+    }
+
+    #[cfg(test)]
+    fn require_exact_match(&mut self) {
+        self.match_policy = ReceiptMatchPolicy::ExactOnly;
     }
 
     pub(crate) fn logical_bytes(&self) -> usize {
@@ -129,7 +172,7 @@ pub(crate) fn decide(
     }
     if suppress_overlap
         && previous.iter().any(|seen| {
-            !seen.exact_only
+            !seen.exact_only()
                 && seen.path == candidate.path
                 && ranges_overlap(
                     seen.start_line,
@@ -141,10 +184,10 @@ pub(crate) fn decide(
     {
         return ReceiptDecision::SuppressOverlap;
     }
-    if candidate.semantic_signature.is_some_and(|signature| {
+    if candidate.semantic_signature().is_some_and(|signature| {
         previous.iter().any(|seen| {
-            !seen.exact_only
-                && seen.semantic_signature.is_some_and(|prior| {
+            !seen.exact_only()
+                && seen.semantic_signature().is_some_and(|prior| {
                     (signature ^ prior).count_ones() <= NEAR_DUPLICATE_HAMMING_DISTANCE
                 })
         })
@@ -262,7 +305,7 @@ mod tests {
             "first",
             Some("alpha beta gamma delta epsilon"),
         );
-        previous.exact_only = true;
+        previous.require_exact_match();
         assert_eq!(
             decide(
                 std::slice::from_ref(&previous),
@@ -299,6 +342,15 @@ mod tests {
             ),
             ReceiptDecision::Return
         );
+    }
+
+    #[test]
+    fn stored_exact_only_evidence_discards_inapplicable_semantic_state() {
+        let evidence =
+            ReceiptEvidence::from_stored("src/lib.rs".into(), 1, 2, "hash".into(), Some(42), true);
+
+        assert!(evidence.exact_only());
+        assert_eq!(evidence.semantic_signature(), None);
     }
 
     #[test]

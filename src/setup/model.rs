@@ -141,11 +141,51 @@ pub struct ClientSetupResult {
     pub client: SetupClient,
     /// Global configuration path.
     pub path: PathBuf,
-    /// Human-readable result status.
-    pub status: String,
-    /// Failure detail when configuration was not changed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    /// Typed configuration outcome and its applicable payload.
+    #[serde(flatten)]
+    pub outcome: ClientSetupOutcome,
+}
+
+/// Client configuration outcome with failures carrying mandatory detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status")]
+pub enum ClientSetupOutcome {
+    #[serde(rename = "configured")]
+    Configured,
+    #[serde(rename = "updated")]
+    Updated,
+    #[serde(rename = "already configured")]
+    AlreadyConfigured,
+    #[serde(rename = "removed")]
+    Removed,
+    #[serde(rename = "not configured")]
+    NotConfigured,
+    #[serde(rename = "failed")]
+    Failed { error: String },
+}
+
+impl ClientSetupOutcome {
+    pub(super) const fn status(&self) -> &'static str {
+        match self {
+            Self::Configured => "configured",
+            Self::Updated => "updated",
+            Self::AlreadyConfigured => "already configured",
+            Self::Removed => "removed",
+            Self::NotConfigured => "not configured",
+            Self::Failed { .. } => "failed",
+        }
+    }
+
+    pub(super) fn error(&self) -> Option<&str> {
+        match self {
+            Self::Failed { error } => Some(error),
+            _ => None,
+        }
+    }
+
+    pub(super) const fn changed(&self) -> bool {
+        matches!(self, Self::Configured | Self::Updated)
+    }
 }
 
 /// Outcome of post-configuration MCP launcher verification.
@@ -162,18 +202,32 @@ pub enum SetupVerificationStatus {
 
 /// Post-configuration verification of the exact registered MCP launcher.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SetupVerification {
-    /// Typed verification outcome.
-    pub status: SetupVerificationStatus,
-    /// Stable MCP boundary where verification failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stage: Option<String>,
-    /// Bounded diagnostic detail.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    /// Exact command the user can run to repeat the diagnostic.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub repair_command: Option<String>,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SetupVerification {
+    /// The registered launcher satisfied the doctor contract.
+    Passed { repair_command: String },
+    /// The launcher failed at a named doctor boundary.
+    Failed {
+        stage: String,
+        message: String,
+        repair_command: String,
+    },
+    /// Configuration failures made launcher verification misleading.
+    Skipped {
+        message: String,
+        repair_command: String,
+    },
+}
+
+impl SetupVerification {
+    #[must_use]
+    pub const fn status(&self) -> SetupVerificationStatus {
+        match self {
+            Self::Passed { .. } => SetupVerificationStatus::Passed,
+            Self::Failed { .. } => SetupVerificationStatus::Failed,
+            Self::Skipped { .. } => SetupVerificationStatus::Skipped,
+        }
+    }
 }
 
 /// Aggregate setup or removal report.
@@ -213,7 +267,9 @@ impl SetupReport {
     /// Return true when at least one selected client edit failed.
     #[must_use]
     pub fn has_client_failures(&self) -> bool {
-        self.results.iter().any(|result| result.error.is_some())
+        self.results
+            .iter()
+            .any(|result| result.outcome.error().is_some())
     }
 
     /// Return true when the setup transaction itself did not complete.
@@ -227,7 +283,7 @@ impl SetupReport {
     pub fn has_verification_failure(&self) -> bool {
         self.verification
             .as_ref()
-            .is_some_and(|verification| verification.status == SetupVerificationStatus::Failed)
+            .is_some_and(|verification| verification.status() == SetupVerificationStatus::Failed)
     }
 
     /// Return true when apply, a client edit, or launcher verification failed.
@@ -289,13 +345,49 @@ pub struct RuntimePruneResult {
     pub path: PathBuf,
     /// Bytes represented by this decision.
     pub size_bytes: u64,
-    /// `retained`, `would_remove`, `removed`, `partially_removed`, or `failed`.
-    pub action: String,
+    /// Typed prune outcome and its applicable failure payload.
+    #[serde(flatten)]
+    pub outcome: RuntimePruneOutcome,
     /// Stable explanation for retaining or selecting the runtime.
     pub reason: String,
-    /// Bounded failure detail when deletion did not complete.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+}
+
+/// Private-runtime prune outcome with error detail only on fallible results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RuntimePruneOutcome {
+    Retained,
+    WouldRemove,
+    Removed {
+        #[serde(rename = "error", skip_serializing_if = "Option::is_none")]
+        sync_error: Option<String>,
+    },
+    PartiallyRemoved {
+        error: String,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+impl RuntimePruneOutcome {
+    pub(super) const fn action(&self) -> &'static str {
+        match self {
+            Self::Retained => "retained",
+            Self::WouldRemove => "would_remove",
+            Self::Removed { .. } => "removed",
+            Self::PartiallyRemoved { .. } => "partially_removed",
+            Self::Failed { .. } => "failed",
+        }
+    }
+
+    pub(super) fn error(&self) -> Option<&str> {
+        match self {
+            Self::Removed { sync_error } => sync_error.as_deref(),
+            Self::PartiallyRemoved { error } | Self::Failed { error } => Some(error),
+            Self::Retained | Self::WouldRemove => None,
+        }
+    }
 }
 
 /// Outcome of a bounded private-runtime prune operation.
@@ -320,6 +412,10 @@ impl RuntimePruneReport {
     /// Return true when one or more selected runtimes could not be removed.
     #[must_use]
     pub fn has_failures(&self) -> bool {
-        self.apply_error.is_some() || self.results.iter().any(|result| result.error.is_some())
+        self.apply_error.is_some()
+            || self
+                .results
+                .iter()
+                .any(|result| result.outcome.error().is_some())
     }
 }

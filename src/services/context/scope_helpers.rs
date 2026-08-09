@@ -1,3 +1,41 @@
+#[derive(Debug, Clone)]
+pub(super) enum ContextRevision {
+    Single(String),
+    Range { base: String, head: String },
+}
+
+impl ContextRevision {
+    pub(super) const fn is_range(&self) -> bool {
+        matches!(self, Self::Range { .. })
+    }
+}
+
+pub(super) fn parse_context_revision(revision: Option<&str>) -> Result<Option<ContextRevision>> {
+    let Some(revision) = revision else {
+        return Ok(None);
+    };
+    if revision.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "must not be empty",
+        });
+    }
+    if revision != revision.trim() {
+        return Err(Error::InvalidInput {
+            field: "base revision",
+            reason: "must not have leading or trailing whitespace",
+        });
+    }
+    validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
+    Ok(Some(match parse_revision_range(revision)? {
+        Some((base, head)) => ContextRevision::Range {
+            base: base.to_owned(),
+            head: head.to_owned(),
+        },
+        None => ContextRevision::Single(revision.to_owned()),
+    }))
+}
+
 pub(super) fn parse_revision_range(revision: &str) -> Result<Option<(&str, &str)>> {
     let Some((base, head)) = revision.split_once("..") else {
         return Ok(None);

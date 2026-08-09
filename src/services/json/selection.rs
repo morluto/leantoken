@@ -3,16 +3,63 @@
 use serde_json::Value;
 
 use crate::model::JsonSelector;
+use crate::services::validation::{MAX_PATTERN_BYTES, validate_input};
 use crate::{Error, Result};
 
+pub(super) enum ParsedJsonSelector {
+    Pointer(String),
+    Jmespath {
+        expression: String,
+        compiled: jmespath::Expression<'static>,
+    },
+}
+
+impl ParsedJsonSelector {
+    pub(super) fn parse(selector: JsonSelector) -> Result<Self> {
+        match selector {
+            JsonSelector::Pointer { pointer } => {
+                validate_input(&pointer, "JSON Pointer", MAX_PATTERN_BYTES)?;
+                if !pointer.is_empty() && !pointer.starts_with('/') {
+                    return Err(Error::InvalidInput {
+                        field: "JSON Pointer",
+                        reason: "must be empty or start with a slash",
+                    });
+                }
+                Ok(Self::Pointer(pointer))
+            }
+            JsonSelector::Jmespath { expression } => {
+                validate_input(&expression, "JMESPath expression", MAX_PATTERN_BYTES)?;
+                if expression.trim().is_empty() {
+                    return Err(Error::InvalidInput {
+                        field: "JMESPath expression",
+                        reason: "must not be empty",
+                    });
+                }
+                let compiled = jmespath::compile(&expression)
+                    .map_err(|error| invalid_json_selector("compile", error))?;
+                Ok(Self::Jmespath {
+                    expression,
+                    compiled,
+                })
+            }
+        }
+    }
+
+    pub(super) fn into_wire(self) -> JsonSelector {
+        match self {
+            Self::Pointer(pointer) => JsonSelector::Pointer { pointer },
+            Self::Jmespath { expression, .. } => JsonSelector::Jmespath { expression },
+        }
+    }
+}
+
 pub(super) struct SelectedJson {
-    present: bool,
     value: Option<Value>,
 }
 
 impl SelectedJson {
     pub(super) fn is_present(&self) -> bool {
-        self.present
+        self.value.is_some()
     }
 
     pub(super) fn value(&self) -> Option<&Value> {
@@ -37,29 +84,25 @@ fn invalid_json_selector(stage: &'static str, error: jmespath::JmespathError) ->
     }
 }
 
-pub(super) fn select_json(value: &Value, selector: Option<&JsonSelector>) -> Result<SelectedJson> {
+pub(super) fn select_json(
+    value: &Value,
+    selector: Option<&ParsedJsonSelector>,
+) -> Result<SelectedJson> {
     match selector {
         None => Ok(SelectedJson {
-            present: true,
             value: Some(value.clone()),
         }),
-        Some(JsonSelector::Pointer { pointer }) => {
+        Some(ParsedJsonSelector::Pointer(pointer)) => {
             let selected = value.pointer(pointer).cloned();
-            Ok(SelectedJson {
-                present: selected.is_some(),
-                value: selected,
-            })
+            Ok(SelectedJson { value: selected })
         }
-        Some(JsonSelector::Jmespath { expression }) => {
-            let expression = jmespath::compile(expression)
-                .map_err(|error| invalid_json_selector("compile", error))?;
-            let selected = expression
+        Some(ParsedJsonSelector::Jmespath { compiled, .. }) => {
+            let selected = compiled
                 .search(value)
                 .map_err(|error| invalid_json_selector("evaluate", error))?;
             let selected = serde_json::to_value(selected.as_ref())
                 .map_err(|error| Error::SerializationFailure(error.to_string()))?;
             Ok(SelectedJson {
-                present: true,
                 value: Some(selected),
             })
         }

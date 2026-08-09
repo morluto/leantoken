@@ -124,12 +124,8 @@ pub struct Config {
     pub root: PathBuf,
     /// SQLite index path.
     pub database_path: PathBuf,
-    /// Whether LeanToken owns this cache file and may rebuild it after
-    /// confirmed SQLite corruption.
-    pub(crate) database_is_managed_cache: bool,
-    /// Whether a managed platform cache was replaced by the repository-local
-    /// fallback because the preferred location was not writable.
-    pub(crate) database_uses_repository_fallback: bool,
+    /// Ownership and selected location of the index database.
+    database_storage: DatabaseStorage,
     /// Maximum filesystem entries yielded by one repository walk.
     pub max_walk_entries: u64,
     /// Maximum files admitted to one repository index.
@@ -172,6 +168,13 @@ pub struct Config {
     pub watcher_debounce: Duration,
     /// Tokenizer used for all source and protocol token accounting.
     pub tokenizer: Tokenizer,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DatabaseStorage {
+    Explicit,
+    ManagedPlatform,
+    ManagedRepositoryFallback,
 }
 
 /// A repository root explicitly approved by the primary repository's config.
@@ -245,10 +248,14 @@ impl Config {
         if !allow_broad_root && is_unsafe_repository_root(&root, home_directory().as_deref()) {
             return Err(Error::UnsafeRepositoryRoot(root));
         }
-        let database_is_managed_cache = database_path.is_none();
+        let database_storage = if database_path.is_some() {
+            DatabaseStorage::Explicit
+        } else {
+            DatabaseStorage::ManagedPlatform
+        };
         let database_path =
             database_path.unwrap_or_else(|| default_database_path_for_scope(&root, &index_scope));
-        let database_path = if database_is_managed_cache {
+        let database_path = if database_storage.is_managed() {
             let cache_root = managed_cache_root().unwrap_or_else(|| root.clone());
             reject_symlinked_managed_cache_components(&cache_root, &database_path)?;
             canonicalize_managed_database_path(database_path)
@@ -259,8 +266,7 @@ impl Config {
         Ok(Self {
             root,
             database_path,
-            database_is_managed_cache,
-            database_uses_repository_fallback: false,
+            database_storage,
             max_walk_entries: DiscoveryLimits::DEFAULT_MAX_WALK_ENTRIES,
             max_files: DiscoveryLimits::DEFAULT_MAX_FILES,
             max_total_source_bytes: DiscoveryLimits::DEFAULT_MAX_TOTAL_SOURCE_BYTES,
@@ -383,7 +389,7 @@ impl Config {
     #[must_use]
     pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
         let fallback_cache = self.root.join(FALLBACK_CACHE_DIRECTORY);
-        if self.database_is_managed_cache
+        if self.database_storage.is_managed()
             && self.database_path.starts_with(&fallback_cache)
             && candidate.starts_with(&fallback_cache)
         {
@@ -401,19 +407,31 @@ impl Config {
     }
 
     pub(crate) fn repository_cache_fallback(&self) -> Option<Self> {
-        if !self.database_is_managed_cache || self.database_uses_repository_fallback {
+        if self.database_storage != DatabaseStorage::ManagedPlatform {
             return None;
         }
         let mut fallback = self.clone();
         fallback.database_path = repository_fallback_database_path(&self.root, &self.index_scope);
-        fallback.database_uses_repository_fallback = true;
+        fallback.database_storage = DatabaseStorage::ManagedRepositoryFallback;
         Some(fallback)
     }
 
     /// Return whether the active managed index uses repository-local storage.
     #[must_use]
     pub const fn uses_repository_cache_fallback(&self) -> bool {
-        self.database_uses_repository_fallback
+        matches!(
+            self.database_storage,
+            DatabaseStorage::ManagedRepositoryFallback
+        )
+    }
+
+    pub(crate) const fn database_is_managed_cache(&self) -> bool {
+        self.database_storage.is_managed()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_database_as_managed_platform(&mut self) {
+        self.database_storage = DatabaseStorage::ManagedPlatform;
     }
 
     /// Return named repository roots approved by this repository's config.
@@ -472,6 +490,15 @@ impl Config {
         }
         result.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(result)
+    }
+}
+
+impl DatabaseStorage {
+    const fn is_managed(self) -> bool {
+        matches!(
+            self,
+            Self::ManagedPlatform | Self::ManagedRepositoryFallback
+        )
     }
 }
 
@@ -713,12 +740,22 @@ pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity
     })
 }
 
+#[cfg(test)]
 pub(crate) fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
+    parse_managed_cache_id(value)
+        .as_ref()
+        .is_some_and(|identity| managed_cache_identity_matches_root(identity, value, root))
+}
+
+pub(crate) fn managed_cache_identity_matches_root(
+    identity: &ManagedCacheIdentity,
+    value: &str,
+    root: &Path,
+) -> bool {
     let hash = managed_cache_root_hash(root);
-    match parse_managed_cache_id(value) {
-        Some(ManagedCacheIdentity::Unversioned) => value == hash,
-        Some(ManagedCacheIdentity::Versioned { root_hash, .. }) => root_hash == hash,
-        None => false,
+    match identity {
+        ManagedCacheIdentity::Unversioned => value == hash,
+        ManagedCacheIdentity::Versioned { root_hash, .. } => root_hash == &hash,
     }
 }
 
@@ -887,7 +924,7 @@ mod tests {
             .join(format!("v{INDEX_CONTENT_VERSION}"))
             .join("index.sqlite");
         let mut config = Config::discover(root.path(), Some(database)).expect("config");
-        config.database_is_managed_cache = true;
+        config.mark_database_as_managed_platform();
         let current_database =
             format!("{FALLBACK_CACHE_DIRECTORY}/v{INDEX_CONTENT_VERSION}/index.sqlite");
 

@@ -1,22 +1,35 @@
 use super::*;
+pub(in crate::ranking) struct BuildContextPlanParams<'a> {
+    pub(in crate::ranking) request: &'a ContextRequest,
+    pub(in crate::ranking) focus_path_matchers: &'a [PathMatcher],
+    pub(in crate::ranking) selected: &'a [ScoredCandidate],
+    pub(in crate::ranking) candidate_paths_total: usize,
+    pub(in crate::ranking) estimated_source_tokens: usize,
+    pub(in crate::ranking) generated_artifact_warning: bool,
+    pub(in crate::ranking) result_complete: bool,
+    pub(in crate::ranking) policy: ContextSelectionPolicy,
+}
+
 pub(in crate::ranking) fn build_context_plan(
-    request: &ContextRequest,
-    selected: &[ScoredCandidate],
-    candidate_paths_total: usize,
-    estimated_source_tokens: usize,
-    generated_artifact_warning: bool,
-    result_complete: bool,
+    params: BuildContextPlanParams<'_>,
 ) -> Option<ContextQueryPlan> {
-    request.plan_only.then(|| {
-        let minimum_fragments = request
-            .minimum_fragments_per_focus_path
-            .unwrap_or(usize::from(request.strict_focus_paths));
+    let BuildContextPlanParams {
+        request,
+        focus_path_matchers,
+        selected,
+        candidate_paths_total,
+        estimated_source_tokens,
+        generated_artifact_warning,
+        result_complete,
+        policy,
+    } = params;
+    policy.is_plan().then(|| {
+        let minimum_fragments = policy.focus_minimum().unwrap_or(0);
         let focus_coverage = request
             .focus_paths
             .iter()
-            .map(|pattern| {
-                let matcher = PathMatcher::new(std::slice::from_ref(pattern))
-                    .expect("focus paths are validated at request admission");
+            .zip(focus_path_matchers)
+            .map(|(pattern, matcher)| {
                 let candidate_fragments = selected
                     .iter()
                     .filter(|candidate| matcher.is_match(&candidate.candidate.path))
@@ -31,22 +44,25 @@ pub(in crate::ranking) fn build_context_plan(
             .collect();
         let candidates = selected
             .iter()
-            .map(|scored| ContextPlanCandidate {
-                path: scored.candidate.path.clone(),
-                start_line: scored.candidate.start_line,
-                end_line: scored.candidate.end_line,
-                target_start_line: scored.candidate.target_start_line,
-                target_end_line: scored.candidate.target_end_line,
-                truncated: scored.candidate.target_truncated(),
-                representation: scored.candidate.representation.clone(),
-                score: (scored.score * 10_000.0).round() / 10_000.0,
-                reasons: scored
-                    .candidate
-                    .reason()
-                    .split("; ")
-                    .map(str::to_owned)
-                    .collect(),
-                estimated_tokens: scored.token_count,
+            .map(|scored| {
+                let (target_start_line, target_end_line) = scored.candidate.target_lines().unzip();
+                ContextPlanCandidate {
+                    path: scored.candidate.path.clone(),
+                    start_line: scored.candidate.start_line,
+                    end_line: scored.candidate.end_line,
+                    target_start_line,
+                    target_end_line,
+                    truncated: scored.candidate.target_truncated(),
+                    representation: scored.candidate.representation.clone(),
+                    score: (scored.score * 10_000.0).round() / 10_000.0,
+                    reasons: scored
+                        .candidate
+                        .reason()
+                        .split("; ")
+                        .map(str::to_owned)
+                        .collect(),
+                    estimated_tokens: scored.token_count,
+                }
             })
             .collect();
         ContextQueryPlan {
@@ -61,28 +77,31 @@ pub(in crate::ranking) fn build_context_plan(
 }
 
 pub(in crate::ranking) fn materialize_context_fragments(
-    request: &ContextRequest,
     selected: &[ScoredCandidate],
     estimated_source_tokens: usize,
+    policy: ContextSelectionPolicy,
 ) -> (Vec<ContextFragment>, Vec<String>, usize) {
-    if request.plan_only {
+    if policy.is_plan() {
         return (Vec::new(), Vec::new(), 0);
     }
     let fragments = selected
         .iter()
-        .map(|scored| ContextFragment {
-            path: scored.candidate.path.clone(),
-            start_line: scored.candidate.start_line,
-            end_line: scored.candidate.end_line,
-            target_start_line: scored.candidate.target_start_line,
-            target_end_line: scored.candidate.target_end_line,
-            truncated: scored.candidate.target_truncated(),
-            representation: scored.candidate.representation.clone(),
-            content: scored.candidate.content.clone(),
-            content_hash: scored.content_hash.clone(),
-            score: (scored.score * 10_000.0).round() / 10_000.0,
-            reason: scored.candidate.reason(),
-            token_count: scored.token_count,
+        .map(|scored| {
+            let (target_start_line, target_end_line) = scored.candidate.target_lines().unzip();
+            ContextFragment {
+                path: scored.candidate.path.clone(),
+                start_line: scored.candidate.start_line,
+                end_line: scored.candidate.end_line,
+                target_start_line,
+                target_end_line,
+                truncated: scored.candidate.target_truncated(),
+                representation: scored.candidate.representation.clone(),
+                content: scored.candidate.content.clone(),
+                content_hash: scored.content_hash.clone(),
+                score: (scored.score * 10_000.0).round() / 10_000.0,
+                reason: scored.candidate.reason(),
+                token_count: scored.token_count,
+            }
         })
         .collect();
     let fragment_hashes = selected

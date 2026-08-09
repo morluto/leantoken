@@ -125,6 +125,7 @@ pub struct Services {
     response_accountant: accounting::ResponseAccountant,
     observer: observer::ServiceObserver,
     reconciliation: reconciliation::ReconciliationCoordinator,
+    context_exclude_paths: validation::PathMatcher,
 }
 
 /// Per-call response controls shared by service entry points.

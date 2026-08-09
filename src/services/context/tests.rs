@@ -52,7 +52,7 @@ fn revision_ranges_require_two_explicit_endpoints() {
 
 #[test]
 fn context_revision_validation_rejects_whitespace_only_values() {
-    let error = validate_revision_field(" \t\n").expect_err("whitespace-only revision");
+    let error = parse_context_revision(Some(" \t\n")).expect_err("whitespace-only revision");
 
     assert!(matches!(
         error,
@@ -65,7 +65,7 @@ fn context_revision_validation_rejects_whitespace_only_values() {
 
 #[test]
 fn context_revision_validation_rejects_outer_whitespace() {
-    let error = validate_revision_field(" main~1 ").expect_err("outer whitespace");
+    let error = parse_context_revision(Some(" main~1 ")).expect_err("outer whitespace");
     assert!(matches!(
         error,
         Error::InvalidInput {

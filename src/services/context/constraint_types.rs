@@ -16,6 +16,7 @@ pub(super) struct ConstraintCandidateExpansion<'a> {
     pub(super) queries: &'a [ContextQuery],
     pub(super) path_scorer: &'a ContextPathScorer,
     pub(super) cancellation: &'a CancellationToken,
+    pub(super) focus: ContextFocusPolicy,
 }
 
 pub(super) struct FocusCandidate {
@@ -65,6 +66,7 @@ pub(super) struct FocusExpansion<'a> {
     pub(super) path_scorer: &'a ContextPathScorer,
     pub(super) resolutions: &'a [FocusPathResolution],
     pub(super) cancellation: &'a CancellationToken,
+    pub(super) focus: ContextFocusPolicy,
 }
 
 pub(super) fn retain_focus_file(files: &mut Vec<FileRecord>, file: &FileRecord) {

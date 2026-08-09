@@ -12,11 +12,14 @@ impl Services {
             path_scorer,
             resolutions,
             cancellation,
+            focus,
         } = expansion;
         let mut warnings = Vec::new();
-        if !request.strict_focus_paths && request.minimum_fragments_per_focus_path.is_none() {
-            return Ok(warnings);
-        }
+        let minimum_fragments = match focus {
+            ContextFocusPolicy::Advisory => return Ok(warnings),
+            ContextFocusPolicy::Minimum { minimum_fragments }
+            | ContextFocusPolicy::Strict { minimum_fragments } => minimum_fragments,
+        };
         for ((pattern, resolution), pattern_index) in
             request.focus_paths.iter().zip(resolutions).zip(0usize..)
         {
@@ -99,6 +102,15 @@ impl Services {
                     } else {
                         relevance.min(4.0)
                     };
+                    let target_range =
+                        CandidateTargetRange::new(symbol.start_line, symbol.end_line).ok_or_else(
+                            || {
+                                Error::OperationFailure(format!(
+                                    "indexed symbol has an invalid source range: {}:{}-{}",
+                                    file.path, symbol.start_line, symbol.end_line
+                                ))
+                            },
+                        )?;
                     let candidate = Candidate::new(
                         &file.path,
                         chunk.start_line,
@@ -109,7 +121,7 @@ impl Services {
                     .concept(format!("focus:path:{pattern}"), 2.0)
                     .representation("focus_symbol")
                     .symbol_name(symbol.name)
-                    .target_range(symbol.start_line, symbol.end_line)
+                    .target_range(target_range)
                     .exact(exact_score)
                     .symbol(if exact_focus_symbol { 2.0 } else { 1.0 })
                     .path_score(path_scorer.score(&file.path))
@@ -199,17 +211,14 @@ impl Services {
                     break;
                 }
             }
-            let requested_minimum = request
-                .minimum_fragments_per_focus_path
-                .unwrap_or(usize::from(request.strict_focus_paths));
             if retained == 0 {
                 warnings.push(format!(
                     "focus pattern `{pattern}` matched indexed files without bounded chunk evidence"
                 ));
-            } else if retained < requested_minimum {
+            } else if retained < minimum_fragments {
                 warnings.push(format!(
                     "focus pattern `{pattern}` generated {retained} distinct bounded candidates \
-                     for requested minimum {requested_minimum}"
+                     for requested minimum {minimum_fragments}"
                 ));
             }
         }
@@ -220,6 +229,7 @@ impl Services {
         &self,
         session: &IndexReadSnapshot,
         request: &ContextRequest,
+        focus: ContextFocusPolicy,
         selected_paths: &[String],
         coverage: &mut ContextCoverageReceipt,
     ) -> Result<()> {
@@ -274,8 +284,7 @@ impl Services {
             });
         }
 
-        let focus_coverage_is_required =
-            request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
+        let focus_coverage_is_required = !matches!(focus, ContextFocusPolicy::Advisory);
         if focus_coverage_is_required || request.strict_changed_paths {
             let satisfied = (!focus_coverage_is_required
                 || coverage

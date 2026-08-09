@@ -31,7 +31,7 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
         report.total_bytes,
         report.matched_entries,
         report.matched_bytes,
-        report.returned_entries
+        report.returned_entries()
     )?;
     let state_counts = report
         .state_counts
@@ -58,7 +58,7 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
         report.safely_reclaimable_incompatible_entries,
         report.safely_reclaimable_incompatible_bytes
     )?;
-    for entry in &report.entries {
+    for entry in report.entries() {
         writeln!(
             output,
             "{}  {} bytes  {}  {}  {}  {}  last_access={}  root_available={}  {}",
@@ -87,7 +87,7 @@ pub fn print_list(report: &CacheListReport, json_output: bool) -> Result<()> {
                 .map_or_else(|| "unknown root".into(), |root| root.display().to_string())
         )?;
     }
-    if let Some(cursor) = &report.next_cursor {
+    if let Some(cursor) = report.next_cursor() {
         writeln!(output, "next_cursor={cursor}")?;
     }
     Ok(())
@@ -110,11 +110,11 @@ pub fn print_prune(report: &CachePruneReport, json_output: bool) -> Result<()> {
         report.total_bytes_after
     )?;
     for result in &report.results {
-        let detail = result.error.as_deref().or(result.detail.as_deref());
+        let detail = result.outcome.diagnostic();
         writeln!(
             output,
             "{}  {}  {} bytes{}{}",
-            result.action.label(),
+            result.outcome.action().label(),
             result.id,
             result.size_bytes,
             if result.reasons.is_empty() {

@@ -170,7 +170,7 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
     };
     writeln!(output, "  {operation_label}")?;
     for result in &report.results {
-        if let Some(error) = &result.error {
+        if let Some(error) = result.outcome.error() {
             writeln!(
                 output,
                 "  ✗ {}: {} ({})",
@@ -184,7 +184,7 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
                 "  ✓ {}: {} ({})",
                 result.client.display_name(),
                 result.path.display(),
-                result.status
+                result.outcome.status()
             )?;
         }
     }
@@ -192,26 +192,25 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         writeln!(output, "  ✗ Setup transaction: {error}")?;
     }
     if let Some(verification) = &report.verification {
-        match verification.status {
-            SetupVerificationStatus::Passed => writeln!(
+        match verification {
+            SetupVerification::Passed { .. } => writeln!(
                 output,
                 "  ✓ Exact launcher verified: initialize, 9-tool catalog, first retrieval"
             )?,
-            SetupVerificationStatus::Skipped => writeln!(
-                output,
-                "  ─ Launcher verification skipped: {}",
-                verification.message.as_deref().unwrap_or("not applicable")
-            )?,
-            SetupVerificationStatus::Failed => {
+            SetupVerification::Skipped { message, .. } => {
+                writeln!(output, "  ─ Launcher verification skipped: {}", message)?
+            }
+            SetupVerification::Failed {
+                stage,
+                message,
+                repair_command,
+            } => {
                 writeln!(
                     output,
                     "  ✗ Launcher verification failed at {}: {}",
-                    verification.stage.as_deref().unwrap_or("unknown"),
-                    verification.message.as_deref().unwrap_or("unknown failure")
+                    stage, message
                 )?;
-                if let Some(command) = &verification.repair_command {
-                    writeln!(output, "    Retry: {command}")?;
-                }
+                writeln!(output, "    Retry: {repair_command}")?;
             }
         }
     }
@@ -219,12 +218,12 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         let configured = report
             .results
             .iter()
-            .filter(|result| result.error.is_none())
+            .filter(|result| result.outcome.error().is_none())
             .count();
         let changed = report
             .results
             .iter()
-            .filter(|result| matches!(result.status.as_str(), "configured" | "updated"))
+            .filter(|result| result.outcome.changed())
             .count();
         writeln!(output)?;
         writeln!(
@@ -309,7 +308,7 @@ pub fn print_report(report: &SetupReport, json_output: bool) -> Result<()> {
         if let Some(client) = report
             .results
             .iter()
-            .find(|result| result.error.is_none())
+            .find(|result| result.outcome.error().is_none())
             .map(|result| result.client)
         {
             writeln!(
