@@ -31,7 +31,7 @@
 <a href=#31 id=31 data-nosnippet>31</a>        report.total_bytes,
 <a href=#32 id=32 data-nosnippet>32</a>        report.matched_entries,
 <a href=#33 id=33 data-nosnippet>33</a>        report.matched_bytes,
-<a href=#34 id=34 data-nosnippet>34</a>        report.returned_entries
+<a href=#34 id=34 data-nosnippet>34</a>        report.returned_entries()
 <a href=#35 id=35 data-nosnippet>35</a>    )<span class="question-mark">?</span>;
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">let </span>state_counts = report
 <a href=#37 id=37 data-nosnippet>37</a>        .state_counts
@@ -58,7 +58,7 @@
 <a href=#58 id=58 data-nosnippet>58</a>        report.safely_reclaimable_incompatible_entries,
 <a href=#59 id=59 data-nosnippet>59</a>        report.safely_reclaimable_incompatible_bytes
 <a href=#60 id=60 data-nosnippet>60</a>    )<span class="question-mark">?</span>;
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">for </span>entry <span class="kw">in </span><span class="kw-2">&amp;</span>report.entries {
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">for </span>entry <span class="kw">in </span>report.entries() {
 <a href=#62 id=62 data-nosnippet>62</a>        <span class="macro">writeln!</span>(
 <a href=#63 id=63 data-nosnippet>63</a>            output,
 <a href=#64 id=64 data-nosnippet>64</a>            <span class="string">"{}  {} bytes  {}  {}  {}  {}  last_access={}  root_available={}  {}"</span>,
@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>                .map_or_else(|| <span class="string">"unknown root"</span>.into(), |root| root.display().to_string())
 <a href=#88 id=88 data-nosnippet>88</a>        )<span class="question-mark">?</span>;
 <a href=#89 id=89 data-nosnippet>89</a>    }
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(cursor) = <span class="kw-2">&amp;</span>report.next_cursor {
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(cursor) = report.next_cursor() {
 <a href=#91 id=91 data-nosnippet>91</a>        <span class="macro">writeln!</span>(output, <span class="string">"next_cursor={cursor}"</span>)<span class="question-mark">?</span>;
 <a href=#92 id=92 data-nosnippet>92</a>    }
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="prelude-val">Ok</span>(())
@@ -110,11 +110,11 @@
 <a href=#110 id=110 data-nosnippet>110</a>        report.total_bytes_after
 <a href=#111 id=111 data-nosnippet>111</a>    )<span class="question-mark">?</span>;
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">for </span>result <span class="kw">in </span><span class="kw-2">&amp;</span>report.results {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">let </span>detail = result.error.as_deref().or(result.detail.as_deref());
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">let </span>detail = result.outcome.diagnostic();
 <a href=#114 id=114 data-nosnippet>114</a>        <span class="macro">writeln!</span>(
 <a href=#115 id=115 data-nosnippet>115</a>            output,
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="string">"{}  {}  {} bytes{}{}"</span>,
-<a href=#117 id=117 data-nosnippet>117</a>            result.action.label(),
+<a href=#117 id=117 data-nosnippet>117</a>            result.outcome.action().label(),
 <a href=#118 id=118 data-nosnippet>118</a>            result.id,
 <a href=#119 id=119 data-nosnippet>119</a>            result.size_bytes,
 <a href=#120 id=120 data-nosnippet>120</a>            <span class="kw">if </span>result.reasons.is_empty() {

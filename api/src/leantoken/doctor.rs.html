@@ -869,7 +869,7 @@
 <a href=#869 id=869 data-nosnippet>869</a>    <span class="kw">let </span><span class="kw-2">mut </span>launch_args = args.iter().map(OsString::from).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#870 id=870 data-nosnippet>870</a>    <span class="kw">let </span><span class="kw-2">mut </span>global_args = <span class="macro">vec!</span>[<span class="string">"--root"</span>.into(), config.root.as_os_str().to_owned()];
 <a href=#871 id=871 data-nosnippet>871</a>    <span class="kw">if </span><span class="macro">matches!</span>(database_forwarding, DatabaseForwarding::Resolved)
-<a href=#872 id=872 data-nosnippet>872</a>        || !config.database_is_managed_cache
+<a href=#872 id=872 data-nosnippet>872</a>        || !config.database_is_managed_cache()
 <a href=#873 id=873 data-nosnippet>873</a>    {
 <a href=#874 id=874 data-nosnippet>874</a>        global_args.extend([
 <a href=#875 id=875 data-nosnippet>875</a>            <span class="string">"--database"</span>.into(),

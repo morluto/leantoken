@@ -149,70 +149,72 @@
 <a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">pub </span>focus_paths: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PathMatcher,
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">pub </span>changed_paths: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>HashSet&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str&gt;,
 <a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">pub </span>generated_artifact_warning: bool,
-<a href=#152 id=152 data-nosnippet>152</a>}
-<a href=#153 id=153 data-nosnippet>153</a>
-<a href=#154 id=154 data-nosnippet>154</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>build_context_omissions(
-<a href=#155 id=155 data-nosnippet>155</a>    params: BuildOmissionsParams&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#156 id=156 data-nosnippet>156</a>) -&gt; (ContextOmissionSummary, Vec&lt;OmittedCandidate&gt;, Vec&lt;String&gt;) {
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span>BuildOmissionsParams {
-<a href=#158 id=158 data-nosnippet>158</a>        request,
-<a href=#159 id=159 data-nosnippet>159</a>        path_omitted,
-<a href=#160 id=160 data-nosnippet>160</a>        known_omitted,
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw-2">mut </span>limit_omitted,
-<a href=#162 id=162 data-nosnippet>162</a>        prefiltered_path_omissions,
-<a href=#163 id=163 data-nosnippet>163</a>        focus_paths,
-<a href=#164 id=164 data-nosnippet>164</a>        changed_paths,
-<a href=#165 id=165 data-nosnippet>165</a>        generated_artifact_warning,
-<a href=#166 id=166 data-nosnippet>166</a>    } = params;
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">let </span>omission_summary = summarize_omissions(
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw-2">&amp;</span>path_omitted,
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw-2">&amp;</span>known_omitted,
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="kw-2">&amp;</span>limit_omitted,
-<a href=#171 id=171 data-nosnippet>171</a>        prefiltered_path_omissions,
-<a href=#172 id=172 data-nosnippet>172</a>        focus_paths,
-<a href=#173 id=173 data-nosnippet>173</a>        changed_paths,
-<a href=#174 id=174 data-nosnippet>174</a>        request.explain_diagnostics,
-<a href=#175 id=175 data-nosnippet>175</a>    );
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span><span class="kw-2">mut </span>omitted = path_omitted
-<a href=#177 id=177 data-nosnippet>177</a>        .into_iter()
-<a href=#178 id=178 data-nosnippet>178</a>        .map(|scored| OmittedCandidate {
-<a href=#179 id=179 data-nosnippet>179</a>            path: scored.candidate.path,
-<a href=#180 id=180 data-nosnippet>180</a>            start_line: scored.candidate.start_line,
-<a href=#181 id=181 data-nosnippet>181</a>            end_line: scored.candidate.end_line,
-<a href=#182 id=182 data-nosnippet>182</a>            reason: <span class="string">"path excluded"</span>.to_string(),
-<a href=#183 id=183 data-nosnippet>183</a>        })
-<a href=#184 id=184 data-nosnippet>184</a>        .chain(known_omitted.into_iter().map(|scored| OmittedCandidate {
-<a href=#185 id=185 data-nosnippet>185</a>            path: scored.candidate.path,
-<a href=#186 id=186 data-nosnippet>186</a>            start_line: scored.candidate.start_line,
-<a href=#187 id=187 data-nosnippet>187</a>            end_line: scored.candidate.end_line,
-<a href=#188 id=188 data-nosnippet>188</a>            reason: <span class="string">"known hash"</span>.to_string(),
-<a href=#189 id=189 data-nosnippet>189</a>        }))
-<a href=#190 id=190 data-nosnippet>190</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#191 id=191 data-nosnippet>191</a>    omitted.extend(limit_omitted.drain(..).map(|scored| OmittedCandidate {
-<a href=#192 id=192 data-nosnippet>192</a>        path: scored.candidate.path,
-<a href=#193 id=193 data-nosnippet>193</a>        start_line: scored.candidate.start_line,
-<a href=#194 id=194 data-nosnippet>194</a>        end_line: scored.candidate.end_line,
-<a href=#195 id=195 data-nosnippet>195</a>        reason: <span class="string">"budget or result limit"</span>.to_string(),
-<a href=#196 id=196 data-nosnippet>196</a>    }));
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">if </span>!request.explain_diagnostics {
-<a href=#198 id=198 data-nosnippet>198</a>        omitted.clear();
-<a href=#199 id=199 data-nosnippet>199</a>    }
-<a href=#200 id=200 data-nosnippet>200</a>    omitted.truncate(MAX_OMITTED_DETAILS);
-<a href=#201 id=201 data-nosnippet>201</a>
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span>omitted_count = omission_summary
-<a href=#203 id=203 data-nosnippet>203</a>        .path_excluded
-<a href=#204 id=204 data-nosnippet>204</a>        .saturating_add(omission_summary.known_hash)
-<a href=#205 id=205 data-nosnippet>205</a>        .saturating_add(omission_summary.budget_or_result_limit);
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span><span class="kw-2">mut </span>warnings = Vec::new();
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">if </span>omitted_count &gt; <span class="number">0 </span>{
-<a href=#208 id=208 data-nosnippet>208</a>        warnings.push(<span class="macro">format!</span>(<span class="string">"{omitted_count} omitted"</span>));
-<a href=#209 id=209 data-nosnippet>209</a>    }
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">if </span>request.plan_only &amp;&amp; generated_artifact_warning {
-<a href=#211 id=211 data-nosnippet>211</a>        warnings.push(
-<a href=#212 id=212 data-nosnippet>212</a>            <span class="string">"generated-artifact candidates matched context exclusion defaults; review their explicit inclusion before materializing source"
-<a href=#213 id=213 data-nosnippet>213</a>                </span>.into(),
-<a href=#214 id=214 data-nosnippet>214</a>        );
-<a href=#215 id=215 data-nosnippet>215</a>    }
-<a href=#216 id=216 data-nosnippet>216</a>    (omission_summary, omitted, warnings)
-<a href=#217 id=217 data-nosnippet>217</a>}
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">pub </span>policy: ContextSelectionPolicy,
+<a href=#153 id=153 data-nosnippet>153</a>}
+<a href=#154 id=154 data-nosnippet>154</a>
+<a href=#155 id=155 data-nosnippet>155</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::ranking) <span class="kw">fn </span>build_context_omissions(
+<a href=#156 id=156 data-nosnippet>156</a>    params: BuildOmissionsParams&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#157 id=157 data-nosnippet>157</a>) -&gt; (ContextOmissionSummary, Vec&lt;OmittedCandidate&gt;, Vec&lt;String&gt;) {
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>BuildOmissionsParams {
+<a href=#159 id=159 data-nosnippet>159</a>        request,
+<a href=#160 id=160 data-nosnippet>160</a>        path_omitted,
+<a href=#161 id=161 data-nosnippet>161</a>        known_omitted,
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw-2">mut </span>limit_omitted,
+<a href=#163 id=163 data-nosnippet>163</a>        prefiltered_path_omissions,
+<a href=#164 id=164 data-nosnippet>164</a>        focus_paths,
+<a href=#165 id=165 data-nosnippet>165</a>        changed_paths,
+<a href=#166 id=166 data-nosnippet>166</a>        generated_artifact_warning,
+<a href=#167 id=167 data-nosnippet>167</a>        policy,
+<a href=#168 id=168 data-nosnippet>168</a>    } = params;
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span>omission_summary = summarize_omissions(
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="kw-2">&amp;</span>path_omitted,
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw-2">&amp;</span>known_omitted,
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw-2">&amp;</span>limit_omitted,
+<a href=#173 id=173 data-nosnippet>173</a>        prefiltered_path_omissions,
+<a href=#174 id=174 data-nosnippet>174</a>        focus_paths,
+<a href=#175 id=175 data-nosnippet>175</a>        changed_paths,
+<a href=#176 id=176 data-nosnippet>176</a>        request.explain_diagnostics,
+<a href=#177 id=177 data-nosnippet>177</a>    );
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">let </span><span class="kw-2">mut </span>omitted = path_omitted
+<a href=#179 id=179 data-nosnippet>179</a>        .into_iter()
+<a href=#180 id=180 data-nosnippet>180</a>        .map(|scored| OmittedCandidate {
+<a href=#181 id=181 data-nosnippet>181</a>            path: scored.candidate.path,
+<a href=#182 id=182 data-nosnippet>182</a>            start_line: scored.candidate.start_line,
+<a href=#183 id=183 data-nosnippet>183</a>            end_line: scored.candidate.end_line,
+<a href=#184 id=184 data-nosnippet>184</a>            reason: <span class="string">"path excluded"</span>.to_string(),
+<a href=#185 id=185 data-nosnippet>185</a>        })
+<a href=#186 id=186 data-nosnippet>186</a>        .chain(known_omitted.into_iter().map(|scored| OmittedCandidate {
+<a href=#187 id=187 data-nosnippet>187</a>            path: scored.candidate.path,
+<a href=#188 id=188 data-nosnippet>188</a>            start_line: scored.candidate.start_line,
+<a href=#189 id=189 data-nosnippet>189</a>            end_line: scored.candidate.end_line,
+<a href=#190 id=190 data-nosnippet>190</a>            reason: <span class="string">"known hash"</span>.to_string(),
+<a href=#191 id=191 data-nosnippet>191</a>        }))
+<a href=#192 id=192 data-nosnippet>192</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#193 id=193 data-nosnippet>193</a>    omitted.extend(limit_omitted.drain(..).map(|scored| OmittedCandidate {
+<a href=#194 id=194 data-nosnippet>194</a>        path: scored.candidate.path,
+<a href=#195 id=195 data-nosnippet>195</a>        start_line: scored.candidate.start_line,
+<a href=#196 id=196 data-nosnippet>196</a>        end_line: scored.candidate.end_line,
+<a href=#197 id=197 data-nosnippet>197</a>        reason: <span class="string">"budget or result limit"</span>.to_string(),
+<a href=#198 id=198 data-nosnippet>198</a>    }));
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">if </span>!request.explain_diagnostics {
+<a href=#200 id=200 data-nosnippet>200</a>        omitted.clear();
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>    omitted.truncate(MAX_OMITTED_DETAILS);
+<a href=#203 id=203 data-nosnippet>203</a>
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>omitted_count = omission_summary
+<a href=#205 id=205 data-nosnippet>205</a>        .path_excluded
+<a href=#206 id=206 data-nosnippet>206</a>        .saturating_add(omission_summary.known_hash)
+<a href=#207 id=207 data-nosnippet>207</a>        .saturating_add(omission_summary.budget_or_result_limit);
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">let </span><span class="kw-2">mut </span>warnings = Vec::new();
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">if </span>omitted_count &gt; <span class="number">0 </span>{
+<a href=#210 id=210 data-nosnippet>210</a>        warnings.push(<span class="macro">format!</span>(<span class="string">"{omitted_count} omitted"</span>));
+<a href=#211 id=211 data-nosnippet>211</a>    }
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">if </span>policy.is_plan() &amp;&amp; generated_artifact_warning {
+<a href=#213 id=213 data-nosnippet>213</a>        warnings.push(
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="string">"generated-artifact candidates matched context exclusion defaults; review their explicit inclusion before materializing source"
+<a href=#215 id=215 data-nosnippet>215</a>                </span>.into(),
+<a href=#216 id=216 data-nosnippet>216</a>        );
+<a href=#217 id=217 data-nosnippet>217</a>    }
+<a href=#218 id=218 data-nosnippet>218</a>    (omission_summary, omitted, warnings)
+<a href=#219 id=219 data-nosnippet>219</a>}
 </code></pre></div></section></main></body></html>

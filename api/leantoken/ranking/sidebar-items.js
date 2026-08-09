@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["deduplicate","rank","select","select_with_tokenizer","select_with_weights","select_with_weights_and_tokenizer"],"struct":["Candidate","ScoredCandidate","Weights"]};
+window.SIDEBAR_ITEMS = {"fn":["deduplicate","rank","select","select_with_tokenizer","select_with_weights","select_with_weights_and_tokenizer"],"struct":["Candidate","CandidateTargetRange","ScoredCandidate","Weights"]};

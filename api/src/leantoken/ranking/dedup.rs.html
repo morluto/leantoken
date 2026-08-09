@@ -129,27 +129,26 @@
 <a href=#129 id=129 data-nosnippet>129</a>        }
 <a href=#130 id=130 data-nosnippet>130</a>    }
 <a href=#131 id=131 data-nosnippet>131</a>    existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">if </span>existing.target_start_line.is_none() &amp;&amp; duplicate.target_start_line.is_some() {
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">if </span>existing.target_range.is_none() &amp;&amp; duplicate.target_range.is_some() {
 <a href=#133 id=133 data-nosnippet>133</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#134 id=134 data-nosnippet>134</a>        existing.target_start_line = duplicate.target_start_line;
-<a href=#135 id=135 data-nosnippet>135</a>        existing.target_end_line = duplicate.target_end_line;
-<a href=#136 id=136 data-nosnippet>136</a>        existing
-<a href=#137 id=137 data-nosnippet>137</a>            .representation
-<a href=#138 id=138 data-nosnippet>138</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
-<a href=#139 id=139 data-nosnippet>139</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
-<a href=#140 id=140 data-nosnippet>140</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
-<a href=#141 id=141 data-nosnippet>141</a>    }
-<a href=#142 id=142 data-nosnippet>142</a>    existing.exact = existing.exact.max(duplicate.exact);
-<a href=#143 id=143 data-nosnippet>143</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
-<a href=#144 id=144 data-nosnippet>144</a>    existing.reference = existing.reference.max(duplicate.reference);
-<a href=#145 id=145 data-nosnippet>145</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
-<a href=#146 id=146 data-nosnippet>146</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
-<a href=#147 id=147 data-nosnippet>147</a>    existing.lexical_frequency_penalty = existing
-<a href=#148 id=148 data-nosnippet>148</a>        .lexical_frequency_penalty
-<a href=#149 id=149 data-nosnippet>149</a>        .min(duplicate.lexical_frequency_penalty);
-<a href=#150 id=150 data-nosnippet>150</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
-<a href=#151 id=151 data-nosnippet>151</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
-<a href=#152 id=152 data-nosnippet>152</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
-<a href=#153 id=153 data-nosnippet>153</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
-<a href=#154 id=154 data-nosnippet>154</a>}
+<a href=#134 id=134 data-nosnippet>134</a>        existing.target_range = duplicate.target_range;
+<a href=#135 id=135 data-nosnippet>135</a>        existing
+<a href=#136 id=136 data-nosnippet>136</a>            .representation
+<a href=#137 id=137 data-nosnippet>137</a>            .clone_from(<span class="kw-2">&amp;</span>duplicate.representation);
+<a href=#138 id=138 data-nosnippet>138</a>    } <span class="kw">else if </span>existing.symbol_name.is_none() {
+<a href=#139 id=139 data-nosnippet>139</a>        existing.symbol_name.clone_from(<span class="kw-2">&amp;</span>duplicate.symbol_name);
+<a href=#140 id=140 data-nosnippet>140</a>    }
+<a href=#141 id=141 data-nosnippet>141</a>    existing.exact = existing.exact.max(duplicate.exact);
+<a href=#142 id=142 data-nosnippet>142</a>    existing.symbol = existing.symbol.max(duplicate.symbol);
+<a href=#143 id=143 data-nosnippet>143</a>    existing.reference = existing.reference.max(duplicate.reference);
+<a href=#144 id=144 data-nosnippet>144</a>    existing.bm25 = existing.bm25.max(duplicate.bm25);
+<a href=#145 id=145 data-nosnippet>145</a>    existing.path_score = existing.path_score.max(duplicate.path_score);
+<a href=#146 id=146 data-nosnippet>146</a>    existing.lexical_frequency_penalty = existing
+<a href=#147 id=147 data-nosnippet>147</a>        .lexical_frequency_penalty
+<a href=#148 id=148 data-nosnippet>148</a>        .min(duplicate.lexical_frequency_penalty);
+<a href=#149 id=149 data-nosnippet>149</a>    existing.size_score = existing.size_score.max(duplicate.size_score);
+<a href=#150 id=150 data-nosnippet>150</a>    existing.focus_boost = existing.focus_boost.max(duplicate.focus_boost);
+<a href=#151 id=151 data-nosnippet>151</a>    existing.import_boost = existing.import_boost.max(duplicate.import_boost);
+<a href=#152 id=152 data-nosnippet>152</a>    existing.change_boost = existing.change_boost.max(duplicate.change_boost);
+<a href=#153 id=153 data-nosnippet>153</a>}
 </code></pre></div></section></main></body></html>
