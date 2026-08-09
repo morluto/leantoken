@@ -63,3 +63,147 @@ async fn required_evidence_does_not_transfer_to_overlapping_content() {
         ["EVIDENCE_ONLY_LITERAL"]
     );
 }
+
+#[tokio::test]
+async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join(".git"),
+        "gitdir: fixture-has-no-repository\n",
+    )
+    .expect("create Git boundary");
+    for directory in [
+        "src/services",
+        "src/mcp/requests",
+        "src/mcp/snapshots",
+        "tests",
+        "fixtures",
+        ".agents/skills/context-helper",
+    ] {
+        std::fs::create_dir_all(root.path().join(directory)).expect("create fixture directory");
+    }
+    std::fs::write(
+        root.path().join("src/services/dispatch.rs"),
+        r#"pub fn resolve_initial_context(index_state: IndexState) -> Result<Generation> {
+    if index_state == IndexState::Uninitialized {
+        return initialize_atomic_generation();
+    }
+    current_generation()
+}
+"#,
+    )
+    .expect("write production owner");
+    std::fs::write(
+        root.path().join("src/mcp/requests/context.rs"),
+        "// context request schema preserves MCP startup snapshot consistency\n\
+         pub struct ContextRequestSchema { pub index_not_ready: bool }\n",
+    )
+    .expect("write request schema");
+    std::fs::write(
+        root.path().join("src/mcp/snapshots/context.snap"),
+        "context index_not_ready initial database MCP startup snapshot consistency schema\n",
+    )
+    .expect("write snapshot");
+    std::fs::write(
+        root.path().join("tests/context.rs"),
+        "#[test] fn context_regression_preserves_mcp_startup() { /* index_not_ready */ }\n",
+    )
+    .expect("write owner test");
+    std::fs::write(
+        root.path().join("fixtures/context.txt"),
+        "context index_not_ready initial database MCP startup snapshot consistency fixture\n",
+    )
+    .expect("write fixture artifact");
+    std::fs::write(
+        root.path().join(".agents/skills/context-helper/SKILL.md"),
+        "# Context helper\nPreserve MCP startup and snapshot consistency after index_not_ready.\n",
+    )
+    .expect("write skill");
+    std::fs::write(
+        root.path().join("context_research.md"),
+        "# Context research\nInitial database context index_not_ready MCP startup snapshot consistency.\n",
+    )
+    .expect("write root research");
+
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let mut request = context_limit_request(1_200);
+    request.max_fragments = Some(6);
+    request.task = "Fix direct CLI context on an initial database so it initializes the first \
+        atomic generation instead of index_not_ready. Preserve MCP startup and snapshot \
+        consistency. Add a context regression test."
+        .into();
+
+    let evaluation = services
+        .context_evaluation(request)
+        .await
+        .expect("evaluate broad context");
+    let paths = evaluation
+        .response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<Vec<_>>();
+    let candidate_diagnostics = evaluation
+        .generated_candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.path.as_str(),
+                candidate.start_line,
+                candidate.score,
+                &candidate.match_kinds,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths.first(),
+        Some(&"src/services/dispatch.rs"),
+        "paths={paths:?} candidates={candidate_diagnostics:#?}"
+    );
+    assert!(evaluation.generated_candidates.iter().any(|candidate| {
+        candidate.path == "src/services/dispatch.rs"
+            && candidate
+                .match_kinds
+                .iter()
+                .any(|kind| kind.starts_with("facet:primary_change:"))
+    }));
+    let selected_failures = evaluation
+        .response
+        .fragments
+        .iter()
+        .filter(|fragment| {
+            evaluation.generated_candidates.iter().any(|candidate| {
+                candidate.path == fragment.path
+                    && candidate.start_line == fragment.start_line
+                    && candidate.end_line == fragment.end_line
+                    && candidate.representation == fragment.representation
+                    && candidate
+                        .match_kinds
+                        .iter()
+                        .any(|kind| kind.starts_with("facet:failure_trace:"))
+            })
+        })
+        .count();
+    assert!(
+        (1..=2).contains(&selected_failures),
+        "failure evidence quota was not enforced: {paths:?}"
+    );
+    let auxiliary = paths
+        .iter()
+        .filter(|path| {
+            path.starts_with("fixtures/")
+                || path.starts_with(".agents/")
+                || path.contains("/snapshots/")
+                || **path == "context_research.md"
+        })
+        .count();
+    assert!(auxiliary <= 1, "auxiliary quota exceeded: {paths:?}");
+    assert!(
+        paths.iter().filter(|path| path.starts_with("tests/")).count() <= 2,
+        "test quota exceeded: {paths:?}"
+    );
+}

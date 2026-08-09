@@ -109,15 +109,18 @@ fn language_scope_does_not_treat_lowercase_go_as_golang() {
 #[test]
 fn language_scope_boosts_common_source_file_extensions() {
     assert_eq!(
-        context_path_score("src/main.rs", &[], "Fix this Rust bug"),
+        context_path_score("src/main.rs", &[], "Fix this Rust bug")
+            - context_path_score("src/main.rs", &[], "Fix this bug"),
         12.0
     );
     assert_eq!(
-        context_path_score("lib/parser.py", &[], "Fix this Python parser"),
+        context_path_score("lib/parser.py", &[], "Fix this Python parser")
+            - context_path_score("lib/parser.py", &[], "Fix this parser"),
         12.0
     );
     assert_eq!(
-        context_path_score("src/main.rs", &[], "Fix this Python parser"),
+        context_path_score("src/main.rs", &[], "Fix this Python parser")
+            - context_path_score("src/main.rs", &[], "Fix this parser"),
         0.0
     );
 }

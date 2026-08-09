@@ -87,6 +87,7 @@ pub use dedup::deduplicate;
 pub(crate) use dedup::deduplicate_with_options;
 use focus_diagnostics::*;
 use greedy::*;
+pub(crate) use metadata::owner_path_prior;
 pub(crate) use metadata::required_evidence_marker;
 use metadata::*;
 use omissions::*;
