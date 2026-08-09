@@ -1533,10 +1533,13 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .await
         .expect("failed result");
     assert_eq!(failed.is_error, Some(true));
-    assert!(
-        failed.content[0]
-            .as_text()
-            .is_some_and(|text| text.text.contains("unavailable"))
+    assert!(failed.content.is_empty());
+    assert_eq!(
+        failed
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["status"].as_str()),
+        Some("unavailable")
     );
 
     client.close().await.expect("close client");
