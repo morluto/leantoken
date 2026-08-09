@@ -465,6 +465,77 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
+pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for repair fixture");
+    }
+    storage
+        .full_reconcile(
+            "config",
+            (0..8)
+                .map(|index| sample_file(&format!("repair-{index}.rs"), "fn repair() {}\n"))
+                .collect(),
+        )
+        .expect("backlogged generation");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "DELETE FROM path_entries WHERE file_id = (SELECT id FROM files LIMIT 1)",
+                [],
+            )
+            .expect("damage path projection");
+    }
+    assert!(
+        fs::metadata(wal_path(&database))
+            .expect("repair fixture WAL")
+            .len()
+            > 0
+    );
+
+    let repaired = Storage::open(&database).expect("repair storage on reopen");
+
+    let writer = repaired
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (files, paths) = writer
+        .query_row(
+            "SELECT (SELECT count(*) FROM files),
+                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("repaired projection counts");
+    assert_eq!(paths, files);
+    assert!(
+        writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("restored auto-checkpoint policy")
+            > 0
+    );
+    assert_eq!(
+        fs::metadata(wal_path(&database))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
+        0,
+        "a successful startup repair should not leave its WAL for a no-change reconcile"
+    );
+}
+
+#[test]
 pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");

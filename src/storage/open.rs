@@ -139,12 +139,12 @@ impl Storage {
         }
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
-        with_auto_checkpoint_suspended(&mut conn, |conn| {
+        with_auto_checkpoint_suspended(&mut conn, true, |conn| {
             MIGRATIONS.to_latest(conn)?;
             Self::ensure_token_savings_schema(conn)?;
-            Self::ensure_path_projection(conn)?;
-            Self::validate_fts5(conn)
+            Self::ensure_path_projection(conn)
         })?;
+        Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         let manager = SqliteConnectionManager::file(&path)
@@ -230,7 +230,7 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        with_auto_checkpoint_suspended(&mut conn, |conn| {
+        with_auto_checkpoint_suspended(&mut conn, false, |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let (expected_repository, expected_identity): (String, String) = tx.query_row(
                 "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
@@ -447,8 +447,13 @@ impl Storage {
 
 fn with_auto_checkpoint_suspended<T>(
     conn: &mut Connection,
+    checkpoint_mutations: bool,
     operation: impl FnOnce(&mut Connection) -> Result<T>,
 ) -> Result<T> {
+    let total_changes_before = checkpoint_mutations.then(|| conn.total_changes());
+    let schema_version_before = checkpoint_mutations
+        .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
+        .transpose()?;
     let previous = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))?;
     if previous != 0 {
         conn.pragma_update(None, "wal_autocheckpoint", 0)?;
@@ -460,10 +465,26 @@ fn with_auto_checkpoint_suspended<T>(
     } else {
         Ok(())
     };
+    let schema_version_after = checkpoint_mutations
+        .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
+        .transpose()?;
+    let main_database_changed = total_changes_before
+        .zip(schema_version_before)
+        .zip(schema_version_after)
+        .is_some_and(|((changes, schema), current_schema)| {
+            conn.total_changes() != changes || current_schema != schema
+        });
+    let checkpoint = if main_database_changed {
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .map_err(Error::from)
+    } else {
+        Ok(())
+    };
     match result {
         Err(error) => Err(error),
         Ok(output) => {
             restore?;
+            checkpoint?;
             Ok(output)
         }
     }
