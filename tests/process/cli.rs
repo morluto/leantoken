@@ -98,10 +98,7 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     );
     assert_eq!(delta["window"], "delta");
     assert_eq!(delta["response_accounting"]["tracked_requests"], 1);
-    assert_eq!(
-        delta["observations"]["request_classification"]["useful"],
-        1
-    );
+    assert_eq!(delta["observations"]["request_classification"]["useful"], 1);
 }
 
 pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {

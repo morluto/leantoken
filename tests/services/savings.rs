@@ -197,13 +197,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert!(observed.observations.unobserved.iter().any(|outcome| {
         outcome.contains("retry chains") && outcome.contains("task/outcome identifier")
     }));
-    assert_eq!(
-        observed
-            .observations
-            .request_classification
-            .useful,
-        4
-    );
+    assert_eq!(observed.observations.request_classification.useful, 4);
     assert_eq!(
         observed.observations.request_classification.hash_suppressed,
         1
@@ -215,9 +209,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert_eq!(observed.observed_task_savings.observed_tasks, 0);
     assert_eq!(
-        observed
-            .observed_task_savings
-            .unknown_relevance_responses,
+        observed.observed_task_savings.unknown_relevance_responses,
         5
     );
     assert_eq!(observed.observed_task_savings.failed_retrieval_calls, 1);
@@ -287,15 +279,21 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert!(serialized.get("response_accounting").is_some());
     assert!(serialized.get("observed_task_savings").is_some());
-    assert!(serialized
-        .pointer("/observed_task_savings/retry_calls")
-        .is_some_and(serde_json::Value::is_null));
-    assert!(serialized
-        .pointer("/observed_task_savings/superseded_calls")
-        .is_some_and(serde_json::Value::is_null));
-    assert!(serialized
-        .pointer("/observed_task_savings/net_tokens_saved")
-        .is_some_and(serde_json::Value::is_null));
+    assert!(
+        serialized
+            .pointer("/observed_task_savings/retry_calls")
+            .is_some_and(serde_json::Value::is_null)
+    );
+    assert!(
+        serialized
+            .pointer("/observed_task_savings/superseded_calls")
+            .is_some_and(serde_json::Value::is_null)
+    );
+    assert!(
+        serialized
+            .pointer("/observed_task_savings/net_tokens_saved")
+            .is_some_and(serde_json::Value::is_null)
+    );
     assert!(serialized.get("observations").is_some());
     assert!(serialized.get("report").is_none());
     let mut legacy = serialized.clone();
@@ -308,13 +306,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         TaskSavingsObservationStatus::Unavailable
     );
     assert_eq!(legacy.observed_task_savings.retry_calls, None);
-    assert_eq!(
-        legacy
-            .observations
-            .request_classification
-            .useful,
-        4
-    );
+    assert_eq!(legacy.observations.request_classification.useful, 4);
 
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");

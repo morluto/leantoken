@@ -108,9 +108,7 @@ async fn fuzzy_find_ties_prioritize_production_source_and_preserve_pagination() 
 
     let full = services.files(request(None, 20)).await.expect("full find");
     assert!(
-        full.entries
-            .iter()
-            .all(|entry| entry.score == Some(109.0)),
+        full.entries.iter().all(|entry| entry.score == Some(109.0)),
         "fixture must exercise the equal-score tie breaker: {:?}",
         full.entries
             .iter()

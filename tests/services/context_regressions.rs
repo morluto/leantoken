@@ -203,7 +203,11 @@ async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
         .count();
     assert!(auxiliary <= 1, "auxiliary quota exceeded: {paths:?}");
     assert!(
-        paths.iter().filter(|path| path.starts_with("tests/")).count() <= 2,
+        paths
+            .iter()
+            .filter(|path| path.starts_with("tests/"))
+            .count()
+            <= 2,
         "test quota exceeded: {paths:?}"
     );
 }

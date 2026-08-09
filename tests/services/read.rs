@@ -1331,9 +1331,7 @@ async fn truncated_symbol_guidance_replaces_many_tiny_pages_with_one_sized_conti
     let body = (1..=80)
         .map(|line| format!("    let value_{line:03} = input + {line};\n"))
         .collect::<String>();
-    let source = format!(
-        "pub fn oversized_owner(input: usize) -> usize {{\n{body}    input\n}}\n"
-    );
+    let source = format!("pub fn oversized_owner(input: usize) -> usize {{\n{body}    input\n}}\n");
     let (_root, services) = indexed_source("owner.rs", source.as_bytes()).await;
     let request = |cursor: Option<String>, max_tokens, policy| ReadRequest {
         path: "owner.rs".into(),
@@ -1381,11 +1379,7 @@ async fn truncated_symbol_guidance_replaces_many_tiny_pages_with_one_sized_conti
     let mut naive_response_tokens = first.meta.total_response_tokens;
     while let Some(cursor) = naive_cursor {
         let page = services
-            .read(request(
-                Some(cursor),
-                12,
-                leantoken::ReadPolicy::Bounded,
-            ))
+            .read(request(Some(cursor), 12, leantoken::ReadPolicy::Bounded))
             .await
             .expect("tiny continuation");
         naive_pages += 1;

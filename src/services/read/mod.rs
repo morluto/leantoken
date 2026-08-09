@@ -436,13 +436,8 @@ impl Services {
         })?;
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
-            let (mut materialized, _) = self.read_at_generation(
-                session,
-                request,
-                target,
-                generation,
-                candidate_limit,
-            )?;
+            let (mut materialized, _) =
+                self.read_at_generation(session, request, target, generation, candidate_limit)?;
             self.apply_read_budget_guidance(
                 &mut materialized,
                 budget_estimate.as_ref(),

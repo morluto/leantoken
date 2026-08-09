@@ -366,7 +366,10 @@ async fn compact_search_preserves_ranked_hits_and_removes_source_metadata() {
             "content_hash",
             "match_kinds",
         ] {
-            assert!(hit.get(omitted).is_none(), "unexpected compact field {omitted}");
+            assert!(
+                hit.get(omitted).is_none(),
+                "unexpected compact field {omitted}"
+            );
         }
     }
     assert!(
