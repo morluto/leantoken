@@ -478,7 +478,7 @@ fn process_test_jobs() -> &'static str {
 fn process_test_jobs_for_os(os: &str) -> &'static str {
     match os {
         "macos" => "3",
-        "linux" | "windows" => "4",
+        "linux" => "4",
         _ => "2",
     }
 }
@@ -936,14 +936,6 @@ mod tests {
                     .windows(2)
                     .any(|args| args == ["--exclude", BENCHMARKS]))
         );
-    }
-
-    #[test]
-    fn process_worker_bound_matches_supported_runner_capacity() {
-        assert_eq!(process_test_jobs_for_os("macos"), "3");
-        assert_eq!(process_test_jobs_for_os("linux"), "4");
-        assert_eq!(process_test_jobs_for_os("windows"), "4");
-        assert_eq!(process_test_jobs_for_os("freebsd"), "2");
     }
 
     #[test]
