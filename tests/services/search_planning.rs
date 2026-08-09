@@ -164,6 +164,234 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
 }
 
 #[tokio::test]
+async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_variants() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let query = "estimated_net_tokens_saved";
+    let filler = format!("{}\n", "x".repeat(1_000)).repeat(28);
+    for index in 0..8 {
+        std::fs::write(
+            root.path().join(format!("lower_{index:02}.rs")),
+            format!("const {query}: usize = {index};\n{filler}"),
+        )
+        .expect("write lower-case source");
+    }
+    std::fs::write(
+        root.path().join("upper.rs"),
+        format!("const ESTIMATED_NET_TOKENS_SAVED: usize = 8;\n{filler}"),
+    )
+    .expect("write upper-case source");
+    std::fs::write(
+        root.path().join("long_s.rs"),
+        format!("const e\u{17f}timated_net_tokens_saved: usize = 9;\n{filler}"),
+    )
+    .expect("write Unicode fold source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let request = SearchRequest {
+        query: query.into(),
+        mode: SearchMode::Text,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(50),
+        max_tokens: Some(2_400),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let optimized = services
+        .search_evaluation(request.clone())
+        .await
+        .expect("planned exhaustive literal");
+    let mut oracle_request = request.clone();
+    oracle_request.max_tokens = Some(32_000);
+    let full_scan = services
+        .search_full_scan_evaluation(oracle_request)
+        .await
+        .expect("full-scan exhaustive literal");
+
+    assert_eq!(optimized.response.occurrences_total, Some(10));
+    assert_eq!(optimized.response.occurrences_returned, 10);
+    assert_eq!(
+        optimized.phases.regex_planning.strategy(),
+        leantoken::RegexCandidateStrategy::Trigram
+    );
+    assert_eq!(
+        optimized.phases.regex_planning.source(),
+        Some(leantoken::RegexPlanSource::LiteralIdentifier)
+    );
+    assert!(optimized.phases.regex_chunks_verified >= 10);
+    assert!(filler.len().saturating_mul(10) > 2_400 * 64);
+
+    let normalize = |mut response: leantoken::SearchResponse| {
+        response.meta.receipt_id = None;
+        response.meta.path_and_metadata_tokens = 0;
+        response.meta.total_response_tokens = 0;
+        serde_json::to_value(response).expect("search response JSON")
+    };
+    assert_eq!(
+        normalize(optimized.response.clone()),
+        normalize(full_scan.response),
+        "the sound candidate lane must preserve complete observable results"
+    );
+
+    let case_sensitive = services
+        .search_evaluation(SearchRequest {
+            case_sensitive: true,
+            ..request
+        })
+        .await
+        .expect("case-sensitive planned exhaustive literal");
+    assert_eq!(case_sensitive.response.occurrences_total, Some(8));
+    assert_eq!(
+        case_sensitive.phases.regex_planning.source(),
+        Some(leantoken::RegexPlanSource::LiteralIdentifier)
+    );
+}
+
+#[tokio::test]
+async fn exhaustive_identifier_with_over_bound_case_variants_keeps_full_scan() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let query = "ssssss_identifier";
+    std::fs::write(
+        root.path().join("fixture.rs"),
+        format!("const {query}: usize = 1;\n"),
+    )
+    .expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let response = services
+        .search_evaluation(SearchRequest {
+            query: query.into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(20),
+            max_tokens: Some(2_400),
+            context_lines: Some(0),
+            case_sensitive: false,
+            all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded full-scan fallback");
+    assert_eq!(response.response.occurrences_total, Some(1));
+    assert_eq!(
+        response.phases.regex_planning.strategy(),
+        leantoken::RegexCandidateStrategy::FullScan
+    );
+    assert_eq!(
+        response.phases.regex_planning.fallback_reason(),
+        Some(leantoken::RegexPlanFallbackReason::CaseInsensitiveUnicode)
+    );
+}
+
+#[tokio::test]
+async fn compact_search_preserves_ranked_hits_and_removes_source_metadata() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for index in 0..12 {
+        let source = format!(
+            "// compact projection fixture {index}\n\
+             // deliberately verbose context before the definition\n\
+             pub fn shared_compact_target() -> usize {{\n\
+                 // deliberately verbose function body retained by full search\n\
+                 {index}\n\
+             }}\n\
+             // deliberately verbose context after the definition\n"
+        );
+        std::fs::write(root.path().join(format!("owner_{index:02}.rs")), source)
+            .expect("write source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+    let request = SearchRequest {
+        query: "shared_compact_target".into(),
+        mode: SearchMode::Identifier,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(20),
+        max_tokens: Some(8_000),
+        context_lines: Some(2),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: true,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+
+    let full = services.search(request.clone()).await.expect("full search");
+    let compact = services
+        .search_compact(request.clone())
+        .await
+        .expect("compact search");
+    assert_eq!(compact.hits_returned, full.hits.len());
+    assert_eq!(compact.coverage, full.coverage);
+    assert_eq!(compact.occurrences_total, full.occurrences_total);
+    assert_eq!(compact.meta.source_tokens, 0);
+    for (full_hit, compact_hit) in full.hits.iter().zip(&compact.hits) {
+        assert_eq!(compact_hit.path, full_hit.path);
+        assert_eq!(compact_hit.start_line, full_hit.start_line);
+        assert_eq!(compact_hit.end_line, full_hit.end_line);
+        assert_eq!(compact_hit.match_kind, full_hit.match_kind);
+        assert_eq!(compact_hit.role, full_hit.role);
+        assert_eq!(compact_hit.symbol, full_hit.symbol);
+        assert_eq!(compact_hit.enclosing_symbol, full_hit.enclosing_symbol);
+        assert_eq!(compact_hit.occurrence, full_hit.occurrence);
+    }
+    let compact_json = serde_json::to_value(&compact).expect("compact JSON");
+    for hit in compact_json["hits"].as_array().expect("compact hits") {
+        for omitted in [
+            "excerpt",
+            "score",
+            "normalized_score",
+            "score_reasons",
+            "content_hash",
+            "match_kinds",
+        ] {
+            assert!(
+                hit.get(omitted).is_none(),
+                "unexpected compact field {omitted}"
+            );
+        }
+    }
+    assert!(
+        compact.meta.total_response_tokens * 3 < full.meta.total_response_tokens * 2,
+        "compact={} full={}",
+        compact.meta.total_response_tokens,
+        full.meta.total_response_tokens
+    );
+    assert_response_token_accounting!(compact, Tokenizer::default());
+
+    let response_limit = compact.meta.total_response_tokens.saturating_sub(1);
+    let error = services
+        .search_compact_with_options(
+            request,
+            ServiceCallOptions::new().with_max_response_tokens(response_limit),
+        )
+        .await
+        .expect_err("compact response must honor the serialized response bound");
+    let _ = assert_response_budget_error(error, response_limit);
+}
+
+#[tokio::test]
 async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repeated_excerpts() {
     let root = tempfile::tempdir().expect("temporary repository");
     let line = "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";

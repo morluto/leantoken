@@ -89,20 +89,46 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             request,
             consistency,
             max_response_tokens,
+            projection,
         } => {
             let services = repository_services(&cli)?;
             let consistency = resolve_retrieval_consistency(&services, consistency).await?;
-            print(
-                &services
-                    .search_with_options_consistency_cancellable(
-                        request,
-                        consistency,
-                        service_call_options(max_response_tokens),
-                        CancellationToken::new(),
-                    )
-                    .await?,
-                json,
-            )
+            match projection {
+                SearchProjectionArg::Full => print(
+                    &services
+                        .search_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                SearchProjectionArg::Compact => print(
+                    &services
+                        .search_compact_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                SearchProjectionArg::Occurrences | SearchProjectionArg::Coordinates => print(
+                    &services
+                        .search_occurrences_with_options_consistency_cancellable(
+                            request,
+                            projection == SearchProjectionArg::Coordinates,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+            }
         }
         AppRequest::Outline {
             request,

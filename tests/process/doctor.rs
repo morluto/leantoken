@@ -11,6 +11,7 @@ pub(super) fn doctor_verifies_identity_catalog_and_first_retrieval() {
 
     let report = run(root.path(), &database, &["doctor"]);
     assert_eq!(report["status"], "ready");
+    assert_eq!(report["process_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["server_name"], "leantoken");
     assert_runtime_version(&report["server_version"]);
     assert_eq!(
@@ -104,6 +105,10 @@ pub(super) fn doctor_human_output_uses_context_distillery_handoff() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Context Distillery is checking"));
     assert!(stdout.contains("LeanToken // Context Distillery"));
+    assert!(stdout.contains(&format!(
+        "Doctor process: leantoken {}",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(stdout.contains("MCP identity: leantoken"));
     assert!(stdout.contains(&format!(
         "Index compatibility: v{EXPECTED_INDEX_CONTENT_VERSION}"

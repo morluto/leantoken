@@ -110,9 +110,9 @@ pub(crate) struct StagingDiagnostics {
 /// the production transaction is open. The production database remains the
 /// sole database mutated by the generation publication transaction.
 pub(crate) struct PreparedReconciliation {
-    connection: Connection,
-    _directory: TempDir,
-    path: PathBuf,
+    _directory: Option<TempDir>,
+    path: Option<PathBuf>,
+    connection: Option<Connection>,
     replacements: Vec<(IndexedFile, usize)>,
     removals: Vec<String>,
     tokenizer: String,
@@ -125,8 +125,8 @@ pub(crate) struct PreparedReconciliation {
 }
 
 pub(crate) struct FinalizedReconciliation {
-    _directory: TempDir,
-    path: PathBuf,
+    _directory: Option<TempDir>,
+    path: Option<PathBuf>,
     tokenizer: String,
     baseline_generation: u64,
     config_hash: String,
@@ -143,6 +143,28 @@ impl PreparedReconciliation {
         rebuild: bool,
         profile: bool,
     ) -> Result<Self> {
+        Ok(Self {
+            _directory: None,
+            path: None,
+            connection: None,
+            replacements: Vec::new(),
+            removals: Vec::new(),
+            tokenizer: tokenizer.to_string(),
+            baseline_generation: baseline.repository_generation,
+            config_hash: config_hash.to_string(),
+            rebuild,
+            next_ordinal: 0,
+            diagnostics: StagingDiagnostics::default(),
+            profile,
+        })
+    }
+
+    fn initialize(&mut self) -> Result<()> {
+        if self.connection.is_some() {
+            return Ok(());
+        }
+        let write_before = self.profile.then(process_write_bytes).flatten();
+        let started = Instant::now();
         let directory = tempfile::Builder::new()
             .prefix(".leantoken-stage-")
             .tempdir()?;
@@ -162,35 +184,29 @@ impl PreparedReconciliation {
         )?;
         connection.execute(
             "UPDATE stage_meta SET value = ?1 WHERE key = 'baseline_generation'",
-            params![baseline.repository_generation.to_string()],
+            params![self.baseline_generation.to_string()],
         )?;
         connection.execute(
             "UPDATE stage_meta SET value = ?1 WHERE key = 'config_hash'",
-            params![config_hash],
+            params![&self.config_hash],
         )?;
         connection.execute(
             "UPDATE stage_meta SET value = ?1 WHERE key = 'rebuild'",
-            params![if rebuild { "1" } else { "0" }],
+            params![if self.rebuild { "1" } else { "0" }],
         )?;
         connection.execute(
             "UPDATE stage_meta SET value = ?1 WHERE key = 'tokenizer'",
-            params![tokenizer],
+            params![&self.tokenizer],
         )?;
-
-        Ok(Self {
-            connection,
-            _directory: directory,
-            path,
-            replacements: Vec::new(),
-            removals: Vec::new(),
-            tokenizer: tokenizer.to_string(),
-            baseline_generation: baseline.repository_generation,
-            config_hash: config_hash.to_string(),
-            rebuild,
-            next_ordinal: 0,
-            diagnostics: StagingDiagnostics::default(),
-            profile,
-        })
+        self.diagnostics.write_ms += started.elapsed().as_secs_f64() * 1_000.0;
+        let write_after = self.profile.then(process_write_bytes).flatten();
+        self.diagnostics.write_bytes = write_before
+            .zip(write_after)
+            .map(|(before, after)| after.saturating_sub(before));
+        self._directory = Some(directory);
+        self.path = Some(path);
+        self.connection = Some(connection);
+        Ok(())
     }
 
     pub(crate) fn stage_indexed(&mut self, file: IndexedFile, source_token_count: usize) {
@@ -210,9 +226,13 @@ impl PreparedReconciliation {
         if self.replacements.is_empty() && self.removals.is_empty() {
             return Ok(());
         }
+        self.initialize()?;
         let write_before = self.profile.then(process_write_bytes).flatten();
         let started = Instant::now();
-        let tx = self.connection.transaction()?;
+        let connection = self.connection.as_mut().ok_or_else(|| {
+            Error::OperationFailure("reconciliation stage connection is closed".into())
+        })?;
+        let tx = connection.transaction()?;
         let mut removals = std::mem::take(&mut self.removals);
         removals.sort();
         let mut replacements = std::mem::take(&mut self.replacements);
@@ -267,10 +287,12 @@ impl PreparedReconciliation {
     /// Finish writes and close the mutable stage connection before publication.
     pub(crate) fn finish(mut self) -> Result<FinalizedReconciliation> {
         self.flush()?;
-        drop(self.connection);
-        self.diagnostics.database_bytes = fs::metadata(&self.path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
+        self.connection.take();
+        self.diagnostics.database_bytes = self
+            .path
+            .as_ref()
+            .and_then(|path| fs::metadata(path).ok())
+            .map_or(0, |metadata| metadata.len());
         Ok(FinalizedReconciliation {
             _directory: self._directory,
             path: self.path,
@@ -294,8 +316,11 @@ impl FinalizedReconciliation {
     /// one file and its child rows at a time, so publication does not reconstruct
     /// the complete prepared generation in memory.
     pub(crate) fn apply(&self, writer: &mut ReconciliationWriter<'_, '_>) -> Result<()> {
+        let Some(path) = self.path.as_ref() else {
+            return Ok(());
+        };
         let connection = Connection::open_with_flags(
-            &self.path,
+            path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
@@ -624,8 +649,11 @@ mod tests {
         )
         .expect("stage");
         stage.stage_removal("old.rs".into());
+        stage.initialize().expect("initialize stage");
         stage
             .connection
+            .as_ref()
+            .expect("initialized stage connection")
             .execute_batch("DROP TABLE stage_removals")
             .expect("break stage fixture");
 
@@ -689,7 +717,7 @@ mod tests {
         stage.stage_removal("old.rs".into());
         stage.stage_indexed(file, 7);
         stage.flush().expect("stage batch");
-        let stage_path = stage.path.clone();
+        let stage_path = stage.path.clone().expect("initialized stage path");
         assert!(
             stage_path.exists(),
             "stage database should exist before publish"

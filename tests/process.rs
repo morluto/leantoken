@@ -12,6 +12,11 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_search_compact_and_coordinate_projections_are_source_free() {
+    cli::cli_search_compact_and_coordinate_projections_are_source_free();
+}
+
+#[test]
 fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     cli::cli_scoped_index_omits_dependencies_and_discloses_the_boundary();
 }

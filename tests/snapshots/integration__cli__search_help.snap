@@ -32,6 +32,12 @@ Options:
           [default: auto]
           [possible values: auto, text, regex, identifier, symbol, reference]
 
+      --projection <PROJECTION>
+          Result shape; occurrences and coordinates require --all-occurrences
+
+          [default: full]
+          [possible values: full, compact, occurrences, coordinates]
+
       --include <INCLUDE_PATHS>
           Include only paths matching this pattern (repeatable)
 

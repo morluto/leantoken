@@ -53,6 +53,7 @@ pub(in crate::mcp) enum SearchMcpProjection {
     #[default]
     Auto,
     Full,
+    Compact,
     Grouped,
     Occurrences,
 }
@@ -60,6 +61,7 @@ pub(in crate::mcp) enum SearchMcpProjection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::mcp) enum SearchMcpOutput {
     Full,
+    Compact,
     Grouped,
     Occurrences { coordinates_only: bool },
 }
@@ -324,6 +326,7 @@ impl SearchMcpRequest {
                 coordinates_only: options.coordinates_only,
             },
             SearchMcpProjection::Auto | SearchMcpProjection::Full => SearchMcpOutput::Full,
+            SearchMcpProjection::Compact => SearchMcpOutput::Compact,
             SearchMcpProjection::Grouped => SearchMcpOutput::Grouped,
             SearchMcpProjection::Occurrences => SearchMcpOutput::Occurrences {
                 coordinates_only: options.coordinates_only,

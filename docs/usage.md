@@ -196,7 +196,8 @@ compare emitted source with whole-file reads of the unique represented files.
 Read compares the emitted range with the requested live range before
 truncation or suppression.
 
-The nested `response_accounting` object additionally covers `files`,
+The nested `response_accounting` object is the machine-readable retrieval-
+compression section and additionally covers `files`,
 `context_plan`, `json`, and `history`. It separates source,
 path/metadata, protocol, and total compact-response tokens. JSON uses the
 complete input file or files as its represented-source baseline. Operations
@@ -204,13 +205,25 @@ without a defensible source baseline still contribute their full response cost,
 so their signed `estimated_net_tokens_saved` value is negative rather than
 silently disappearing. Counts are stored separately per configured tokenizer.
 
-The default terminal view presents an aligned summary and per-operation table,
-using color when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
+The default terminal view separates **Retrieval compression** from **Observed
+task savings** before the per-operation table. The represented-source ratio is
+labeled retrieval-only and is never presented as a task-savings percentage.
+Color is used when stdout is a terminal. `NO_COLOR` or `CLICOLOR=0` disables
 color, while `CLICOLOR_FORCE=1` enables it for compatible redirected output.
-Pass `--json` for the stable compact JSON representation used by scripts. The
-`observations` object reports persisted successful and failed service records, exact
-`expected_hash` not-modified responses, their suppressed represented-source
-tokens, and a fixed-order failure breakdown with non-sensitive categories.
+
+Pass `--json` for the compact JSON representation used by scripts. The existing
+`response_accounting` object owns successful-response retrieval compression;
+the additive `observed_task_savings` object reports task attribution
+separately. Without a host task/outcome identity its status is `unavailable`,
+its task delta, rate,
+retry, superseded, relevance, and failure-response-token fields remain `null`,
+and the successful responses with unknown relevance and observed failed calls
+remain visible as counts. The `observations` object reports persisted
+successful and failed service records, exact `expected_hash` not-modified
+responses, their suppressed represented-source tokens, and a fixed-order
+failure breakdown with non-sensitive categories. Its legacy `useful`
+classification means a complete supported protocol response, not relevant or
+useful evidence; the human view labels it `complete-supported`.
 
 Full-response counts include the compact structured response but not tool
 discovery, JSON-RPC transport envelopes, provider billing/cache behavior,
@@ -693,6 +706,10 @@ Pass one of those tagged objects as `operation`. Operation-specific fields
 cannot be mixed. `max_results`, `max_response_tokens`, `cursor`, and (for
 `tree`) `depth` belong to the selected operation. Output contains bounded
 file/directory entries with language and size metadata when available.
+Fuzzy score remains the primary ordering key. Equal-score results prefer root
+and conventional production-source paths, then shallower paths; explicit
+benchmark, bench, fixture, and testdata directories sort after ordinary paths.
+The final path tie-break remains deterministic and continuation-safe.
 
 Set `projection="paths"` for the opt-in path-only response. It returns the same
 ordered page as `full` in a `paths` array plus the complete `meta` freshness,
@@ -940,6 +957,13 @@ indexed version (for example after an edit that has not been reindexed yet).
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and live full-file hash, so a
 stale cursor cannot combine pages from different file versions.
+`truncation_guidance` reports the complete target and remaining source-token
+cost, estimated additional pages at the current budget, a bounded recommended
+budget for the next continuation, and the minimum pages allowed by the server's
+source-token ceiling. `basis: "verified_live"` means full-file verification
+proved the pinned indexed target matches live source;
+`basis: "indexed_generation_estimate"` keeps bounded reads cheap and makes the
+snapshot-based uncertainty explicit.
 `delta_receipt` reports the stable target key, selected base and head hashes and
 generations, full and delta token counts, avoided tokens, and any explicit
 fallback reason. Missing bases, changed target coordinates, truncated or
@@ -1460,13 +1484,18 @@ available locally. It does not guarantee that a provider will accept a payload
 at the reported budget; responses mark this with `token_count_exact: false`.
 
 `savings` uses the same tokenizer and marks whether its local counts are exact.
-The `response_accounting.estimated_net_tokens_saved` value subtracts every
+The `response_accounting.estimated_net_tokens_saved` retrieval-compression
+value subtracts every
 recorded complete response from the represented-source baseline, so metadata,
 protocol, plan-only, discovery, and history costs can reduce the net result.
 It does not establish task-level savings. Only successful persisted responses
-contribute token deltas. `observations` separately counts persisted service
-failures and exact expected-hash suppression. Retry chains, evidence use,
-superseded calls, and task outcomes remain explicitly unobserved.
+contribute token deltas. `observed_task_savings` therefore reports no task-level
+percentage until host-linked outcomes and the declared cost categories are
+available. It prominently separates observed failed calls and successful
+responses with unknown relevance; failure-response tokens, retry chains,
+superseded calls, and task outcomes remain explicitly unknown rather than being
+treated as zero. `observations` retains the lower-level persisted failure and
+exact expected-hash counters.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
 schemas, or JSON-RPC envelopes. `total_response_tokens` captures the compact response

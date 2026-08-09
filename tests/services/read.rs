@@ -1327,6 +1327,109 @@ async fn token_truncated_read_reports_the_returned_line_range() {
 }
 
 #[tokio::test]
+async fn truncated_symbol_guidance_replaces_many_tiny_pages_with_one_sized_continuation() {
+    let body = (1..=80)
+        .map(|line| format!("    let value_{line:03} = input + {line};\n"))
+        .collect::<String>();
+    let source = format!("pub fn oversized_owner(input: usize) -> usize {{\n{body}    input\n}}\n");
+    let (_root, services) = indexed_source("owner.rs", source.as_bytes()).await;
+    let request = |cursor: Option<String>, max_tokens, policy| ReadRequest {
+        path: "owner.rs".into(),
+        start_line: None,
+        end_line: None,
+        symbol: cursor.is_none().then(|| "oversized_owner".into()),
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: cursor,
+        max_tokens: Some(max_tokens),
+        expected_hash: None,
+        delta: false,
+        receipt_id: None,
+        policy,
+    };
+
+    let first = services
+        .read(request(None, 12, leantoken::ReadPolicy::Bounded))
+        .await
+        .expect("tiny first page");
+    let guidance = first
+        .truncation_guidance
+        .as_ref()
+        .expect("truncation guidance");
+    let first_content = first.content.as_deref().expect("first-page source");
+    let expected_remaining = Tokenizer::Cl100kBase.count(&source[first_content.len()..]);
+    assert_eq!(
+        guidance.basis,
+        leantoken::ReadTruncationGuidanceBasis::IndexedGenerationEstimate
+    );
+    assert_eq!(
+        guidance.target_source_tokens,
+        Tokenizer::Cl100kBase.count(&source)
+    );
+    assert_eq!(guidance.remaining_source_tokens, expected_remaining);
+    assert_eq!(
+        guidance.remaining_pages_at_current_budget,
+        expected_remaining.div_ceil(12)
+    );
+    assert_eq!(guidance.recommended_next_max_tokens, expected_remaining);
+    assert_eq!(guidance.minimum_remaining_pages, 1);
+
+    let mut naive_cursor = first.continuation_cursor.clone();
+    let mut naive_pages = 1usize;
+    let mut naive_response_tokens = first.meta.total_response_tokens;
+    while let Some(cursor) = naive_cursor {
+        let page = services
+            .read(request(Some(cursor), 12, leantoken::ReadPolicy::Bounded))
+            .await
+            .expect("tiny continuation");
+        naive_pages += 1;
+        naive_response_tokens =
+            naive_response_tokens.saturating_add(page.meta.total_response_tokens);
+        naive_cursor = page.continuation_cursor;
+        assert!(naive_pages < 100, "tiny continuations must make progress");
+    }
+    assert!(naive_pages >= 13, "fixture used only {naive_pages} pages");
+
+    let recommended = services
+        .read(request(
+            first.continuation_cursor.clone(),
+            guidance.recommended_next_max_tokens,
+            leantoken::ReadPolicy::Bounded,
+        ))
+        .await
+        .expect("sized continuation");
+    assert!(!recommended.truncated);
+    assert!(recommended.truncation_guidance.is_none());
+    let guided_response_tokens = first
+        .meta
+        .total_response_tokens
+        .saturating_add(recommended.meta.total_response_tokens);
+    assert!(
+        guided_response_tokens.saturating_mul(4) < naive_response_tokens,
+        "guided={guided_response_tokens} naive={naive_response_tokens}"
+    );
+    assert_eq!(
+        format!(
+            "{first_content}{}",
+            recommended.content.as_deref().expect("remaining source")
+        ),
+        source
+    );
+
+    let verified = services
+        .read(request(None, 12, leantoken::ReadPolicy::Full))
+        .await
+        .expect("verified first page");
+    assert_eq!(
+        verified
+            .truncation_guidance
+            .expect("verified guidance")
+            .basis,
+        leantoken::ReadTruncationGuidanceBasis::VerifiedLive
+    );
+}
+
+#[tokio::test]
 async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
     let leading_scalar = "\u{10000}";
     let first_source = format!("{leading_scalar}tail\n");

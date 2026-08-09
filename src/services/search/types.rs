@@ -16,6 +16,8 @@ pub(in crate::services) const DEFAULT_REGEX_WORK_FILES: usize = MAX_REGEX_FILES_
 pub(in crate::services) const DEFAULT_REGEX_WORK_CHUNKS: usize = 20_510;
 /// Twice the largest representative indexed corpus, rounded up below the 2 GiB index ceiling.
 pub(in crate::services) const DEFAULT_REGEX_WORK_BYTES: usize = 1024 * 1024 * 1024;
+/// Verification-byte floor for sound long-identifier candidate plans.
+pub(in crate::services) const LITERAL_IDENTIFIER_WORK_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum delay between cooperative cancellation probes during candidate verification.
 pub(in crate::services) const REGEX_CANCELLATION_CHECK_INTERVAL: usize = 64;
 /// Maximum exact matches materialized by one exhaustive occurrence request.
@@ -26,6 +28,7 @@ pub(super) const REGEX_CANDIDATE_PAGE_SIZE: usize = 512;
 pub(super) const MAX_REGEX_PLAN_NODES: usize = 256;
 pub(super) const MAX_REGEX_PLAN_TERMS: usize = 32;
 pub(super) const MAX_REGEX_PLAN_TERM_BYTES: usize = 256;
+pub(super) const MAX_LITERAL_IDENTIFIER_PLAN_BYTES: usize = 4 * 1024;
 pub(super) const MAX_REGEX_LITERAL_SEQUENCE: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +82,18 @@ impl RegexWorkLimits {
             },
         }
     }
+
+    pub(super) fn for_literal_identifier_request(
+        max_results: Option<usize>,
+        max_tokens: Option<usize>,
+        minimum_chunk_bytes: usize,
+    ) -> Self {
+        let mut limits = Self::for_request(max_results, max_tokens, minimum_chunk_bytes);
+        limits.bytes = limits
+            .bytes
+            .clamp(LITERAL_IDENTIFIER_WORK_BYTES, DEFAULT_REGEX_WORK_BYTES);
+        limits
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +111,7 @@ pub(super) enum SearchDiagnostics {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SearchOutputShape {
     Full,
+    Compact,
     OccurrenceGroups { coordinates_only: bool },
 }
 
@@ -133,6 +149,21 @@ impl RegexWorkBudget {
     ) -> Self {
         Self {
             limits: RegexWorkLimits::for_request(max_results, max_tokens, minimum_chunk_bytes),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn for_literal_identifier_request(
+        max_results: Option<usize>,
+        max_tokens: Option<usize>,
+        minimum_chunk_bytes: usize,
+    ) -> Self {
+        Self {
+            limits: RegexWorkLimits::for_literal_identifier_request(
+                max_results,
+                max_tokens,
+                minimum_chunk_bytes,
+            ),
             ..Self::default()
         }
     }
@@ -314,5 +345,15 @@ mod regex_work_budget_tests {
         assert_eq!(result_limited.files, DEFAULT_REGEX_WORK_FILES);
         assert_eq!(result_limited.chunks, DEFAULT_REGEX_WORK_CHUNKS);
         assert_eq!(result_limited.bytes, 32 * 1024);
+    }
+
+    #[test]
+    fn literal_identifier_work_keeps_a_bounded_verification_floor() {
+        let small = RegexWorkLimits::for_literal_identifier_request(Some(1), Some(1), 32 * 1024);
+        let large =
+            RegexWorkLimits::for_literal_identifier_request(Some(100), Some(128_000), 32 * 1024);
+        assert_eq!(small.bytes, LITERAL_IDENTIFIER_WORK_BYTES);
+        assert!(small.bytes <= large.bytes);
+        assert!(large.bytes <= DEFAULT_REGEX_WORK_BYTES);
     }
 }

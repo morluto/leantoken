@@ -203,6 +203,35 @@ pub struct SearchResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// One source-free ranked hit without scoring or content-verification metadata.
+pub struct SearchCompactHit {
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub match_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<ReferenceRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enclosing_symbol: Option<String>,
+    /// Preserved when compact output is explicitly requested for exhaustive search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrence: Option<SearchOccurrence>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Source-free ranked search response with the same membership and ordering as full search.
+pub struct SearchCompactResponse {
+    pub hits: Vec<SearchCompactHit>,
+    pub coverage: SearchCoverage,
+    pub hits_returned: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occurrences_total: Option<usize>,
+    pub meta: ResponseMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 /// Compact line/column coordinates for one exhaustive lexical occurrence.
 pub struct SearchOccurrenceCoordinate {
     /// One-based line containing the start of the match.
@@ -444,6 +473,8 @@ impl RegexPlanningOutcome {
 #[serde(rename_all = "snake_case")]
 /// HIR analysis that produced a sound trigram candidate plan.
 pub enum RegexPlanSource {
+    /// A long exhaustive text literal was planned from complete identifier variants.
+    LiteralIdentifier,
     /// Existing recursive analysis found mandatory inner literal terms.
     MandatoryLiterals,
     /// Bounded extraction found a finite set of required match prefixes.
@@ -461,6 +492,8 @@ pub enum RegexPlanFallbackReason {
     PlanningDisabled,
     /// Unicode case folding cannot be represented by SQLite's ASCII folding.
     CaseInsensitiveUnicode,
+    /// An exhaustive text literal was not a long ASCII identifier.
+    LiteralIdentifierIneligible,
     /// The HIR parser unexpectedly rejected a regex accepted by the matcher.
     HirParseFailed,
     /// Recursive analysis crossed its bounded HIR-node limit.

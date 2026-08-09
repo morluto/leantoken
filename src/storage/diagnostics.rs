@@ -195,6 +195,27 @@ pub struct PublicationDiagnostics {
     pub post_commit_diagnostics_complete: bool,
 }
 
+impl PublicationDiagnostics {
+    /// Sum non-overlapping write-byte phases captured by profiled publication.
+    #[must_use]
+    pub fn measured_write_bytes(&self) -> Option<u64> {
+        let phases = [
+            self.stage_write_bytes,
+            self.relational_write_bytes,
+            self.chunk_word_fts_rebuild_write_bytes,
+            self.chunk_trigram_fts_rebuild_write_bytes,
+            self.symbol_fts_rebuild_write_bytes,
+            self.reference_fts_rebuild_write_bytes,
+            self.commit_write_bytes,
+            self.checkpoint_write_bytes,
+        ];
+        phases
+            .iter()
+            .any(Option::is_some)
+            .then(|| phases.into_iter().flatten().fold(0u64, u64::saturating_add))
+    }
+}
+
 pub(crate) struct DatabaseTriggerGuard<'connection> {
     connection: &'connection Connection,
     state: DatabaseTriggerState,

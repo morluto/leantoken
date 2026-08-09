@@ -13,6 +13,9 @@ const OBSERVATION_SCOPE: &str = "repository-local best-effort service records; s
     are recorded after final token accounting, failures at instrumented service-operation \
     boundaries, outcome classes are mutually exclusive for newly recorded successes, and busy \
     telemetry writers are skipped without delaying retrieval";
+const TASK_SAVINGS_EXCLUSION_BASIS: &str = "host task/outcome identities are unavailable; failure \
+    response tokens, retries, superseded calls, response relevance, task success, provider/model \
+    costs, native-tool costs, and wall time are not attributed";
 const UNOBSERVED_OUTCOMES: [&str; 4] = [
     "retry chains without a host task/outcome identifier",
     "unused or irrelevant returned evidence",
@@ -441,6 +444,21 @@ impl Services {
                 },
                 failed_by_operation_and_category,
                 unobserved: UNOBSERVED_OUTCOMES.map(str::to_owned).to_vec(),
+            },
+            observed_task_savings: ObservedTaskSavings {
+                status: TaskSavingsObservationStatus::Unavailable,
+                observed_tasks: 0,
+                task_successes: None,
+                task_failures: None,
+                relevant_retrieval_responses: None,
+                unknown_relevance_responses: report.response_accounting.tracked_requests,
+                failed_retrieval_calls: failed_service_requests,
+                failure_response_tokens: None,
+                retry_calls: None,
+                superseded_calls: None,
+                net_tokens_saved: None,
+                savings_rate_basis_points: None,
+                exclusion_basis: TASK_SAVINGS_EXCLUSION_BASIS.to_owned(),
             },
             report,
         })
