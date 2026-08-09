@@ -681,7 +681,7 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
 }
 
 #[tokio::test]
-async fn regex_full_scan_reports_the_per_file_chunk_bound_without_a_path() {
+async fn regex_full_scan_reports_the_path_blocking_the_per_file_chunk_bound() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = "let value = true;\n".repeat(257 * 80);
     std::fs::write(root.path().join("large.rs"), source).expect("write source");
@@ -713,11 +713,12 @@ async fn regex_full_scan_reports_the_per_file_chunk_bound_without_a_path() {
 
     assert!(matches!(
         error,
-        Error::RetrievalLimitExceeded {
+        Error::RetrievalPathLimitExceeded {
             kind: leantoken::RetrievalLimitKind::RegexChunksPerFile,
+            path,
             observed: 257,
             limit: 256,
-        }
+        } if path == "large.rs"
     ));
 }
 

@@ -426,8 +426,9 @@ impl Services {
         for (file, chunk_count) in &files {
             check_cancelled(cancellation)?;
             if path_filter.allows(&file.path) && *chunk_count > MAX_REGEX_CHUNKS_PER_FILE {
-                return Err(Error::RetrievalLimitExceeded {
+                return Err(Error::RetrievalPathLimitExceeded {
                     kind: RetrievalLimitKind::RegexChunksPerFile,
+                    path: file.path.clone(),
                     observed: *chunk_count,
                     limit: MAX_REGEX_CHUNKS_PER_FILE,
                 });

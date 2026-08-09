@@ -61,6 +61,21 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
                 "limit": limit,
             })),
         ),
+        crate::Error::RetrievalPathLimitExceeded {
+            kind,
+            path,
+            observed,
+            limit,
+        } => ErrorData::invalid_params(
+            format!("{cause}; {}", kind.guidance()),
+            Some(serde_json::json!({
+                "category": cause.public_category(),
+                "reason": kind.as_str(),
+                "blocking_path": path,
+                "requested": observed,
+                "limit": limit,
+            })),
+        ),
         crate::Error::RegexWorkBudgetExceeded {
             dimension,
             candidate_files,
