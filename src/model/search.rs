@@ -444,6 +444,8 @@ impl RegexPlanningOutcome {
 #[serde(rename_all = "snake_case")]
 /// HIR analysis that produced a sound trigram candidate plan.
 pub enum RegexPlanSource {
+    /// A long exhaustive text literal was planned from complete identifier variants.
+    LiteralIdentifier,
     /// Existing recursive analysis found mandatory inner literal terms.
     MandatoryLiterals,
     /// Bounded extraction found a finite set of required match prefixes.
@@ -461,6 +463,8 @@ pub enum RegexPlanFallbackReason {
     PlanningDisabled,
     /// Unicode case folding cannot be represented by SQLite's ASCII folding.
     CaseInsensitiveUnicode,
+    /// An exhaustive text literal was not a long ASCII identifier.
+    LiteralIdentifierIneligible,
     /// The HIR parser unexpectedly rejected a regex accepted by the matcher.
     HirParseFailed,
     /// Recursive analysis crossed its bounded HIR-node limit.

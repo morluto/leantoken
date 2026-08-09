@@ -860,10 +860,12 @@ claims.
 | Regex request candidate chunks | `max_results × 20` when a result bound is supplied, capped at 20,510; omitted result bounds retain the global ceiling |
 | Regex request candidate files | `max_results × 200` when a result bound is supplied, capped at 10,000 |
 | Regex request candidate bytes | `max(max_tokens × 64, 1 KiB)` when a token bound is supplied, capped at 1 GiB; omitted token bounds retain the global ceiling |
+| Exhaustive long-identifier candidate bytes | At least 4 MiB after normal request-derived sizing, capped at the same 1 GiB ceiling |
 | Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
 | Regex candidate-plan aggregate term bytes | 256 |
+| Exhaustive long-identifier plan bytes | 4 KiB across at most 32 complete variants |
 | Regex prefix/suffix literal alternatives | 16 |
 | Unicode simple-case-fold literal alternatives | 32 complete FTS variants per query |
 | Unicode structural full-scan fallback | 10000 admitted symbol or reference rows plus one overflow sentinel |
@@ -1379,6 +1381,15 @@ ASCII-only. Evaluation counters expose only fixed plan-source and fallback
 enums plus bounded counts; they never retain regex text, literals, paths, or
 repository identity. Differential tests compare planned results with a forced
 full scan before a new HIR shape is admitted.
+
+Exhaustive text literals that are ASCII identifiers of at least 12 bytes use a
+separate sound candidate lane. Case-sensitive requests plan the exact literal;
+case-insensitive requests plan the complete bounded Unicode simple-fold variant
+set, then the original literal matcher verifies every candidate. Unavailable or
+over-bound variant sets retain the full-scan oracle. This lane raises only the
+request-derived verified-byte floor to 4 MiB; the 10,000 candidate-chunk cap,
+file limits, occurrence cap, cancellation cadence, and exact response budgets
+remain unchanged.
 
 Non-regex literal search uses the same Unicode simple-case-fold table as the
 Rust verifier. It expands each scalar into at most 32 complete literal

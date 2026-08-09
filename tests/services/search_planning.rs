@@ -164,6 +164,143 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
 }
 
 #[tokio::test]
+async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_variants() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let query = "estimated_net_tokens_saved";
+    let filler = format!("{}\n", "x".repeat(1_000)).repeat(28);
+    for index in 0..8 {
+        std::fs::write(
+            root.path().join(format!("lower_{index:02}.rs")),
+            format!("const {query}: usize = {index};\n{filler}"),
+        )
+        .expect("write lower-case source");
+    }
+    std::fs::write(
+        root.path().join("upper.rs"),
+        format!("const ESTIMATED_NET_TOKENS_SAVED: usize = 8;\n{filler}"),
+    )
+    .expect("write upper-case source");
+    std::fs::write(
+        root.path().join("long_s.rs"),
+        format!("const e\u{17f}timated_net_tokens_saved: usize = 9;\n{filler}"),
+    )
+    .expect("write Unicode fold source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let request = SearchRequest {
+        query: query.into(),
+        mode: SearchMode::Text,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(50),
+        max_tokens: Some(2_400),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let optimized = services
+        .search_evaluation(request.clone())
+        .await
+        .expect("planned exhaustive literal");
+    let mut oracle_request = request.clone();
+    oracle_request.max_tokens = Some(32_000);
+    let full_scan = services
+        .search_full_scan_evaluation(oracle_request)
+        .await
+        .expect("full-scan exhaustive literal");
+
+    assert_eq!(optimized.response.occurrences_total, Some(10));
+    assert_eq!(optimized.response.occurrences_returned, 10);
+    assert_eq!(
+        optimized.phases.regex_candidate_strategy,
+        leantoken::RegexCandidateStrategy::Trigram
+    );
+    assert_eq!(
+        optimized.phases.regex_plan_source,
+        Some(leantoken::RegexPlanSource::LiteralIdentifier)
+    );
+    assert!(optimized.phases.regex_chunks_verified >= 10);
+    assert!(filler.len().saturating_mul(10) > 2_400 * 64);
+
+    let normalize = |mut response: leantoken::SearchResponse| {
+        response.meta.receipt_id = None;
+        response.meta.path_and_metadata_tokens = 0;
+        response.meta.total_response_tokens = 0;
+        serde_json::to_value(response).expect("search response JSON")
+    };
+    assert_eq!(
+        normalize(optimized.response.clone()),
+        normalize(full_scan.response),
+        "the sound candidate lane must preserve complete observable results"
+    );
+
+    let case_sensitive = services
+        .search_evaluation(SearchRequest {
+            case_sensitive: true,
+            ..request
+        })
+        .await
+        .expect("case-sensitive planned exhaustive literal");
+    assert_eq!(case_sensitive.response.occurrences_total, Some(8));
+    assert_eq!(
+        case_sensitive.phases.regex_plan_source,
+        Some(leantoken::RegexPlanSource::LiteralIdentifier)
+    );
+}
+
+#[tokio::test]
+async fn exhaustive_identifier_with_over_bound_case_variants_keeps_full_scan() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let query = "ssssss_identifier";
+    std::fs::write(
+        root.path().join("fixture.rs"),
+        format!("const {query}: usize = 1;\n"),
+    )
+    .expect("write source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services.index(false).await.expect("index fixture");
+
+    let response = services
+        .search_evaluation(SearchRequest {
+            query: query.into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(20),
+            max_tokens: Some(2_400),
+            context_lines: Some(0),
+            case_sensitive: false,
+            all_occurrences: true,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        })
+        .await
+        .expect("bounded full-scan fallback");
+    assert_eq!(response.response.occurrences_total, Some(1));
+    assert_eq!(
+        response.phases.regex_candidate_strategy,
+        leantoken::RegexCandidateStrategy::FullScan
+    );
+    assert_eq!(
+        response.phases.regex_plan_fallback_reason,
+        Some(leantoken::RegexPlanFallbackReason::CaseInsensitiveUnicode)
+    );
+}
+
+#[tokio::test]
 async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repeated_excerpts() {
     let root = tempfile::tempdir().expect("temporary repository");
     let line = "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";

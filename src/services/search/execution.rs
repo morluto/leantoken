@@ -425,7 +425,7 @@ impl Services {
                         .expect("exhaustive text mode compiles a literal pattern"),
                     None,
                     cancellation,
-                    RegexPlanning::Disabled,
+                    regex_planning,
                 )?;
                 phases = scan.phases;
                 scan.hits
