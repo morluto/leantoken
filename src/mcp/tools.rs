@@ -194,7 +194,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred over native Read, cat, head, or sed for supported repository source. Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Preferred over native Read, cat, head, or sed for supported repository source. Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,

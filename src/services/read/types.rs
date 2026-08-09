@@ -121,6 +121,12 @@ pub(super) struct MaterializedRead {
     pub(super) current_tokens: usize,
 }
 
+pub(super) struct ReadBudgetEstimate {
+    pub(super) indexed_content: String,
+    pub(super) target_source_tokens: usize,
+    pub(super) page_start_byte: usize,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ReadCursor {
     pub(super) generation: u64,

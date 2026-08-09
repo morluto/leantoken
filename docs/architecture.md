@@ -325,6 +325,13 @@ repository-sized path collection in Rust. CI changed-path input is capped at
 16 MiB and 100,000 paths before topology matching. Bounded live-read cursors
 also carry a fingerprint of the requested target prefix, so continuation
 cannot rely on size and timestamp metadata when a file is replaced in place.
+When a read is truncated, source-budget guidance hydrates at most one target
+range from the request's pinned indexed generation. The range remains bounded
+by the configured per-file indexing limit and is reused across serialized-
+response fitting probes. It does not rescan the remaining live file, fan out to
+other paths, or create an additional request. Full-policy reads that verify the
+indexed file report exact live guidance; bounded reads label it as an indexed-
+generation estimate.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries

@@ -135,6 +135,9 @@ pub struct ReadResponse {
     /// Opaque continuation bound to this repository generation and live file content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_cursor: Option<String>,
+    /// Source-budget guidance for completing a truncated target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncation_guidance: Option<ReadTruncationGuidance>,
     /// Whether an explicit or automatically selected base matched this response page.
     #[serde(default)]
     pub not_modified: bool,
@@ -160,6 +163,33 @@ pub struct ReadResponse {
     #[serde(default)]
     pub live_bytes_read: usize,
     pub meta: ResponseMeta,
+}
+
+/// Bounded guidance for avoiding repeated undersized continuation reads.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ReadTruncationGuidance {
+    /// Evidence used to size the complete target and remaining suffix.
+    pub basis: ReadTruncationGuidanceBasis,
+    /// Source tokens in the complete resolved target.
+    pub target_source_tokens: usize,
+    /// Source tokens after the byte-exact progress represented by this page.
+    pub remaining_source_tokens: usize,
+    /// Additional calls estimated when the caller keeps this page's source budget.
+    pub remaining_pages_at_current_budget: usize,
+    /// Source budget recommended for the next continuation call.
+    pub recommended_next_max_tokens: usize,
+    /// Fewest additional calls possible under the configured source-token ceiling.
+    pub minimum_remaining_pages: usize,
+}
+
+/// Confidence boundary for [`ReadTruncationGuidance`] token counts.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadTruncationGuidanceBasis {
+    /// Full live-file verification proved the indexed target is current.
+    VerifiedLive,
+    /// Counts come from the pinned indexed generation; the bounded live page may be newer.
+    IndexedGenerationEstimate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

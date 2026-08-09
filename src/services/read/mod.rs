@@ -390,8 +390,20 @@ impl Services {
         max_tokens: usize,
         options: ServiceCallOptions,
     ) -> Result<MaterializedRead> {
-        let (materialized, minimum_progress_tokens) =
+        let (mut materialized, minimum_progress_tokens) =
             self.read_at_generation(session, request, target, generation, max_tokens)?;
+        let returned_items = usize::from(!materialized.response.not_modified);
+        if self.response_fits_with_receipt_reserve(
+            &materialized.response,
+            returned_items,
+            options,
+        )? && !materialized.response.truncated
+        {
+            return Ok(materialized);
+        }
+
+        let budget_estimate = self.read_budget_estimate(session, request, target, generation)?;
+        self.apply_read_budget_guidance(&mut materialized, budget_estimate.as_ref(), max_tokens);
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
             &materialized.response,
@@ -408,8 +420,13 @@ impl Services {
         let additional_tokens = max_tokens.saturating_sub(minimum_progress_tokens);
         let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
-            let (candidate, _) =
+            let (mut candidate, _) =
                 self.read_at_generation(session, request, target, generation, candidate_limit)?;
+            self.apply_read_budget_guidance(
+                &mut candidate,
+                budget_estimate.as_ref(),
+                candidate_limit,
+            );
             let returned_items = usize::from(!candidate.response.not_modified);
             self.finalized_response_tokens_with_receipt_reserve(
                 &candidate.response,
@@ -419,24 +436,117 @@ impl Services {
         })?;
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
-            return self
-                .read_at_generation(session, request, target, generation, candidate_limit)
-                .map(|(materialized, _)| materialized);
+            let (mut materialized, _) = self.read_at_generation(
+                session,
+                request,
+                target,
+                generation,
+                candidate_limit,
+            )?;
+            self.apply_read_budget_guidance(
+                &mut materialized,
+                budget_estimate.as_ref(),
+                candidate_limit,
+            );
+            return Ok(materialized);
         }
 
-        let (minimum, _) = self.read_at_generation(
+        let (mut minimum, _) = self.read_at_generation(
             session,
             request,
             target,
             generation,
             minimum_progress_tokens,
         )?;
+        self.apply_read_budget_guidance(
+            &mut minimum,
+            budget_estimate.as_ref(),
+            minimum_progress_tokens,
+        );
         Err(self.response_budget_error_with_receipt_reserve(
             &minimum.response,
             usize::from(!minimum.response.not_modified),
             max_response_tokens,
             options,
         )?)
+    }
+
+    fn read_budget_estimate(
+        &self,
+        session: &IndexReadSnapshot,
+        request: &ReadRequest,
+        target: &ParsedReadTarget,
+        generation: u64,
+    ) -> Result<Option<ReadBudgetEstimate>> {
+        let Some(indexed) = session.find_file(&request.path)? else {
+            return Ok(None);
+        };
+        let target = resolve_read_target(session, indexed.id, request, target, generation)?;
+        let target_end_line = match target.target_end_line {
+            Some(end_line) => end_line,
+            None => match session
+                .file_end_lines_batch(&[indexed.id])?
+                .into_iter()
+                .next()
+            {
+                Some(Some(end_line)) => end_line,
+                _ => return Ok(None),
+            },
+        };
+        let Some(excerpt) = self.stored_excerpt(
+            session,
+            indexed.id,
+            target.target_start_line,
+            target_end_line,
+            0,
+            0,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ReadBudgetEstimate {
+            target_source_tokens: self.config.tokenizer.count(&excerpt.content),
+            indexed_content: excerpt.content,
+            page_start_byte: target.page_start_byte,
+        }))
+    }
+
+    fn apply_read_budget_guidance(
+        &self,
+        materialized: &mut MaterializedRead,
+        estimate: Option<&ReadBudgetEstimate>,
+        current_max_tokens: usize,
+    ) {
+        materialized.response.truncation_guidance = None;
+        if !materialized.response.truncated {
+            return;
+        }
+        let Some(estimate) = estimate else {
+            return;
+        };
+        let progress_bytes = estimate
+            .page_start_byte
+            .saturating_add(materialized.current_content.len());
+        let Some(remaining) = estimate.indexed_content.get(progress_bytes..) else {
+            return;
+        };
+        let remaining_source_tokens = self.config.tokenizer.count(remaining);
+        if remaining_source_tokens == 0 {
+            return;
+        }
+        materialized.response.truncation_guidance = Some(ReadTruncationGuidance {
+            basis: if materialized.response.index_state == ReadIndexState::Current {
+                ReadTruncationGuidanceBasis::VerifiedLive
+            } else {
+                ReadTruncationGuidanceBasis::IndexedGenerationEstimate
+            },
+            target_source_tokens: estimate.target_source_tokens,
+            remaining_source_tokens,
+            remaining_pages_at_current_budget: remaining_source_tokens.div_ceil(current_max_tokens),
+            recommended_next_max_tokens: remaining_source_tokens.min(self.config.max_output_tokens),
+            minimum_remaining_pages: remaining_source_tokens
+                .div_ceil(self.config.max_output_tokens),
+        });
     }
 
     fn read_at_generation(
@@ -607,6 +717,7 @@ impl Services {
                 truncated,
                 next_start_line,
                 continuation_cursor,
+                truncation_guidance: None,
                 not_modified,
                 content: (!not_modified).then(|| content.to_string()),
                 delta: None,

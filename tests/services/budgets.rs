@@ -470,6 +470,7 @@ async fn read_response_budget_reduces_source_without_skipping_continuation() {
         .expect("fit read response");
     assert!(bounded.meta.total_response_tokens <= limit);
     assert!(bounded.truncated);
+    assert!(bounded.truncation_guidance.is_some());
     let next_start_line = bounded.next_start_line.expect("next line");
     let cursor = bounded
         .continuation_cursor

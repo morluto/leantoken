@@ -17,7 +17,6 @@ pub(super) fn assemble_stored_excerpt(
     })
 }
 
-#[cfg(test)]
 impl Services {
     pub(super) fn stored_excerpt(
         &self,

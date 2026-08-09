@@ -953,6 +953,13 @@ indexed version (for example after an edit that has not been reindexed yet).
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and live full-file hash, so a
 stale cursor cannot combine pages from different file versions.
+`truncation_guidance` reports the complete target and remaining source-token
+cost, estimated additional pages at the current budget, a bounded recommended
+budget for the next continuation, and the minimum pages allowed by the server's
+source-token ceiling. `basis: "verified_live"` means full-file verification
+proved the pinned indexed target matches live source;
+`basis: "indexed_generation_estimate"` keeps bounded reads cheap and makes the
+snapshot-based uncertainty explicit.
 `delta_receipt` reports the stable target key, selected base and head hashes and
 generations, full and delta token counts, avoided tokens, and any explicit
 fallback reason. Missing bases, changed target coordinates, truncated or
