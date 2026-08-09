@@ -333,6 +333,13 @@ other paths, or create an additional request. Full-policy reads that verify the
 indexed file report exact live guidance; bounded reads label it as an indexed-
 generation estimate.
 
+Fuzzy file discovery retains a bounded `max_results + 1` ranking map while it
+scans the already bounded indexed file set. Path classification adds one linear
+segment pass per fuzzy-matching path, no extra filesystem or database scan, and
+no response metadata. Raw fuzzy score remains primary; equal scores use the
+deterministic production/support class, path depth, and path. Cursors retain the
+raw score and path and reconstruct the same tie-break key on continuation.
+
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
 rolls the transaction back; an individual SQLite FTS statement remains the

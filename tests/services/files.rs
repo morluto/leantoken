@@ -74,6 +74,87 @@ async fn file_operations_page_without_duplicates() {
 }
 
 #[tokio::test]
+async fn fuzzy_find_ties_prioritize_production_source_and_preserve_pagination() {
+    let root = tempfile::tempdir().expect("root");
+    let paths = [
+        "benchmarks/kotlin/src/main.rs",
+        "fixtures/sample/src/go/main.go",
+        "fixtures/sample/src/python/main.py",
+        "fixtures/sample/src/rust/main.rs",
+        "src/main.rs",
+        "src/main/dispatch.rs",
+        "src/main/output.rs",
+        "xtask/src/main.rs",
+    ];
+    for path in paths {
+        let source = root.path().join(path);
+        std::fs::create_dir_all(source.parent().expect("source parent")).expect("directories");
+        std::fs::write(source, "fn main() {}\n").expect("source");
+    }
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services.index(false).await.expect("index");
+    let request = |cursor, max_results| FilesRequest {
+        operation: FileOperation::Find,
+        path: None,
+        query: Some("main".into()),
+        pattern: None,
+        max_results: Some(max_results),
+        cursor,
+        depth: None,
+    };
+
+    let full = services.files(request(None, 20)).await.expect("full find");
+    assert!(
+        full.entries
+            .iter()
+            .all(|entry| entry.score == Some(109.0)),
+        "fixture must exercise the equal-score tie breaker: {:?}",
+        full.entries
+            .iter()
+            .map(|entry| (&entry.path, entry.score))
+            .collect::<Vec<_>>()
+    );
+    let full_paths = full
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(full_paths.first().map(String::as_str), Some("src/main.rs"));
+    let first_support = full_paths
+        .iter()
+        .position(|path| path.starts_with("benchmarks/") || path.starts_with("fixtures/"))
+        .expect("support result");
+    assert!(
+        full_paths[..first_support]
+            .iter()
+            .all(|path| path.starts_with("src/") || path.starts_with("xtask/src/"))
+    );
+    let paths_projection = services
+        .files_paths(request(None, 20))
+        .await
+        .expect("paths projection");
+    assert_eq!(paths_projection.paths, full_paths);
+
+    let mut cursor = None;
+    let mut paged = Vec::new();
+    loop {
+        let page = services
+            .files(request(cursor, 2))
+            .await
+            .expect("paged find");
+        paged.extend(page.entries.into_iter().map(|entry| entry.path));
+        cursor = page.meta.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(paged, full_paths);
+}
+
+#[tokio::test]
 async fn files_glob_selective_pattern_returns_only_matching_paths() {
     let root = tempfile::tempdir().expect("root");
     for (name, body) in [

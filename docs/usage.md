@@ -706,6 +706,10 @@ Pass one of those tagged objects as `operation`. Operation-specific fields
 cannot be mixed. `max_results`, `max_response_tokens`, `cursor`, and (for
 `tree`) `depth` belong to the selected operation. Output contains bounded
 file/directory entries with language and size metadata when available.
+Fuzzy score remains the primary ordering key. Equal-score results prefer root
+and conventional production-source paths, then shallower paths; explicit
+benchmark, bench, fixture, and testdata directories sort after ordinary paths.
+The final path tie-break remains deterministic and continuation-safe.
 
 Set `projection="paths"` for the opt-in path-only response. It returns the same
 ordered page as `full` in a `paths` array plus the complete `meta` freshness,
