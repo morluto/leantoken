@@ -160,6 +160,19 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         .read_with_options(request.clone(), shaped_options)
         .await
         .expect("unbounded MCP-shaped read");
+    let visible_tokens = services
+        .response_accountant
+        .finalized_tokens_with_receipt_resource(&successful, Some(shape))
+        .expect("model-visible receipt accounting");
+    assert_eq!(successful.meta.total_response_tokens, visible_tokens);
+    let savings = services
+        .token_savings_report()
+        .await
+        .expect("accounted savings");
+    assert_eq!(
+        savings.response_accounting.total_response_tokens,
+        successful.meta.total_response_tokens as u64
+    );
 
     let mut prototype = successful.clone();
     prototype.meta.receipt_id = None;

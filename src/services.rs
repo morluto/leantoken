@@ -370,11 +370,17 @@ impl Services {
         T: RetrievalResponse + Clone,
     {
         if options.receipt_resource_reserve() {
-            let reserved_tokens = self
-                .response_accountant
-                .finalized_tokens_with_receipt_resource(response, options.mcp_response_shape())?;
-            self.response_accountant
-                .finalize_for(response, options.mcp_response_shape())?;
+            let reserved_tokens = if options.mcp_response_shape().is_some() {
+                self.response_accountant
+                    .finalize_with_receipt_resource(response, options.mcp_response_shape())?;
+                response.meta_mut().total_response_tokens
+            } else {
+                let reserved = self
+                    .response_accountant
+                    .finalized_tokens_with_receipt_resource(response, None)?;
+                self.response_accountant.finalize_for(response, None)?;
+                reserved
+            };
             if let Some(limit) = options.max_response_tokens()
                 && reserved_tokens > limit
             {
