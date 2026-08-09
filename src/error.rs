@@ -554,6 +554,7 @@ impl Error {
             Self::UnknownQueryReceipt(_) => "unknown_query_receipt",
             Self::QueryReceiptMismatch => "query_receipt_mismatch",
             Self::StaleQueryReceipt { .. } => "stale_query_receipt",
+            Self::RepositoryIdentityMismatch { .. } => "repository_identity_mismatch",
             Self::Cancelled => "request_cancelled",
             Self::PathOutsideRoot(_) => "path_outside_root",
             Self::UnsupportedPathEncoding(_) => "unsupported_path_encoding",
@@ -576,8 +577,7 @@ impl Error {
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
             Self::ShutdownTimeout { .. } => "shutdown_timeout",
-            Self::RepositoryIdentityMismatch { .. }
-            | Self::RetrievalOverloaded
+            Self::RetrievalOverloaded
             | Self::RetrievalQueueTimeout
             | Self::ReconciliationFailed(_)
             | Self::McpRuntimeStopped
@@ -688,6 +688,18 @@ mod tests {
             }
             .public_category(),
             "shutdown_timeout"
+        );
+    }
+
+    #[test]
+    fn repository_identity_mismatch_has_a_public_client_category() {
+        assert_eq!(
+            Error::RepositoryIdentityMismatch {
+                expected: "expected".into(),
+                actual: "actual".into(),
+            }
+            .public_category(),
+            "repository_identity_mismatch"
         );
     }
 }

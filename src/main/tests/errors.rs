@@ -216,6 +216,16 @@ fn cli_error_json_has_exact_safe_metadata() {
             }),
         ),
         (
+            leantoken::Error::RepositoryIdentityMismatch {
+                expected: "expected-repository".into(),
+                actual: "actual-repository".into(),
+            },
+            serde_json::json!({
+                "error": "repository identity mismatch: expected expected-repository, actual actual-repository",
+                "category": "repository_identity_mismatch"
+            }),
+        ),
+        (
             leantoken::Error::Cancelled,
             serde_json::json!({
                 "error": "request cancelled",

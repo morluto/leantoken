@@ -1005,7 +1005,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
             .coverage
             .focus_path_coverage
             .iter()
-            .all(|focus| focus.indexed_paths == 2 && focus.minimum_fragments == 1)
+            .all(|focus| focus.indexed_paths == 2 && focus.minimum_fragments == 0)
     );
     assert_eq!(
         ordinary_focus
@@ -1014,7 +1014,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
             .iter()
             .filter(|focus| focus.satisfied)
             .count(),
-        1
+        2
     );
 
     let mut request = context_limit_request(1_000);

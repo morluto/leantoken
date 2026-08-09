@@ -116,12 +116,13 @@ pub(super) async fn run_mcp_runtime(
         return Err(error);
     }
     service_state.set_ready(Arc::clone(&services));
+    let mut context_tasks = Vec::with_capacity(approved_contexts.len());
     for (approved, context_state) in approved_contexts.drain(..) {
         let context_cancellation = cancellation.clone();
         let startup_cancellation = context_cancellation.clone();
         let context_name = approved.name.clone();
         let context_cli = context_cli.clone();
-        tokio::spawn(async move {
+        context_tasks.push(tokio::spawn(async move {
             let startup = tokio::task::spawn_blocking(move || {
                 let mut config = context_cli.config_for_root(approved.root, None)?;
                 config.max_index_workers = mcp_index_worker_limit(
@@ -150,9 +151,16 @@ pub(super) async fn run_mcp_runtime(
                     tracing::error!(context = %context_name, %error, "approved repository context startup task failed");
                 }
             }
-        });
+        }));
     }
-    run_mcp_index_loop(services, cancellation).await
+    let result = run_mcp_index_loop(services, cancellation.clone()).await;
+    cancellation.cancel();
+    for context_task in context_tasks {
+        if let Err(error) = context_task.await {
+            tracing::warn!(%error, "approved repository context task failed to join during shutdown");
+        }
+    }
+    result
 }
 
 async fn run_mcp_index_loop(

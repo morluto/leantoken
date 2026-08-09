@@ -289,7 +289,7 @@ fn truncate_bpe_tokens<'a>(
     if tokens.len() <= max_tokens {
         return (text, tokens.len());
     }
-    let selected = &tokens[..tokens.len().min(max_tokens)];
+    let selected = &tokens[..max_tokens];
     let Some(offset) = decoded_prefix_offset(bpe, text, selected) else {
         return ("", 0);
     };

@@ -30,6 +30,81 @@ async fn search_range_covers_the_returned_context_lines() {
 }
 
 #[tokio::test]
+async fn token_limited_search_cursor_defers_a_hit_without_skipping_it() {
+    let (_root, services) = indexed_source("paged.txt", b"needle\nneedle\n").await;
+    let request = SearchRequest {
+        query: "needle".into(),
+        mode: SearchMode::Text,
+        include_paths: vec!["paged.txt".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(1),
+        max_tokens: Some(100),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let one_hit = services.search(request.clone()).await.expect("one hit");
+    let mut paged = request;
+    paged.max_results = Some(2);
+    paged.max_tokens = Some(one_hit.meta.source_tokens);
+
+    let first = services.search(paged.clone()).await.expect("first page");
+    assert_eq!(first.hits.len(), 1);
+    assert_eq!(first.occurrences_total, Some(2));
+    let first_line = first.hits[0].start_line;
+    paged.cursor = first.meta.next_cursor;
+
+    let second = services.search(paged).await.expect("second page");
+    assert_eq!(second.hits.len(), 1);
+    assert_ne!(second.hits[0].start_line, first_line);
+    assert_eq!(second.meta.next_cursor, None);
+}
+
+#[tokio::test]
+async fn token_limited_search_skips_unfit_hits_while_advancing_the_cursor() {
+    let source = format!("needle {}\nneedle {}\n", "context ".repeat(40), "context ".repeat(40));
+    let (_root, services) = indexed_source("oversized.txt", source.as_bytes()).await;
+
+    let request = SearchRequest {
+        query: "needle".into(),
+        mode: SearchMode::Text,
+        include_paths: vec!["oversized.txt".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(1),
+        max_tokens: Some(1),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let first = services
+        .search(request.clone())
+        .await
+        .expect("an unfit result is a valid empty page");
+    assert!(first.hits.is_empty());
+    let cursor = first.meta.next_cursor.expect("the next candidate remains reachable");
+
+    let final_page = services
+        .search(SearchRequest {
+            cursor: Some(cursor),
+            ..request
+        })
+        .await
+        .expect("the final unfit result remains a valid page");
+    assert!(final_page.hits.is_empty());
+    assert_eq!(final_page.meta.next_cursor, None);
+}
+
+#[tokio::test]
 async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
     let mut lines = (1..=60)
         .map(|line| format!("ordinary line {line}"))

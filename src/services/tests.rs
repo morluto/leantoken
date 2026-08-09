@@ -953,7 +953,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
 }
 
 #[tokio::test]
-async fn search_cursor_tracks_candidates_consumed_by_token_filter() {
+async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page() {
     let root = tempfile::tempdir().expect("root");
     for name in ["a.rs", "b.rs", "c.rs"] {
         fs::write(
@@ -967,14 +967,14 @@ async fn search_cursor_tracks_candidates_consumed_by_token_filter() {
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index");
 
-    let request = SearchRequest {
+    let mut request = SearchRequest {
         query: "needle".into(),
         mode: SearchMode::Text,
         include_paths: Vec::new(),
         exclude_paths: Vec::new(),
         focus_paths: Vec::new(),
         max_results: Some(2),
-        max_tokens: Some(1),
+        max_tokens: Some(1_000),
         context_lines: Some(0),
         case_sensitive: false,
         all_occurrences: false,
@@ -983,22 +983,65 @@ async fn search_cursor_tracks_candidates_consumed_by_token_filter() {
         query_receipt: None,
         cursor: None,
     };
-    let response = services.search(request.clone()).await.expect("search");
+    let unbounded = services
+        .search(request.clone())
+        .await
+        .expect("unbounded search");
+    let one_hit_tokens = services
+        .config()
+        .tokenizer
+        .count(&unbounded.hits[0].excerpt);
+    request.max_tokens = Some(one_hit_tokens);
 
-    assert!(response.hits.is_empty());
-    let cursor = response
+    let first_page = services.search(request.clone()).await.expect("first page");
+    assert_eq!(
+        first_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a.rs"]
+    );
+    let second_cursor = first_page
         .meta
         .next_cursor
-        .expect("unscanned candidates require another page");
+        .expect("second candidate must remain on a later page");
+
+    let second_page = services
+        .search(SearchRequest {
+            cursor: Some(second_cursor),
+            ..request.clone()
+        })
+        .await
+        .expect("second page");
+    assert_eq!(
+        second_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b.rs"]
+    );
+    let third_cursor = second_page
+        .meta
+        .next_cursor
+        .expect("third candidate must remain on a later page");
 
     let final_page = services
         .search(SearchRequest {
-            cursor: Some(cursor),
+            cursor: Some(third_cursor),
             ..request
         })
         .await
-        .expect("final search page");
-    assert!(final_page.hits.is_empty());
+        .expect("final page");
+    assert_eq!(
+        final_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c.rs"]
+    );
     assert!(final_page.meta.next_cursor.is_none());
 }
 
