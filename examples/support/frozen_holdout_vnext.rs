@@ -1079,6 +1079,16 @@ mod tests {
     }
 
     #[test]
+    fn checked_policy_file_is_valid_for_public_sealing() {
+        let policy: Policy = serde_json::from_str(include_str!(
+            "../../benchmarks/frozen_holdout_vnext_policy.json"
+        ))
+        .expect("policy JSON");
+
+        validate_policy(&policy).expect("frozen policy");
+    }
+
+    #[test]
     fn family_coverage_requires_independent_repository_language_and_shape_evidence() {
         let tasks = complete_tasks();
         let policy = policy(tasks.len());
