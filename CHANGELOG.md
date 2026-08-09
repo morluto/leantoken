@@ -1,6 +1,59 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.25] - 2026-08-09
+### Bug Fixes
+
+- Checkpoint startup repair writes
+- Avoid no-change reconcile amplification
+- Reserve relevant context owners
+- Keep mcp descriptions within budget
+- Clarify setup runtime versions
+- Satisfy context facet lints
+- **ci:** Bound Windows process tests
+- **ci:** Validate the published npm artifact
+- **index:** Retain safe reconciliation state
+- **retrieval:** Preserve bounded MCP pagination and errors
+- **setup:** Preserve committed recovery state
+- **search:** Preserve Unicode case-fold matches
+- **read:** Reject zero-progress token pages
+- **context:** Preserve required-evidence provenance
+### Documentation
+
+- Clarify token-bounded code retrieval
+### Features
+
+- **mcp:** Align discovery and model-visible result contracts (#466) ([#466](https://github.com/morluto/leantoken/pull/466))
+- Prioritize production file matches
+- Guide truncated read budgets
+- Add compact search projections
+- Plan exhaustive identifier searches
+- Separate task savings from retrieval compression
+- Prioritize primary context owners
+### Performance
+
+- Attribute no-op reconciliation writes
+### Refactoring
+
+- Make invalid application states unrepresentable
+- **test:** Remove redundant fixture framework
+### Styling
+
+- Format rebased retrieval changes
+- Format rebased test assertions
+- Format integration test modules
+### Testing
+
+- Preserve sealed fixture contracts
+- Validate structural benchmark manifests
+- Cover published policy and npm versioning
+- Bind published benchmark fixtures
+- Preserve report artifact bindings
+- Verify published evidence bindings
+- Remove implementation-coupled checks
+- Eliminate false-green fixture assumptions
+- Bind checked-in fixture evidence
+
 ## [0.1.24] - 2026-08-06
 ### Bug Fixes
 
