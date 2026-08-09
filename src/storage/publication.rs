@@ -189,6 +189,7 @@ impl Storage {
                 rebuild,
                 replacements: 0,
                 deletions: HashSet::new(),
+                projection_refreshes: 0,
             };
             let (output, relational_write_ms, relational_write_bytes) =
                 measured_storage_phase(profile, || write(&mut writer))?;
@@ -197,6 +198,7 @@ impl Storage {
             let changed = rebuild
                 || writer.replacements > 0
                 || !writer.deletions.is_empty()
+                || writer.projection_refreshes > 0
                 || current_config != config_hash;
             if !rebuild && !writer.deletions.is_empty() {
                 Self::remove_orphan_path_entries(&tx)?;
@@ -262,14 +264,24 @@ impl Storage {
             }
             drop(trigger_guard);
             observe(ReconciliationPublicationPhase::CommitAndCheckpoint)?;
-            let (_, elapsed_ms, write_bytes) =
-                measured_storage_phase(profile, || Ok(tx.commit()?))?;
+            // A read-only COMMIT can invoke SQLite auto-checkpointing on a
+            // pre-existing WAL backlog. Rollback still releases BEGIN
+            // IMMEDIATE after the baseline check, without rewriting pages for
+            // a generation that did not change.
+            let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                if changed {
+                    Ok(tx.commit()?)
+                } else {
+                    Ok(tx.rollback()?)
+                }
+            })?;
             diagnostics.commit_ms = elapsed_ms;
             diagnostics.commit_write_bytes = write_bytes;
 
             if profile {
                 diagnostics.post_commit_diagnostics_complete =
-                    populate_post_commit_diagnostics(conn, &self.path, &mut diagnostics).is_ok();
+                    populate_post_commit_diagnostics(conn, &self.path, changed, &mut diagnostics)
+                        .is_ok();
             }
             Ok((i64_to_u64(published_generation)?, output, diagnostics))
         })()

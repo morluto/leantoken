@@ -159,6 +159,7 @@ struct ReconciliationWriteAttribution {
     stage_write_bytes: Option<u64>,
     relational_write_bytes: Option<u64>,
     commit_write_bytes: Option<u64>,
+    checkpoint_attempted: bool,
     checkpoint_write_bytes: Option<u64>,
     generation_before: u64,
     generation_after: u64,
@@ -174,6 +175,7 @@ impl From<&IndexingDiagnostics> for ReconciliationWriteAttribution {
             stage_write_bytes: diagnostics.publication_detail.stage_write_bytes,
             relational_write_bytes: diagnostics.publication_detail.relational_write_bytes,
             commit_write_bytes: diagnostics.publication_detail.commit_write_bytes,
+            checkpoint_attempted: diagnostics.publication_detail.checkpoint_attempted,
             checkpoint_write_bytes: diagnostics.publication_detail.checkpoint_write_bytes,
             generation_before: diagnostics.generation_before,
             generation_after: diagnostics.generation_after,
@@ -512,7 +514,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 9,
+        schema_version: 10,
         leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -1217,7 +1219,7 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.schema_version, 9);
+        assert_eq!(report.schema_version, 10);
         assert_eq!(report.initial_index.response.files_indexed, 7);
         assert!(report.initial_index.storage_footprint.database_bytes > 0);
         assert_eq!(

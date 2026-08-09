@@ -322,5 +322,6 @@ pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
     pub(crate) rebuild: bool,
     pub(crate) replacements: usize,
     pub(crate) deletions: HashSet<String>,
+    pub(crate) projection_refreshes: usize,
 }
 use super::*;

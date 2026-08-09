@@ -1,6 +1,34 @@
 use super::*;
 
 impl Indexer {
+    /// Remove metadata-only watcher events before parse and publication.
+    pub(super) fn remove_content_stable_candidates(
+        &self,
+        existing: &HashMap<String, crate::storage::FileRecord>,
+        candidates: &mut HashMap<String, DiscoveredFile>,
+        cancellation: &CancellationToken,
+    ) -> Result<usize> {
+        let mut content_stable = Vec::new();
+        for (path, file) in candidates.iter() {
+            check_cancelled(cancellation)?;
+            if let Some(record) = existing.get(path)
+                && record.size_bytes == file.size_bytes
+                && content_unchanged(
+                    &self.repository_root,
+                    path,
+                    &record.content_hash,
+                    self.config.max_file_bytes,
+                )
+            {
+                content_stable.push(path.clone());
+            }
+        }
+        for path in &content_stable {
+            candidates.remove(path);
+        }
+        Ok(content_stable.len())
+    }
+
     pub(super) fn validate_membership_limits(
         &self,
         existing: &HashMap<String, crate::storage::FileRecord>,

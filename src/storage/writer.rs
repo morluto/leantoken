@@ -127,6 +127,7 @@ impl ReconciliationWriter<'_, '_> {
         for file_id in file_ids {
             update_generation.execute(params![self.generation, file_id])?;
         }
+        self.projection_refreshes = self.projection_refreshes.saturating_add(projections.len());
         Ok(())
     }
 }

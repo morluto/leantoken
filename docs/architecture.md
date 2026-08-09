@@ -770,11 +770,23 @@ are diagnostic evidence, not transaction state.
 
 The normalized stage database is created lazily on the first replacement or
 removal. A no-change reconciliation therefore materializes no temporary schema
-or journal, but it still enters the ordinary baseline-verifying publication
-transaction. The optimization does not skip stale-plan detection, the writer
-lock, atomic generation publication, freshness reconciliation, or subsequent
-request snapshot pinning. Once initialized, the stage retains the existing
-bounded-batch and cleanup behavior.
+or journal, but it still acquires the writer lock and enters the ordinary
+`BEGIN IMMEDIATE` baseline-verifying publication transaction. Once that
+transaction proves there is no logical mutation, it rolls back instead of
+issuing a read-only commit: SQLite therefore cannot auto-checkpoint a
+pre-existing WAL backlog on every no-change run. Database startup schema checks
+and repository-binding telemetry also temporarily suspend the writer
+connection's auto-checkpoint threshold around their bounded transactions, then
+restore the exact prior connection-local value before returning. This prevents
+an idempotent schema ensure or one-row last-access update from checkpointing an
+unrelated index backlog before reconcile begins. Profiled no-change runs also
+collect database, WAL, and FTS footprints without requesting an explicit
+checkpoint. A later changed publication retains the restored ordinary commit
+and checkpoint policy, including busy-reader handling and WAL recycling. The
+optimization does not skip migrations, ownership validation, last-access
+telemetry, stale-plan detection, atomic generation publication, freshness
+reconciliation, crash recovery, or subsequent request snapshot pinning. Once
+initialized, the stage retains the existing bounded-batch and cleanup behavior.
 
 This snapshot is intentionally not persisted or shared through another
 sidecar. A same-process MCP leader can include full details in `index_building`
@@ -816,11 +828,17 @@ expansions query the indexed `import_candidates` reverse projection so only
 importers whose bounded candidate paths gained or lost membership are reparsed.
 New targets can therefore resolve previously unresolved edges without scanning
 every stored import. Both the watcher path and full discovery
-content-hash files before treating them as unchanged: matching size and mtime
-alone never skips reindexing when the body changed (bind mounts, copy tools that
-preserve mtime, some network filesystems). File replacement, deletion,
-reverse-import invalidation, and generation advancement commit in one SQLite
-transaction.
+content-hash files before treating them as unchanged. Size gates one bounded
+read of at most `max_file_bytes + 1`; the content hash, not mtime, is the
+identity evidence. Metadata-only churn across identical Git trees therefore
+does not parse, tokenize, stage, or publish files, while same-size content
+changes still enter preparation. A same-size changed file may require the
+bounded identity read followed by the normal bounded preparation read; no
+source bytes are retained across files or outside the existing preparation
+batch bounds. Matching size and mtime alone never skips reindexing when the body
+changed (bind mounts, copy tools that preserve mtime, some network filesystems).
+File replacement, deletion, reverse-import invalidation, and generation
+advancement commit in one SQLite transaction.
 
 Indexing is serialized across processes, but queries continue against the last
 committed WAL generation. The short-lived operation lock makes `reconciling`
