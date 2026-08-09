@@ -224,14 +224,79 @@ pub struct TokenSavingsObservations {
     pub unobserved: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+/// Whether end-to-end task savings can be attributed from available observations.
+pub enum TaskSavingsObservationStatus {
+    /// Retrieval records lack a host task identity, relevance labels, or task outcomes.
+    #[default]
+    Unavailable,
+    /// Task-linked outcomes and all declared cost categories were observed.
+    Observed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+/// End-to-end task-savings fields kept separate from retrieval compression.
+pub struct ObservedTaskSavings {
+    /// Whether task savings are attributable from the current observations.
+    pub status: TaskSavingsObservationStatus,
+    /// Host tasks with a linked retrieval and terminal outcome.
+    pub observed_tasks: u64,
+    /// Linked tasks that completed successfully, or unknown when unavailable.
+    pub task_successes: Option<u64>,
+    /// Linked tasks that failed, or unknown when unavailable.
+    pub task_failures: Option<u64>,
+    /// Successful retrieval responses known to be relevant to their host task.
+    pub relevant_retrieval_responses: Option<u64>,
+    /// Successful retrieval responses whose task relevance is unknown.
+    pub unknown_relevance_responses: u64,
+    /// Failed retrieval calls observed at instrumented service boundaries.
+    pub failed_retrieval_calls: u64,
+    /// Serialized failure-response tokens, or unknown when not observed.
+    pub failure_response_tokens: Option<u64>,
+    /// Calls identified as retries of an earlier host-task request.
+    pub retry_calls: Option<u64>,
+    /// Calls whose evidence was superseded before the host task completed.
+    pub superseded_calls: Option<u64>,
+    /// Complete task-level provider-token difference, or unknown when unavailable.
+    pub net_tokens_saved: Option<i64>,
+    /// Exact task-level reduction in basis points, or unknown when unavailable.
+    pub savings_rate_basis_points: Option<i64>,
+    /// Stable explanation of costs and outcomes excluded from task attribution.
+    pub exclusion_basis: String,
+}
+
+impl Default for ObservedTaskSavings {
+    fn default() -> Self {
+        Self {
+            status: TaskSavingsObservationStatus::Unavailable,
+            observed_tasks: 0,
+            task_successes: None,
+            task_failures: None,
+            relevant_retrieval_responses: None,
+            unknown_relevance_responses: 0,
+            failed_retrieval_calls: 0,
+            failure_response_tokens: None,
+            retry_calls: None,
+            superseded_calls: None,
+            net_tokens_saved: None,
+            savings_rate_basis_points: None,
+            exclusion_basis: "task-savings attribution was not recorded in this response".into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 /// Response accounting plus directly observed service outcomes.
 pub struct ObservedTokenSavingsReport {
-    /// Full-response accounting fields.
+    /// Retrieval-compression accounting, serialized under `response_accounting`.
     #[serde(flatten)]
     pub report: TokenSavingsReport,
     /// Additive counters whose observation boundaries are explicitly documented.
     pub observations: TokenSavingsObservations,
+    /// Task-level savings attribution, explicitly unavailable without host outcomes.
+    #[serde(default)]
+    pub observed_task_savings: ObservedTaskSavings,
 }
 
 #[derive(
@@ -253,7 +318,7 @@ pub enum TokenSavingsRequestClass {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 /// Aggregate mutually exclusive retrieval outcome counts.
 pub struct TokenSavingsRequestClassification {
-    /// Successful complete supported retrievals.
+    /// Successful complete supported protocol responses; never a relevance judgment.
     pub useful: u64,
     /// Successful bounded or explicitly partial retrievals.
     pub incomplete: u64,

@@ -5,7 +5,8 @@ use std::{
 
 use leantoken::{
     ObservedTokenSavingsReport, ResponseTokenAccountingByOperation, Result,
-    TokenAccountingOperation, TokenSavingsSnapshotReport, TokenSavingsWindow,
+    TaskSavingsObservationStatus, TokenAccountingOperation, TokenSavingsSnapshotReport,
+    TokenSavingsWindow,
 };
 
 const RESET: &str = "\x1b[0m";
@@ -74,6 +75,7 @@ fn write_human_report(
     let palette = Palette { enabled: color };
     let accounting = &report.report.response_accounting;
     let observations = &report.observations;
+    let task_savings = &report.observed_task_savings;
     let net = format_signed_count(accounting.estimated_net_tokens_saved);
     let net_summary = if accounting.estimated_net_tokens_saved > 0 {
         format!("{net} fewer response tokens than represented source")
@@ -93,17 +95,18 @@ fn write_human_report(
     writeln!(
         output,
         "{}",
-        palette.paint(BOLD_CYAN, "LeanToken Observed Token Accounting")
+        palette.paint(BOLD_CYAN, "LeanToken Retrieval Accounting")
     )?;
     writeln!(
         output,
         "{}",
-        palette.paint(DIM, "===================================")
+        palette.paint(DIM, "==============================")
     )?;
+    writeln!(output, "Retrieval compression (not task savings)")?;
+    writeln!(output, "{}", palette.paint(net_style, &net_summary))?;
     writeln!(
         output,
-        "{}  ({} response delta)",
-        palette.paint(net_style, &net_summary),
+        "Retrieval-only ratio: {} represented-source response delta",
         format_net_reduction(
             accounting.estimated_net_tokens_saved,
             accounting.baseline_source_tokens
@@ -128,6 +131,43 @@ fn write_human_report(
         format_count(accounting.tracked_requests),
         format_count(accounting.baseline_requests)
     )?;
+    writeln!(output)?;
+    writeln!(output, "Observed task savings")?;
+    writeln!(
+        output,
+        "Status: {}; no task-savings percentage is reported",
+        match task_savings.status {
+            TaskSavingsObservationStatus::Unavailable => "unavailable",
+            TaskSavingsObservationStatus::Observed => "observed",
+        }
+    )?;
+    writeln!(
+        output,
+        "Unknown relevance: {} successful retrieval responses",
+        format_count(task_savings.unknown_relevance_responses)
+    )?;
+    writeln!(
+        output,
+        "Failed retrieval calls: {}  |  failure-response tokens: {}",
+        format_count(task_savings.failed_retrieval_calls),
+        format_optional_count(task_savings.failure_response_tokens)
+    )?;
+    writeln!(
+        output,
+        "Retry calls: {}  |  superseded calls: {}",
+        format_optional_count(task_savings.retry_calls),
+        format_optional_count(task_savings.superseded_calls)
+    )?;
+    writeln!(
+        output,
+        "Task outcomes: {} observed  |  net task tokens: {}",
+        format_count(task_savings.observed_tasks),
+        task_savings
+            .net_tokens_saved
+            .map(format_signed_count)
+            .unwrap_or_else(|| "unknown".into())
+    )?;
+    writeln!(output, "Excluded: {}", task_savings.exclusion_basis)?;
     writeln!(
         output,
         "Persisted observations: {} successful  |  {} failed  |  {} expected-hash not-modified",
@@ -143,7 +183,7 @@ fn write_human_report(
     let classification = &observations.request_classification;
     writeln!(
         output,
-        "Request classes: {} useful  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} unclassified  |  {} failed",
+        "Protocol classes: {} complete-supported  |  {} incomplete  |  {} unsupported  |  {} hash-suppressed  |  {} unclassified  |  {} failed",
         format_count(classification.useful),
         format_count(classification.incomplete),
         format_count(classification.unsupported),
@@ -321,6 +361,10 @@ fn format_signed_count(value: i64) -> String {
     }
 }
 
+fn format_optional_count(value: Option<u64>) -> String {
+    value.map(format_count).unwrap_or_else(|| "unknown".into())
+}
+
 fn format_net_reduction(saved: i64, baseline: u64) -> String {
     if baseline == 0 {
         return "--".into();
@@ -352,8 +396,8 @@ fn color_enabled(is_terminal: bool) -> bool {
 mod tests {
     use super::*;
     use leantoken::{
-        ResponseTokenAccounting, ServiceFailureObservation, TokenSavingsObservations,
-        TokenSavingsReport, TokenSavingsRequestClassification,
+        ObservedTaskSavings, ResponseTokenAccounting, ServiceFailureObservation,
+        TokenSavingsObservations, TokenSavingsReport, TokenSavingsRequestClassification,
     };
 
     fn report() -> ObservedTokenSavingsReport {
@@ -430,6 +474,21 @@ mod tests {
                     "unused or irrelevant evidence".into(),
                 ],
             },
+            observed_task_savings: ObservedTaskSavings {
+                status: TaskSavingsObservationStatus::Unavailable,
+                observed_tasks: 0,
+                task_successes: None,
+                task_failures: None,
+                relevant_retrieval_responses: None,
+                unknown_relevance_responses: 27,
+                failed_retrieval_calls: 3,
+                failure_response_tokens: None,
+                retry_calls: None,
+                superseded_calls: None,
+                net_tokens_saved: None,
+                savings_rate_basis_points: None,
+                exclusion_basis: "host task identities are unavailable".into(),
+            },
         }
     }
 
@@ -439,12 +498,13 @@ mod tests {
         write_human_report(&mut output, &report(), false).expect("human report");
         let output = String::from_utf8(output).expect("UTF-8 report");
 
-        assert!(output.starts_with(
-            "LeanToken Observed Token Accounting\n===================================\n"
-        ));
+        assert!(
+            output.starts_with("LeanToken Retrieval Accounting\n==============================\n")
+        );
         assert!(output.contains(
-            "300,993 fewer response tokens than represented source  (92.7% response delta)"
+            "Retrieval compression (not task savings)\n300,993 fewer response tokens than represented source"
         ));
+        assert!(output.contains("Retrieval-only ratio: 92.7% represented-source response delta"));
         assert!(output.contains("324,656 baseline  ->  23,663 total response"));
         assert!(output.contains("9,263 source + 12,000 metadata + 2,400 protocol"));
         assert!(output.contains("27 successful responses  |  24 with baselines"));
@@ -452,6 +512,12 @@ mod tests {
             "Persisted observations: 27 successful  |  3 failed  |  2 expected-hash not-modified"
         ));
         assert!(output.contains("Expected-hash suppression: 8,192 represented-source tokens"));
+        assert!(output.contains(
+            "Observed task savings\nStatus: unavailable; no task-savings percentage is reported"
+        ));
+        assert!(output.contains("Unknown relevance: 27 successful retrieval responses"));
+        assert!(output.contains("Failed retrieval calls: 3  |  failure-response tokens: unknown"));
+        assert!(output.contains("Retry calls: unknown  |  superseded calls: unknown"));
         assert!(output.contains("Observed failure: Search / invalid_input = 3"));
         assert!(output.contains("Operation  Requests  Compared"));
         assert!(output.contains("Search"));

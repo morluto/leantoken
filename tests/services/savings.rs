@@ -1,4 +1,5 @@
 use super::*;
+use leantoken::{ObservedTokenSavingsReport, TaskSavingsObservationStatus};
 
 #[tokio::test]
 async fn token_savings_tracks_successful_source_retrievals_by_operation() {
@@ -196,12 +197,38 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     assert!(observed.observations.unobserved.iter().any(|outcome| {
         outcome.contains("retry chains") && outcome.contains("task/outcome identifier")
     }));
-    assert_eq!(observed.observations.request_classification.useful, 4);
+    assert_eq!(
+        observed
+            .observations
+            .request_classification
+            .useful,
+        4
+    );
     assert_eq!(
         observed.observations.request_classification.hash_suppressed,
         1
     );
     assert_eq!(observed.observations.request_classification.failed, 1);
+    assert_eq!(
+        observed.observed_task_savings.status,
+        TaskSavingsObservationStatus::Unavailable
+    );
+    assert_eq!(observed.observed_task_savings.observed_tasks, 0);
+    assert_eq!(
+        observed
+            .observed_task_savings
+            .unknown_relevance_responses,
+        5
+    );
+    assert_eq!(observed.observed_task_savings.failed_retrieval_calls, 1);
+    assert_eq!(observed.observed_task_savings.failure_response_tokens, None);
+    assert_eq!(observed.observed_task_savings.retry_calls, None);
+    assert_eq!(observed.observed_task_savings.superseded_calls, None);
+    assert_eq!(observed.observed_task_savings.net_tokens_saved, None);
+    assert_eq!(
+        observed.observed_task_savings.savings_rate_basis_points,
+        None
+    );
     let delta = services
         .observed_token_savings_snapshot(Some(initial_snapshot.snapshot))
         .await
@@ -259,8 +286,35 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .is_some()
     );
     assert!(serialized.get("response_accounting").is_some());
+    assert!(serialized.get("observed_task_savings").is_some());
+    assert!(serialized
+        .pointer("/observed_task_savings/retry_calls")
+        .is_some_and(serde_json::Value::is_null));
+    assert!(serialized
+        .pointer("/observed_task_savings/superseded_calls")
+        .is_some_and(serde_json::Value::is_null));
+    assert!(serialized
+        .pointer("/observed_task_savings/net_tokens_saved")
+        .is_some_and(serde_json::Value::is_null));
     assert!(serialized.get("observations").is_some());
     assert!(serialized.get("report").is_none());
+    let mut legacy = serialized.clone();
+    let object = legacy.as_object_mut().expect("observed report object");
+    object.remove("observed_task_savings");
+    let legacy: ObservedTokenSavingsReport =
+        serde_json::from_value(legacy).expect("deserialize legacy observed report");
+    assert_eq!(
+        legacy.observed_task_savings.status,
+        TaskSavingsObservationStatus::Unavailable
+    );
+    assert_eq!(legacy.observed_task_savings.retry_calls, None);
+    assert_eq!(
+        legacy
+            .observations
+            .request_classification
+            .useful,
+        4
+    );
 
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");
