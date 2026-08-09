@@ -844,97 +844,91 @@
 <a href=#844 id=844 data-nosnippet>844</a>    <span class="attr">#[test]
 <a href=#845 id=845 data-nosnippet>845</a>    </span><span class="kw">fn </span>checked_matrix_matches_all_committed_evidence() {
 <a href=#846 id=846 data-nosnippet>846</a>        <span class="kw">let </span>(root, matrix) = checked_matrix();
-<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>summary = validate(<span class="kw-2">&amp;</span>matrix, <span class="kw-2">&amp;</span>root).expect(<span class="string">"valid matrix"</span>);
-<a href=#848 id=848 data-nosnippet>848</a>
-<a href=#849 id=849 data-nosnippet>849</a>        <span class="macro">assert_eq!</span>(summary.host_families, <span class="number">5</span>);
-<a href=#850 id=850 data-nosnippet>850</a>        <span class="macro">assert_eq!</span>(summary.host_version_observations, <span class="number">6</span>);
-<a href=#851 id=851 data-nosnippet>851</a>        <span class="macro">assert_eq!</span>(summary.model_consumption_proofs, <span class="number">2</span>);
-<a href=#852 id=852 data-nosnippet>852</a>        <span class="macro">assert_eq!</span>(summary.evidence_artifacts_verified, <span class="number">4</span>);
-<a href=#853 id=853 data-nosnippet>853</a>        <span class="macro">assert_eq!</span>(summary.unavailable_host_families.len(), <span class="number">4</span>);
-<a href=#854 id=854 data-nosnippet>854</a>    }
-<a href=#855 id=855 data-nosnippet>855</a>
-<a href=#856 id=856 data-nosnippet>856</a>    <span class="attr">#[test]
-<a href=#857 id=857 data-nosnippet>857</a>    </span><span class="kw">fn </span>unavailable_host_cannot_report_zero_as_a_measurement() {
-<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>matrix) = checked_matrix();
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">let </span>unavailable = matrix
-<a href=#860 id=860 data-nosnippet>860</a>            .host_observations
-<a href=#861 id=861 data-nosnippet>861</a>            .iter_mut()
-<a href=#862 id=862 data-nosnippet>862</a>            .find(|observation| observation.availability == <span class="string">"unavailable"</span>)
-<a href=#863 id=863 data-nosnippet>863</a>            .expect(<span class="string">"unavailable host"</span>);
-<a href=#864 id=864 data-nosnippet>864</a>        unavailable.modes[<span class="number">0</span>].complete_wire_tokens = <span class="prelude-val">Some</span>(<span class="number">0</span>);
-<a href=#865 id=865 data-nosnippet>865</a>
-<a href=#866 id=866 data-nosnippet>866</a>        <span class="kw">let </span>error = validate_matrix(<span class="kw-2">&amp;</span>matrix).expect_err(<span class="string">"imputed zero must fail"</span>);
-<a href=#867 id=867 data-nosnippet>867</a>        <span class="macro">assert!</span>(
-<a href=#868 id=868 data-nosnippet>868</a>            error
-<a href=#869 id=869 data-nosnippet>869</a>                .to_string()
-<a href=#870 id=870 data-nosnippet>870</a>                .contains(<span class="string">"measurements must remain unknown and null"</span>)
-<a href=#871 id=871 data-nosnippet>871</a>        );
-<a href=#872 id=872 data-nosnippet>872</a>    }
-<a href=#873 id=873 data-nosnippet>873</a>
-<a href=#874 id=874 data-nosnippet>874</a>    <span class="attr">#[test]
-<a href=#875 id=875 data-nosnippet>875</a>    </span><span class="kw">fn </span>every_host_requires_all_three_modes() {
-<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>matrix) = checked_matrix();
-<a href=#877 id=877 data-nosnippet>877</a>        matrix.host_observations[<span class="number">0</span>].modes.pop();
-<a href=#878 id=878 data-nosnippet>878</a>
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">let </span>error = validate_matrix(<span class="kw-2">&amp;</span>matrix).expect_err(<span class="string">"missing mode must fail"</span>);
-<a href=#880 id=880 data-nosnippet>880</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"each result mode once"</span>));
-<a href=#881 id=881 data-nosnippet>881</a>    }
-<a href=#882 id=882 data-nosnippet>882</a>
-<a href=#883 id=883 data-nosnippet>883</a>    <span class="attr">#[test]
-<a href=#884 id=884 data-nosnippet>884</a>    </span><span class="kw">fn </span>artifact_identity_normalizes_windows_checkout_line_endings() {
-<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>root = PathBuf::from(<span class="macro">env!</span>(<span class="string">"LEANTOKEN_REPOSITORY_ROOT"</span>));
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">let </span>bytes = fs::read(root.join(<span class="string">"benchmarks/reports/wire-trace-codex-cli-0.144.1.json"</span>))
-<a href=#887 id=887 data-nosnippet>887</a>            .expect(<span class="string">"wire evidence"</span>);
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>canonical = canonical_json_artifact(bytes).expect(<span class="string">"canonical evidence"</span>);
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>crlf = String::from_utf8(canonical.clone())
-<a href=#890 id=890 data-nosnippet>890</a>            .expect(<span class="string">"UTF-8 evidence"</span>)
-<a href=#891 id=891 data-nosnippet>891</a>            .replace(<span class="string">'\n'</span>, <span class="string">"\r\n"</span>)
-<a href=#892 id=892 data-nosnippet>892</a>            .into_bytes();
-<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>normalized = canonical_json_artifact(crlf).expect(<span class="string">"normalized evidence"</span>);
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>        <span class="macro">assert_eq!</span>(normalized, canonical);
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="macro">assert_eq!</span>(blake3::hash(<span class="kw-2">&amp;</span>normalized), blake3::hash(<span class="kw-2">&amp;</span>canonical));
-<a href=#897 id=897 data-nosnippet>897</a>    }
-<a href=#898 id=898 data-nosnippet>898</a>
-<a href=#899 id=899 data-nosnippet>899</a>    <span class="attr">#[test]
-<a href=#900 id=900 data-nosnippet>900</a>    </span><span class="kw">fn </span>receipt_resource_report_is_bound_to_its_fixture() {
-<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>root = PathBuf::from(<span class="macro">env!</span>(<span class="string">"LEANTOKEN_REPOSITORY_ROOT"</span>));
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let </span>fixture_bytes = canonical_json_artifact(
-<a href=#903 id=903 data-nosnippet>903</a>            fs::read(root.join(<span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"</span>))
-<a href=#904 id=904 data-nosnippet>904</a>                .expect(<span class="string">"receipt fixture"</span>),
-<a href=#905 id=905 data-nosnippet>905</a>        )
-<a href=#906 id=906 data-nosnippet>906</a>        .expect(<span class="string">"canonical receipt fixture"</span>);
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>report_bytes = canonical_json_artifact(
-<a href=#908 id=908 data-nosnippet>908</a>            fs::read(
-<a href=#909 id=909 data-nosnippet>909</a>                root.join(<span class="string">"benchmarks/reports/codex-receipt-resource-0.146.0-2026-07-29.json"</span>),
-<a href=#910 id=910 data-nosnippet>910</a>            )
-<a href=#911 id=911 data-nosnippet>911</a>            .expect(<span class="string">"receipt report"</span>),
-<a href=#912 id=912 data-nosnippet>912</a>        )
-<a href=#913 id=913 data-nosnippet>913</a>        .expect(<span class="string">"canonical receipt report"</span>);
-<a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>fixture: serde_json::Value =
-<a href=#915 id=915 data-nosnippet>915</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>fixture_bytes).expect(<span class="string">"fixture JSON"</span>);
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>report: serde_json::Value = serde_json::from_slice(<span class="kw-2">&amp;</span>report_bytes).expect(<span class="string">"report JSON"</span>);
-<a href=#917 id=917 data-nosnippet>917</a>
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="macro">assert_eq!</span>(
-<a href=#919 id=919 data-nosnippet>919</a>            report[<span class="string">"fixture"</span>],
-<a href=#920 id=920 data-nosnippet>920</a>            <span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"
-<a href=#921 id=921 data-nosnippet>921</a>        </span>);
-<a href=#922 id=922 data-nosnippet>922</a>        <span class="macro">assert_eq!</span>(
-<a href=#923 id=923 data-nosnippet>923</a>            report[<span class="string">"fixture_blake3"</span>],
-<a href=#924 id=924 data-nosnippet>924</a>            blake3::hash(<span class="kw-2">&amp;</span>fixture_bytes).to_hex().to_string()
-<a href=#925 id=925 data-nosnippet>925</a>        );
-<a href=#926 id=926 data-nosnippet>926</a>        <span class="kw">let </span>production_variant = report[<span class="string">"production_variant"</span>]
-<a href=#927 id=927 data-nosnippet>927</a>            .as_str()
-<a href=#928 id=928 data-nosnippet>928</a>            .expect(<span class="string">"production variant"</span>);
-<a href=#929 id=929 data-nosnippet>929</a>        <span class="macro">assert!</span>(fixture[<span class="string">"variants"</span>].get(production_variant).is_some());
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="macro">assert_eq!</span>(
-<a href=#931 id=931 data-nosnippet>931</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_evidence_count"</span>],
-<a href=#932 id=932 data-nosnippet>932</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence_count"</span>]
-<a href=#933 id=933 data-nosnippet>933</a>        );
-<a href=#934 id=934 data-nosnippet>934</a>        <span class="macro">assert_eq!</span>(
-<a href=#935 id=935 data-nosnippet>935</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_content_hash"</span>],
-<a href=#936 id=936 data-nosnippet>936</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence"</span>][<span class="number">0</span>][<span class="string">"content_hash"</span>]
-<a href=#937 id=937 data-nosnippet>937</a>        );
-<a href=#938 id=938 data-nosnippet>938</a>    }
-<a href=#939 id=939 data-nosnippet>939</a>}
+<a href=#847 id=847 data-nosnippet>847</a>        validate(<span class="kw-2">&amp;</span>matrix, <span class="kw-2">&amp;</span>root).expect(<span class="string">"valid matrix"</span>);
+<a href=#848 id=848 data-nosnippet>848</a>    }
+<a href=#849 id=849 data-nosnippet>849</a>
+<a href=#850 id=850 data-nosnippet>850</a>    <span class="attr">#[test]
+<a href=#851 id=851 data-nosnippet>851</a>    </span><span class="kw">fn </span>unavailable_host_cannot_report_zero_as_a_measurement() {
+<a href=#852 id=852 data-nosnippet>852</a>        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>matrix) = checked_matrix();
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw">let </span>unavailable = matrix
+<a href=#854 id=854 data-nosnippet>854</a>            .host_observations
+<a href=#855 id=855 data-nosnippet>855</a>            .iter_mut()
+<a href=#856 id=856 data-nosnippet>856</a>            .find(|observation| observation.availability == <span class="string">"unavailable"</span>)
+<a href=#857 id=857 data-nosnippet>857</a>            .expect(<span class="string">"unavailable host"</span>);
+<a href=#858 id=858 data-nosnippet>858</a>        unavailable.modes[<span class="number">0</span>].complete_wire_tokens = <span class="prelude-val">Some</span>(<span class="number">0</span>);
+<a href=#859 id=859 data-nosnippet>859</a>
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>error = validate_matrix(<span class="kw-2">&amp;</span>matrix).expect_err(<span class="string">"imputed zero must fail"</span>);
+<a href=#861 id=861 data-nosnippet>861</a>        <span class="macro">assert!</span>(
+<a href=#862 id=862 data-nosnippet>862</a>            error
+<a href=#863 id=863 data-nosnippet>863</a>                .to_string()
+<a href=#864 id=864 data-nosnippet>864</a>                .contains(<span class="string">"measurements must remain unknown and null"</span>)
+<a href=#865 id=865 data-nosnippet>865</a>        );
+<a href=#866 id=866 data-nosnippet>866</a>    }
+<a href=#867 id=867 data-nosnippet>867</a>
+<a href=#868 id=868 data-nosnippet>868</a>    <span class="attr">#[test]
+<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="kw">fn </span>every_host_requires_all_three_modes() {
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>(<span class="kw">_</span>, <span class="kw-2">mut </span>matrix) = checked_matrix();
+<a href=#871 id=871 data-nosnippet>871</a>        matrix.host_observations[<span class="number">0</span>].modes.pop();
+<a href=#872 id=872 data-nosnippet>872</a>
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>error = validate_matrix(<span class="kw-2">&amp;</span>matrix).expect_err(<span class="string">"missing mode must fail"</span>);
+<a href=#874 id=874 data-nosnippet>874</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"each result mode once"</span>));
+<a href=#875 id=875 data-nosnippet>875</a>    }
+<a href=#876 id=876 data-nosnippet>876</a>
+<a href=#877 id=877 data-nosnippet>877</a>    <span class="attr">#[test]
+<a href=#878 id=878 data-nosnippet>878</a>    </span><span class="kw">fn </span>artifact_identity_normalizes_windows_checkout_line_endings() {
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">let </span>root = PathBuf::from(<span class="macro">env!</span>(<span class="string">"LEANTOKEN_REPOSITORY_ROOT"</span>));
+<a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">let </span>bytes = fs::read(root.join(<span class="string">"benchmarks/reports/wire-trace-codex-cli-0.144.1.json"</span>))
+<a href=#881 id=881 data-nosnippet>881</a>            .expect(<span class="string">"wire evidence"</span>);
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>canonical = canonical_json_artifact(bytes).expect(<span class="string">"canonical evidence"</span>);
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>crlf = String::from_utf8(canonical.clone())
+<a href=#884 id=884 data-nosnippet>884</a>            .expect(<span class="string">"UTF-8 evidence"</span>)
+<a href=#885 id=885 data-nosnippet>885</a>            .replace(<span class="string">'\n'</span>, <span class="string">"\r\n"</span>)
+<a href=#886 id=886 data-nosnippet>886</a>            .into_bytes();
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">let </span>normalized = canonical_json_artifact(crlf).expect(<span class="string">"normalized evidence"</span>);
+<a href=#888 id=888 data-nosnippet>888</a>
+<a href=#889 id=889 data-nosnippet>889</a>        <span class="macro">assert_eq!</span>(normalized, canonical);
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="macro">assert_eq!</span>(blake3::hash(<span class="kw-2">&amp;</span>normalized), blake3::hash(<span class="kw-2">&amp;</span>canonical));
+<a href=#891 id=891 data-nosnippet>891</a>    }
+<a href=#892 id=892 data-nosnippet>892</a>
+<a href=#893 id=893 data-nosnippet>893</a>    <span class="attr">#[test]
+<a href=#894 id=894 data-nosnippet>894</a>    </span><span class="kw">fn </span>receipt_resource_report_is_bound_to_its_fixture() {
+<a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">let </span>root = PathBuf::from(<span class="macro">env!</span>(<span class="string">"LEANTOKEN_REPOSITORY_ROOT"</span>));
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>fixture_bytes = canonical_json_artifact(
+<a href=#897 id=897 data-nosnippet>897</a>            fs::read(root.join(<span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"</span>))
+<a href=#898 id=898 data-nosnippet>898</a>                .expect(<span class="string">"receipt fixture"</span>),
+<a href=#899 id=899 data-nosnippet>899</a>        )
+<a href=#900 id=900 data-nosnippet>900</a>        .expect(<span class="string">"canonical receipt fixture"</span>);
+<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>report_bytes = canonical_json_artifact(
+<a href=#902 id=902 data-nosnippet>902</a>            fs::read(
+<a href=#903 id=903 data-nosnippet>903</a>                root.join(<span class="string">"benchmarks/reports/codex-receipt-resource-0.146.0-2026-07-29.json"</span>),
+<a href=#904 id=904 data-nosnippet>904</a>            )
+<a href=#905 id=905 data-nosnippet>905</a>            .expect(<span class="string">"receipt report"</span>),
+<a href=#906 id=906 data-nosnippet>906</a>        )
+<a href=#907 id=907 data-nosnippet>907</a>        .expect(<span class="string">"canonical receipt report"</span>);
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="kw">let </span>fixture: serde_json::Value =
+<a href=#909 id=909 data-nosnippet>909</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>fixture_bytes).expect(<span class="string">"fixture JSON"</span>);
+<a href=#910 id=910 data-nosnippet>910</a>        <span class="kw">let </span>report: serde_json::Value = serde_json::from_slice(<span class="kw-2">&amp;</span>report_bytes).expect(<span class="string">"report JSON"</span>);
+<a href=#911 id=911 data-nosnippet>911</a>
+<a href=#912 id=912 data-nosnippet>912</a>        <span class="macro">assert_eq!</span>(
+<a href=#913 id=913 data-nosnippet>913</a>            report[<span class="string">"fixture"</span>],
+<a href=#914 id=914 data-nosnippet>914</a>            <span class="string">"benchmarks/fixtures/codex-receipt-resource-v1.json"
+<a href=#915 id=915 data-nosnippet>915</a>        </span>);
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="macro">assert_eq!</span>(
+<a href=#917 id=917 data-nosnippet>917</a>            report[<span class="string">"fixture_blake3"</span>],
+<a href=#918 id=918 data-nosnippet>918</a>            blake3::hash(<span class="kw-2">&amp;</span>fixture_bytes).to_hex().to_string()
+<a href=#919 id=919 data-nosnippet>919</a>        );
+<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span>production_variant = report[<span class="string">"production_variant"</span>]
+<a href=#921 id=921 data-nosnippet>921</a>            .as_str()
+<a href=#922 id=922 data-nosnippet>922</a>            .expect(<span class="string">"production variant"</span>);
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">assert!</span>(fixture[<span class="string">"variants"</span>].get(production_variant).is_some());
+<a href=#924 id=924 data-nosnippet>924</a>        <span class="macro">assert_eq!</span>(
+<a href=#925 id=925 data-nosnippet>925</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_evidence_count"</span>],
+<a href=#926 id=926 data-nosnippet>926</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence_count"</span>]
+<a href=#927 id=927 data-nosnippet>927</a>        );
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="macro">assert_eq!</span>(
+<a href=#929 id=929 data-nosnippet>929</a>            report[<span class="string">"production_gate"</span>][<span class="string">"expected_content_hash"</span>],
+<a href=#930 id=930 data-nosnippet>930</a>            fixture[<span class="string">"receipt"</span>][<span class="string">"evidence"</span>][<span class="number">0</span>][<span class="string">"content_hash"</span>]
+<a href=#931 id=931 data-nosnippet>931</a>        );
+<a href=#932 id=932 data-nosnippet>932</a>    }
+<a href=#933 id=933 data-nosnippet>933</a>}
 </code></pre></div></section></main></body></html>

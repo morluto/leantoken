@@ -267,38 +267,51 @@
 <a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#268 id=268 data-nosnippet>268</a>
 <a href=#269 id=269 data-nosnippet>269</a>    <span class="attr">#[test]
-<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">fn </span>fixture_uses_current_catalog_dual_result_and_range_identity() {
+<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">fn </span>fixture_preserves_the_synthetic_mcp_exchange_contract() {
 <a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>trace = synthetic_trace().expect(<span class="string">"trace"</span>);
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="macro">assert_eq!</span>(trace.schema_version, TRACE_SCHEMA_V2);
-<a href=#273 id=273 data-nosnippet>273</a>        trace.validate_version().expect(<span class="string">"valid sealed trace"</span>);
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span>content_hash = trace.content_blake3().expect(<span class="string">"content hash"</span>);
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="macro">assert_eq!</span>(
-<a href=#276 id=276 data-nosnippet>276</a>            trace.trace_content_blake3.as_deref(),
-<a href=#277 id=277 data-nosnippet>277</a>            <span class="prelude-val">Some</span>(content_hash.as_str())
-<a href=#278 id=278 data-nosnippet>278</a>        );
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="macro">assert_eq!</span>(trace.events.len(), <span class="number">8</span>);
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>catalog: serde_json::Value =
-<a href=#281 id=281 data-nosnippet>281</a>            serde_json::from_str(trace.events[<span class="number">4</span>].raw_json.as_deref().expect(<span class="string">"catalog raw"</span>))
-<a href=#282 id=282 data-nosnippet>282</a>                .expect(<span class="string">"catalog message"</span>);
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="macro">assert_eq!</span>(
-<a href=#284 id=284 data-nosnippet>284</a>            catalog[<span class="string">"result"</span>][<span class="string">"tools"</span>]
-<a href=#285 id=285 data-nosnippet>285</a>                .as_array()
-<a href=#286 id=286 data-nosnippet>286</a>                .expect(<span class="string">"tools array"</span>)
-<a href=#287 id=287 data-nosnippet>287</a>                .len(),
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="number">9
-<a href=#289 id=289 data-nosnippet>289</a>        </span>);
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">let </span>result: serde_json::Value =
-<a href=#291 id=291 data-nosnippet>291</a>            serde_json::from_str(trace.events[<span class="number">6</span>].raw_json.as_deref().expect(<span class="string">"result raw"</span>))
-<a href=#292 id=292 data-nosnippet>292</a>                .expect(<span class="string">"tool result"</span>);
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="macro">assert!</span>(
-<a href=#294 id=294 data-nosnippet>294</a>            result[<span class="string">"result"</span>][<span class="string">"content"</span>]
-<a href=#295 id=295 data-nosnippet>295</a>                .as_array()
-<a href=#296 id=296 data-nosnippet>296</a>                .is_some_and(|content| !content.is_empty())
-<a href=#297 id=297 data-nosnippet>297</a>        );
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="macro">assert!</span>(result[<span class="string">"result"</span>].get(<span class="string">"structuredContent"</span>).is_some());
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">assert_eq!</span>(trace.events[<span class="number">6</span>].ranges.len(), <span class="number">1</span>);
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="macro">assert_eq!</span>(trace.events[<span class="number">6</span>].visible_through_turn, <span class="prelude-val">Some</span>(<span class="number">3</span>));
-<a href=#301 id=301 data-nosnippet>301</a>        <span class="macro">assert_eq!</span>(trace.events[<span class="number">7</span>].direction, Direction::Handoff);
-<a href=#302 id=302 data-nosnippet>302</a>    }
-<a href=#303 id=303 data-nosnippet>303</a>}
+<a href=#272 id=272 data-nosnippet>272</a>        trace.validate_version().expect(<span class="string">"valid sealed trace"</span>);
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="macro">assert_eq!</span>(
+<a href=#274 id=274 data-nosnippet>274</a>            trace.trace_content_blake3.as_deref(),
+<a href=#275 id=275 data-nosnippet>275</a>            <span class="prelude-val">Some</span>(trace.content_blake3().expect(<span class="string">"content hash"</span>).as_str())
+<a href=#276 id=276 data-nosnippet>276</a>        );
+<a href=#277 id=277 data-nosnippet>277</a>
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span>catalog = trace
+<a href=#279 id=279 data-nosnippet>279</a>            .events
+<a href=#280 id=280 data-nosnippet>280</a>            .iter()
+<a href=#281 id=281 data-nosnippet>281</a>            .filter_map(|event| event.raw_json.as_deref())
+<a href=#282 id=282 data-nosnippet>282</a>            .map(|raw| serde_json::from_str::&lt;serde_json::Value&gt;(raw).expect(<span class="string">"wire message"</span>))
+<a href=#283 id=283 data-nosnippet>283</a>            .find(|message| message[<span class="string">"result"</span>][<span class="string">"tools"</span>].is_array())
+<a href=#284 id=284 data-nosnippet>284</a>            .expect(<span class="string">"tool catalog response"</span>);
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="macro">assert!</span>(
+<a href=#286 id=286 data-nosnippet>286</a>            catalog[<span class="string">"result"</span>][<span class="string">"tools"</span>]
+<a href=#287 id=287 data-nosnippet>287</a>                .as_array()
+<a href=#288 id=288 data-nosnippet>288</a>                .is_some_and(|tools| !tools.is_empty())
+<a href=#289 id=289 data-nosnippet>289</a>        );
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>result = trace
+<a href=#292 id=292 data-nosnippet>292</a>            .events
+<a href=#293 id=293 data-nosnippet>293</a>            .iter()
+<a href=#294 id=294 data-nosnippet>294</a>            .find(|event| event.result_id.as_deref() == <span class="prelude-val">Some</span>(<span class="string">"context-result-1"</span>))
+<a href=#295 id=295 data-nosnippet>295</a>            .expect(<span class="string">"context result event"</span>);
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="macro">assert_eq!</span>(result.tool_name.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"context"</span>));
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="macro">assert_eq!</span>(result.call_id.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"2"</span>));
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="macro">assert_eq!</span>(result.visible_through_turn, <span class="prelude-val">Some</span>(<span class="number">3</span>));
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">assert_eq!</span>(result.ranges.len(), <span class="number">1</span>);
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span>result_message: serde_json::Value =
+<a href=#302 id=302 data-nosnippet>302</a>            serde_json::from_str(result.raw_json.as_deref().expect(<span class="string">"result wire message"</span>))
+<a href=#303 id=303 data-nosnippet>303</a>                .expect(<span class="string">"tool result"</span>);
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="macro">assert!</span>(
+<a href=#305 id=305 data-nosnippet>305</a>            result_message[<span class="string">"result"</span>][<span class="string">"content"</span>]
+<a href=#306 id=306 data-nosnippet>306</a>                .as_array()
+<a href=#307 id=307 data-nosnippet>307</a>                .is_some_and(|content| !content.is_empty())
+<a href=#308 id=308 data-nosnippet>308</a>        );
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">assert!</span>(result_message[<span class="string">"result"</span>].get(<span class="string">"structuredContent"</span>).is_some());
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="macro">assert!</span>(trace.events.iter().any(|event| {
+<a href=#311 id=311 data-nosnippet>311</a>            event.direction == Direction::Handoff
+<a href=#312 id=312 data-nosnippet>312</a>                &amp;&amp; event.result_id == result.result_id
+<a href=#313 id=313 data-nosnippet>313</a>                &amp;&amp; event.call_id == result.call_id
+<a href=#314 id=314 data-nosnippet>314</a>        }));
+<a href=#315 id=315 data-nosnippet>315</a>    }
+<a href=#316 id=316 data-nosnippet>316</a>}
 </code></pre></div></section></main></body></html>
