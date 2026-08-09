@@ -79,6 +79,78 @@ pub(super) fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision
     }
 }
 
+const MIN_LITERAL_IDENTIFIER_BYTES: usize = 12;
+
+pub(super) fn literal_identifier_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
+    let eligible = request.mode == SearchMode::Text
+        && request.all_occurrences
+        && request.query.len() >= MIN_LITERAL_IDENTIFIER_BYTES
+        && request.query.is_ascii()
+        && request
+            .query
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        && request
+            .query
+            .bytes()
+            .any(|byte| byte.is_ascii_alphanumeric());
+    if !eligible {
+        return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+            fallback_reason: RegexPlanFallbackReason::LiteralIdentifierIneligible,
+            nodes_visited: 0,
+            term_count: 0,
+            term_bytes: 0,
+        });
+    }
+
+    let variants = if request.case_sensitive {
+        vec![request.query.clone()]
+    } else {
+        let Some(variants) = crate::symbol_identity::case_fold_literal_variants(&request.query)
+        else {
+            return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+                fallback_reason: RegexPlanFallbackReason::CaseInsensitiveUnicode,
+                nodes_visited: 0,
+                term_count: 0,
+                term_bytes: 0,
+            });
+        };
+        variants.values
+    };
+    let alternative_count = variants.len();
+    let mut alternatives = Vec::with_capacity(alternative_count);
+    let mut term_bytes = 0usize;
+    for variant in variants {
+        term_bytes = term_bytes.saturating_add(variant.len());
+        if term_bytes > MAX_LITERAL_IDENTIFIER_PLAN_BYTES {
+            return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+                fallback_reason: RegexPlanFallbackReason::PlanTermBytesLimit,
+                nodes_visited: 0,
+                term_count: alternatives.len().saturating_add(1),
+                term_bytes,
+            });
+        }
+        alternatives.push(RegexCandidateExpr::Term(variant));
+    }
+    let Some(expression) = combine_candidate_expr(alternatives, false) else {
+        return RegexPlanDecision::Fallback(RegexPlanDiagnostics {
+            fallback_reason: RegexPlanFallbackReason::LiteralSequenceUnavailable,
+            nodes_visited: 0,
+            term_count: 0,
+            term_bytes: 0,
+        });
+    };
+    RegexPlanDecision::Planned(RegexCandidatePlan {
+        expression,
+        source: RegexPlanSource::LiteralIdentifier,
+        nodes_visited: 0,
+        term_count: alternative_count,
+        term_bytes,
+        alternative_count,
+        min_literal_len: request.query.len(),
+    })
+}
+
 pub(super) fn bounded_hir_node_count(
     hir: &Hir,
 ) -> std::result::Result<usize, RegexPlanBudgetExceeded> {
@@ -258,9 +330,10 @@ pub(super) fn extracted_literal_plan(
 
 pub(super) const fn regex_plan_source_order(source: RegexPlanSource) -> u8 {
     match source {
-        RegexPlanSource::MandatoryLiterals => 0,
-        RegexPlanSource::PrefixLiterals => 1,
-        RegexPlanSource::SuffixLiterals => 2,
+        RegexPlanSource::LiteralIdentifier => 0,
+        RegexPlanSource::MandatoryLiterals => 1,
+        RegexPlanSource::PrefixLiterals => 2,
+        RegexPlanSource::SuffixLiterals => 3,
     }
 }
 
@@ -385,7 +458,11 @@ impl Services {
             !request.include_paths.is_empty() || !request.exclude_paths.is_empty();
         let file_count = session.file_count()?;
         let decision = if planning == RegexPlanning::Enabled {
-            regex_candidate_plan(request)
+            if request.mode == SearchMode::Text && request.all_occurrences {
+                literal_identifier_candidate_plan(request)
+            } else {
+                regex_candidate_plan(request)
+            }
         } else {
             RegexPlanDecision::Fallback(RegexPlanDiagnostics {
                 fallback_reason: RegexPlanFallbackReason::PlanningDisabled,
@@ -528,7 +605,15 @@ impl Services {
             ..SearchPhaseCounters::default()
         };
         let query = plan.expression.fts_query();
-        let mut work = RegexWorkBudget::for_request(max_results, max_tokens, minimum_chunk_bytes);
+        let mut work = if plan.source == RegexPlanSource::LiteralIdentifier {
+            RegexWorkBudget::for_literal_identifier_request(
+                max_results,
+                max_tokens,
+                minimum_chunk_bytes,
+            )
+        } else {
+            RegexWorkBudget::for_request(max_results, max_tokens, minimum_chunk_bytes)
+        };
         let mut charged_files = HashSet::new();
         if has_path_filters {
             let candidate_ids = session.select_scoped_regex_candidate_ids(

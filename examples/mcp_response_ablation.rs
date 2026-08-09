@@ -1566,7 +1566,7 @@ mod tests {
         assert_eq!(report.decision.global_result_mode, "dual");
         assert_eq!(report.decision.accepted_new_runtime_change.len(), 1);
         assert_eq!(report.follow_up.exact_resend_source_tokens, 0);
-        assert_eq!(report.follow_up.overlapping_source_tokens, 14);
+        assert_eq!(report.follow_up.overlapping_source_tokens, 44);
     }
 
     #[test]

@@ -40,6 +40,64 @@ enum FileCursor {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum FuzzyPathClass {
+    ProductionSource,
+    General,
+    BenchmarkOrFixture,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct FuzzyRankKey {
+    score: Reverse<u32>,
+    class: FuzzyPathClass,
+    depth: usize,
+    path: String,
+}
+
+impl FuzzyRankKey {
+    fn new(score: u32, path: String) -> Self {
+        let class = fuzzy_path_class(&path);
+        let depth = path.bytes().filter(|byte| *byte == b'/').count();
+        Self {
+            score: Reverse(score),
+            class,
+            depth,
+            path,
+        }
+    }
+}
+
+fn fuzzy_path_class(path: &str) -> FuzzyPathClass {
+    let support = [
+        "bench",
+        "benches",
+        "benchmark",
+        "benchmarks",
+        "fixture",
+        "fixtures",
+        "testdata",
+    ];
+    let production = ["app", "cmd", "internal", "lib", "src"];
+    if path.split('/').any(|segment| {
+        support
+            .iter()
+            .any(|support| segment.eq_ignore_ascii_case(support))
+    }) {
+        return FuzzyPathClass::BenchmarkOrFixture;
+    }
+    if !path.contains('/')
+        || path.split('/').any(|segment| {
+            production
+                .iter()
+                .any(|production| segment.eq_ignore_ascii_case(production))
+        })
+    {
+        return FuzzyPathClass::ProductionSource;
+    }
+    FuzzyPathClass::General
+}
+
 #[derive(Clone, Copy)]
 enum PathOperation {
     Tree,
@@ -207,7 +265,7 @@ fn fuzzy_entries(
     let mut matcher = Matcher::new(MatcherConfig::DEFAULT.match_paths());
     let mut unicode_buf = Vec::new();
     let after = match cursor {
-        Some(FileCursor::Fuzzy { score, path }) => Some((Reverse(score), path)),
+        Some(FileCursor::Fuzzy { score, path }) => Some(FuzzyRankKey::new(score, path)),
         Some(FileCursor::Path { .. }) => return Err(Error::StaleCursor),
         None => None,
     };
@@ -218,7 +276,7 @@ fn fuzzy_entries(
         else {
             return Ok(());
         };
-        let key = (Reverse(score), file.path.clone());
+        let key = FuzzyRankKey::new(score, file.path.clone());
         if after.as_ref().is_none_or(|after| key > *after) {
             entries.insert(
                 key,
@@ -241,9 +299,9 @@ fn fuzzy_entries(
     let next = has_more
         .then(|| selected.last())
         .flatten()
-        .map(|((Reverse(score), path), _)| FileCursor::Fuzzy {
-            score: *score,
-            path: path.clone(),
+        .map(|(key, _)| FileCursor::Fuzzy {
+            score: key.score.0,
+            path: key.path.clone(),
         });
     Ok(FilePage {
         entries: selected.into_iter().map(|(_, entry)| entry).collect(),

@@ -162,6 +162,9 @@ impl Indexer {
         after_publication: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
+        let process_write_before = (profiling == StorageProfiling::Collect)
+            .then(process_write_bytes)
+            .flatten();
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let mut progress =
@@ -402,6 +405,16 @@ impl Indexer {
             warnings,
         };
         let report = IndexReport::with_skip_reasons(response, skip_reasons);
+        let process_write_after = (profiling == StorageProfiling::Collect)
+            .then(process_write_bytes)
+            .flatten();
+        let process_write_bytes = process_write_before
+            .zip(process_write_after)
+            .map(|(before, after)| after.saturating_sub(before));
+        let storage_phase_write_bytes = publication_detail.measured_write_bytes();
+        let unattributed_process_write_bytes = process_write_bytes
+            .zip(storage_phase_write_bytes)
+            .map(|(total, attributed)| total.saturating_sub(attributed));
         let diagnostics = IndexingDiagnostics {
             total_ms: duration_ms(total_started.elapsed()),
             discovery_ms: duration_ms(discovery_elapsed),
@@ -416,6 +429,12 @@ impl Indexer {
             insertion_ms: duration_ms(preparation.insertion),
             publication_ms: duration_ms(publication_elapsed),
             publication_detail,
+            process_write_bytes,
+            storage_phase_write_bytes,
+            unattributed_process_write_bytes,
+            generation_before: baseline.repository_generation,
+            generation_after: generation,
+            generation_published: generation != baseline.repository_generation,
             preparation_batches: preparation.batches,
             max_batch_files: preparation.max_batch_files,
             max_batch_source_bytes: preparation.max_batch_source_bytes,

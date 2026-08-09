@@ -310,6 +310,25 @@ fn toml_setup_and_remove_preserve_unrelated_content() {
 }
 
 #[test]
+fn toml_setup_accepts_integer_valued_float_timeout_without_rewriting() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.toml");
+    let launcher = McpLauncher::from_executable(&temp.path().join("bin/leantoken"));
+    let source = format!(
+        "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\nstartup_timeout_sec = 30.0\n",
+        launcher.command().unwrap(),
+        launcher.args
+    );
+    fs::write(&path, &source).unwrap();
+
+    assert!(matches!(
+        edit_toml_config(SetupOperation::Setup, &path, &launcher).unwrap(),
+        EditStatus::AlreadyConfigured
+    ));
+    assert_eq!(fs::read_to_string(path).unwrap(), source);
+}
+
+#[test]
 fn malformed_config_is_never_overwritten() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("broken.json");
@@ -2206,7 +2225,7 @@ fn codex_registration_health_includes_the_configured_startup_timeout() {
     let environment = environment(&temp);
     let command = serde_json::to_string(environment.launcher.command().unwrap()).unwrap();
     let args = serde_json::to_string(&environment.launcher.args).unwrap();
-    let source = |timeout| {
+    let source = |timeout: &str| {
         format!(
             "[mcp_servers.leantoken]\ncommand = {command}\nargs = {args}\nstartup_timeout_sec = {timeout}\n"
         )
@@ -2216,7 +2235,7 @@ fn codex_registration_health_includes_the_configured_startup_timeout() {
         SetupClient::Codex,
         &environment.home,
         &environment.launcher,
-        Some(&source(CODEX_STARTUP_TIMEOUT_SECONDS)),
+        Some(&source("30")),
     )
     .unwrap()
     .unwrap();
@@ -2230,12 +2249,32 @@ fn codex_registration_health_includes_the_configured_startup_timeout() {
         SetupClient::Codex,
         &environment.home,
         &environment.launcher,
-        Some(&source(1)),
+        Some(&source("1")),
     )
     .unwrap()
     .unwrap();
     assert!(!short.matches_current);
     assert_eq!(short.startup_timeout_seconds, Some(1));
+
+    let float = configured_registration_from_source(
+        SetupClient::Codex,
+        &environment.home,
+        &environment.launcher,
+        Some(&source("30.0")),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(float.matches_current);
+    assert_eq!(float.startup_timeout_seconds, Some(30));
+
+    let fractional = configured_registration_from_source(
+        SetupClient::Codex,
+        &environment.home,
+        &environment.launcher,
+        Some(&source("30.5")),
+    )
+    .expect_err("fractional timeout must remain invalid");
+    assert!(fractional.to_string().contains("integer-valued float"));
 }
 
 #[test]

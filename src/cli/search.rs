@@ -1,5 +1,16 @@
 use super::*;
 
+/// Output projection for search results.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum SearchProjectionArg {
+    #[default]
+    Full,
+    Compact,
+    Occurrences,
+    Coordinates,
+}
+
 #[derive(Debug, Clone, Parser)]
 pub struct SearchArgs {
     /// Search query.
@@ -12,6 +23,10 @@ pub struct SearchArgs {
     /// Search mode.
     #[arg(short, long, value_enum, default_value_t = SearchModeArg::Auto)]
     pub mode: SearchModeArg,
+
+    /// Result shape; occurrences and coordinates require --all-occurrences.
+    #[arg(long, value_enum, default_value_t = SearchProjectionArg::Full)]
+    pub projection: SearchProjectionArg,
 
     /// Include only paths matching this pattern (repeatable).
     #[arg(long = "include")]

@@ -72,7 +72,7 @@ impl RegexWorkDimension {
         match self {
             Self::CandidateFiles => "narrow include_paths or index a smaller repository scope",
             Self::CandidateChunks | Self::CandidateBytes => {
-                "add a mandatory case-sensitive literal or narrow include_paths"
+                "increase max_results or max_tokens, narrow include_paths, or make the query more selective"
             }
         }
     }
@@ -692,7 +692,20 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[cfg(test)]
 mod tests {
-    use super::Error;
+    use super::{Error, RegexWorkDimension};
+
+    #[test]
+    fn regex_work_guidance_names_controls_that_change_the_bound() {
+        for dimension in [
+            RegexWorkDimension::CandidateChunks,
+            RegexWorkDimension::CandidateBytes,
+        ] {
+            let guidance = dimension.guidance();
+            assert!(guidance.contains("max_tokens"));
+            assert!(guidance.contains("include_paths"));
+            assert!(!guidance.contains("case-sensitive"));
+        }
+    }
 
     #[test]
     fn shutdown_timeout_has_a_public_shutdown_category() {

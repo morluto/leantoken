@@ -425,7 +425,7 @@ impl Services {
                         .expect("exhaustive text mode compiles a literal pattern"),
                     None,
                     cancellation,
-                    RegexPlanning::Disabled,
+                    regex_planning,
                 )?;
                 phases = scan.phases;
                 scan.hits
@@ -645,9 +645,12 @@ impl Services {
             })
             .collect::<Vec<_>>();
         let receipt = self.evaluate_receipt(
-            matches!(execution.output_shape, SearchOutputShape::Full)
-                .then_some(request.receipt_id.as_deref())
-                .flatten(),
+            matches!(
+                execution.output_shape,
+                SearchOutputShape::Full | SearchOutputShape::Compact
+            )
+            .then_some(request.receipt_id.as_deref())
+            .flatten(),
             generation,
             &receipt_candidates,
         )?;

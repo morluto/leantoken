@@ -74,6 +74,13 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
             .as_i64()
             .is_some()
     );
+    assert_eq!(savings["observed_task_savings"]["status"], "unavailable");
+    assert_eq!(
+        savings["observed_task_savings"]["unknown_relevance_responses"],
+        1
+    );
+    assert!(savings["observed_task_savings"]["retry_calls"].is_null());
+    assert!(savings["observed_task_savings"]["superseded_calls"].is_null());
     assert_eq!(savings["window"], "lifetime");
     let snapshot = savings["snapshot"]
         .as_str()
@@ -92,6 +99,52 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     assert_eq!(delta["window"], "delta");
     assert_eq!(delta["response_accounting"]["tracked_requests"], 1);
     assert_eq!(delta["observations"]["request_classification"]["useful"], 1);
+}
+
+pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "pub fn projection_target() {}\npub fn caller() { projection_target(); }\n",
+    )
+    .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    let compact = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "projection_target",
+            "--mode",
+            "identifier",
+            "--projection",
+            "compact",
+        ],
+    );
+    assert_eq!(compact["meta"]["source_tokens"], 0);
+    assert!(compact["hits"][0].get("excerpt").is_none());
+    assert!(compact["hits"][0].get("score").is_none());
+    assert!(compact["hits"][0].get("content_hash").is_none());
+
+    let coordinates = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "projection_target",
+            "--mode",
+            "text",
+            "--all-occurrences",
+            "--projection",
+            "coordinates",
+        ],
+    );
+    assert_eq!(coordinates["coordinates_only"], true);
+    assert_eq!(coordinates["occurrences_total"], 2);
+    assert!(coordinates["groups"][0].get("excerpt").is_none());
+    assert!(coordinates["groups"][0].get("content_hash").is_none());
 }
 
 pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
@@ -241,18 +294,19 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
         .expect("plain savings report");
     assert!(plain.status.success());
     let plain = String::from_utf8(plain.stdout).expect("plain UTF-8");
-    assert!(
-        plain.starts_with(
-            "LeanToken Observed Token Accounting\n===================================\n"
-        )
-    );
+    assert!(plain.starts_with("LeanToken Retrieval Accounting\n==============================\n"));
+    assert!(plain.contains("Retrieval compression (not task savings)"));
+    assert!(plain.contains("Observed task savings"));
+    assert!(plain.contains("no task-savings percentage is reported"));
+    assert!(plain.contains("Unknown relevance"));
+    assert!(plain.contains("Retry calls: unknown  |  superseded calls: unknown"));
     assert!(plain.contains("response tokens"));
     assert!(plain.contains("Persisted observations"));
-    assert!(plain.contains("Request classes:"));
+    assert!(plain.contains("Protocol classes:"));
     assert!(plain.contains("Unobserved task outcomes"));
     assert!(plain.contains("Operation"));
     assert!(plain.contains("Search"));
-    assert!(plain.contains("response delta"));
+    assert!(plain.contains("represented-source response delta"));
     assert!(plain.contains("Window: lifetime"));
     assert!(plain.contains("Snapshot: lts1."));
     assert!(!plain.contains("\x1b["));
@@ -266,7 +320,7 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
     assert!(
         String::from_utf8(colored.stdout)
             .expect("colored UTF-8")
-            .contains("\x1b[1;36mLeanToken Observed Token Accounting\x1b[0m")
+            .contains("\x1b[1;36mLeanToken Retrieval Accounting\x1b[0m")
     );
 
     let no_color = command()

@@ -12,7 +12,9 @@ const MAX_NATURAL_PHRASES: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum FacetKind {
     ExactAtom,
+    PrimaryChange,
     FailureTrace,
+    PreserveConstraint,
     Symbol,
     Path,
     Behavior,
@@ -24,7 +26,9 @@ impl FacetKind {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::ExactAtom => "exact_atom",
+            Self::PrimaryChange => "primary_change",
             Self::FailureTrace => "failure_trace",
+            Self::PreserveConstraint => "preserve_constraint",
             Self::Symbol => "symbol",
             Self::Path => "path",
             Self::Behavior => "behavior",
@@ -152,7 +156,23 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
     } else {
         1
     };
-    let natural_phrases = natural_phrases(task, &atom_parts, natural_phrase_limit);
+    let primary_task = primary_task_text(task);
+    let mut selected_natural_phrases =
+        natural_phrases(&primary_task, &atom_parts, natural_phrase_limit);
+    if selected_natural_phrases.len() < natural_phrase_limit && primary_task != task {
+        for phrase in natural_phrases(task, &atom_parts, natural_phrase_limit) {
+            if selected_natural_phrases
+                .iter()
+                .all(|existing| !existing.eq_ignore_ascii_case(&phrase))
+            {
+                selected_natural_phrases.push(phrase);
+                if selected_natural_phrases.len() == natural_phrase_limit {
+                    break;
+                }
+            }
+        }
+    }
+    let natural_phrases = selected_natural_phrases;
 
     for phrase in quoted_phrases.iter().chain(&natural_phrases) {
         push_facet(
@@ -191,7 +211,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         );
     }
 
-    let queries = build_queries(
+    let mut queries = build_queries(
         task,
         &facets,
         &behavior_terms,
@@ -199,6 +219,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         limit,
         wants_tests,
     );
+    annotate_task_roles(task, &mut queries);
     FacetPlan {
         #[cfg(test)]
         facets,
@@ -230,9 +251,13 @@ pub(super) fn plan_with_workflow_evidence(
                 weight: 1.25,
                 concept_weight: 1.0,
                 fuse: false,
-                facets: [FacetKind::ExactAtom, FacetKind::Symbol]
-                    .into_iter()
-                    .collect(),
+                facets: [
+                    FacetKind::ExactAtom,
+                    FacetKind::PrimaryChange,
+                    FacetKind::Symbol,
+                ]
+                .into_iter()
+                .collect(),
                 exact_variant: true,
             },
             limit,
@@ -248,9 +273,13 @@ pub(super) fn plan_with_workflow_evidence(
                 weight: 1.1,
                 concept_weight: 0.95,
                 fuse: false,
-                facets: [FacetKind::ExactAtom, FacetKind::Path]
-                    .into_iter()
-                    .collect(),
+                facets: [
+                    FacetKind::ExactAtom,
+                    FacetKind::PrimaryChange,
+                    FacetKind::Path,
+                ]
+                .into_iter()
+                .collect(),
                 exact_variant: true,
             },
             limit,
@@ -296,6 +325,173 @@ fn push_workflow_query(
     let key = query.value.to_ascii_lowercase();
     if seen.insert(key) {
         queries.push(query);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskRole {
+    PrimaryChange,
+    FailureTrace,
+    PreserveConstraint,
+    TestIntent,
+}
+
+impl TaskRole {
+    const fn facet(self) -> FacetKind {
+        match self {
+            Self::PrimaryChange => FacetKind::PrimaryChange,
+            Self::FailureTrace => FacetKind::FailureTrace,
+            Self::PreserveConstraint => FacetKind::PreserveConstraint,
+            Self::TestIntent => FacetKind::TestIntent,
+        }
+    }
+}
+
+fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
+    let clauses = task_clauses(task);
+    for (position, clause) in clauses.iter().enumerate() {
+        let roles = clause_roles(clause, position == 0);
+        if roles.is_empty() {
+            continue;
+        }
+        let normalized = clause.to_ascii_lowercase();
+        let terms = task_terms(clause)
+            .into_iter()
+            .chain(technical_atoms(clause))
+            .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(&term)))
+            .map(|term| term.to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        for query in queries.iter_mut().filter(|query| {
+            let value = query.value.to_ascii_lowercase();
+            normalized.contains(&value)
+                || terms.contains(&value)
+                || terms.contains(&query.fusion_key.to_ascii_lowercase())
+        }) {
+            let generic_test_path_prior = query.is_generic_test_path_prior();
+            query.facets.extend(
+                roles
+                    .iter()
+                    .filter(|role| **role != TaskRole::TestIntent || generic_test_path_prior)
+                    .map(|role| role.facet()),
+            );
+        }
+    }
+    if !queries
+        .iter()
+        .any(|query| query.has_facet(FacetKind::PrimaryChange))
+        && let Some(query) = queries.first_mut()
+    {
+        query.facets.insert(FacetKind::PrimaryChange);
+    }
+}
+
+fn task_clauses(task: &str) -> Vec<&str> {
+    task.split(['\n', ';'])
+        .flat_map(|part| part.split(". "))
+        .flat_map(split_role_transitions)
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .collect()
+}
+
+fn split_role_transitions(part: &str) -> Vec<&str> {
+    let normalized = part.to_ascii_lowercase();
+    let mut boundaries = [" while ", " without ", " but "]
+        .into_iter()
+        .filter_map(|marker| normalized.find(marker).map(|position| position + 1))
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut start = 0;
+    let mut clauses = Vec::with_capacity(boundaries.len() + 1);
+    for boundary in boundaries {
+        clauses.push(&part[start..boundary]);
+        start = boundary;
+    }
+    clauses.push(&part[start..]);
+    clauses
+}
+
+fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
+    let clause = clause.to_ascii_lowercase();
+    let has_any = |markers: &[&str]| markers.iter().any(|marker| clause.contains(marker));
+    let words = clause
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|word| !word.is_empty())
+        .collect::<HashSet<_>>();
+    let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
+    let preserve = has_word(&[
+        "preserve",
+        "preserved",
+        "preserves",
+        "preserving",
+        "keep",
+        "keeping",
+        "retain",
+        "retained",
+        "retaining",
+        "unchanged",
+    ]) || has_any(&[
+        "without changing",
+        "must remain",
+        "do not change",
+        "while maintaining",
+    ]);
+    let test = has_word(&["test", "tests", "regression", "spec", "coverage", "assert"]);
+    let primary = !preserve
+        && !test
+        && (first
+            || has_word(&[
+                "fix",
+                "implement",
+                "change",
+                "add",
+                "make",
+                "refactor",
+                "trace",
+                "identify",
+                "find",
+                "investigate",
+                "diagnose",
+                "support",
+            ]));
+    let failure = has_word(&[
+        "error",
+        "fail",
+        "failed",
+        "fails",
+        "failure",
+        "not_ready",
+        "panic",
+        "timeout",
+        "broken",
+        "incorrect",
+    ]) || clause.contains("instead of");
+    [
+        primary.then_some(TaskRole::PrimaryChange),
+        failure.then_some(TaskRole::FailureTrace),
+        preserve.then_some(TaskRole::PreserveConstraint),
+        test.then_some(TaskRole::TestIntent),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+pub(super) fn primary_task_text(task: &str) -> String {
+    let primary = task_clauses(task)
+        .into_iter()
+        .enumerate()
+        .filter(|(position, clause)| {
+            clause_roles(clause, *position == 0).contains(&TaskRole::PrimaryChange)
+        })
+        .map(|(_, clause)| clause)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if primary.is_empty() {
+        task.to_owned()
+    } else {
+        primary
     }
 }
 
@@ -1122,6 +1318,75 @@ mod tests {
         assert_eq!(
             plan(task, 12).queries,
             plan_with_workflow_evidence(task, &WorkflowEvidence::default(), 12).queries
+        );
+    }
+
+    #[test]
+    fn task_roles_separate_primary_preserve_and_test_queries() {
+        let facet_plan = plan(
+            "Fix direct context initialization instead of index_not_ready. Preserve MCP startup \
+             and snapshot consistency. Add a regression test.",
+            16,
+        );
+
+        assert!(facet_plan.queries.iter().any(|query| {
+            query.has_facet(FacetKind::PrimaryChange)
+                && (query.value == "context" || query.value == "initialization")
+        }));
+        assert!(facet_plan.queries.iter().any(|query| {
+            query.has_facet(FacetKind::FailureTrace) && query.value.contains("index_not_ready")
+        }));
+        assert!(
+            facet_plan
+                .queries
+                .iter()
+                .any(|query| query.has_facet(FacetKind::PreserveConstraint))
+        );
+        assert!(
+            facet_plan
+                .queries
+                .iter()
+                .any(|query| query.has_facet(FacetKind::TestIntent))
+        );
+        assert_eq!(
+            primary_task_text("Which test suite verifies the MCP tool schemas?"),
+            "Which test suite verifies the MCP tool schemas?"
+        );
+        assert!(
+            plan("Test direct context initialization", 8)
+                .queries
+                .iter()
+                .any(|query| query.has_facet(FacetKind::TestIntent))
+        );
+
+        let mixed = plan(
+            "Add SearchCompactResponse compact output while preserving full ranking and regression tests",
+            16,
+        );
+        let exact = mixed
+            .queries
+            .iter()
+            .find(|query| query.value == "SearchCompactResponse")
+            .expect("exact implementation query");
+        assert!(exact.has_facet(FacetKind::PrimaryChange));
+        assert!(!exact.has_facet(FacetKind::TestIntent));
+        assert!(mixed.queries.iter().any(|query| {
+            query.has_facet(FacetKind::PreserveConstraint)
+                && !query.has_facet(FacetKind::TestIntent)
+        }));
+        let primary_phrase = ["search", "projection"].join(" ");
+        let natural_task = format!(
+            "Add a source-free compact {primary_phrase} to CLI and MCP while preserving full ranking"
+        );
+        let natural = plan(&natural_task, 16);
+        assert!(natural.queries.iter().any(|query| {
+            query.value == primary_phrase && query.has_facet(FacetKind::PrimaryChange)
+        }));
+        assert_eq!(
+            primary_task_text(
+                "Add SearchCompactResponse compact output while preserving full ranking"
+            ),
+            "Add SearchCompactResponse compact output"
         );
     }
 }

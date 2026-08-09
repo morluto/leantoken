@@ -43,6 +43,24 @@ pub struct IndexingDiagnostics {
     pub publication_ms: f64,
     /// Storage-level phases and footprint captured only by profiled reconciliation.
     pub publication_detail: PublicationDiagnostics,
+    /// Linux process write bytes across the complete reconciliation.
+    #[serde(default)]
+    pub process_write_bytes: Option<u64>,
+    /// Sum of non-overlapping stage, relational, FTS, commit, and checkpoint writes.
+    #[serde(default)]
+    pub storage_phase_write_bytes: Option<u64>,
+    /// Process writes not owned by one measured storage phase.
+    #[serde(default)]
+    pub unattributed_process_write_bytes: Option<u64>,
+    /// Committed generation observed before publication verification.
+    #[serde(default)]
+    pub generation_before: u64,
+    /// Committed generation returned after publication verification.
+    #[serde(default)]
+    pub generation_after: u64,
+    /// Whether this reconciliation published a new generation.
+    #[serde(default)]
+    pub generation_published: bool,
     /// Number of bounded preparation batches consumed.
     pub preparation_batches: usize,
     /// Largest number of files held in one prepared batch.

@@ -615,18 +615,12 @@ pub(super) fn toml_registration_command(
     let startup_timeout_seconds = table
         .get("startup_timeout_sec")
         .map(|timeout| {
-            let timeout = timeout.as_integer().ok_or_else(|| {
-                invalid_config(path, "LeanToken MCP startup_timeout_sec must be an integer")
-            })?;
-            u64::try_from(timeout)
-                .ok()
-                .filter(|timeout| *timeout > 0)
-                .ok_or_else(|| {
-                    invalid_config(
-                        path,
-                        "LeanToken MCP startup_timeout_sec must be a positive integer",
-                    )
-                })
+            toml_positive_integer(timeout).ok_or_else(|| {
+                invalid_config(
+                    path,
+                    "LeanToken MCP startup_timeout_sec must be a positive integer or integer-valued float",
+                )
+            })
         })
         .transpose()?;
     Ok((command.to_owned(), args, startup_timeout_seconds))

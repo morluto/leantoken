@@ -58,6 +58,8 @@ const MAX_PROTOCOL_QUEUED_RECORDS: usize = 4;
 pub struct DoctorReport {
     /// Overall diagnostic status.
     pub status: &'static str,
+    /// Version of the executable running this doctor process.
+    pub process_version: &'static str,
     /// Canonical repository checked by the diagnostic.
     pub repository_root: std::path::PathBuf,
     /// MCP implementation name returned during initialization.
@@ -123,7 +125,10 @@ pub struct RegistrationReport {
     /// Release inferred from the configured command or package argument.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub configured_version: Option<String>,
-    /// Version of the executable used by this doctor invocation.
+    /// Explicit release pin read from the client configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub configured_version_pin: Option<String>,
+    /// Version the current doctor process expects for a freshly managed launcher.
     pub expected_version: String,
     /// Whether command and arguments match the current launcher exactly.
     pub matches_current: bool,
@@ -131,6 +136,23 @@ pub struct RegistrationReport {
     pub managed: bool,
     /// Whether the host client will launch this registration.
     pub enabled: bool,
+}
+
+impl From<&setup::ConfiguredRegistration> for RegistrationReport {
+    fn from(registration: &setup::ConfiguredRegistration) -> Self {
+        Self {
+            client: registration.client,
+            config_path: registration.path.clone(),
+            command: registration.command.clone(),
+            args: registration.args.clone(),
+            configured_version: registration.version.clone(),
+            configured_version_pin: registration.version.clone(),
+            expected_version: registration.expected_version.clone(),
+            matches_current: registration.matches_current,
+            managed: registration.managed,
+            enabled: registration.enabled,
+        }
+    }
 }
 
 /// First retrieval outcome recorded by [`DoctorReport`].
@@ -434,17 +456,7 @@ fn run_with_transport(
     let registrations = setup
         .registrations
         .iter()
-        .map(|registration| RegistrationReport {
-            client: registration.client,
-            config_path: registration.path.clone(),
-            command: registration.command.clone(),
-            args: registration.args.clone(),
-            configured_version: registration.version.clone(),
-            expected_version: registration.expected_version.clone(),
-            matches_current: registration.matches_current,
-            managed: registration.managed,
-            enabled: registration.enabled,
-        })
+        .map(RegistrationReport::from)
         .collect::<Vec<_>>();
     let registration_health = registration_health(setup.registration_status, &registrations);
     let repair_command = registration_repair_command(
@@ -455,6 +467,7 @@ fn run_with_transport(
     let result_mode = McpResultMode::Structured;
     Ok(DoctorReport {
         status: "ready",
+        process_version: env!("CARGO_PKG_VERSION"),
         repository_root: config.root.clone(),
         server_name,
         server_version,
@@ -664,6 +677,11 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
     writeln!(output, "  Repository: {}", report.repository_root.display())?;
     writeln!(
         output,
+        "  ✓ Doctor process: leantoken {}",
+        report.process_version
+    )?;
+    writeln!(
+        output,
         "  ✓ MCP identity: {} {}",
         report.server_name, report.server_version
     )?;
@@ -702,7 +720,7 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
             .unwrap_or("unknown version");
         writeln!(
             output,
-            "    {:?}: {} ({})",
+            "    {:?}: {} (config pin: {})",
             registration.client, registration.command, version
         )?;
     }
@@ -1265,6 +1283,7 @@ mod tests {
             command: "/opt/manual-leantoken".into(),
             args: vec!["mcp".into()],
             configured_version: None,
+            configured_version_pin: None,
             expected_version: env!("CARGO_PKG_VERSION").into(),
             matches_current,
             managed,
@@ -1393,6 +1412,10 @@ mod tests {
         };
 
         assert_eq!(expected_server_version(Some(&registration)), Some("0.1.19"));
+        let report = RegistrationReport::from(&registration);
+        assert_eq!(report.configured_version.as_deref(), Some("0.1.19"));
+        assert_eq!(report.configured_version_pin.as_deref(), Some("0.1.19"));
+        assert_eq!(report.expected_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             configured_handshake_timeout(Some(&registration)),
             RESPONSE_TIMEOUT

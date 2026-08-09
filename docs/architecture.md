@@ -332,6 +332,20 @@ repository-sized path collection in Rust. CI changed-path input is capped at
 16 MiB and 100,000 paths before topology matching. Bounded live-read cursors
 also carry a fingerprint of the requested target prefix, so continuation
 cannot rely on size and timestamp metadata when a file is replaced in place.
+When a read is truncated, source-budget guidance hydrates at most one target
+range from the request's pinned indexed generation. The range remains bounded
+by the configured per-file indexing limit and is reused across serialized-
+response fitting probes. It does not rescan the remaining live file, fan out to
+other paths, or create an additional request. Full-policy reads that verify the
+indexed file report exact live guidance; bounded reads label it as an indexed-
+generation estimate.
+
+Fuzzy file discovery retains a bounded `max_results + 1` ranking map while it
+scans the already bounded indexed file set. Path classification adds one linear
+segment pass per fuzzy-matching path, no extra filesystem or database scan, and
+no response metadata. Raw fuzzy score remains primary; equal scores use the
+deterministic production/support class, path depth, and path. Cursors retain the
+raw score and path and reconstruct the same tie-break key on continuation.
 
 Cooperative cancellation is checked between each FTS publication phase and
 immediately before commit. Cancellation observed at one of those boundaries
@@ -752,6 +766,23 @@ replaces the prior counters and identity. Terminal guard updates are accepted
 only for their matching attempt, preventing cancellation, failure, takeover, or
 stale guard destruction from making an older attempt current.
 
+Profiled reconciliation also records Linux process write bytes for the complete
+attempt, a non-overlapping subtotal for stage/relational/FTS/commit/checkpoint
+phases, and the remaining unattributed bytes. Generation-before/after and an
+explicit publication flag prevent a checkpoint of pre-existing WAL pages from
+being labeled a generation publish. Retrieval telemetry is outside this
+indexing interval and must be measured separately with an
+`indexed_generation` control. These counters are process-wide observations and
+are diagnostic evidence, not transaction state.
+
+The normalized stage database is created lazily on the first replacement or
+removal. A no-change reconciliation therefore materializes no temporary schema
+or journal, but it still enters the ordinary baseline-verifying publication
+transaction. The optimization does not skip stale-plan detection, the writer
+lock, atomic generation publication, freshness reconciliation, or subsequent
+request snapshot pinning. Once initialized, the stage retains the existing
+bounded-batch and cleanup behavior.
+
 This snapshot is intentionally not persisted or shared through another
 sidecar. A same-process MCP leader can include full details in `index_building`
 and status responses. A follower reports `detail_available: false`, the
@@ -869,10 +900,12 @@ claims.
 | Regex request candidate chunks | `max_results × 20` when a result bound is supplied, capped at 20,510; omitted result bounds retain the global ceiling |
 | Regex request candidate files | `max_results × 200` when a result bound is supplied, capped at 10,000 |
 | Regex request candidate bytes | `max(max_tokens × 64, 1 KiB)` when a token bound is supplied, capped at 1 GiB; omitted token bounds retain the global ceiling |
+| Exhaustive long-identifier candidate bytes | At least 4 MiB after normal request-derived sizing, capped at the same 1 GiB ceiling |
 | Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
 | Regex candidate-plan aggregate term bytes | 256 |
+| Exhaustive long-identifier plan bytes | 4 KiB across at most 32 complete variants |
 | Regex prefix/suffix literal alternatives | 16 |
 | Unicode simple-case-fold literal alternatives | 32 complete FTS variants per query |
 | Unicode structural full-scan fallback | 10000 admitted symbol or reference rows plus one overflow sentinel |
@@ -1393,6 +1426,15 @@ enums plus bounded counts; they never retain regex text, literals, paths, or
 repository identity. Differential tests compare planned results with a forced
 full scan before a new HIR shape is admitted.
 
+Exhaustive text literals that are ASCII identifiers of at least 12 bytes use a
+separate sound candidate lane. Case-sensitive requests plan the exact literal;
+case-insensitive requests plan the complete bounded Unicode simple-fold variant
+set, then the original literal matcher verifies every candidate. Unavailable or
+over-bound variant sets retain the full-scan oracle. This lane raises only the
+request-derived verified-byte floor to 4 MiB; the 10,000 candidate-chunk cap,
+file limits, occurrence cap, cancellation cadence, and exact response budgets
+remain unchanged.
+
 Non-regex literal search uses the same Unicode simple-case-fold table as the
 Rust verifier. It expands each scalar into at most 32 complete literal
 combinations, submits those combinations as one deterministic FTS disjunction,
@@ -1412,6 +1454,15 @@ round-robin so one long name cannot consume the budget. Reciprocal-rank fusion
 applies only when a path matches multiple independent explicit terms; variants
 of one identifier do not count as separate evidence. Signals change ordering;
 absent structural evidence never removes a lexical match.
+
+The opt-in compact search projection performs the same candidate generation,
+ranking, pagination, receipt suppression, and coverage accounting inside one
+pinned read snapshot. Only after selection does it retain path, line range,
+match kind, role, symbol identity, and optional exhaustive coordinates while
+dropping excerpts, scores, reasons, and hashes. Hidden excerpts consume no
+source-token budget, the projected response still receives exact serialized
+token accounting and its own response-bound check, and materialization remains
+bounded by the already selected `max_results` page.
 
 Strict focus expansion stays inside the existing per-pattern bounds: at most
 four eligible files are inspected, with at most 256 chunks and 128 symbols per
@@ -1450,6 +1501,27 @@ hashes, applies a relative confidence floor and per-file diversity cap, and
 selects only complete fragments that fit the source-token budget. Fragment
 hashes live once in an aligned receipt table rather than repeating beside every
 fragment.
+
+Implementation-shaped tasks additionally classify bounded query facets as the
+primary change, failure trace, preservation constraint, or test intent. Path
+priors prefer production services and dispatch/call-edge code for those tasks;
+request schemas, snapshots, fixtures, agent skills, benchmark reports, and
+unscoped root prose are auxiliary evidence. Greedy selection first reserves a
+production fragment carrying a specific exact atom and primary-change facet;
+short surface acronyms such as CLI and MCP and prose hyphen compounds do not
+override a matching service owner. Deterministic fallbacks prefer the
+`src/services` or dispatch owner matching the most distinct primary facets
+before other production primary evidence. Natural phrase queries prefer the
+primary clause and fall back to trailing clauses only when a query slot remains.
+It then reserves one relevant test path and one non-auxiliary preservation
+fragment when each exists and fits, before admitting at most one auxiliary
+fragment, two failure-trace fragments, two test fragments, and two preservation
+fragments. Role parsing splits preservation transitions and keeps the generic
+test path prior from marking every query in a mixed implementation/test clause.
+The reservations require at most five linear passes over the already bounded
+candidate pool. They apply only after explicit required/focus evidence is
+selected, add no repository scan or candidate fan-out, and never relax
+source-token or fragment bounds.
 
 An opt-in handoff manifest is assembled inside the same pinned context
 generation. It captures selected coordinates and hashes before server-receipt

@@ -409,6 +409,104 @@ fn concept_allocation_keeps_independent_task_evidence() {
 }
 
 #[test]
+fn broad_allocation_reserves_exact_owner_test_and_preservation_evidence() {
+    let generic = Candidate::new(
+        "src/services/json/projection.rs",
+        1,
+        1,
+        "generic projection",
+    )
+    .concept("projection", 2.0)
+    .facet("primary_change", "projection")
+    .exact(10.0);
+    let owner = Candidate::new("src/services/search.rs", 1, 1, "compact owner")
+        .concept("search_compact_response", 2.0)
+        .facet("primary_change", "search_compact_response")
+        .facet("exact_atom", "search_compact_response")
+        .exact(1.0);
+    let owner_test = Candidate::new("tests/search.rs", 1, 1, "compact regression")
+        .concept("search_compact_response", 2.0)
+        .facet("exact_atom", "search_compact_response")
+        .exact(0.1);
+    let preservation = Candidate::new("src/model/search.rs", 1, 1, "full ranking contract")
+        .concept("ranking", 1.5)
+        .facet("preserve_constraint", "ranking")
+        .exact(0.05);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(3);
+
+    let response = select(vec![generic, preservation, owner_test, owner], &request, 1);
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(paths[0], "src/services/search.rs");
+    assert!(paths.contains(&"tests/search.rs"), "paths={paths:?}");
+    assert!(paths.contains(&"src/model/search.rs"), "paths={paths:?}");
+    assert!(!paths.contains(&"src/services/json/projection.rs"));
+}
+
+#[test]
+fn broad_allocation_does_not_treat_surface_acronyms_as_exact_owners() {
+    let adapter = Candidate::new("src/mcp/runtime.rs", 1, 1, "MCP adapter")
+        .concept("mcp", 2.0)
+        .facet("primary_change", "mcp")
+        .facet("exact_atom", "mcp")
+        .exact(10.0);
+    let owner = Candidate::new("src/services/search.rs", 1, 1, "search projection owner")
+        .concept("search projection", 2.0)
+        .facet("primary_change", "search projection")
+        .exact(1.0);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(1);
+
+    let response = select(vec![adapter, owner], &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/services/search.rs");
+}
+
+#[test]
+fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
+    let generic = Candidate::new("src/main/dispatch.rs", 1, 1, "generic adapter")
+        .concept("mcp", 2.0)
+        .facet("primary_change", "mcp")
+        .exact(10.0);
+    let owner = Candidate::new("src/services/search.rs", 1, 1, "compact search projection")
+        .concept("compact", 2.0)
+        .concept("search", 2.0)
+        .facet("primary_change", "compact")
+        .facet("primary_change", "search")
+        .exact(1.0);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(1);
+
+    let response = select(vec![generic, owner], &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/services/search.rs");
+}
+
+#[test]
+fn preservation_exact_atoms_do_not_override_the_primary_owner() {
+    let preservation = Candidate::new("src/model/search.rs", 1, 1, "LegacySearchResponse")
+        .concept("legacy_search_response", 2.0)
+        .facet("preserve_constraint", "legacy_search_response")
+        .facet("exact_atom", "legacy_search_response")
+        .exact(10.0);
+    let owner = Candidate::new("src/services/search.rs", 1, 1, "search owner")
+        .concept("search", 2.0)
+        .facet("primary_change", "search")
+        .exact(1.0);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(1);
+
+    let response = select(vec![preservation, owner], &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/services/search.rs");
+}
+
+#[test]
 fn decisive_second_view_prefers_the_definition_path() {
     let definition = Candidate::new("owner.rs", 1, 1, "definition")
         .concept("handle", 2.0)

@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use leantoken::cache::{CacheCompatibility, CacheState, DEFAULT_CACHE_LIST_LIMIT};
-use leantoken::cli::{AppRequest, Cli};
+use leantoken::cli::{AppRequest, Cli, SearchProjectionArg};
 use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
     JsonProjection, JsonSelector, SearchMode,
@@ -210,6 +210,21 @@ fn cli_search_default_mode_is_auto() {
         panic!("expected search request");
     };
     assert_eq!(request.mode, SearchMode::Auto);
+}
+
+#[test]
+fn cli_search_projection_is_explicit_and_defaults_to_full() {
+    let cli = parse(&["search", "bar", "--projection", "compact"]);
+    let AppRequest::Search { projection, .. } = cli.app_request() else {
+        panic!("expected search request");
+    };
+    assert_eq!(projection, SearchProjectionArg::Compact);
+
+    let cli = parse(&["search", "bar"]);
+    let AppRequest::Search { projection, .. } = cli.app_request() else {
+        panic!("expected search request");
+    };
+    assert_eq!(projection, SearchProjectionArg::Full);
 }
 
 #[test]

@@ -1174,7 +1174,7 @@ expression: mcp_contract()
       "name": "history"
     },
     {
-      "description": "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed.",
+      "description": "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare live JSON without indexing it. Operations are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with omission metadata. JSON requests do not accept consistency. JMESPath evaluates against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}}. A zero numeric count means the selection has no numeric leaves, not that the file is malformed.",
       "inputSchema": {
         "$defs": {
           "JsonMcpOperation": {
@@ -1682,7 +1682,7 @@ expression: mcp_contract()
       "name": "outline"
     },
     {
-      "description": "Preferred over native Read, cat, head, or sed for supported repository source. Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
+      "description": "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
       "inputSchema": {
         "$defs": {
           "ReadMcpTarget": {
@@ -2025,7 +2025,7 @@ expression: mcp_contract()
       "name": "savings"
     },
     {
-      "description": "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the repository's configured cap (default 100; the active cap may be lower), and requests above it fail with the reported limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
+      "description": "Preferred over native grep or rg for repository source search. Search indexed source with operation.kind auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses complete coverage and fails closed when indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the configured cap and rejects larger requests with that limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
       "inputSchema": {
         "$defs": {
           "QueryReceiptAction": {
@@ -2957,6 +2957,7 @@ expression: mcp_contract()
             "enum": [
               "auto",
               "full",
+              "compact",
               "grouped",
               "occurrences"
             ],

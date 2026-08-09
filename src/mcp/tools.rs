@@ -65,7 +65,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred over native grep or rg for repository source search. Search indexed source with operation.kind auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses complete coverage and fails closed when indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the configured cap and rejects larger requests with that limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\"}}; exhaustive: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
+        description = "Preferred over native grep or rg for repository source search. Search indexed source with operation.kind auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses complete coverage and fails closed when indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the configured cap and rejects larger requests with that limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
     )]
     async fn leantoken_search(
         &self,
@@ -101,6 +101,15 @@ impl LeanTokenMcp {
                     match output {
                         SearchMcpOutput::Full => services
                             .search_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
+                            .await
+                            .and_then(serialized_response),
+                        SearchMcpOutput::Compact => services
+                            .search_compact_with_options_consistency_cancellable(
                                 request,
                                 consistency,
                                 options,
@@ -197,7 +206,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred over native Read, cat, head, or sed for supported repository source. Read an exact source symbol, Markdown heading, line range, or continuation. Keep path separate from target; use the symbol or range returned by search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,

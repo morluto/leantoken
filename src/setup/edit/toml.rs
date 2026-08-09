@@ -132,7 +132,9 @@ pub(super) fn toml_entry_matches(item: &Item, command: &str, expected_args: &[St
                 .eq(expected_args.iter().map(String::as_str))
                 && args.len() == expected_args.len()
         });
-    let timeout_matches = table.get("startup_timeout_sec").and_then(Item::as_integer)
-        == i64::try_from(CODEX_STARTUP_TIMEOUT_SECONDS).ok();
+    let timeout_matches = table
+        .get("startup_timeout_sec")
+        .and_then(toml_positive_integer)
+        == Some(CODEX_STARTUP_TIMEOUT_SECONDS);
     command_matches && args_match && timeout_matches
 }

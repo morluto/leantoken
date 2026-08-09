@@ -20,6 +20,113 @@ pub(in crate::ranking) fn greedy_select(
     let mut covered_concepts = HashSet::new();
     let mut concept_representations = HashSet::new();
     let mut concept_paths = HashMap::new();
+    let mut evidence_counts = EvidenceQuotaCounts::default();
+
+    let primary_candidate_fits = |candidate: &ScoredCandidate| {
+        context_path_class(&candidate.candidate.path) == ContextPathClass::Production
+            && evidence_counts.allows(candidate, max_fragments)
+            && candidate_fits(
+                candidate,
+                budget,
+                *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+    };
+    let primary_position = pool
+        .iter()
+        .position(|candidate| {
+            primary_candidate_fits(candidate)
+                && carries_specific_exact_atom(&candidate.candidate)
+                && carries_facet(&candidate.candidate, "primary_change")
+        })
+        .or_else(|| {
+            pool.iter()
+                .enumerate()
+                .filter(|(_, candidate)| {
+                    primary_candidate_fits(candidate)
+                        && is_primary_owner_path(&candidate.candidate.path)
+                        && carries_facet(&candidate.candidate, "primary_change")
+                })
+                .max_by_key(|(position, candidate)| {
+                    (
+                        facet_value_count(&candidate.candidate, "primary_change"),
+                        std::cmp::Reverse(*position),
+                    )
+                })
+                .map(|(position, _)| position)
+        })
+        .or_else(|| {
+            pool.iter().position(|candidate| {
+                primary_candidate_fits(candidate)
+                    && carries_facet(&candidate.candidate, "primary_change")
+            })
+        });
+    if let Some(position) = primary_position {
+        let candidate = pool.remove(position);
+        record_context_selection(
+            &candidate,
+            &mut covered_concepts,
+            &mut concept_representations,
+            &mut concept_paths,
+            &mut evidence_counts,
+        );
+        push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+    }
+
+    if let Some(position) = pool.iter().position(|candidate| {
+        context_path_class(&candidate.candidate.path) == ContextPathClass::Test
+            && (carries_specific_exact_atom(&candidate.candidate)
+                || candidate
+                    .candidate
+                    .concepts
+                    .iter()
+                    .any(|concept| covered_concepts.contains(concept)))
+            && evidence_counts.allows(candidate, max_fragments)
+            && candidate_fits(
+                candidate,
+                budget.saturating_sub(used_tokens),
+                *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+    }) {
+        let candidate = pool.remove(position);
+        record_context_selection(
+            &candidate,
+            &mut covered_concepts,
+            &mut concept_representations,
+            &mut concept_paths,
+            &mut evidence_counts,
+        );
+        push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+    }
+
+    if let Some(position) = pool.iter().position(|candidate| {
+        context_path_class(&candidate.candidate.path) != ContextPathClass::Auxiliary
+            && carries_facet(&candidate.candidate, "preserve_constraint")
+            && evidence_counts.allows(candidate, max_fragments)
+            && candidate_fits(
+                candidate,
+                budget.saturating_sub(used_tokens),
+                *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+    }) {
+        let candidate = pool.remove(position);
+        record_context_selection(
+            &candidate,
+            &mut covered_concepts,
+            &mut concept_representations,
+            &mut concept_paths,
+            &mut evidence_counts,
+        );
+        push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
+    }
 
     for candidate in pool {
         let adds_concept = candidate
@@ -34,14 +141,16 @@ pub(in crate::ranking) fn greedy_select(
         let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
         let remaining = budget.saturating_sub(used_tokens);
 
-        if candidate_fits(
-            &candidate,
-            remaining,
-            file_count,
-            max_per_file,
-            selected.len(),
-            max_fragments,
-        ) {
+        if evidence_counts.allows(&candidate, max_fragments)
+            && candidate_fits(
+                &candidate,
+                remaining,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+        {
             covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
             concept_representations.extend(
                 candidate
@@ -55,6 +164,7 @@ pub(in crate::ranking) fn greedy_select(
                     .entry(concept.clone())
                     .or_insert_with(|| candidate.candidate.path.clone());
             }
+            evidence_counts.record(&candidate);
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             deferred.push(candidate);
@@ -87,6 +197,7 @@ pub(in crate::ranking) fn greedy_select(
         let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
         let remaining_tokens = budget.saturating_sub(used_tokens);
         if adds_decisive_view
+            && evidence_counts.allows(&candidate, max_fragments)
             && candidate_fits(
                 &candidate,
                 remaining_tokens,
@@ -103,6 +214,7 @@ pub(in crate::ranking) fn greedy_select(
                     .iter()
                     .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
             );
+            evidence_counts.record(&candidate);
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             remaining.push(candidate);
@@ -122,6 +234,7 @@ pub(in crate::ranking) fn greedy_select(
             candidate.candidate.concept_weight >= 1.0 || candidate.score >= confidence_floor;
         if adds_concept
             && confident
+            && evidence_counts.allows(&candidate, max_fragments)
             && candidate_fits(
                 &candidate,
                 remaining_tokens,
@@ -132,6 +245,7 @@ pub(in crate::ranking) fn greedy_select(
             )
         {
             covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+            evidence_counts.record(&candidate);
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             fill.push(candidate);
@@ -145,14 +259,17 @@ pub(in crate::ranking) fn greedy_select(
         }
         let file_count = *file_counts.get(&candidate.candidate.path).unwrap_or(&0);
         let remaining = budget.saturating_sub(used_tokens);
-        if candidate_fits(
-            &candidate,
-            remaining,
-            file_count,
-            max_per_file,
-            selected.len(),
-            max_fragments,
-        ) {
+        if evidence_counts.allows(&candidate, max_fragments)
+            && candidate_fits(
+                &candidate,
+                remaining,
+                file_count,
+                max_per_file,
+                selected.len(),
+                max_fragments,
+            )
+        {
+            evidence_counts.record(&candidate);
             push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
         } else {
             omitted.push(candidate);
@@ -160,6 +277,67 @@ pub(in crate::ranking) fn greedy_select(
     }
 
     (selected, omitted)
+}
+
+#[derive(Default)]
+struct EvidenceQuotaCounts {
+    auxiliary: usize,
+    failures: usize,
+    tests: usize,
+    preserve: usize,
+}
+
+fn record_context_selection(
+    candidate: &ScoredCandidate,
+    covered_concepts: &mut HashSet<String>,
+    concept_representations: &mut HashSet<(String, String)>,
+    concept_paths: &mut HashMap<String, String>,
+    evidence_counts: &mut EvidenceQuotaCounts,
+) {
+    covered_concepts.extend(candidate.candidate.concepts.iter().cloned());
+    concept_representations.extend(
+        candidate
+            .candidate
+            .concepts
+            .iter()
+            .map(|concept| (concept.clone(), candidate.candidate.representation.clone())),
+    );
+    for concept in &candidate.candidate.concepts {
+        concept_paths
+            .entry(concept.clone())
+            .or_insert_with(|| candidate.candidate.path.clone());
+    }
+    evidence_counts.record(candidate);
+}
+
+impl EvidenceQuotaCounts {
+    fn allows(&self, candidate: &ScoredCandidate, max_fragments: usize) -> bool {
+        let auxiliary_limit = usize::from(max_fragments > 0);
+        let failure_limit = max_fragments.min(2);
+        let test_limit = max_fragments.min(2);
+        let preserve_limit = max_fragments.min(2);
+        let path_class = context_path_class(&candidate.candidate.path);
+        (path_class != ContextPathClass::Auxiliary || self.auxiliary < auxiliary_limit)
+            && (!carries_facet(&candidate.candidate, "failure_trace")
+                || self.failures < failure_limit)
+            && (path_class != ContextPathClass::Test || self.tests < test_limit)
+            && (!carries_facet(&candidate.candidate, "preserve_constraint")
+                || self.preserve < preserve_limit)
+    }
+
+    fn record(&mut self, candidate: &ScoredCandidate) {
+        match context_path_class(&candidate.candidate.path) {
+            ContextPathClass::Auxiliary => self.auxiliary += 1,
+            ContextPathClass::Test => self.tests += 1,
+            ContextPathClass::Production | ContextPathClass::Supporting => {}
+        }
+        if carries_facet(&candidate.candidate, "preserve_constraint") {
+            self.preserve += 1;
+        }
+        if carries_facet(&candidate.candidate, "failure_trace") {
+            self.failures += 1;
+        }
+    }
 }
 
 pub(in crate::ranking) fn candidate_fits(

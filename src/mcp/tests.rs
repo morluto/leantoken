@@ -2262,6 +2262,16 @@ fn compact_projections_map_to_service_requests() {
     assert_eq!(output, SearchMcpOutput::Grouped);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        "operation": {"kind": "identifier", "query": "Services", "projection": "compact"}
+    }))
+    .expect("compact projection");
+    search
+        .validate_limits(McpLimitPolicy::DEFAULT)
+        .expect("valid compact projection");
+    let (_, output, _, _, _) = search.into_parts();
+    assert_eq!(output, SearchMcpOutput::Compact);
+
+    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {
             "kind": "text",
             "query": "Services",

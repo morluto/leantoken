@@ -187,3 +187,12 @@ pub(super) fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
         path.display()
     ))
 }
+
+pub(super) fn toml_positive_integer(item: &Item) -> Option<u64> {
+    if let Some(value) = item.as_integer() {
+        return u64::try_from(value).ok().filter(|value| *value > 0);
+    }
+    item.as_float()
+        .filter(|value| value.is_finite() && *value >= 1.0 && value.fract() == 0.0)
+        .and_then(|value| value.to_string().parse().ok())
+}

@@ -81,6 +81,7 @@ struct Report {
     initial_index: IndexSample,
     full_noop: IndexMeasurement,
     full_noop_phases: IndexingPhaseMeasurement,
+    full_noop_write_attribution: Vec<ReconciliationWriteAttribution>,
     full_changed: IndexMeasurement,
     targeted_changed: IndexMeasurement,
     create_delta: IndexMeasurement,
@@ -148,6 +149,37 @@ struct IndexingPhaseMeasurement {
     preparation: TimingStats,
     insertion: TimingStats,
     publication: TimingStats,
+}
+
+#[derive(Debug, Serialize)]
+struct ReconciliationWriteAttribution {
+    process_write_bytes: Option<u64>,
+    storage_phase_write_bytes: Option<u64>,
+    unattributed_process_write_bytes: Option<u64>,
+    stage_write_bytes: Option<u64>,
+    relational_write_bytes: Option<u64>,
+    commit_write_bytes: Option<u64>,
+    checkpoint_write_bytes: Option<u64>,
+    generation_before: u64,
+    generation_after: u64,
+    generation_published: bool,
+}
+
+impl From<&IndexingDiagnostics> for ReconciliationWriteAttribution {
+    fn from(diagnostics: &IndexingDiagnostics) -> Self {
+        Self {
+            process_write_bytes: diagnostics.process_write_bytes,
+            storage_phase_write_bytes: diagnostics.storage_phase_write_bytes,
+            unattributed_process_write_bytes: diagnostics.unattributed_process_write_bytes,
+            stage_write_bytes: diagnostics.publication_detail.stage_write_bytes,
+            relational_write_bytes: diagnostics.publication_detail.relational_write_bytes,
+            commit_write_bytes: diagnostics.publication_detail.commit_write_bytes,
+            checkpoint_write_bytes: diagnostics.publication_detail.checkpoint_write_bytes,
+            generation_before: diagnostics.generation_before,
+            generation_after: diagnostics.generation_after,
+            generation_published: diagnostics.generation_published,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +336,10 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         full_noop_diagnostics.push(profiled.diagnostics);
     }
     let full_noop_phases = IndexingPhaseMeasurement::from_diagnostics(&full_noop_diagnostics);
+    let full_noop_write_attribution = full_noop_diagnostics
+        .iter()
+        .map(ReconciliationWriteAttribution::from)
+        .collect();
 
     let full_changed = measure_changed_indexing(
         args.iterations,
@@ -476,7 +512,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
 
     let (leantoken_git_revision, leantoken_worktree_dirty) = leantoken_source_identity();
     Ok(Report {
-        schema_version: 8,
+        schema_version: 9,
         leantoken_version: env!("LEANTOKEN_PRODUCT_VERSION"),
         leantoken_git_revision,
         leantoken_worktree_dirty,
@@ -492,6 +528,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
             files_removed_per_sample: 0,
         },
         full_noop_phases,
+        full_noop_write_attribution,
         full_changed,
         targeted_changed,
         create_delta,
@@ -1180,7 +1217,7 @@ mod tests {
 
         let report = run_profile(&args).expect("profile");
 
-        assert_eq!(report.schema_version, 8);
+        assert_eq!(report.schema_version, 9);
         assert_eq!(report.initial_index.response.files_indexed, 7);
         assert!(report.initial_index.storage_footprint.database_bytes > 0);
         assert_eq!(
@@ -1191,6 +1228,14 @@ mod tests {
         );
         assert_eq!(report.full_noop.timing.samples, 2);
         assert_eq!(report.full_noop_phases.discovery.samples, 2);
+        assert_eq!(report.full_noop_write_attribution.len(), 2);
+        assert!(
+            report
+                .full_noop_write_attribution
+                .iter()
+                .all(|sample| !sample.generation_published
+                    && sample.generation_before == sample.generation_after)
+        );
         assert_eq!(report.full_changed.files_indexed_per_sample, 1);
         assert_eq!(report.targeted_changed.files_seen_per_sample, 1);
         assert_eq!(report.create_delta.files_seen_per_sample, 1);
