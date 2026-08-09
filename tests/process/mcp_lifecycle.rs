@@ -276,10 +276,7 @@ pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
             }
         }));
         let response = process.response(deadline.saturating_duration_since(Instant::now()));
-        let message = response["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default();
-        if message.contains("unavailable") {
+        if response["result"]["structuredContent"]["status"] == "unavailable" {
             assert_eq!(response["result"]["isError"], true);
             assert_eq!(
                 response["result"]["structuredContent"]["reason"],
@@ -326,10 +323,7 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
             }
         }));
         let response = process.response(deadline.saturating_duration_since(Instant::now()));
-        let message = response["result"]["content"][0]["text"]
-            .as_str()
-            .unwrap_or_default();
-        if message.contains("unavailable") {
+        if response["result"]["structuredContent"]["status"] == "unavailable" {
             assert_eq!(response["result"]["isError"], true);
             break;
         }
@@ -359,10 +353,9 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
         response["result"]["isError"], true,
         "runtime retried: {response}"
     );
-    assert!(
-        response["result"]["content"][0]["text"]
-            .as_str()
-            .is_some_and(|message| message.contains("unavailable"))
+    assert_eq!(
+        response["result"]["structuredContent"]["status"],
+        "unavailable"
     );
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
