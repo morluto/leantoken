@@ -132,8 +132,10 @@
 <a href=#132 id=132 data-nosnippet>132</a>                .eq(expected_args.iter().map(String::as_str))
 <a href=#133 id=133 data-nosnippet>133</a>                &amp;&amp; args.len() == expected_args.len()
 <a href=#134 id=134 data-nosnippet>134</a>        });
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>timeout_matches = table.get(<span class="string">"startup_timeout_sec"</span>).and_then(Item::as_integer)
-<a href=#136 id=136 data-nosnippet>136</a>        == i64::try_from(CODEX_STARTUP_TIMEOUT_SECONDS).ok();
-<a href=#137 id=137 data-nosnippet>137</a>    command_matches &amp;&amp; args_match &amp;&amp; timeout_matches
-<a href=#138 id=138 data-nosnippet>138</a>}
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>timeout_matches = table
+<a href=#136 id=136 data-nosnippet>136</a>        .get(<span class="string">"startup_timeout_sec"</span>)
+<a href=#137 id=137 data-nosnippet>137</a>        .and_then(toml_positive_integer)
+<a href=#138 id=138 data-nosnippet>138</a>        == <span class="prelude-val">Some</span>(CODEX_STARTUP_TIMEOUT_SECONDS);
+<a href=#139 id=139 data-nosnippet>139</a>    command_matches &amp;&amp; args_match &amp;&amp; timeout_matches
+<a href=#140 id=140 data-nosnippet>140</a>}
 </code></pre></div></section></main></body></html>

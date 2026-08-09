@@ -87,26 +87,27 @@
 <a href=#87 id=87 data-nosnippet>87</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>dedup::deduplicate_with_options;
 <a href=#88 id=88 data-nosnippet>88</a><span class="kw">use </span>focus_diagnostics::<span class="kw-2">*</span>;
 <a href=#89 id=89 data-nosnippet>89</a><span class="kw">use </span>greedy::<span class="kw-2">*</span>;
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>metadata::required_evidence_marker;
-<a href=#91 id=91 data-nosnippet>91</a><span class="kw">use </span>metadata::<span class="kw-2">*</span>;
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">use </span>omissions::<span class="kw-2">*</span>;
-<a href=#93 id=93 data-nosnippet>93</a><span class="kw">use </span>requirements::<span class="kw-2">*</span>;
-<a href=#94 id=94 data-nosnippet>94</a><span class="kw">use </span>response::<span class="kw-2">*</span>;
-<a href=#95 id=95 data-nosnippet>95</a><span class="kw">use </span>scored::rank_with_tokenizer;
-<a href=#96 id=96 data-nosnippet>96</a><span class="kw">pub use </span>scored::{ScoredCandidate, rank};
-<a href=#97 id=97 data-nosnippet>97</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>selection::select_with_tokenizer_and_context_exclusions;
-<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub use </span>selection::{
-<a href=#99 id=99 data-nosnippet>99</a>    select, select_with_tokenizer, select_with_weights, select_with_weights_and_tokenizer,
-<a href=#100 id=100 data-nosnippet>100</a>};
-<a href=#101 id=101 data-nosnippet>101</a>
-<a href=#102 id=102 data-nosnippet>102</a><span class="kw">fn </span>bounded_count_f64(value: usize) -&gt; f64 {
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="comment">// `usize` is already the bounded count type used by the tokenizer and
-<a href=#104 id=104 data-nosnippet>104</a>    // selection budget. Converting directly preserves monotonic ordering for
-<a href=#105 id=105 data-nosnippet>105</a>    // counts above `u32::MAX`; saturating through `u32` made every larger
-<a href=#106 id=106 data-nosnippet>106</a>    // fragment indistinguishable to the ranker.
-<a href=#107 id=107 data-nosnippet>107</a>    </span>value <span class="kw">as </span>f64
-<a href=#108 id=108 data-nosnippet>108</a>}
-<a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a><span class="attr">#[cfg(test)]
-<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">mod </span>tests;
+<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>metadata::owner_path_prior;
+<a href=#91 id=91 data-nosnippet>91</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>metadata::required_evidence_marker;
+<a href=#92 id=92 data-nosnippet>92</a><span class="kw">use </span>metadata::<span class="kw-2">*</span>;
+<a href=#93 id=93 data-nosnippet>93</a><span class="kw">use </span>omissions::<span class="kw-2">*</span>;
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">use </span>requirements::<span class="kw-2">*</span>;
+<a href=#95 id=95 data-nosnippet>95</a><span class="kw">use </span>response::<span class="kw-2">*</span>;
+<a href=#96 id=96 data-nosnippet>96</a><span class="kw">use </span>scored::rank_with_tokenizer;
+<a href=#97 id=97 data-nosnippet>97</a><span class="kw">pub use </span>scored::{ScoredCandidate, rank};
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>selection::select_with_tokenizer_and_context_exclusions;
+<a href=#99 id=99 data-nosnippet>99</a><span class="kw">pub use </span>selection::{
+<a href=#100 id=100 data-nosnippet>100</a>    select, select_with_tokenizer, select_with_weights, select_with_weights_and_tokenizer,
+<a href=#101 id=101 data-nosnippet>101</a>};
+<a href=#102 id=102 data-nosnippet>102</a>
+<a href=#103 id=103 data-nosnippet>103</a><span class="kw">fn </span>bounded_count_f64(value: usize) -&gt; f64 {
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="comment">// `usize` is already the bounded count type used by the tokenizer and
+<a href=#105 id=105 data-nosnippet>105</a>    // selection budget. Converting directly preserves monotonic ordering for
+<a href=#106 id=106 data-nosnippet>106</a>    // counts above `u32::MAX`; saturating through `u32` made every larger
+<a href=#107 id=107 data-nosnippet>107</a>    // fragment indistinguishable to the ranker.
+<a href=#108 id=108 data-nosnippet>108</a>    </span>value <span class="kw">as </span>f64
+<a href=#109 id=109 data-nosnippet>109</a>}
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a><span class="attr">#[cfg(test)]
+<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

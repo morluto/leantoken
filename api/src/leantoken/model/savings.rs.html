@@ -224,73 +224,138 @@
 <a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">pub </span>unobserved: Vec&lt;String&gt;,
 <a href=#225 id=225 data-nosnippet>225</a>}
 <a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#228 id=228 data-nosnippet>228</a></span><span class="doccomment">/// Response accounting plus directly observed service outcomes.
-<a href=#229 id=229 data-nosnippet>229</a></span><span class="kw">pub struct </span>ObservedTokenSavingsReport {
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// Full-response accounting fields.
-<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="attr">#[serde(flatten)]
-<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">pub </span>report: TokenSavingsReport,
-<a href=#233 id=233 data-nosnippet>233</a>    <span class="doccomment">/// Additive counters whose observation boundaries are explicitly documented.
-<a href=#234 id=234 data-nosnippet>234</a>    </span><span class="kw">pub </span>observations: TokenSavingsObservations,
-<a href=#235 id=235 data-nosnippet>235</a>}
-<a href=#236 id=236 data-nosnippet>236</a>
-<a href=#237 id=237 data-nosnippet>237</a><span class="attr">#[derive(
-<a href=#238 id=238 data-nosnippet>238</a>    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
-<a href=#239 id=239 data-nosnippet>239</a>)]
-<a href=#240 id=240 data-nosnippet>240</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
-<a href=#241 id=241 data-nosnippet>241</a></span><span class="doccomment">/// Outcome assigned to one successful retrieval for aggregate savings accounting.
-<a href=#242 id=242 data-nosnippet>242</a></span><span class="kw">pub enum </span>TokenSavingsRequestClass {
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// Returned supported evidence or useful negative evidence.
-<a href=#244 id=244 data-nosnippet>244</a>    </span>Useful,
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="doccomment">/// Returned a bounded or explicitly partial result.
-<a href=#246 id=246 data-nosnippet>246</a>    </span>Incomplete,
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="doccomment">/// Could not provide the requested structural retrieval contract.
-<a href=#248 id=248 data-nosnippet>248</a>    </span>Unsupported,
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="doccomment">/// Suppressed unchanged source because an explicit or automatic base hash matched.
-<a href=#250 id=250 data-nosnippet>250</a>    </span>HashSuppressed,
-<a href=#251 id=251 data-nosnippet>251</a>}
-<a href=#252 id=252 data-nosnippet>252</a>
-<a href=#253 id=253 data-nosnippet>253</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#254 id=254 data-nosnippet>254</a></span><span class="doccomment">/// Aggregate mutually exclusive retrieval outcome counts.
-<a href=#255 id=255 data-nosnippet>255</a></span><span class="kw">pub struct </span>TokenSavingsRequestClassification {
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="doccomment">/// Successful complete supported retrievals.
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">pub </span>useful: u64,
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="doccomment">/// Successful bounded or explicitly partial retrievals.
-<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">pub </span>incomplete: u64,
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="doccomment">/// Successful unsupported results plus typed unsupported-language errors.
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">pub </span>unsupported: u64,
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// Successful exact `expected_hash` suppression.
-<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">pub </span>hash_suppressed: u64,
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// Successful response records from legacy or otherwise unclassified rows.
-<a href=#265 id=265 data-nosnippet>265</a>    </span><span class="kw">pub </span>unclassified: u64,
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Observed errors other than typed unsupported-language outcomes.
-<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">pub </span>failed: u64,
-<a href=#268 id=268 data-nosnippet>268</a>}
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a><span class="attr">#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#271 id=271 data-nosnippet>271</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
-<a href=#272 id=272 data-nosnippet>272</a></span><span class="doccomment">/// Time window represented by a savings snapshot response.
-<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">pub enum </span>TokenSavingsWindow {
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// All persisted aggregate records.
-<a href=#275 id=275 data-nosnippet>275</a>    </span>Lifetime,
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="doccomment">/// Aggregate counters added after the supplied opaque snapshot.
-<a href=#277 id=277 data-nosnippet>277</a>    </span>Delta,
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-<a href=#281 id=281 data-nosnippet>281</a></span><span class="doccomment">/// Observed accounting plus a caller-carried opaque aggregate snapshot.
-<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">pub struct </span>TokenSavingsSnapshotReport {
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="attr">#[serde(flatten)]
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub </span>observed: ObservedTokenSavingsReport,
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// Opaque state that can be supplied to a later savings request.
-<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">pub </span>snapshot: String,
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Whether the report covers lifetime totals or a snapshot delta.
-<a href=#288 id=288 data-nosnippet>288</a>    </span><span class="kw">pub </span>window: TokenSavingsWindow,
-<a href=#289 id=289 data-nosnippet>289</a>}
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">pub struct </span>LanguageCount {
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">pub </span>language: String,
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">pub </span>files: usize,
-<a href=#295 id=295 data-nosnippet>295</a>}
+<a href=#227 id=227 data-nosnippet>227</a><span class="attr">#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#228 id=228 data-nosnippet>228</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#229 id=229 data-nosnippet>229</a></span><span class="doccomment">/// Whether end-to-end task savings can be attributed from available observations.
+<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">pub enum </span>TaskSavingsObservationStatus {
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="doccomment">/// Retrieval records lack a host task identity, relevance labels, or task outcomes.
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="attr">#[default]
+<a href=#233 id=233 data-nosnippet>233</a>    </span>Unavailable,
+<a href=#234 id=234 data-nosnippet>234</a>    <span class="doccomment">/// Task-linked outcomes and all declared cost categories were observed.
+<a href=#235 id=235 data-nosnippet>235</a>    </span>Observed,
+<a href=#236 id=236 data-nosnippet>236</a>}
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#239 id=239 data-nosnippet>239</a></span><span class="doccomment">/// End-to-end task-savings fields kept separate from retrieval compression.
+<a href=#240 id=240 data-nosnippet>240</a></span><span class="kw">pub struct </span>ObservedTaskSavings {
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Whether task savings are attributable from the current observations.
+<a href=#242 id=242 data-nosnippet>242</a>    </span><span class="kw">pub </span>status: TaskSavingsObservationStatus,
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// Host tasks with a linked retrieval and terminal outcome.
+<a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">pub </span>observed_tasks: u64,
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="doccomment">/// Linked tasks that completed successfully, or unknown when unavailable.
+<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">pub </span>task_successes: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="doccomment">/// Linked tasks that failed, or unknown when unavailable.
+<a href=#248 id=248 data-nosnippet>248</a>    </span><span class="kw">pub </span>task_failures: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="doccomment">/// Successful retrieval responses known to be relevant to their host task.
+<a href=#250 id=250 data-nosnippet>250</a>    </span><span class="kw">pub </span>relevant_retrieval_responses: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="doccomment">/// Successful retrieval responses whose task relevance is unknown.
+<a href=#252 id=252 data-nosnippet>252</a>    </span><span class="kw">pub </span>unknown_relevance_responses: u64,
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// Failed retrieval calls observed at instrumented service boundaries.
+<a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">pub </span>failed_retrieval_calls: u64,
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// Serialized failure-response tokens, or unknown when not observed.
+<a href=#256 id=256 data-nosnippet>256</a>    </span><span class="kw">pub </span>failure_response_tokens: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Calls identified as retries of an earlier host-task request.
+<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">pub </span>retry_calls: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// Calls whose evidence was superseded before the host task completed.
+<a href=#260 id=260 data-nosnippet>260</a>    </span><span class="kw">pub </span>superseded_calls: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+<a href=#261 id=261 data-nosnippet>261</a>    <span class="doccomment">/// Complete task-level provider-token difference, or unknown when unavailable.
+<a href=#262 id=262 data-nosnippet>262</a>    </span><span class="kw">pub </span>net_tokens_saved: <span class="prelude-ty">Option</span>&lt;i64&gt;,
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="doccomment">/// Exact task-level reduction in basis points, or unknown when unavailable.
+<a href=#264 id=264 data-nosnippet>264</a>    </span><span class="kw">pub </span>savings_rate_basis_points: <span class="prelude-ty">Option</span>&lt;i64&gt;,
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="doccomment">/// Stable explanation of costs and outcomes excluded from task attribution.
+<a href=#266 id=266 data-nosnippet>266</a>    </span><span class="kw">pub </span>exclusion_basis: String,
+<a href=#267 id=267 data-nosnippet>267</a>}
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">impl </span>Default <span class="kw">for </span>ObservedTaskSavings {
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="self">Self </span>{
+<a href=#272 id=272 data-nosnippet>272</a>            status: TaskSavingsObservationStatus::Unavailable,
+<a href=#273 id=273 data-nosnippet>273</a>            observed_tasks: <span class="number">0</span>,
+<a href=#274 id=274 data-nosnippet>274</a>            task_successes: <span class="prelude-val">None</span>,
+<a href=#275 id=275 data-nosnippet>275</a>            task_failures: <span class="prelude-val">None</span>,
+<a href=#276 id=276 data-nosnippet>276</a>            relevant_retrieval_responses: <span class="prelude-val">None</span>,
+<a href=#277 id=277 data-nosnippet>277</a>            unknown_relevance_responses: <span class="number">0</span>,
+<a href=#278 id=278 data-nosnippet>278</a>            failed_retrieval_calls: <span class="number">0</span>,
+<a href=#279 id=279 data-nosnippet>279</a>            failure_response_tokens: <span class="prelude-val">None</span>,
+<a href=#280 id=280 data-nosnippet>280</a>            retry_calls: <span class="prelude-val">None</span>,
+<a href=#281 id=281 data-nosnippet>281</a>            superseded_calls: <span class="prelude-val">None</span>,
+<a href=#282 id=282 data-nosnippet>282</a>            net_tokens_saved: <span class="prelude-val">None</span>,
+<a href=#283 id=283 data-nosnippet>283</a>            savings_rate_basis_points: <span class="prelude-val">None</span>,
+<a href=#284 id=284 data-nosnippet>284</a>            exclusion_basis: <span class="string">"task-savings attribution was not recorded in this response"</span>.into(),
+<a href=#285 id=285 data-nosnippet>285</a>        }
+<a href=#286 id=286 data-nosnippet>286</a>    }
+<a href=#287 id=287 data-nosnippet>287</a>}
+<a href=#288 id=288 data-nosnippet>288</a>
+<a href=#289 id=289 data-nosnippet>289</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#290 id=290 data-nosnippet>290</a></span><span class="doccomment">/// Response accounting plus directly observed service outcomes.
+<a href=#291 id=291 data-nosnippet>291</a></span><span class="kw">pub struct </span>ObservedTokenSavingsReport {
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// Retrieval-compression accounting, serialized under `response_accounting`.
+<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="attr">#[serde(flatten)]
+<a href=#294 id=294 data-nosnippet>294</a>    </span><span class="kw">pub </span>report: TokenSavingsReport,
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="doccomment">/// Additive counters whose observation boundaries are explicitly documented.
+<a href=#296 id=296 data-nosnippet>296</a>    </span><span class="kw">pub </span>observations: TokenSavingsObservations,
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="doccomment">/// Task-level savings attribution, explicitly unavailable without host outcomes.
+<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="attr">#[serde(default)]
+<a href=#299 id=299 data-nosnippet>299</a>    </span><span class="kw">pub </span>observed_task_savings: ObservedTaskSavings,
+<a href=#300 id=300 data-nosnippet>300</a>}
+<a href=#301 id=301 data-nosnippet>301</a>
+<a href=#302 id=302 data-nosnippet>302</a><span class="attr">#[derive(
+<a href=#303 id=303 data-nosnippet>303</a>    Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+<a href=#304 id=304 data-nosnippet>304</a>)]
+<a href=#305 id=305 data-nosnippet>305</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#306 id=306 data-nosnippet>306</a></span><span class="doccomment">/// Outcome assigned to one successful retrieval for aggregate savings accounting.
+<a href=#307 id=307 data-nosnippet>307</a></span><span class="kw">pub enum </span>TokenSavingsRequestClass {
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="doccomment">/// Returned supported evidence or useful negative evidence.
+<a href=#309 id=309 data-nosnippet>309</a>    </span>Useful,
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// Returned a bounded or explicitly partial result.
+<a href=#311 id=311 data-nosnippet>311</a>    </span>Incomplete,
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="doccomment">/// Could not provide the requested structural retrieval contract.
+<a href=#313 id=313 data-nosnippet>313</a>    </span>Unsupported,
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="doccomment">/// Suppressed unchanged source because an explicit or automatic base hash matched.
+<a href=#315 id=315 data-nosnippet>315</a>    </span>HashSuppressed,
+<a href=#316 id=316 data-nosnippet>316</a>}
+<a href=#317 id=317 data-nosnippet>317</a>
+<a href=#318 id=318 data-nosnippet>318</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#319 id=319 data-nosnippet>319</a></span><span class="doccomment">/// Aggregate mutually exclusive retrieval outcome counts.
+<a href=#320 id=320 data-nosnippet>320</a></span><span class="kw">pub struct </span>TokenSavingsRequestClassification {
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// Successful complete supported protocol responses; never a relevance judgment.
+<a href=#322 id=322 data-nosnippet>322</a>    </span><span class="kw">pub </span>useful: u64,
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="doccomment">/// Successful bounded or explicitly partial retrievals.
+<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub </span>incomplete: u64,
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// Successful unsupported results plus typed unsupported-language errors.
+<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">pub </span>unsupported: u64,
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="doccomment">/// Successful exact `expected_hash` suppression.
+<a href=#328 id=328 data-nosnippet>328</a>    </span><span class="kw">pub </span>hash_suppressed: u64,
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// Successful response records from legacy or otherwise unclassified rows.
+<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub </span>unclassified: u64,
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="doccomment">/// Observed errors other than typed unsupported-language outcomes.
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub </span>failed: u64,
+<a href=#333 id=333 data-nosnippet>333</a>}
+<a href=#334 id=334 data-nosnippet>334</a>
+<a href=#335 id=335 data-nosnippet>335</a><span class="attr">#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#336 id=336 data-nosnippet>336</a>#[serde(rename_all = <span class="string">"snake_case"</span>)]
+<a href=#337 id=337 data-nosnippet>337</a></span><span class="doccomment">/// Time window represented by a savings snapshot response.
+<a href=#338 id=338 data-nosnippet>338</a></span><span class="kw">pub enum </span>TokenSavingsWindow {
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="doccomment">/// All persisted aggregate records.
+<a href=#340 id=340 data-nosnippet>340</a>    </span>Lifetime,
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="doccomment">/// Aggregate counters added after the supplied opaque snapshot.
+<a href=#342 id=342 data-nosnippet>342</a>    </span>Delta,
+<a href=#343 id=343 data-nosnippet>343</a>}
+<a href=#344 id=344 data-nosnippet>344</a>
+<a href=#345 id=345 data-nosnippet>345</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+<a href=#346 id=346 data-nosnippet>346</a></span><span class="doccomment">/// Observed accounting plus a caller-carried opaque aggregate snapshot.
+<a href=#347 id=347 data-nosnippet>347</a></span><span class="kw">pub struct </span>TokenSavingsSnapshotReport {
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="attr">#[serde(flatten)]
+<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="kw">pub </span>observed: ObservedTokenSavingsReport,
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="doccomment">/// Opaque state that can be supplied to a later savings request.
+<a href=#351 id=351 data-nosnippet>351</a>    </span><span class="kw">pub </span>snapshot: String,
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// Whether the report covers lifetime totals or a snapshot delta.
+<a href=#353 id=353 data-nosnippet>353</a>    </span><span class="kw">pub </span>window: TokenSavingsWindow,
+<a href=#354 id=354 data-nosnippet>354</a>}
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+<a href=#357 id=357 data-nosnippet>357</a></span><span class="kw">pub struct </span>LanguageCount {
+<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">pub </span>language: String,
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">pub </span>files: usize,
+<a href=#360 id=360 data-nosnippet>360</a>}
 </code></pre></div></section></main></body></html>

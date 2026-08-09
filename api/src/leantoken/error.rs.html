@@ -72,7 +72,7 @@
 <a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#73 id=73 data-nosnippet>73</a>            <span class="self">Self</span>::CandidateFiles =&gt; <span class="string">"narrow include_paths or index a smaller repository scope"</span>,
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="self">Self</span>::CandidateChunks | <span class="self">Self</span>::CandidateBytes =&gt; {
-<a href=#75 id=75 data-nosnippet>75</a>                <span class="string">"add a mandatory case-sensitive literal or narrow include_paths"
+<a href=#75 id=75 data-nosnippet>75</a>                <span class="string">"increase max_results or max_tokens, narrow include_paths, or make the query more selective"
 <a href=#76 id=76 data-nosnippet>76</a>            </span>}
 <a href=#77 id=77 data-nosnippet>77</a>        }
 <a href=#78 id=78 data-nosnippet>78</a>    }
@@ -678,29 +678,42 @@
 <a href=#678 id=678 data-nosnippet>678</a>
 <a href=#679 id=679 data-nosnippet>679</a><span class="attr">#[cfg(test)]
 <a href=#680 id=680 data-nosnippet>680</a></span><span class="kw">mod </span>tests {
-<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">use </span><span class="kw">super</span>::Error;
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">use </span>super::{Error, RegexWorkDimension};
 <a href=#682 id=682 data-nosnippet>682</a>
 <a href=#683 id=683 data-nosnippet>683</a>    <span class="attr">#[test]
-<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>shutdown_timeout_has_a_public_shutdown_category() {
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="macro">assert_eq!</span>(
-<a href=#686 id=686 data-nosnippet>686</a>            Error::ShutdownTimeout {
-<a href=#687 id=687 data-nosnippet>687</a>                component: <span class="string">"repository watcher"
-<a href=#688 id=688 data-nosnippet>688</a>            </span>}
-<a href=#689 id=689 data-nosnippet>689</a>            .public_category(),
-<a href=#690 id=690 data-nosnippet>690</a>            <span class="string">"shutdown_timeout"
-<a href=#691 id=691 data-nosnippet>691</a>        </span>);
-<a href=#692 id=692 data-nosnippet>692</a>    }
-<a href=#693 id=693 data-nosnippet>693</a>
-<a href=#694 id=694 data-nosnippet>694</a>    <span class="attr">#[test]
-<a href=#695 id=695 data-nosnippet>695</a>    </span><span class="kw">fn </span>repository_identity_mismatch_has_a_public_client_category() {
-<a href=#696 id=696 data-nosnippet>696</a>        <span class="macro">assert_eq!</span>(
-<a href=#697 id=697 data-nosnippet>697</a>            Error::RepositoryIdentityMismatch {
-<a href=#698 id=698 data-nosnippet>698</a>                expected: <span class="string">"expected"</span>.into(),
-<a href=#699 id=699 data-nosnippet>699</a>                actual: <span class="string">"actual"</span>.into(),
-<a href=#700 id=700 data-nosnippet>700</a>            }
-<a href=#701 id=701 data-nosnippet>701</a>            .public_category(),
-<a href=#702 id=702 data-nosnippet>702</a>            <span class="string">"repository_identity_mismatch"
-<a href=#703 id=703 data-nosnippet>703</a>        </span>);
-<a href=#704 id=704 data-nosnippet>704</a>    }
-<a href=#705 id=705 data-nosnippet>705</a>}
+<a href=#684 id=684 data-nosnippet>684</a>    </span><span class="kw">fn </span>regex_work_guidance_names_controls_that_change_the_bound() {
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">for </span>dimension <span class="kw">in </span>[
+<a href=#686 id=686 data-nosnippet>686</a>            RegexWorkDimension::CandidateChunks,
+<a href=#687 id=687 data-nosnippet>687</a>            RegexWorkDimension::CandidateBytes,
+<a href=#688 id=688 data-nosnippet>688</a>        ] {
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="kw">let </span>guidance = dimension.guidance();
+<a href=#690 id=690 data-nosnippet>690</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"max_tokens"</span>));
+<a href=#691 id=691 data-nosnippet>691</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"include_paths"</span>));
+<a href=#692 id=692 data-nosnippet>692</a>            <span class="macro">assert!</span>(!guidance.contains(<span class="string">"case-sensitive"</span>));
+<a href=#693 id=693 data-nosnippet>693</a>        }
+<a href=#694 id=694 data-nosnippet>694</a>    }
+<a href=#695 id=695 data-nosnippet>695</a>
+<a href=#696 id=696 data-nosnippet>696</a>    <span class="attr">#[test]
+<a href=#697 id=697 data-nosnippet>697</a>    </span><span class="kw">fn </span>shutdown_timeout_has_a_public_shutdown_category() {
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="macro">assert_eq!</span>(
+<a href=#699 id=699 data-nosnippet>699</a>            Error::ShutdownTimeout {
+<a href=#700 id=700 data-nosnippet>700</a>                component: <span class="string">"repository watcher"
+<a href=#701 id=701 data-nosnippet>701</a>            </span>}
+<a href=#702 id=702 data-nosnippet>702</a>            .public_category(),
+<a href=#703 id=703 data-nosnippet>703</a>            <span class="string">"shutdown_timeout"
+<a href=#704 id=704 data-nosnippet>704</a>        </span>);
+<a href=#705 id=705 data-nosnippet>705</a>    }
+<a href=#706 id=706 data-nosnippet>706</a>
+<a href=#707 id=707 data-nosnippet>707</a>    <span class="attr">#[test]
+<a href=#708 id=708 data-nosnippet>708</a>    </span><span class="kw">fn </span>repository_identity_mismatch_has_a_public_client_category() {
+<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert_eq!</span>(
+<a href=#710 id=710 data-nosnippet>710</a>            Error::RepositoryIdentityMismatch {
+<a href=#711 id=711 data-nosnippet>711</a>                expected: <span class="string">"expected"</span>.into(),
+<a href=#712 id=712 data-nosnippet>712</a>                actual: <span class="string">"actual"</span>.into(),
+<a href=#713 id=713 data-nosnippet>713</a>            }
+<a href=#714 id=714 data-nosnippet>714</a>            .public_category(),
+<a href=#715 id=715 data-nosnippet>715</a>            <span class="string">"repository_identity_mismatch"
+<a href=#716 id=716 data-nosnippet>716</a>        </span>);
+<a href=#717 id=717 data-nosnippet>717</a>    }
+<a href=#718 id=718 data-nosnippet>718</a>}
 </code></pre></div></section></main></body></html>
