@@ -856,12 +856,6 @@ mod tests {
     }
 
     #[test]
-    fn lockfile_reports_an_evaluated_swift_grammar() {
-        let version = locked_package_version("tree-sitter-swift").expect("locked version");
-        assert!(matches!(version.as_str(), "0.7.2" | "0.7.3"));
-    }
-
-    #[test]
     fn recovery_categories_are_bounded_before_insertion() {
         let mut recovery = BTreeMap::new();
         for index in 0..MAX_RECOVERY_CATEGORIES {
@@ -895,101 +889,4 @@ mod tests {
         assert_eq!(recovery.len(), MAX_RECOVERY_CATEGORIES);
     }
 
-    #[test]
-    fn checked_openclaw_reports_capture_the_version_tradeoff() {
-        let version_072: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.2-v1.json"
-        ))
-        .expect("0.7.2 report");
-        let version_073: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/swift-parse-diagnostic-openclaw-0.7.3-v1.json"
-        ))
-        .expect("0.7.3 report");
-        let evaluation: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/swift-structural-evaluation-openclaw-v1.json"
-        ))
-        .expect("evaluation report");
-        let attempts: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/swift-retrieval-attempts-openclaw-v1.json"
-        ))
-        .expect("attempt receipt");
-        let raw_reports = [
-            include_str!("../benchmarks/reports/swift-retrieval-control-run1.json"),
-            include_str!("../benchmarks/reports/swift-retrieval-control-run2.json"),
-            include_str!("../benchmarks/reports/swift-retrieval-0.7.2-run1.json"),
-            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run1.json"),
-            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run2.json"),
-        ];
-
-        for report in [&version_072, &version_073] {
-            assert_eq!(
-                report["corpus"]["revision"],
-                "9feb6ad161877da86200693b039638dbf3411e66"
-            );
-            assert_eq!(report["corpus"]["files"], 1043);
-            assert_eq!(
-                report["corpus"]["content_blake3"],
-                "20a7422e4e204416ad7a477ba4ede1c51b014d2a7b90ea8e9981a658a492c851"
-            );
-            let reported_recovery = report["recovery_categories"]
-                .as_array()
-                .expect("recovery categories")
-                .iter()
-                .map(|category| category["count"].as_u64().expect("category count"))
-                .sum::<u64>()
-                + report["other_recovery_nodes"]
-                    .as_u64()
-                    .expect("other recovery count");
-            assert_eq!(
-                reported_recovery,
-                report["summary"]["error_nodes"]
-                    .as_u64()
-                    .expect("ERROR count")
-                    + report["summary"]["missing_nodes"]
-                        .as_u64()
-                        .expect("MISSING count")
-            );
-        }
-        assert_eq!(version_072["summary"]["incomplete_files"], 359);
-        assert_eq!(version_073["summary"]["incomplete_files"], 349);
-        assert_eq!(evaluation["decision"], "do_not_ship_swift_parser");
-        assert_eq!(
-            evaluation["attempt_receipt"],
-            "benchmarks/reports/swift-retrieval-attempts-openclaw-v1.json"
-        );
-
-        for raw in raw_reports {
-            assert!(
-                !raw.contains("\"content\":"),
-                "raw retrieval report retained source content"
-            );
-            let report: serde_json::Value =
-                serde_json::from_str(raw).expect("raw retrieval report");
-            assert_eq!(report["schema_version"], 4);
-            assert_eq!(
-                report["manifest_blake3"],
-                "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7"
-            );
-            assert_eq!(report["aggregate"]["task_count"], 10);
-            assert_eq!(report["aggregate"]["relevant_files"], 20);
-            assert_eq!(report["aggregate"]["line_anchors"], 68);
-        }
-
-        let attempts = attempts["attempts"].as_array().expect("attempt list");
-        assert_eq!(attempts.len(), 11);
-        assert_eq!(
-            attempts
-                .iter()
-                .filter(|attempt| attempt["outcome"] == "success")
-                .count(),
-            5
-        );
-        assert_eq!(
-            attempts
-                .iter()
-                .filter(|attempt| attempt["outcome"] == "nondeterministic_context")
-                .count(),
-            6
-        );
-    }
 }

@@ -24,10 +24,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
             "target.php",
             "<?php\nfunction phpTarget() {\n    return 44;\n}\n",
         ),
-        (
-            "target.rb",
-            "def ruby_target\n  55\nend\n",
-        ),
+        ("target.rb", "def ruby_target\n  55\nend\n"),
     ] {
         std::fs::write(root.path().join(path), source).expect("source");
     }
@@ -83,10 +80,10 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
                 known_hashes: Vec::new(),
                 receipt_id: None,
                 prior_repository_generation: None,
-            base_revision: None,
-            changed_paths: Vec::new(),
-            strict_changed_paths: false,
-            explain_diagnostics: false,
+                base_revision: None,
+                changed_paths: Vec::new(),
+                strict_changed_paths: false,
+                explain_diagnostics: false,
             })
             .await
             .expect("context");
@@ -195,8 +192,7 @@ public sealed class Worker {
         .await
         .expect("C# reference search");
     assert!(reference_search.hits.iter().any(|hit| {
-        hit.symbol.as_deref() == Some("Normalize")
-            && hit.enclosing_symbol.as_deref() == Some("Run")
+        hit.symbol.as_deref() == Some("Normalize") && hit.enclosing_symbol.as_deref() == Some("Run")
     }));
 
     let read = services
@@ -415,8 +411,11 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
 "##,
     )
     .expect("HTML source");
-    std::fs::write(root.path().join("js/clinic.js"), "export const clinic = {};\n")
-        .expect("JavaScript source");
+    std::fs::write(
+        root.path().join("js/clinic.js"),
+        "export const clinic = {};\n",
+    )
+    .expect("JavaScript source");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
@@ -451,9 +450,9 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
         .find(|symbol| symbol.name == ".clinic-hero" && symbol.parent.is_none())
         .expect("top-level hero selector");
     assert!(
-        css.symbols.iter().any(
-            |symbol| symbol.name == "--clinic-accent" && symbol.kind == "css_custom_property"
-        )
+        css.symbols
+            .iter()
+            .any(|symbol| symbol.name == "--clinic-accent" && symbol.kind == "css_custom_property")
     );
     let html = outline
         .files
@@ -469,10 +468,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
     assert_eq!(
         html.imports
             .iter()
-            .map(|import| (
-                import.raw_target.as_str(),
-                import.resolved_path.as_deref()
-            ))
+            .map(|import| (import.raw_target.as_str(), import.resolved_path.as_deref()))
             .collect::<Vec<_>>(),
         vec![
             ("./styles/clinic.css", Some("styles/clinic.css")),
@@ -509,7 +505,10 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             })
             .await
             .expect("structural search");
-        assert!(!search.hits.is_empty(), "missing {mode:?} search for {query}");
+        assert!(
+            !search.hits.is_empty(),
+            "missing {mode:?} search for {query}"
+        );
     }
 
     let ambiguous_hero = services
@@ -654,14 +653,15 @@ Setext
             ("Setext", Some("Root"), 10, 14),
         ]
     );
-    assert!(!markdown.symbols.iter().any(|symbol| symbol.name == "hidden"));
+    assert!(
+        !markdown
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "hidden")
+    );
 
     for (occurrence, expected_range, expected_content) in [
-        (
-            None,
-            (3, 6),
-            "## Repeat\nfirst\n### Child\nchild",
-        ),
+        (None, (3, 6), "## Repeat\nfirst\n### Child\nchild"),
         (Some(2), (7, 9), "## Repeat\nsecond"),
     ] {
         let read = services
@@ -689,7 +689,10 @@ Setext
             (read.target_start_line, read.target_end_line),
             expected_range
         );
-        assert_eq!(read.content.as_deref().map(str::trim_end), Some(expected_content));
+        assert_eq!(
+            read.content.as_deref().map(str::trim_end),
+            Some(expected_content)
+        );
     }
 
     let error = services

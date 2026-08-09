@@ -231,8 +231,14 @@ async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
     assert_zero_limit(error, "max_results");
 
     for (request, field) in [
-        (search_limit_request(Some(0), Some(1), Some(0)), "max_results"),
-        (search_limit_request(Some(1), Some(0), Some(0)), "max_tokens"),
+        (
+            search_limit_request(Some(0), Some(1), Some(0)),
+            "max_results",
+        ),
+        (
+            search_limit_request(Some(1), Some(0), Some(0)),
+            "max_tokens",
+        ),
     ] {
         let error = services
             .search_with_consistency_cancellable(
@@ -288,7 +294,10 @@ async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
         .expect_err("invalid context limit");
     assert_zero_limit(error, "token_budget");
 
-    let after = services.status().await.expect("status after invalid requests");
+    let after = services
+        .status()
+        .await
+        .expect("status after invalid requests");
     assert_eq!(after.repository_generation, generation);
     let committed = services
         .files(FilesRequest {
@@ -615,8 +624,7 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
         .await
         .expect("observed static failures");
     assert_eq!(
-        observed.observations.failed_service_requests,
-        expected_failures,
+        observed.observations.failed_service_requests, expected_failures,
         "each failed public service request must be observed exactly once"
     );
     assert_eq!(
@@ -656,7 +664,10 @@ async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
         .expect_err("cursor from the pre-reconciliation generation must be stale");
     assert!(matches!(error, Error::StaleCursor));
 
-    let after = services.status().await.expect("status after reconciliation");
+    let after = services
+        .status()
+        .await
+        .expect("status after reconciliation");
     assert!(after.repository_generation > generation);
     let committed = services
         .files(FilesRequest {

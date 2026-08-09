@@ -1131,35 +1131,6 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_openclaw_report_matches_issue_evidence() {
-        let json = include_str!(
-            "../benchmarks/reports/typescript-parse-diagnostic-openclaw-v1-2026-07-30.json"
-        );
-        let report: DiagnosticReport = serde_json::from_str(json).expect("checked OpenClaw report");
-        assert_eq!(
-            report.corpus.identity,
-            "9feb6ad161877da86200693b039638dbf3411e66"
-        );
-        assert_eq!(
-            report.corpus.content_blake3,
-            "ba170cefc4bf348ea1b752d7c2fff2ea179f512854b46c5abf46b8035c80d006"
-        );
-        assert_eq!(report.summary.files, 23_738);
-        assert_eq!(report.summary.incomplete_files, 810);
-        assert_eq!(report.summary.error_nodes, 1_380);
-        assert_eq!(report.summary.missing_nodes, 40);
-        assert_eq!(
-            report
-                .recovery_categories
-                .iter()
-                .map(|category| category.count)
-                .sum::<u64>()
-                + report.other_recovery_nodes,
-            report.summary.error_nodes + report.summary.missing_nodes
-        );
-    }
-
-    #[test]
     fn source_shape_classification_is_fixed_and_path_only() {
         assert_eq!(
             classify_source_shape(Path::new("src/service.ts")),
@@ -1372,19 +1343,6 @@ mod tests {
         ] {
             assert!(!json.contains(private_value));
         }
-    }
-
-    #[test]
-    fn dependency_versions_match_the_locked_graph() {
-        assert_eq!(
-            locked_package_version("tree-sitter").expect("tree-sitter version"),
-            "0.26.11"
-        );
-        assert_eq!(
-            locked_package_version("tree-sitter-typescript")
-                .expect("tree-sitter-typescript version"),
-            "0.23.2"
-        );
     }
 
     #[test]

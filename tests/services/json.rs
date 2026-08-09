@@ -55,7 +55,10 @@ async fn json_structural_queries_summarize_ignored_artifacts_and_diff_fields() {
         })
         .await
         .expect("collapsed JMESPath query");
-    assert_eq!(collapsed.value.as_ref().expect("value")["$array"]["count"], 4);
+    assert_eq!(
+        collapsed.value.as_ref().expect("value")["$array"]["count"],
+        4
+    );
     assert_eq!(
         collapsed.value.as_ref().expect("value")["$array"]["sample"]
             .as_array()
@@ -231,10 +234,7 @@ async fn json_keys_paginate_by_item_and_token_limits_with_exact_diagnostics() {
             assert!(page.meta.next_cursor.is_none());
             break;
         }
-        assert_eq!(
-            page.incomplete_reason,
-            Some(JsonIncompleteReason::MaxItems)
-        );
+        assert_eq!(page.incomplete_reason, Some(JsonIncompleteReason::MaxItems));
         cursor = page.meta.next_cursor;
         assert!(cursor.is_some());
     }
@@ -398,17 +398,11 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("create src");
     let callers = (0..24)
-        .map(|index| {
-            format!(
-                "pub fn caller_{index:02}() -> usize {{\n    target()\n}}\n\n"
-            )
-        })
+        .map(|index| format!("pub fn caller_{index:02}() -> usize {{\n    target()\n}}\n\n"))
         .collect::<String>();
     std::fs::write(
         root.path().join("src/lib.rs"),
-        format!(
-            "pub fn target() -> usize {{\n    42\n}}\n\n{callers}"
-        ),
+        format!("pub fn target() -> usize {{\n    42\n}}\n\n{callers}"),
     )
     .expect("write primary source");
     std::fs::write(
@@ -493,8 +487,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
             assert_eq!(
                 file.content_hash,
                 leantoken::text::hash(
-                    &serde_json::to_string(&file.signatures)
-                        .expect("serialize compact signatures")
+                    &serde_json::to_string(&file.signatures).expect("serialize compact signatures")
                 )
             );
             file.signatures.iter().map(|symbol| {
@@ -734,10 +727,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
         )
         .await
         .expect("exact path-only response bound");
-    assert!(
-        bounded_files.meta.total_response_tokens
-            <= compact_files.meta.total_response_tokens
-    );
+    assert!(bounded_files.meta.total_response_tokens <= compact_files.meta.total_response_tokens);
     let bounded_outline = services
         .outline_signatures_with_options(
             OutlineRequest {
@@ -755,8 +745,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
         .await
         .expect("exact signature response bound");
     assert!(
-        bounded_outline.meta.total_response_tokens
-            <= compact_outline.meta.total_response_tokens
+        bounded_outline.meta.total_response_tokens <= compact_outline.meta.total_response_tokens
     );
     let bounded_search = services
         .search_grouped_with_options(
@@ -783,10 +772,7 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
         )
         .await
         .expect("exact grouped response bound");
-    assert!(
-        bounded_search.meta.total_response_tokens
-            <= compact_search.meta.total_response_tokens
-    );
+    assert!(bounded_search.meta.total_response_tokens <= compact_search.meta.total_response_tokens);
 }
 
 #[tokio::test]
@@ -855,11 +841,8 @@ async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() 
         }
     ));
 
-    std::fs::write(
-        &path,
-        r#"{"version":2,"nested":{"answer":42},"tail":true}"#,
-    )
-    .expect("mutated JSON fixture");
+    std::fs::write(&path, r#"{"version":2,"nested":{"answer":42},"tail":true}"#)
+        .expect("mutated JSON fixture");
     let stale_source = services
         .json(JsonRequest {
             operation: operation.clone(),
@@ -893,10 +876,7 @@ async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() 
     );
     assert_eq!(
         incomplete_schema.remaining_items,
-        Some(
-            incomplete_schema.total_items.unwrap()
-                - incomplete_schema.returned_items.unwrap()
-        )
+        Some(incomplete_schema.total_items.unwrap() - incomplete_schema.returned_items.unwrap())
     );
     assert_eq!(
         incomplete_schema.incomplete_reason,
@@ -920,17 +900,20 @@ async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() 
         })
         .await
         .expect_err("typed JMESPath error");
-    assert!(matches!(
-        &typed_selector,
-        Error::InvalidJsonSelector {
-            stage: "evaluate",
-            offset: 6,
-            line: 1,
-            column: 7,
-            reason,
-            ..
-        } if reason.contains("expects type") && reason.contains("given number")
-    ), "{typed_selector:?}");
+    assert!(
+        matches!(
+            &typed_selector,
+            Error::InvalidJsonSelector {
+                stage: "evaluate",
+                offset: 6,
+                line: 1,
+                column: 7,
+                reason,
+                ..
+            } if reason.contains("expects type") && reason.contains("given number")
+        ),
+        "{typed_selector:?}"
+    );
 
     let invalid_expression = services
         .json(JsonRequest {

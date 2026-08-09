@@ -104,8 +104,10 @@ The runner sequences units, ordinary domain integration, and process-heavy
 tests. CI uses `cargo xtask test product --parallel` to overlap only the
 library/binary unit lane and ordinary integration lane; those phases use
 `cargo-nextest` with two workers each (a maximum of four across the overlap),
-while process-heavy executable/MCP behavior uses three nextest workers on macOS
-and four on Linux or Windows. Doctests stay on their explicit Cargo command.
+while process-heavy executable/MCP behavior uses three nextest workers on macOS,
+four on Linux, and two on Windows. Windows process tests can each launch
+several child processes, so the lower bound avoids starving those children.
+Doctests stay on their explicit Cargo command.
 The runner prints per-lane elapsed time and preserves child exit codes. It also
 owns the opt-in profile and stress commands. Checked-in corpora and benchmark
 reports execute through their explicit domain, contract, or example owner
@@ -127,9 +129,9 @@ cargo test-contract
 ```
 
 This full local command uses a platform-aware process-test bound: three workers
-on macOS and four on Linux or Windows. That keeps child-process load bounded
-while using the standard runner capacity. Focused tests retain Cargo's normal
-host parallelism.
+on macOS, four on Linux, and two on Windows. That keeps child-process load
+bounded while using the standard runner capacity. Focused tests retain Cargo's
+normal host parallelism.
 
 Benchmark and example tests are a separate target group because Cargo executes
 test binaries serially. Run them when changing `examples/`, benchmark fixtures,
@@ -248,10 +250,10 @@ The CI planner selects product, token-economy contract, benchmark/example, and
 coverage lanes independently from their owned paths. Selected benchmark,
 example, and documentation tests run once on Linux. Selected product and
 contract lanes run on Linux, macOS, and Windows with per-lane elapsed summaries
-from xtask. The process-heavy phase uses three workers on macOS and four on
-Linux or Windows because each test can start several child processes; ordinary
-tests retain the runner's default parallelism. Selected Rust changes also run
-the instrumented coverage gate in parallel (50% line floor; the opt-in
+from xtask. The process-heavy phase uses three workers on macOS, four on Linux,
+and two on Windows because each test can start several child processes;
+ordinary tests retain the runner's default parallelism. Selected Rust changes
+also run the instrumented coverage gate in parallel (50% line floor; the opt-in
 `concurrency_profile` harness and subprocess-only CLI entrypoints are
 excluded). The stable Required checks job fails if a selected lane fails,
 cancels, times out, or disappears, while intentionally unselected lanes remain
@@ -388,9 +390,6 @@ run them in parallel rather than starting one executable per file.
   publication, leader failover, MCP EOF shutdown, and repository-free episode
   audit behavior through the executable;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
-- `tests/representation_comparison.rs`: tree, outline, search, read, and context
-  representation costs.
-
 `src/episode.rs` owns unit coverage for versioned analyzer adapters, published
 60-run replay, exact/proxy classification boundaries, binding/privacy failure,
 resource caps, and deterministic JSON/Markdown normalization.

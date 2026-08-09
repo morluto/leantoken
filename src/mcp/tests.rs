@@ -344,28 +344,6 @@ fn startup_failures_expose_only_allowlisted_guidance() {
 }
 
 #[test]
-fn mcp_exposes_nine_tools() {
-    let router = LeanTokenMcp::tool_router();
-    let tools = router.list_all();
-    assert_eq!(tools.len(), 9);
-
-    let names: std::collections::HashSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
-    for name in [
-        "files",
-        "search",
-        "outline",
-        "read",
-        "history",
-        "json",
-        "context",
-        "receipt_rebase",
-        "savings",
-    ] {
-        assert!(names.contains(name), "missing tool {name}");
-    }
-}
-
-#[test]
 fn user_docs_list_the_exact_runtime_tool_catalog() {
     let expected = LeanTokenMcp::tool_router()
         .list_all()

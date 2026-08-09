@@ -78,10 +78,10 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
                 known_hashes: Vec::new(),
                 receipt_id: None,
                 prior_repository_generation: None,
-            base_revision: None,
-            changed_paths: Vec::new(),
-            strict_changed_paths: false,
-            explain_diagnostics: false,
+                base_revision: None,
+                changed_paths: Vec::new(),
+                strict_changed_paths: false,
+                explain_diagnostics: false,
             },
             cancellation,
         )
@@ -95,7 +95,11 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
 async fn concurrent_queries_observe_one_committed_generation_during_reconciliation() {
     let (root, services) = fixture().await;
     let services = std::sync::Arc::new(services);
-    let before = services.status().await.expect("before status").repository_generation;
+    let before = services
+        .status()
+        .await
+        .expect("before status")
+        .repository_generation;
     std::fs::write(
         root.path().join("src/lib.rs"),
         "pub fn replacement() -> u8 { 42 }\n",
@@ -117,7 +121,11 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
     for index in 0..4 {
         let services = std::sync::Arc::clone(&services);
         queries.spawn(async move {
-            let query = if index % 2 == 0 { "greet" } else { "replacement" };
+            let query = if index % 2 == 0 {
+                "greet"
+            } else {
+                "replacement"
+            };
             let response = services
                 .search(SearchRequest {
                     query: query.into(),
@@ -145,7 +153,9 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
     assert!(after > before);
     while let Some(result) = queries.join_next().await {
         let (query, response) = result.expect("query task");
-        assert!(matches!(response.meta.repository_generation, value if value == before || value == after));
+        assert!(
+            matches!(response.meta.repository_generation, value if value == before || value == after)
+        );
         if response.meta.repository_generation == before {
             assert_eq!(response.hits.is_empty(), query == "replacement");
         } else {
@@ -186,7 +196,10 @@ fn explicit_corrupt_database_is_not_deleted() {
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
 
     Services::open(config).expect_err("explicit corruption must be reported");
-    assert_eq!(std::fs::read(database).expect("preserved database"), original);
+    assert_eq!(
+        std::fs::read(database).expect("preserved database"),
+        original
+    );
 }
 
 #[tokio::test]
@@ -238,10 +251,7 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
     let services = Services::open(config).expect("services");
 
     services.index(false).await.expect("initial index");
-    let initial_report = services
-        .parser_coverage()
-        .await
-        .expect("initial coverage");
+    let initial_report = services.parser_coverage().await.expect("initial coverage");
     assert_eq!(initial_report.repository_generation, 1);
     let initial = initial_report.coverage;
     assert_eq!(
@@ -284,21 +294,16 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
     services.index(false).await.expect("incremental index");
     let connection = rusqlite::Connection::open(database).expect("database");
     let distinct_generations: i64 = connection
-        .query_row(
-            "SELECT count(DISTINCT generation) FROM files",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT count(DISTINCT generation) FROM files", [], |row| {
+            row.get(0)
+        })
         .expect("row generations");
     assert!(
         distinct_generations > 1,
         "fixture did not retain unchanged rows from the earlier generation"
     );
 
-    let updated_report = services
-        .parser_coverage()
-        .await
-        .expect("updated coverage");
+    let updated_report = services.parser_coverage().await.expect("updated coverage");
     assert_eq!(updated_report.repository_generation, 2);
     let updated = updated_report.coverage;
     assert_eq!(updated.indexed.files, 3);
@@ -324,10 +329,7 @@ async fn parser_coverage_reports_an_empty_uninitialized_index() {
     let report = services.parser_coverage().await.expect("empty coverage");
 
     assert_eq!(report.repository_generation, 0);
-    assert_eq!(
-        report.coverage,
-        leantoken::ParserCoverageSummary::default()
-    );
+    assert_eq!(report.coverage, leantoken::ParserCoverageSummary::default());
 }
 
 #[tokio::test]
@@ -335,10 +337,9 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
     let database = root.path().join("index.sqlite");
-    let services = Services::open(
-        Config::discover(root.path(), Some(database.clone())).expect("config"),
-    )
-    .expect("services");
+    let services =
+        Services::open(Config::discover(root.path(), Some(database.clone())).expect("config"))
+            .expect("services");
     let coordination = IndexCoordination::for_database(&database);
     let operation = coordination
         .acquire_operation(&CancellationToken::new())

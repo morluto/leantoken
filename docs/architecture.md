@@ -1525,10 +1525,11 @@ appropriate for that repository.
 The product test orchestrator may overlap exactly two Cargo children: the
 library/binary unit lane and ordinary integration lane, each with two nextest
 workers. It waits for both before starting executable/MCP process behavior,
-whose nextest concurrency uses three workers on macOS and four on Linux or
-Windows. Any parallel-lane failure prevents the process phase and is reported
-with its original child exit code. Checked-in corpora and derived benchmark
-reports are verified by their semantic domain, contract, or executable owner;
+whose nextest concurrency uses three workers on macOS, four on Linux, and two
+on Windows. The Windows bound leaves capacity for the child processes each test
+can launch. Any parallel-lane failure prevents the process phase and is
+reported with its original child exit code. Checked-in corpora and derived
+benchmark reports are verified by their semantic domain, contract, or executable owner;
 small input/output cases stay as ordinary named tests rather than passing
 through a generic fixture interpreter.
 

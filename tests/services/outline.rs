@@ -10,8 +10,7 @@ async fn multi_path_outline_reports_each_path_without_aborting_indexed_results()
         "fn first() {}\nfn second() {}\n",
     )
     .expect("indexed source");
-    std::fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n")
-        .expect("ignored source");
+    std::fs::write(root.path().join("ignored.rs"), "fn ignored() {}\n").expect("ignored source");
     std::fs::write(root.path().join(".gitignore"), "ignored.rs\n").expect("ignore rules");
     let services = Services::open(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),

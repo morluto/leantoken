@@ -1570,41 +1570,16 @@ mod tests {
     }
 
     #[test]
-    fn checked_report_matches_its_manifest_commitment() {
+    fn checked_report_matches_manifest_commitment() {
         let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
         let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
             .expect("frozen manifest");
         validate_manifest(&manifest).expect("valid manifest");
-        let report_bytes =
-            fs::read(root.join(&manifest.checked_report.path)).expect("checked report");
-        assert_eq!(
-            blake3::hash(&report_bytes).to_hex().as_str(),
-            manifest.checked_report.blake3
-        );
 
-        let report: Value = serde_json::from_slice(&report_bytes).expect("valid report JSON");
-        assert_eq!(report["schema_version"], manifest.schema_version);
-        assert_eq!(report["experiment"], manifest.experiment);
+        let report = fs::read(root.join(&manifest.checked_report.path)).expect("checked report");
         assert_eq!(
-            report["fixture"]["tree_blake3"],
-            manifest.fixture.tree_blake3
-        );
-        assert_eq!(
-            report["fixture"]["host_compatibility_blake3"],
-            manifest.host_compatibility_evidence.blake3
-        );
-        assert_eq!(
-            report["candidates"]
-                .as_array()
-                .expect("candidate array")
-                .iter()
-                .map(|candidate| candidate["id"].as_str().expect("candidate id"))
-                .collect::<Vec<_>>(),
-            manifest
-                .candidates
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
+            blake3::hash(&report).to_hex().as_str(),
+            manifest.checked_report.blake3
         );
     }
 

@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[test]
 fn services_reject_database_owned_by_another_repository() {
     let first_root = tempfile::tempdir().expect("first root");
@@ -17,32 +16,24 @@ fn services_reject_database_owned_by_another_repository() {
 
     assert!(matches!(error, Error::RepositoryMismatch { .. }));
     drop(first);
-    Services::open(
-        Config::discover(first_root.path(), Some(database)).expect("same-root config"),
-    )
-    .expect("same root may share database");
+    Services::open(Config::discover(first_root.path(), Some(database)).expect("same-root config"))
+        .expect("same root may share database");
 }
 
 #[test]
 fn explicit_database_rejects_a_different_index_scope() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("shared.sqlite");
-    let source_scope =
-        IndexScope::new(vec!["src/**".into()], Vec::new()).expect("source scope");
+    let source_scope = IndexScope::new(vec!["src/**".into()], Vec::new()).expect("source scope");
     let first = Services::open(
-        Config::discover_scoped(
-            root.path(),
-            Some(database.clone()),
-            source_scope.clone(),
-        )
-        .expect("scoped config"),
+        Config::discover_scoped(root.path(), Some(database.clone()), source_scope.clone())
+            .expect("scoped config"),
     )
     .expect("claim scoped database");
 
-    let full_error = Services::open(
-        Config::discover(root.path(), Some(database.clone())).expect("full config"),
-    )
-    .expect_err("full scope must not share a scoped explicit database");
+    let full_error =
+        Services::open(Config::discover(root.path(), Some(database.clone())).expect("full config"))
+            .expect_err("full scope must not share a scoped explicit database");
     assert!(matches!(full_error, Error::IndexScopeMismatch { .. }));
 
     drop(first);
@@ -50,8 +41,7 @@ fn explicit_database_rejects_a_different_index_scope() {
         Config::discover_scoped(
             root.path(),
             Some(database),
-            IndexScope::new(vec!["./src\\**".into()], Vec::new())
-                .expect("equivalent scope"),
+            IndexScope::new(vec!["./src\\**".into()], Vec::new()).expect("equivalent scope"),
         )
         .expect("equivalent config"),
     )
@@ -144,7 +134,11 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         .await
         .expect("outside-scope targeted reconciliation");
     assert_eq!(
-        scoped.status().await.expect("status after outside change").file_count,
+        scoped
+            .status()
+            .await
+            .expect("status after outside change")
+            .file_count,
         2
     );
 
@@ -158,7 +152,11 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         .await
         .expect("included targeted reconciliation");
     assert_eq!(
-        scoped.status().await.expect("status after included change").file_count,
+        scoped
+            .status()
+            .await
+            .expect("status after included change")
+            .file_count,
         3
     );
     std::fs::rename(
@@ -174,16 +172,16 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         .await
         .expect("cross-scope rename reconciliation");
     assert_eq!(
-        scoped.status().await.expect("status after rename").file_count,
+        scoped
+            .status()
+            .await
+            .expect("status after rename")
+            .file_count,
         2
     );
 
     let full = Services::open(
-        Config::discover(
-            root.path(),
-            Some(cache.path().join("full.sqlite")),
-        )
-        .expect("full config"),
+        Config::discover(root.path(), Some(cache.path().join("full.sqlite"))).expect("full config"),
     )
     .expect("full services");
     full.index(false).await.expect("full index");
@@ -200,10 +198,7 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         full_result.hits[0].start_line,
         scoped_result.hits[0].start_line
     );
-    assert_eq!(
-        full_result.hits[0].end_line,
-        scoped_result.hits[0].end_line
-    );
+    assert_eq!(full_result.hits[0].end_line, scoped_result.hits[0].end_line);
 }
 
 #[tokio::test]
@@ -215,15 +210,17 @@ async fn same_repository_services_share_committed_generations() {
         Config::discover(root.path(), Some(database.clone())).expect("first config"),
     )
     .expect("first services");
-    let second = Services::open(
-        Config::discover(root.path(), Some(database)).expect("second config"),
-    )
-    .expect("second services");
+    let second =
+        Services::open(Config::discover(root.path(), Some(database)).expect("second config"))
+            .expect("second services");
 
     let indexed = first.index(false).await.expect("index");
     let observed = second.status().await.expect("follower status");
 
-    assert_eq!(observed.repository_generation, indexed.repository_generation);
+    assert_eq!(
+        observed.repository_generation,
+        indexed.repository_generation
+    );
 }
 
 #[tokio::test]
@@ -286,11 +283,8 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
     std::os::unix::fs::symlink(root.path(), &alias).expect("symlink root");
     std::fs::write(root.path().join("lib.rs"), "fn source() {}\n").expect("source");
 
-    let config = Config::discover(
-        root.path(),
-        Some(alias.join("missing/cache/index.sqlite")),
-    )
-    .expect("config");
+    let config = Config::discover(root.path(), Some(alias.join("missing/cache/index.sqlite")))
+        .expect("config");
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index");
 

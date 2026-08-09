@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
-import { PLATFORMS, buildNpmPackages, readCargoVersion } from "../scripts/build-npm-packages.mjs";
+import { PLATFORMS, buildNpmPackages } from "../scripts/build-npm-packages.mjs";
 
 function run(program, args, options = {}) {
   const result = spawnSync(program, args, { encoding: "utf8", ...options });
@@ -52,9 +52,13 @@ async function unpackPackage(tarball, workspace) {
   return directory;
 }
 
-test("reads the npm package version from Cargo.toml", async () => {
-  assert.match(await readCargoVersion(), /^\d+\.\d+\.\d+/);
-});
+async function cargoPackageVersion() {
+  const manifest = await readFile(new URL("../Cargo.toml", import.meta.url), "utf8");
+  const packageSection = manifest.split(/^\[package\]\s*$/m)[1]?.split(/^\[/m)[0] ?? "";
+  const version = packageSection.match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1];
+  assert.ok(version, "Cargo.toml must declare a package version");
+  return version;
+}
 
 test("keeps cargo-dist targets aligned with the canonical npm platform manifest", async () => {
   const distWorkspace = await readFile(new URL("../dist-workspace.toml", import.meta.url), "utf8");
@@ -65,6 +69,31 @@ test("keeps cargo-dist targets aligned with the canonical npm platform manifest"
   const npmTargets = PLATFORMS.map((platform) => platform.target);
   assert.equal(new Set(npmTargets).size, npmTargets.length, "npm targets must be unique");
   assert.deepEqual([...distTargets].sort(), [...npmTargets].sort());
+});
+
+test("uses the Cargo package version when the release CLI omits --version", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-version-"));
+  const artifacts = join(workspace, "artifacts");
+  const output = join(workspace, "packages");
+  await mkdir(artifacts);
+
+  try {
+    for (const platform of PLATFORMS) await makeArchive(artifacts, platform);
+    run(process.execPath, [
+      new URL("../scripts/build-npm-packages.mjs", import.meta.url).pathname,
+      "--artifacts",
+      artifacts,
+      "--out",
+      output,
+    ]);
+
+    assert.deepEqual(
+      await readdir(output),
+      [`leantoken-${await cargoPackageVersion()}.tgz`],
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("builds one script-free package containing every native binary", async () => {

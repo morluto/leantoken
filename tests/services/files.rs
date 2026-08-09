@@ -4,8 +4,11 @@ use super::*;
 async fn file_operations_page_without_duplicates() {
     let root = tempfile::tempdir().expect("root");
     for name in ["alpha.rs", "bravo.rs", "charlie.rs", "delta.rs", "echo.rs"] {
-        std::fs::write(root.path().join(name), format!("fn {}() {{}}\n", &name[..name.len() - 3]))
-            .expect("source");
+        std::fs::write(
+            root.path().join(name),
+            format!("fn {}() {{}}\n", &name[..name.len() - 3]),
+        )
+        .expect("source");
     }
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
@@ -113,8 +116,7 @@ async fn file_tree_projection_respects_root_depth_and_removes_empty_directories(
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir_all(root.path().join("src/deep")).expect("directories");
     std::fs::write(root.path().join("src/top.rs"), "fn top() {}\n").expect("top source");
-    std::fs::write(root.path().join("src/deep/lib.rs"), "fn deep() {}\n")
-        .expect("deep source");
+    std::fs::write(root.path().join("src/deep/lib.rs"), "fn deep() {}\n").expect("deep source");
     let services = Services::open(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
@@ -178,16 +180,16 @@ async fn file_tree_normalizes_equivalent_roots_before_query_and_pagination() {
     for aliases in [
         vec![None, Some(""), Some("."), Some("./")],
         vec![Some("src"), Some("./src"), Some("src/")],
-        vec![
-            Some("src/rust"),
-            Some("./src//rust"),
-            Some("src/rust/"),
-        ],
+        vec![Some("src/rust"), Some("./src//rust"), Some("src/rust/")],
     ] {
         let expected = tree_pages(&services, aliases[0]).await;
         assert!(expected.len() > 1, "fixture must exercise pagination");
         for alias in aliases.into_iter().skip(1) {
-            assert_eq!(tree_pages(&services, alias).await, expected, "alias {alias:?}");
+            assert_eq!(
+                tree_pages(&services, alias).await,
+                expected,
+                "alias {alias:?}"
+            );
         }
     }
 }

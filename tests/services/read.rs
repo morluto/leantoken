@@ -159,8 +159,7 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
     let source = (1..=120)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
         .collect::<String>();
-    let (persistent_root, persistent_a) =
-        indexed_source("restart.rs", source.as_bytes()).await;
+    let (persistent_root, persistent_a) = indexed_source("restart.rs", source.as_bytes()).await;
     let (oracle_root, oracle) = indexed_source("restart.rs", source.as_bytes()).await;
     let request = |expected_hash: Option<String>| ReadRequest {
         path: "restart.rs".into(),
@@ -227,10 +226,7 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
     assert_eq!(restarted.indexed_hash, in_memory.indexed_hash);
     assert_eq!(restarted.target_start_line, in_memory.target_start_line);
     assert_eq!(restarted.target_end_line, in_memory.target_end_line);
-    assert_eq!(
-        restarted.returned_start_line,
-        in_memory.returned_start_line
-    );
+    assert_eq!(restarted.returned_start_line, in_memory.returned_start_line);
     assert_eq!(restarted.returned_end_line, in_memory.returned_end_line);
     let restarted_receipt = restarted.delta_receipt.as_ref().expect("restart receipt");
     let oracle_receipt = in_memory.delta_receipt.as_ref().expect("oracle receipt");
@@ -344,15 +340,11 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
     let isolated = tempfile::tempdir().expect("isolated repository");
     std::fs::create_dir(isolated.path().join(".git")).expect("git marker");
     std::fs::write(isolated.path().join(".gitignore"), "ignored.rs\n").expect("ignore file");
-    std::fs::write(isolated.path().join("tracked.rs"), "fn tracked() {}\n")
-        .expect("tracked file");
-    std::fs::write(isolated.path().join("ignored.rs"), "fn secret() {}\n")
-        .expect("ignored file");
-    let isolated_config = Config::discover(
-        isolated.path(),
-        Some(isolated.path().join("index.sqlite")),
-    )
-    .expect("isolated config");
+    std::fs::write(isolated.path().join("tracked.rs"), "fn tracked() {}\n").expect("tracked file");
+    std::fs::write(isolated.path().join("ignored.rs"), "fn secret() {}\n").expect("ignored file");
+    let isolated_config =
+        Config::discover(isolated.path(), Some(isolated.path().join("index.sqlite")))
+            .expect("isolated config");
     let isolated_services = Services::open(isolated_config).expect("isolated services");
     isolated_services
         .index(false)
@@ -442,10 +434,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         unchanged_receipt.base_hash.as_deref(),
         Some(first.content_hash.as_str())
     );
-    assert_eq!(
-        unchanged_receipt.base_generation,
-        Some(first_generation)
-    );
+    assert_eq!(unchanged_receipt.base_generation, Some(first_generation));
 
     let changed_source = source.replace(
         "let value_40 = compute_value(40);",
@@ -477,10 +466,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         "let value_60 = compute_updated_value(60);",
     );
     std::fs::write(root.path().join("latest.rs"), &changed_again_source).expect("second edit");
-    let changed_again = services
-        .read(request())
-        .await
-        .expect("latest changed read");
+    let changed_again = services.read(request()).await.expect("latest changed read");
     assert_eq!(changed_again.status, ReadStatus::Delta);
     assert_eq!(
         changed_again
@@ -583,7 +569,6 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
         Some(ReadDeltaPersistenceFallback::CurrentTruncated)
     );
     assert_eq!(receipt.avoided_tokens, 0);
-
 }
 
 #[tokio::test]
@@ -869,8 +854,17 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("open-ended range");
-    assert_eq!((from_second.returned_start_line, from_second.returned_end_line), (2, 5));
-    assert_eq!(from_second.content.as_deref(), Some("two\nthree\nfour\nfive\n"));
+    assert_eq!(
+        (
+            from_second.returned_start_line,
+            from_second.returned_end_line
+        ),
+        (2, 5)
+    );
+    assert_eq!(
+        from_second.content.as_deref(),
+        Some("two\nthree\nfour\nfive\n")
+    );
 
     let through_third = services
         .read(ReadRequest {
@@ -889,7 +883,13 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("open-start range");
-    assert_eq!((through_third.returned_start_line, through_third.returned_end_line), (1, 3));
+    assert_eq!(
+        (
+            through_third.returned_start_line,
+            through_third.returned_end_line
+        ),
+        (1, 3)
+    );
     assert_eq!(through_third.content.as_deref(), Some("one\ntwo\nthree\n"));
 
     let whole = services
@@ -926,7 +926,10 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("exact whole file");
-    assert_eq!(whole.content.as_deref(), Some("one\ntwo\nthree\nfour\nfive\n"));
+    assert_eq!(
+        whole.content.as_deref(),
+        Some("one\ntwo\nthree\nfour\nfive\n")
+    );
     assert_eq!(exact_whole.content, whole.content);
     assert_eq!(exact_whole.content_hash, whole.content_hash);
 
@@ -947,7 +950,13 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         })
         .await
         .expect("range through EOF");
-    assert_eq!((through_eof.returned_start_line, through_eof.returned_end_line), (4, 5));
+    assert_eq!(
+        (
+            through_eof.returned_start_line,
+            through_eof.returned_end_line
+        ),
+        (4, 5)
+    );
     assert_eq!(through_eof.content.as_deref(), Some("four\nfive\n"));
 
     std::fs::write(
@@ -1001,7 +1010,10 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
         .await
         .expect("symbol range");
 
-    assert_eq!((response.returned_start_line, response.returned_end_line), (3, 6));
+    assert_eq!(
+        (response.returned_start_line, response.returned_end_line),
+        (3, 6)
+    );
     assert_eq!(
         response.content.as_deref(),
         Some("fn target() -> usize {\n    let value = PREFIX + 1;\n    value\n}\n")
@@ -1211,7 +1223,13 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             })
             .await
             .expect_err("invalid range");
-        assert!(matches!(error, Error::InvalidInput { field: "line range", .. }));
+        assert!(matches!(
+            error,
+            Error::InvalidInput {
+                field: "line range",
+                ..
+            }
+        ));
     }
 
     let malformed = services
@@ -1242,7 +1260,8 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             heading: None,
             heading_occurrence: None,
             continuation_cursor: Some(
-                "1:read:v4:1:1:1:1:f:00000000000000000000000000000000:-:0000000000000000:0:-".into(),
+                "1:read:v4:1:1:1:1:f:00000000000000000000000000000000:-:0000000000000000:0:-"
+                    .into(),
             ),
             max_tokens: Some(100),
             expected_hash: None,
@@ -1284,16 +1303,25 @@ async fn token_truncated_read_reports_the_returned_line_range() {
         .await
         .expect("token-truncated range");
     let content = response.content.as_deref().expect("content");
-    let returned_lines = content.lines().count().max(usize::from(!content.is_empty()));
+    let returned_lines = content
+        .lines()
+        .count()
+        .max(usize::from(!content.is_empty()));
 
     assert!(!content.is_empty());
     assert_eq!(response.status, ReadStatus::Truncated);
     assert!(response.truncated);
-    assert_eq!((response.target_start_line, response.target_end_line), (2, 4));
+    assert_eq!(
+        (response.target_start_line, response.target_end_line),
+        (2, 4)
+    );
     assert!(response.next_start_line.is_some());
     assert!(response.continuation_cursor.is_some());
     assert_eq!(response.returned_start_line, 2);
-    assert_eq!(response.returned_end_line, response.returned_start_line + returned_lines - 1);
+    assert_eq!(
+        response.returned_end_line,
+        response.returned_start_line + returned_lines - 1
+    );
     assert!(response.returned_end_line <= 4);
     assert!(response.meta.source_tokens <= 3);
 }
@@ -1460,7 +1488,10 @@ async fn bounded_open_continuation_preserves_the_unbounded_target() {
 
 #[tokio::test]
 async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_changes() {
-    let long_line = format!("    let payload = \"{}\";\n", "multibyte-\u{754c}".repeat(80));
+    let long_line = format!(
+        "    let payload = \"{}\";\n",
+        "multibyte-\u{754c}".repeat(80)
+    );
     let source = format!("fn oversized_symbol() {{\n{long_line}    consume(payload);\n}}\n");
     let (root, services) = indexed_source("large.rs", source.as_bytes()).await;
 
@@ -1587,8 +1618,11 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
         })
         .await
         .expect("current first page");
-    std::fs::write(root.path().join("large.rs"), source.replace("consume", "changed"))
-        .expect("change live file");
+    std::fs::write(
+        root.path().join("large.rs"),
+        source.replace("consume", "changed"),
+    )
+    .expect("change live file");
     let error = services
         .read(ReadRequest {
             path: "large.rs".into(),
@@ -1685,7 +1719,10 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
         })
         .await
         .expect("qualified symbol");
-    assert_eq!((response.returned_start_line, response.returned_end_line), (6, 7));
+    assert_eq!(
+        (response.returned_start_line, response.returned_end_line),
+        (6, 7)
+    );
     assert!(
         response
             .content
@@ -1877,10 +1914,7 @@ async fn full_read_reports_stale_index_state_when_live_file_diverges() {
     assert!(response.index_stale);
     assert!(response.indexed_hash.is_some());
     assert_eq!(response.live_bytes_read, 37);
-    assert_eq!(
-        response.content.as_deref(),
-        Some("line one changed\n")
-    );
+    assert_eq!(response.content.as_deref(), Some("line one changed\n"));
 }
 
 #[tokio::test]

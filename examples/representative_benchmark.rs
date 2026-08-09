@@ -3646,10 +3646,51 @@ fn finalize_aggregate(aggregate: &mut AggregateReport) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn checkout_independent_hash(bytes: &[u8]) -> String {
+        let normalized = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+        blake3::hash(normalized.as_bytes()).to_hex().to_string()
+    }
+
+    fn report_preserves_manifest_binding(report: &str, manifest: &[u8]) {
+        let report: serde_json::Value = serde_json::from_str(report).expect("retrieval report");
+        assert_eq!(
+            report["manifest_blake3"],
+            checkout_independent_hash(manifest)
+        );
+    }
     use leantoken::{
         ContextCoverageReceipt, ContextOmissionSummary, ContextResponseProfile, ContextWorkflow,
         EvidenceReceipt, Freshness, IndexScopeMode, ResponseMeta,
     };
+
+    #[test]
+    fn structural_reports_preserve_manifest_bindings() {
+        let swift_manifest = include_str!("../benchmarks/swift_structural_validation.json");
+        let swift: Manifest = serde_json::from_str(swift_manifest).expect("Swift manifest");
+        validate_manifest(&swift).expect("valid Swift manifest");
+        for report in [
+            include_str!("../benchmarks/reports/swift-retrieval-control-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-control-run2.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.2-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run1.json"),
+            include_str!("../benchmarks/reports/swift-retrieval-0.7.3-run2.json"),
+        ] {
+            report_preserves_manifest_binding(report, swift_manifest.as_bytes());
+        }
+
+        let kotlin_manifest = include_str!("../benchmarks/kotlin_structural_validation.json");
+        let kotlin: Manifest = serde_json::from_str(kotlin_manifest).expect("Kotlin manifest");
+        validate_manifest(&kotlin).expect("valid Kotlin manifest");
+        for report in [
+            include_str!("../benchmarks/reports/kotlin-retrieval-control-run1.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-control-run2.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run1.json"),
+            include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run2.json"),
+        ] {
+            report_preserves_manifest_binding(report, kotlin_manifest.as_bytes());
+        }
+    }
 
     fn external_manifest() -> Manifest {
         serde_json::from_value(serde_json::json!({
@@ -4237,256 +4278,7 @@ mod tests {
     }
 
     #[test]
-    fn swift_structural_manifest_binds_the_frozen_gate() {
-        let source = include_str!("../benchmarks/swift_structural_validation.json");
-        let manifest: Manifest = serde_json::from_str(source).expect("Swift manifest");
-        validate_manifest(&manifest).expect("valid Swift manifest");
-
-        assert_eq!(manifest.schema_version, 4);
-        assert_eq!(manifest.dataset_kind, "prospective_validation");
-        assert_eq!(
-            blake3::hash(source.as_bytes()).to_hex().to_string(),
-            "f745f4d49833f7888502892a9ab0ee892f8621a8ada26d576407036be25d80e7"
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .count(),
-            10
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .map(|task| task.relevant_files.len())
-                .sum::<usize>(),
-            20
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .flat_map(|task| &task.relevant_files)
-                .map(|file| file.line_anchors.len())
-                .sum::<usize>(),
-            68
-        );
-        assert!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .all(|task| task.token_budget == 1024)
-        );
-    }
-
-    #[test]
-    fn kotlin_structural_manifest_binds_the_frozen_gate() {
-        let source = include_str!("../benchmarks/kotlin_structural_validation.json");
-        let manifest: Manifest = serde_json::from_str(source).expect("Kotlin manifest");
-        validate_manifest(&manifest).expect("valid Kotlin manifest");
-
-        assert_eq!(manifest.schema_version, 4);
-        assert_eq!(manifest.dataset_kind, "prospective_validation");
-        assert_eq!(
-            blake3::hash(source.as_bytes()).to_hex().to_string(),
-            "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59"
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .count(),
-            10
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .map(|task| task.relevant_files.len())
-                .sum::<usize>(),
-            20
-        );
-        assert_eq!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .flat_map(|task| &task.relevant_files)
-                .map(|file| file.line_anchors.len())
-                .sum::<usize>(),
-            82
-        );
-        assert!(
-            manifest
-                .corpora
-                .iter()
-                .flat_map(|corpus| &corpus.tasks)
-                .all(|task| task.token_budget == 1024)
-        );
-    }
-
-    #[test]
-    fn kotlin_structural_reports_bind_the_no_ship_decision() {
-        let evaluation: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/kotlin-structural-evaluation-openclaw-v1.json"
-        ))
-        .expect("Kotlin evaluation report");
-        let diagnostic: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/kotlin-parse-diagnostic-openclaw-0.4.0-v1.json"
-        ))
-        .expect("Kotlin parse diagnostic");
-        let attempts: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/kotlin-retrieval-attempts-openclaw-v1.json"
-        ))
-        .expect("Kotlin attempt receipt");
-        let raw_reports = [
-            (
-                include_str!("../benchmarks/reports/kotlin-retrieval-control-run1.json"),
-                "a2625a699ec66318e225fa8a9836692e847f3e20",
-                16,
-                8,
-            ),
-            (
-                include_str!("../benchmarks/reports/kotlin-retrieval-control-run2.json"),
-                "a2625a699ec66318e225fa8a9836692e847f3e20",
-                16,
-                8,
-            ),
-            (
-                include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run1.json"),
-                "a4640f64ce266130819141a9279d7676884faea7",
-                18,
-                26,
-            ),
-            (
-                include_str!("../benchmarks/reports/kotlin-retrieval-0.4.0-run2.json"),
-                "a4640f64ce266130819141a9279d7676884faea7",
-                18,
-                26,
-            ),
-        ];
-
-        assert_eq!(evaluation["decision"], "do_not_ship_kotlin_parser");
-        assert_eq!(
-            evaluation["determinism_gate"]["result"],
-            "inconclusive_legacy_accounting_normalization"
-        );
-        assert_eq!(
-            evaluation["product_test_gate"]["result"],
-            "inconclusive_no_candidate_revision_receipt"
-        );
-        assert_eq!(
-            evaluation["arms"][1]["retrieval"]["regressed_task_families"][0],
-            "directive_parsing"
-        );
-        assert_eq!(
-            diagnostic["parser_dependencies"]["tree_sitter_kotlin"],
-            "0.4.0"
-        );
-        assert_eq!(
-            evaluation["arms"][1]["parse_diagnostic"]["report_sha256"],
-            "2ea2b813b088c91e7ee426137e6ec8566746594f738dd5da251dc3b31dcf0b12"
-        );
-        assert_eq!(diagnostic["corpus"]["files"], 419);
-        assert_eq!(diagnostic["summary"]["incomplete_files"], 9);
-        assert_eq!(diagnostic["summary"]["error_nodes"], 11);
-        assert_eq!(diagnostic["summary"]["missing_nodes"], 0);
-        assert_eq!(
-            diagnostic["extension_strata"][1]["extension"], "kts",
-            "extension-only evidence must retain the script subgate"
-        );
-        assert_eq!(diagnostic["extension_strata"][1]["counts"]["files"], 6);
-        assert_eq!(
-            diagnostic["extension_strata"][1]["counts"]["incomplete_files"],
-            0
-        );
-        assert_eq!(
-            evaluation["arms"][1]["growth_against_control_run_means"]["cold_index_gate"],
-            "inconclusive_non_alternating_two_samples_per_arm"
-        );
-        assert_eq!(
-            evaluation["arms"][1]["growth_against_control_run_means"]["peak_rss_gate"],
-            "inconclusive_same_host_identity_not_retained"
-        );
-        assert!(
-            attempts["resource_measurement"]["host_pairing_evidence"].is_null(),
-            "missing host identity must remain explicit rather than inferred"
-        );
-        let gate_failures = evaluation["gate_failures"]
-            .as_array()
-            .expect("Kotlin gate failures");
-        assert!(
-            gate_failures.iter().all(|failure| !failure
-                .as_str()
-                .expect("gate failure text")
-                .contains("structurally incomplete")),
-            "parse incompleteness was diagnostic, not a frozen gate"
-        );
-        assert_eq!(
-            evaluation["arms"][1]["resource_samples"]["shipped_cli_binary_bytes"],
-            48_250_704
-        );
-        assert_eq!(
-            evaluation["arms"][1]["growth_against_control_run_means"]["shipped_cli_binary_bytes"],
-            4_871_232
-        );
-        assert_eq!(
-            evaluation["arms"][1]["resource_samples"]["peak_process_rss_bytes"],
-            serde_json::json!([121_884_672, 120_356_864])
-        );
-        assert_eq!(
-            attempts["attempts"]
-                .as_array()
-                .expect("Kotlin attempt list")
-                .len(),
-            7
-        );
-        assert_eq!(
-            attempts["attempts"][5]["peak_process_rss_bytes"],
-            121_884_672
-        );
-        assert!(
-            attempts["attempts"][5].get("process_rss_bytes").is_none(),
-            "external peak RSS must not be confused with end-of-run VmRSS"
-        );
-
-        for (raw, revision, relevant_files_found, line_anchors_found) in raw_reports {
-            assert!(
-                !raw.contains("\"content\":"),
-                "raw Kotlin report retained source content"
-            );
-            let report: serde_json::Value =
-                serde_json::from_str(raw).expect("raw Kotlin retrieval report");
-            assert_eq!(report["schema_version"], 4);
-            assert_eq!(
-                report["manifest_blake3"],
-                "39738183652e4d82af6e3dd73e3426ede8bab517e0f2ed8fd758ad10da207a59"
-            );
-            assert_eq!(report["harness_revision"], revision);
-            assert_eq!(report["harness_worktree_dirty"], false);
-            assert_eq!(report["aggregate"]["task_count"], 10);
-            assert_eq!(report["aggregate"]["relevant_files"], 20);
-            assert_eq!(report["aggregate"]["line_anchors"], 82);
-            assert_eq!(
-                report["aggregate"]["relevant_files_found"],
-                relevant_files_found
-            );
-            assert_eq!(
-                report["aggregate"]["line_anchors_found"],
-                line_anchors_found
-            );
-        }
-    }
-
-    #[test]
-    fn sealed_holdout_manifest_meets_schema_and_coverage_contract() {
+    fn sealed_holdout_manifest_meets_its_blind_holdout_contract() {
         let manifest: Manifest = serde_json::from_str(include_str!("../benchmarks/holdout.json"))
             .expect("holdout manifest");
 

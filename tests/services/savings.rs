@@ -179,12 +179,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         observed.observations.expected_hash_not_modified_responses,
         1
     );
-    assert!(
-        observed
-            .observations
-            .expected_hash_suppressed_source_tokens
-            > 0
-    );
+    assert!(observed.observations.expected_hash_suppressed_source_tokens > 0);
     assert_eq!(
         observed
             .observations
@@ -203,10 +198,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     }));
     assert_eq!(observed.observations.request_classification.useful, 4);
     assert_eq!(
-        observed
-            .observations
-            .request_classification
-            .hash_suppressed,
+        observed.observations.request_classification.hash_suppressed,
         1
     );
     assert_eq!(observed.observations.request_classification.failed, 1);
@@ -221,10 +213,17 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
         .await
         .expect("empty snapshot delta");
-    assert_eq!(zero_delta.observed.observations.successful_response_records, 0);
+    assert_eq!(
+        zero_delta.observed.observations.successful_response_records,
+        0
+    );
     assert_eq!(zero_delta.observed.observations.failed_service_requests, 0);
     assert_eq!(
-        zero_delta.observed.report.response_accounting.total_response_tokens,
+        zero_delta
+            .observed
+            .report
+            .response_accounting
+            .total_response_tokens,
         0
     );
     let (_other_root, other_services) = fixture().await;
@@ -249,12 +248,16 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
         })
     ));
     let serialized = serde_json::to_value(&observed).expect("serialize observed accounting");
-    assert!(serialized
-        .pointer("/response_accounting/estimate_basis")
-        .is_some());
-    assert!(serialized
-        .pointer("/response_accounting/estimated_net_tokens_saved")
-        .is_some());
+    assert!(
+        serialized
+            .pointer("/response_accounting/estimate_basis")
+            .is_some()
+    );
+    assert!(
+        serialized
+            .pointer("/response_accounting/estimated_net_tokens_saved")
+            .is_some()
+    );
     assert!(serialized.get("response_accounting").is_some());
     assert!(serialized.get("observations").is_some());
     assert!(serialized.get("report").is_none());
@@ -364,10 +367,7 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
             .failed_by_operation_and_category
             .iter()
             .filter(|failure| failure.operation == TokenAccountingOperation::ReceiptRebase)
-            .map(|failure| (
-                failure.error_category.as_str(),
-                failure.failed_requests
-            ))
+            .map(|failure| (failure.error_category.as_str(), failure.failed_requests))
             .collect::<Vec<_>>(),
         vec![("request_limit_exceeded", 1)]
     );
@@ -421,11 +421,7 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
         .expect("classified delta");
     assert_eq!(delta.window, TokenSavingsWindow::Delta);
     assert_eq!(
-        delta
-            .observed
-            .report
-            .response_accounting
-            .tracked_requests,
+        delta.observed.report.response_accounting.tracked_requests,
         2
     );
     assert_eq!(
@@ -444,9 +440,6 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
             .incomplete,
         1
     );
-    assert_eq!(
-        delta.observed.observations.request_classification.failed,
-        0
-    );
+    assert_eq!(delta.observed.observations.request_classification.failed, 0);
     assert_eq!(delta.observed.observations.failed_service_requests, 0);
 }

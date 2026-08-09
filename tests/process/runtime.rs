@@ -176,7 +176,10 @@ pub(super) fn empty_setup_refresh_reports_unrecognized_clients_without_mutation(
         "No existing LeanToken client registrations were recognized; no changes were made."
     ));
     assert_eq!(std::fs::read_to_string(config).unwrap(), original_config);
-    assert_eq!(std::fs::read_to_string(discovery).unwrap(), original_discovery);
+    assert_eq!(
+        std::fs::read_to_string(discovery).unwrap(),
+        original_discovery
+    );
 }
 
 pub(super) fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
@@ -324,7 +327,10 @@ fn assert_runtime_inventory(listed: &serde_json::Value) {
         .iter()
         .find(|entry| entry["version"] == "1.1.0")
         .expect("referenced runtime");
-    assert_eq!(referenced_entry["referenced_by"], serde_json::json!(["claude"]));
+    assert_eq!(
+        referenced_entry["referenced_by"],
+        serde_json::json!(["claude"])
+    );
     let unsafe_entry = entries
         .iter()
         .find(|entry| entry["version"] == "0.9.0")
@@ -367,8 +373,10 @@ pub(super) fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation(
         .output()
         .expect("initial runtime list");
     assert!(initial.status.success());
-    let initial: serde_json::Value = serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
-    let runtime_root = std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
+    let initial: serde_json::Value =
+        serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
+    let runtime_root =
+        std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
     let external = temp.path().join("external-runtimes");
     let version = external.join("1.0.0");
     std::fs::create_dir_all(&version).expect("external runtime directory");
@@ -378,7 +386,10 @@ pub(super) fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation(
         .expect("runtime parent");
     symlink(&external, &runtime_root).expect("symlink runtime root");
 
-    let list = command().args(["runtime", "list"]).output().expect("list symlinked runtime root");
+    let list = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("list symlinked runtime root");
     assert!(!list.status.success());
     assert!(String::from_utf8_lossy(&list.stderr).contains("non-symlink directory"));
     let prune = command()
@@ -415,9 +426,15 @@ pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_d
         .output()
         .expect("initial runtime list");
     assert!(initial.status.success());
-    let initial: serde_json::Value = serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
-    let runtime_root = std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
-    let executable_name = if cfg!(windows) { "leantoken.exe" } else { "leantoken" };
+    let initial: serde_json::Value =
+        serde_json::from_slice(&initial.stdout).expect("initial runtime JSON");
+    let runtime_root =
+        std::path::PathBuf::from(initial["runtime_root"].as_str().expect("runtime root"));
+    let executable_name = if cfg!(windows) {
+        "leantoken.exe"
+    } else {
+        "leantoken"
+    };
     let runtime = |version: &str, bytes: &[u8]| {
         let directory = runtime_root.join(version);
         std::fs::create_dir_all(&directory).expect("runtime directory");
@@ -431,19 +448,37 @@ pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_d
     let unsafe_runtime = runtime("0.9.0", b"unsafe");
     std::fs::write(unsafe_runtime.parent().unwrap().join("notes.txt"), b"keep")
         .expect("unrecognized sibling");
-    let referenced_alias = referenced.parent().unwrap().join("..").join("1.1.0").join(executable_name);
-    assert_eq!(referenced_alias.canonicalize().unwrap(), referenced.canonicalize().unwrap());
+    let referenced_alias = referenced
+        .parent()
+        .unwrap()
+        .join("..")
+        .join("1.1.0")
+        .join(executable_name);
+    assert_eq!(
+        referenced_alias.canonicalize().unwrap(),
+        referenced.canonicalize().unwrap()
+    );
     let claude = serde_json::json!({"mcpServers": {"leantoken": {
         "command": referenced_alias, "args": ["--managed-by-setup", "mcp"]
     }}});
-    std::fs::write(temp.path().join(".claude.json"), serde_json::to_vec(&claude).unwrap())
-        .expect("Claude config");
+    std::fs::write(
+        temp.path().join(".claude.json"),
+        serde_json::to_vec(&claude).unwrap(),
+    )
+    .expect("Claude config");
 
-    let listed = command().args(["--json", "runtime", "list"]).output().expect("runtime list");
+    let listed = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("runtime list");
     assert!(listed.status.success());
-    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("runtime list JSON");
+    let listed: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("runtime list JSON");
     assert_runtime_inventory(&listed);
-    let human_list = command().args(["runtime", "list"]).output().expect("human runtime list");
+    let human_list = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("human runtime list");
     assert!(human_list.status.success());
     assert_human_runtime_list(&human_list.stdout);
 
@@ -452,11 +487,15 @@ pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_d
         .output()
         .expect("runtime prune plan");
     assert!(planned.status.success());
-    let planned: serde_json::Value = serde_json::from_slice(&planned.stdout).expect("runtime prune JSON");
+    let planned: serde_json::Value =
+        serde_json::from_slice(&planned.stdout).expect("runtime prune JSON");
     assert_eq!(planned["dry_run"], true);
     assert!(oldest.exists() && newest.exists() && referenced.exists() && unsafe_runtime.exists());
     assert_runtime_prune_decisions(&planned);
-    let human_plan = command().args(["runtime", "prune", "--keep-latest", "0"]).output().expect("human runtime prune plan");
+    let human_plan = command()
+        .args(["runtime", "prune", "--keep-latest", "0"])
+        .output()
+        .expect("human runtime prune plan");
     assert!(human_plan.status.success());
     assert_human_runtime_prune(&human_plan.stdout);
 
@@ -464,20 +503,34 @@ pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_d
         .args(["--json", "runtime", "prune", "--keep-latest", "0", "--yes"])
         .output()
         .expect("apply runtime prune");
-    assert!(applied.status.success(), "stderr: {}", String::from_utf8_lossy(&applied.stderr));
+    assert!(
+        applied.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
     assert!(!oldest.exists());
     assert!(!newest.exists());
     assert!(referenced.exists());
     assert!(unsafe_runtime.exists());
-    let final_list = command().args(["--json", "runtime", "list"]).output().expect("final runtime list");
+    let final_list = command()
+        .args(["--json", "runtime", "list"])
+        .output()
+        .expect("final runtime list");
     assert!(final_list.status.success());
-    let final_list: serde_json::Value = serde_json::from_slice(&final_list.stdout).expect("final runtime JSON");
+    let final_list: serde_json::Value =
+        serde_json::from_slice(&final_list.stdout).expect("final runtime JSON");
     assert_eq!(final_list["ignored_entries"], 0);
 
     std::fs::create_dir_all(temp.path().join(".cursor")).expect("Cursor config directory");
-    let oversized = std::fs::File::create(temp.path().join(".cursor/mcp.json")).expect("oversized Cursor config");
-    oversized.set_len(8 * 1024 * 1024 + 1).expect("extend Cursor config");
-    let bounded = command().args(["runtime", "list"]).output().expect("bounded runtime list");
+    let oversized = std::fs::File::create(temp.path().join(".cursor/mcp.json"))
+        .expect("oversized Cursor config");
+    oversized
+        .set_len(8 * 1024 * 1024 + 1)
+        .expect("extend Cursor config");
+    let bounded = command()
+        .args(["runtime", "list"])
+        .output()
+        .expect("bounded runtime list");
     assert!(!bounded.status.success());
     assert!(String::from_utf8_lossy(&bounded.stderr).contains("byte limit"));
 }
@@ -497,18 +550,36 @@ pub(super) fn ambient_npx_metadata_does_not_replace_the_persistent_setup_launche
         .args(["--json", "setup", "--claude", "--yes"])
         .output()
         .expect("run npx setup");
-    assert!(setup.status.success(), "ambient lifecycle metadata must not break a persistent executable");
-    let report: serde_json::Value = serde_json::from_slice(&setup.stdout).expect("setup JSON output");
+    assert!(
+        setup.status.success(),
+        "ambient lifecycle metadata must not break a persistent executable"
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
     assert_eq!(report["verification"]["status"], "passed");
-    let executable = assert_cmd::cargo::cargo_bin!("leantoken").canonicalize().expect("canonical executable");
+    let executable = assert_cmd::cargo::cargo_bin!("leantoken")
+        .canonicalize()
+        .expect("canonical executable");
     assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
     assert_eq!(report["launcher"]["may_contact_network"], false);
     assert_eq!(report["launcher"]["command"], executable.to_str().unwrap());
-    assert_eq!(report["launcher"]["args"], serde_json::json!(["--managed-by-setup", "mcp"]));
-    let config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(temp.path().join(".claude.json")).expect("Claude configuration")).expect("Claude JSON");
-    assert_eq!(config["mcpServers"]["leantoken"]["command"], executable.to_str().unwrap());
-    assert_eq!(config["mcpServers"]["leantoken"]["args"], serde_json::json!(["--managed-by-setup", "mcp"]));
+    assert_eq!(
+        report["launcher"]["args"],
+        serde_json::json!(["--managed-by-setup", "mcp"])
+    );
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(temp.path().join(".claude.json")).expect("Claude configuration"),
+    )
+    .expect("Claude JSON");
+    assert_eq!(
+        config["mcpServers"]["leantoken"]["command"],
+        executable.to_str().unwrap()
+    );
+    assert_eq!(
+        config["mcpServers"]["leantoken"]["args"],
+        serde_json::json!(["--managed-by-setup", "mcp"])
+    );
 }
 
 pub(super) fn ambient_npx_metadata_keeps_the_persistent_setup_handoff() {
@@ -523,12 +594,17 @@ pub(super) fn ambient_npx_metadata_keeps_the_persistent_setup_handoff() {
         .args(["setup", "--codex", "--yes"])
         .output()
         .expect("run npx setup");
-    assert!(output.status.success(), "ambient lifecycle metadata must not break a persistent executable");
+    assert!(
+        output.status.success(),
+        "ambient lifecycle metadata must not break a persistent executable"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("LeanToken // Context Distillery"));
     assert!(stdout.contains("LeanToken is configured for 1 client."));
     assert!(stdout.contains("✓ Exact launcher verified: initialize, 9-tool catalog"));
-    assert!(stdout.contains("Verify the stored Codex launcher from a repository: leantoken doctor --client codex"));
+    assert!(stdout.contains(
+        "Verify the stored Codex launcher from a repository: leantoken doctor --client codex"
+    ));
     assert!(stdout.contains("Update later with: leantoken upgrade"));
     assert!(!stdout.contains("Some selected clients failed"));
     assert!(!stdout.contains("Launcher verification failed"));
