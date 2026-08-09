@@ -224,13 +224,12 @@ impl Indexer {
         let mut candidates = Vec::new();
         for file in discovered {
             check_cancelled(cancellation)?;
-            // mtime+size alone cannot prove content identity (bind mounts, copy
-            // tools that preserve mtime, some network filesystems). Content-hash
-            // before skipping so silent overwrites still reindex.
+            // Size bounds the identity read; the indexed content hash is the
+            // authority. mtime can churn across checkouts, copy tools, and
+            // filesystems without changing the indexed repository view.
             if !force
                 && let Some(record) = existing.get(&file.relative_path)
                 && record.size_bytes == file.size_bytes
-                && record.modified_ns == file.modified_ns
                 && content_unchanged(
                     &self.repository_root,
                     &file.relative_path,

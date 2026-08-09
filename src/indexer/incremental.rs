@@ -281,6 +281,12 @@ impl Indexer {
             }
         }
 
+        unchanged = unchanged.saturating_add(self.remove_content_stable_candidates(
+            &existing,
+            &mut candidates,
+            cancellation,
+        )?);
+
         let change_set = ChangeSet::classify(&existing, &candidates, &deletions, visibility_delta);
         debug_assert_eq!(
             change_set.modified.len() + change_set.created.len(),
@@ -299,7 +305,9 @@ impl Indexer {
         directly_observed_deletions.retain(|path| deletions.contains(path));
         debug_assert!(directly_observed_deletions.is_subset(&deletions));
 
-        let files_seen = candidates.len() + directly_observed_deletions.len();
+        let files_seen = unchanged
+            .saturating_add(candidates.len())
+            .saturating_add(directly_observed_deletions.len());
         let relocation_old_paths = relocations
             .iter()
             .map(|relocation| relocation.old_path.clone())
@@ -377,7 +385,6 @@ impl Indexer {
                             let same = existing.get(&file.path).is_some_and(|record| {
                                 record.content_hash == file.content_hash
                                     && record.size_bytes == file.size_bytes
-                                    && record.modified_ns == file.modified_ns
                             });
                             if same {
                                 unchanged += 1;

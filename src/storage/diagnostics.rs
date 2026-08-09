@@ -91,25 +91,29 @@ pub(crate) fn fts_storage_footprint(conn: &Connection) -> Result<FtsStorageFootp
 pub(crate) fn populate_post_commit_diagnostics(
     conn: &Connection,
     database: &Path,
+    checkpoint: bool,
     diagnostics: &mut PublicationDiagnostics,
 ) -> Result<()> {
-    let ((busy, log_frames, checkpointed_frames), elapsed_ms, write_bytes) =
-        measured_storage_phase(true, || {
-            Ok(
-                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                })?,
-            )
-        })?;
-    diagnostics.checkpoint_ms = elapsed_ms;
-    diagnostics.checkpoint_write_bytes = write_bytes;
-    diagnostics.checkpoint_busy = busy;
-    diagnostics.checkpoint_log_frames = log_frames;
-    diagnostics.checkpointed_frames = checkpointed_frames;
+    if checkpoint {
+        diagnostics.checkpoint_attempted = true;
+        let ((busy, log_frames, checkpointed_frames), elapsed_ms, write_bytes) =
+            measured_storage_phase(true, || {
+                Ok(
+                    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })?,
+                )
+            })?;
+        diagnostics.checkpoint_ms = elapsed_ms;
+        diagnostics.checkpoint_write_bytes = write_bytes;
+        diagnostics.checkpoint_busy = busy;
+        diagnostics.checkpoint_log_frames = log_frames;
+        diagnostics.checkpointed_frames = checkpointed_frames;
+    }
     diagnostics.database_bytes = fs::metadata(database)
         .map(|metadata| metadata.len())
         .unwrap_or(0);
@@ -164,10 +168,17 @@ pub struct PublicationDiagnostics {
     pub reference_fts_rebuild_ms: f64,
     /// Linux process write bytes observed during the reference-index rebuild.
     pub reference_fts_rebuild_write_bytes: Option<u64>,
-    /// Transaction commit time with auto-checkpointing disabled for this profile.
+    /// Transaction completion time with auto-checkpointing disabled for this profile.
+    ///
+    /// A no-change reconciliation rolls back its read-only verification
+    /// transaction instead of committing it.
     pub commit_ms: f64,
-    /// Linux process write bytes observed during commit.
+    /// Linux process write bytes observed while completing the transaction.
     pub commit_write_bytes: Option<u64>,
+    /// Whether publication requested an explicit post-commit checkpoint.
+    ///
+    /// No-change reconciliation leaves an existing WAL backlog untouched.
+    pub checkpoint_attempted: bool,
     /// Explicit post-commit checkpoint time.
     pub checkpoint_ms: f64,
     /// Linux process write bytes observed during the checkpoint.
@@ -188,7 +199,7 @@ pub struct PublicationDiagnostics {
     pub wal_bytes: u64,
     /// Per-index logical bytes from SQLite's `dbstat` virtual table.
     pub fts_storage: FtsStorageFootprint,
-    /// Whether every post-commit checkpoint and footprint diagnostic completed.
+    /// Whether every requested post-commit diagnostic completed.
     ///
     /// Publication success does not depend on diagnostic collection after the
     /// transaction has committed.

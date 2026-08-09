@@ -303,8 +303,9 @@ pub(super) fn push_warning(warnings: &mut Vec<String>, warning: String) {
 
 /// Return whether the on-disk file still matches the indexed content hash.
 ///
-/// Used when size and mtime look unchanged so full reconcile cannot skip a
-/// content rewrite that preserved those metadata fields.
+/// Size is checked by the caller before this bounded read. The content hash is
+/// authoritative both when mtime is stable and when metadata churned without a
+/// repository-content change.
 pub(super) fn content_unchanged(
     root: &Dir,
     path: &str,

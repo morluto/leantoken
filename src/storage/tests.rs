@@ -326,6 +326,216 @@ pub(crate) fn writer_bounds_recycled_wal_size() {
 }
 
 #[test]
+pub(crate) fn ordinary_noop_does_not_autocheckpoint_existing_wal_backlog() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for backlog fixture");
+    }
+    storage
+        .full_reconcile(
+            "config",
+            vec![sample_file(
+                "backlog.rs",
+                &"checkpoint backlog\n".repeat(32_768),
+            )],
+        )
+        .expect("backlogged generation");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 1)
+            .expect("arm auto-checkpoint for no-op");
+    }
+    let wal_bytes_before = fs::metadata(wal_path(&database))
+        .expect("backlogged WAL")
+        .len();
+    assert!(wal_bytes_before > 0);
+    let database_hash_before =
+        crate::text::hash_bytes(&fs::read(&database).expect("database bytes before no-op"));
+
+    let generation = storage
+        .reconcile_files("config", Vec::new(), &[])
+        .expect("ordinary no-op");
+
+    assert_eq!(generation, 1);
+    assert_eq!(
+        fs::metadata(wal_path(&database))
+            .expect("WAL after no-op")
+            .len(),
+        wal_bytes_before
+    );
+    assert_eq!(
+        crate::text::hash_bytes(&fs::read(&database).expect("database bytes after no-op")),
+        database_hash_before,
+        "a no-change baseline verification must not copy WAL pages into the main database"
+    );
+}
+
+#[test]
+pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
+    let root = tempfile::tempdir().expect("root");
+    let repository = root.path().join("repository");
+    fs::create_dir(&repository).expect("repository");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .bind_repository_at(&repository, None, 1_234)
+        .expect("initial repository binding");
+    let (auto_checkpoint_pages, page_size) = {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let pages = writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("default auto-checkpoint pages");
+        let page_size = writer
+            .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+            .expect("database page size");
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for backlog fixture");
+        (pages, page_size)
+    };
+    assert!(auto_checkpoint_pages > 0);
+    assert!(page_size > 0);
+    let payload = "x".repeat(512 * 1024);
+    storage
+        .full_reconcile(
+            "config",
+            (0..8)
+                .map(|index| {
+                    sample_file(
+                        &format!("backlog-{index}.rs"),
+                        &format!("file {index}\n{payload}"),
+                    )
+                })
+                .collect(),
+        )
+        .expect("backlogged generation");
+    let reader = storage.begin_read().expect("latest pinned reader");
+    assert_eq!(
+        reader.repository_generation().expect("pinned generation"),
+        1
+    );
+    let wal_bytes_before = fs::metadata(wal_path(&database))
+        .expect("backlogged WAL")
+        .len();
+    assert!(
+        wal_bytes_before
+            > u64::try_from(auto_checkpoint_pages)
+                .expect("positive auto-checkpoint pages")
+                .saturating_mul(u64::try_from(page_size).expect("positive database page size"))
+    );
+    let database_hash_before =
+        crate::text::hash_bytes(&fs::read(&database).expect("database before reopen"));
+
+    let reopened = Storage::open_for_repository(&database, &repository).expect("reopen storage");
+
+    assert_eq!(
+        crate::text::hash_bytes(&fs::read(&database).expect("database after reopen")),
+        database_hash_before,
+        "startup schema checks and binding telemetry must not checkpoint existing WAL pages"
+    );
+    assert!(
+        fs::metadata(wal_path(&database))
+            .expect("WAL after reopen")
+            .len()
+            >= wal_bytes_before
+    );
+    let restored_auto_checkpoint = reopened
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+        .expect("restored auto-checkpoint pages");
+    assert_eq!(restored_auto_checkpoint, auto_checkpoint_pages);
+    assert_eq!(reader.repository_generation().expect("stable snapshot"), 1);
+}
+
+#[test]
+pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for repair fixture");
+    }
+    storage
+        .full_reconcile(
+            "config",
+            (0..8)
+                .map(|index| sample_file(&format!("repair-{index}.rs"), "fn repair() {}\n"))
+                .collect(),
+        )
+        .expect("backlogged generation");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "DELETE FROM path_entries WHERE file_id = (SELECT id FROM files LIMIT 1)",
+                [],
+            )
+            .expect("damage path projection");
+    }
+    assert!(
+        fs::metadata(wal_path(&database))
+            .expect("repair fixture WAL")
+            .len()
+            > 0
+    );
+
+    let repaired = Storage::open(&database).expect("repair storage on reopen");
+
+    let writer = repaired
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (files, paths) = writer
+        .query_row(
+            "SELECT (SELECT count(*) FROM files),
+                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("repaired projection counts");
+    assert_eq!(paths, files);
+    assert!(
+        writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("restored auto-checkpoint policy")
+            > 0
+    );
+    assert_eq!(
+        fs::metadata(wal_path(&database))
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
+        0,
+        "a successful startup repair should not leave its WAL for a no-change reconcile"
+    );
+}
+
+#[test]
 pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
@@ -379,6 +589,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
         })
         .expect("profiled reconciliation with pinned reader");
     assert!(blocked_checkpoint.post_commit_diagnostics_complete);
+    assert!(blocked_checkpoint.checkpoint_attempted);
     assert_eq!(blocked_checkpoint.checkpoint_busy, 1);
     assert!(blocked_checkpoint.wal_bytes >= retained_wal_bytes);
 
@@ -392,6 +603,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
         .expect("post-reader reconciliation");
 
     assert!(completed_checkpoint.post_commit_diagnostics_complete);
+    assert!(completed_checkpoint.checkpoint_attempted);
     assert_eq!(completed_checkpoint.checkpoint_busy, 0);
     assert_eq!(completed_checkpoint.checkpoint_log_frames, 0);
     assert_eq!(completed_checkpoint.checkpointed_frames, 0);

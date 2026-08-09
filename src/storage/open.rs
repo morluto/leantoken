@@ -139,9 +139,11 @@ impl Storage {
         }
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
-        MIGRATIONS.to_latest(&mut conn)?;
-        Self::ensure_token_savings_schema(&mut conn)?;
-        Self::ensure_path_projection(&mut conn)?;
+        with_auto_checkpoint_suspended(&mut conn, true, |conn| {
+            MIGRATIONS.to_latest(conn)?;
+            Self::ensure_token_savings_schema(conn)?;
+            Self::ensure_path_projection(conn)
+        })?;
         Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
@@ -228,40 +230,42 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (expected_repository, expected_identity): (String, String) = tx.query_row(
-            "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-
-        if expected_identity.is_empty() {
-            tx.execute(
-                "UPDATE meta SET repository_root = ?1, repository_identity = ?2, last_access_unix_seconds = ?3 WHERE id = 1",
-                params![actual_display.as_ref(), actual_identity, accessed_at],
+        with_auto_checkpoint_suspended(&mut conn, false, |conn| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let (expected_repository, expected_identity): (String, String) = tx.query_row(
+                "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            tx.commit()?;
-            return Ok(());
-        }
-        if expected_identity != actual_identity {
-            if expected_repository == actual_display {
-                return Err(Error::IndexScopeMismatch {
+
+            if expected_identity.is_empty() {
+                tx.execute(
+                    "UPDATE meta SET repository_root = ?1, repository_identity = ?2, last_access_unix_seconds = ?3 WHERE id = 1",
+                    params![actual_display.as_ref(), actual_identity, accessed_at],
+                )?;
+                tx.commit()?;
+                return Ok(());
+            }
+            if expected_identity != actual_identity {
+                if expected_repository == actual_display {
+                    return Err(Error::IndexScopeMismatch {
+                        database: self.path.clone(),
+                    });
+                }
+                return Err(Error::RepositoryMismatch {
                     database: self.path.clone(),
+                    expected_repository,
+                    actual_repository,
                 });
             }
-            return Err(Error::RepositoryMismatch {
-                database: self.path.clone(),
-                expected_repository,
-                actual_repository,
-            });
-        }
 
-        tx.execute(
-            "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
-            params![accessed_at],
-        )?;
-        tx.commit()?;
-        Ok(())
+            tx.execute(
+                "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
+                params![accessed_at],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
     }
 
     pub(crate) fn configure(conn: &mut Connection, startup_timeout: Duration) -> Result<()> {
@@ -438,6 +442,51 @@ impl Storage {
         tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+fn with_auto_checkpoint_suspended<T>(
+    conn: &mut Connection,
+    checkpoint_mutations: bool,
+    operation: impl FnOnce(&mut Connection) -> Result<T>,
+) -> Result<T> {
+    let total_changes_before = checkpoint_mutations.then(|| conn.total_changes());
+    let schema_version_before = checkpoint_mutations
+        .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
+        .transpose()?;
+    let previous = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))?;
+    if previous != 0 {
+        conn.pragma_update(None, "wal_autocheckpoint", 0)?;
+    }
+    let result = operation(conn);
+    let restore = if previous != 0 {
+        conn.pragma_update(None, "wal_autocheckpoint", previous)
+            .map_err(Error::from)
+    } else {
+        Ok(())
+    };
+    let schema_version_after = checkpoint_mutations
+        .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
+        .transpose()?;
+    let main_database_changed = total_changes_before
+        .zip(schema_version_before)
+        .zip(schema_version_after)
+        .is_some_and(|((changes, schema), current_schema)| {
+            conn.total_changes() != changes || current_schema != schema
+        });
+    let checkpoint = if main_database_changed {
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .map_err(Error::from)
+    } else {
+        Ok(())
+    };
+    match result {
+        Err(error) => Err(error),
+        Ok(output) => {
+            restore?;
+            checkpoint?;
+            Ok(output)
+        }
     }
 }
 use super::*;

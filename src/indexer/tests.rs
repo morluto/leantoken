@@ -128,7 +128,7 @@ fn initial_reconcile_reports_completed_aggregate_progress() {
 }
 
 #[test]
-fn profiled_noop_attributes_backlogged_wal_writes_to_checkpoint_without_publishing() {
+fn profiled_noop_preserves_backlogged_wal_without_checkpointing_or_publishing() {
     let root = tempfile::tempdir().expect("root");
     for index in 0..32 {
         fs::write(
@@ -166,34 +166,122 @@ fn profiled_noop_attributes_backlogged_wal_writes_to_checkpoint_without_publishi
         profiled.diagnostics.publication_detail.stage_database_bytes, 0,
         "an empty reconciliation must not materialize a stage database"
     );
+    assert!(profiled.diagnostics.publication_detail.wal_bytes > 0);
+    assert!(!profiled.diagnostics.publication_detail.checkpoint_attempted);
+    assert_eq!(
+        profiled
+            .diagnostics
+            .publication_detail
+            .checkpoint_write_bytes,
+        None
+    );
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        let publication = &profiled.diagnostics.publication_detail;
-        let checkpoint = publication
-            .checkpoint_write_bytes
-            .expect("Linux checkpoint write bytes");
-        let generation_publish = publication
-            .relational_write_bytes
-            .unwrap_or(0)
-            .saturating_add(publication.commit_write_bytes.unwrap_or(0));
-        assert!(checkpoint > 0, "the fixture must leave a WAL backlog");
-        assert!(
-            checkpoint > generation_publish,
-            "checkpoint={checkpoint} generation_publish={generation_publish}"
-        );
-        assert!(
-            profiled
-                .diagnostics
-                .process_write_bytes
-                .expect("process writes")
-                >= checkpoint
-        );
-        assert_eq!(
-            profiled.diagnostics.storage_phase_write_bytes,
-            publication.measured_write_bytes()
-        );
-    }
+fn advance_modified_time(path: &Path) {
+    let modified = fs::metadata(path)
+        .expect("source metadata")
+        .modified()
+        .expect("source mtime");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open source for mtime update")
+        .set_times(fs::FileTimes::new().set_modified(modified + Duration::from_secs(60)))
+        .expect("advance source mtime");
+    assert_ne!(
+        fs::metadata(path)
+            .expect("updated source metadata")
+            .modified()
+            .expect("updated source mtime"),
+        modified
+    );
+}
+
+#[test]
+fn full_reconcile_treats_mtime_only_churn_as_content_stable() {
+    let root = tempfile::tempdir().expect("root");
+    let source = root.path().join("stable.rs");
+    fs::write(&source, "pub fn stable() -> usize { 1 }\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+    let initial = indexer.reconcile(false).expect("initial reconcile");
+    advance_modified_time(&source);
+
+    let profiled = indexer
+        .reconcile_profiled(false)
+        .expect("mtime-only reconcile");
+
+    assert_eq!(profiled.response.files_seen, 1);
+    assert_eq!(profiled.response.files_indexed, 0);
+    assert_eq!(profiled.response.files_unchanged, 1);
+    assert_eq!(
+        profiled.response.repository_generation,
+        initial.repository_generation
+    );
+    assert_eq!(profiled.diagnostics.preparation_detail.files_profiled, 0);
+    assert_eq!(
+        profiled.diagnostics.publication_detail.stage_database_bytes,
+        0
+    );
+    assert!(!profiled.diagnostics.generation_published);
+    assert!(!profiled.diagnostics.publication_detail.checkpoint_attempted);
+}
+
+#[test]
+fn targeted_reconcile_treats_mtime_only_churn_as_content_stable() {
+    let root = tempfile::tempdir().expect("root");
+    let source = root.path().join("stable.rs");
+    fs::write(&source, "pub fn stable() -> usize { 1 }\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
+    let initial = indexer.reconcile(false).expect("initial reconcile");
+    advance_modified_time(&source);
+
+    let response = indexer
+        .reconcile_paths(&["stable.rs".into()])
+        .expect("mtime-only targeted reconcile");
+
+    assert_eq!(response.files_seen, 1);
+    assert_eq!(response.files_indexed, 0);
+    assert_eq!(response.files_unchanged, 1);
+    assert_eq!(
+        response.repository_generation,
+        initial.repository_generation
+    );
+}
+
+#[test]
+fn same_size_content_change_still_reindexes_when_mtime_changes() {
+    let root = tempfile::tempdir().expect("root");
+    let source = root.path().join("changed.rs");
+    fs::write(&source, "pub fn alpha() -> usize { 1 }\n").expect("original source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    let initial = indexer.reconcile(false).expect("initial reconcile");
+    fs::write(&source, "pub fn bravo() -> usize { 1 }\n").expect("replacement source");
+    advance_modified_time(&source);
+
+    let response = indexer.reconcile(false).expect("changed reconcile");
+
+    assert_eq!(response.files_indexed, 1);
+    assert_eq!(response.files_unchanged, 0);
+    assert_eq!(
+        response.repository_generation,
+        initial.repository_generation + 1
+    );
+    assert_eq!(
+        storage
+            .search_symbols("bravo", true, 10)
+            .expect("replacement symbol")
+            .len(),
+        1
+    );
 }
 
 #[test]
