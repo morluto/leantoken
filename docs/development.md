@@ -388,9 +388,6 @@ run them in parallel rather than starting one executable per file.
   publication, leader failover, MCP EOF shutdown, and repository-free episode
   audit behavior through the executable;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
-- `tests/representation_comparison.rs`: tree, outline, search, read, and context
-  representation costs.
-
 `src/episode.rs` owns unit coverage for versioned analyzer adapters, published
 60-run replay, exact/proxy classification boundaries, binding/privacy failure,
 resource caps, and deterministic JSON/Markdown normalization.

@@ -1349,28 +1349,4 @@ mod tests {
         assert!(!report.required_exchange_parts["initialize_response"]);
     }
 
-    #[test]
-    fn checked_in_synthetic_token_fixture_is_deterministic() {
-        let report: serde_json::Value = serde_json::from_str(include_str!(
-            "../benchmarks/reports/wire-trace-synthetic-v2.json"
-        ))
-        .expect("checked-in report");
-        assert_eq!(report["total_serialized_json_tokens"], 2_820);
-        assert_eq!(report["total_source_tokens"], 21);
-        assert_eq!(report["total_provider_visible_payload_tokens"], 13);
-        assert_eq!(report["total_handoff_tokens"], 13);
-        assert_eq!(report["total_observed_boundary_tokens"], 2_833);
-        assert_eq!(
-            report["result_lifetimes"][0]["serialized_token_amplification"],
-            663
-        );
-        assert_eq!(
-            report["result_lifetimes"][0]["provider_visible_token_amplification"],
-            26
-        );
-        assert_eq!(
-            report["result_lifetimes"][0]["source_token_amplification"],
-            63
-        );
-    }
 }

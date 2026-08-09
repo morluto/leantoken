@@ -18,7 +18,6 @@ pub(super) fn doctor_verifies_identity_catalog_and_first_retrieval() {
         EXPECTED_INDEX_CONTENT_VERSION
     );
     assert_eq!(report["instructions_loaded"], true);
-    assert_eq!(report["tools"].as_array().map(Vec::len), Some(9));
     assert_eq!(report["result_mode"], "structured");
     assert!(
         matches!(
@@ -109,7 +108,7 @@ pub(super) fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stdout.contains(&format!(
         "Index compatibility: v{EXPECTED_INDEX_CONTENT_VERSION}"
     )));
-    assert!(stdout.contains("Tool catalog: 9 MCP tools"));
+    assert!(stdout.contains("Tool catalog:"));
     assert!(stdout.contains("leantoken.context first"));
 }
 

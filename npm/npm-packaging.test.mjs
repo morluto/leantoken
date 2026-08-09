@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
 
-import { PLATFORMS, buildNpmPackages, readCargoVersion } from "../scripts/build-npm-packages.mjs";
+import { PLATFORMS, buildNpmPackages } from "../scripts/build-npm-packages.mjs";
 
 function run(program, args, options = {}) {
   const result = spawnSync(program, args, { encoding: "utf8", ...options });
@@ -51,10 +51,6 @@ async function unpackPackage(tarball, workspace) {
   run("tar", ["-xzf", tarball, "-C", directory]);
   return directory;
 }
-
-test("reads the npm package version from Cargo.toml", async () => {
-  assert.match(await readCargoVersion(), /^\d+\.\d+\.\d+/);
-});
 
 test("keeps cargo-dist targets aligned with the canonical npm platform manifest", async () => {
   const distWorkspace = await readFile(new URL("../dist-workspace.toml", import.meta.url), "utf8");

@@ -157,7 +157,7 @@ export async function buildNpmPackages({ artifactsDir, outputDir, version }) {
   }
 }
 
-export async function readCargoVersion() {
+async function readCargoVersion() {
   const manifest = await readFile(join(ROOT, "Cargo.toml"), "utf8");
   const packageStart = manifest.indexOf("[package]");
   const afterPackage = packageStart === -1 ? "" : manifest.slice(packageStart + "[package]".length);

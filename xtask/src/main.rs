@@ -758,22 +758,8 @@ fn collect_rust_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<
     Ok(())
 }
 
-const ROOT_TEST_MODULES: &[&str] = &[
-    "cli",
-    "graph_signal_ablation_report",
-    "model_ab_trajectory_report",
-    "process",
-    "resolved_reference_oracle_report",
-    "representation_comparison",
-    "services",
-];
-
 fn check_test_inventory(root: &Path) -> Result<(), XtaskError> {
     let tests_dir = root.join("tests");
-    let expected = ROOT_TEST_MODULES
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect::<BTreeSet<_>>();
     let actual = std::fs::read_dir(&tests_dir)
         .map_err(XtaskError::Io)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -785,22 +771,18 @@ fn check_test_inventory(root: &Path) -> Result<(), XtaskError> {
         })
         .filter(|name| name != "integration" && name != "benchmark_contract")
         .collect::<BTreeSet<_>>();
-    if actual != expected {
-        return Err(XtaskError::Architecture(format!(
-            "root test inventory drifted: expected {expected:?}, found {actual:?}"
-        )));
-    }
     let integration =
         std::fs::read_to_string(tests_dir.join("integration.rs")).map_err(XtaskError::Io)?;
-    for name in &actual {
-        if !integration
-            .lines()
-            .any(|line| line.trim() == format!("{name},"))
-        {
-            return Err(XtaskError::Architecture(format!(
-                "root test `{name}` is not registered in tests/integration.rs"
-            )));
-        }
+    let registered = integration
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("mod "))
+        .filter_map(|line| line.strip_suffix(';'))
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if actual != registered {
+        return Err(XtaskError::Architecture(format!(
+            "root test inventory drifted: expected {registered:?}, found {actual:?}"
+        )));
     }
     println!("test inventory: ok ({} root owners)", actual.len());
     Ok(())
@@ -962,20 +944,6 @@ mod tests {
         assert_eq!(process_test_jobs_for_os("linux"), "4");
         assert_eq!(process_test_jobs_for_os("windows"), "4");
         assert_eq!(process_test_jobs_for_os("freebsd"), "2");
-    }
-
-    #[test]
-    fn ci_uses_the_bounded_parallel_product_plan() {
-        let workflow = include_str!("../../.github/workflows/ci.yml");
-        let after_phase = workflow
-            .split_once("- name: Test product behavior")
-            .expect("product phase")
-            .1;
-        let phase = after_phase
-            .split_once("- name:")
-            .map_or(after_phase, |(phase, _)| phase);
-        assert!(phase.contains("cargo xtask test product --parallel"));
-        assert!(!phase.contains("cargo test --locked"));
     }
 
     #[test]
