@@ -19,8 +19,7 @@
     "README.md",
     "AGENTS.md",
     "dist-workspace.toml",
-    "package.json",
-    "package-lock.json"
+    "npm/"
   ],
   "lanes": [
     {
@@ -99,7 +98,7 @@
       "id": "release-plan",
       "owner": "release packaging inputs",
       "required_events": ["manual"],
-      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "dist-workspace.toml", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "dist-workspace.toml", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     },
@@ -107,7 +106,7 @@
       "id": "npm",
       "owner": "npm packaging and installation",
       "required_events": ["merge_group", "push", "manual"],
-      "paths": ["Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },

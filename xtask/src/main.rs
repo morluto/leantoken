@@ -99,7 +99,6 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         *domain == selector
             || selector.strip_prefix("domains::") == Some(*domain)
             || selector.starts_with(&format!("{domain}::"))
-            || selector.strip_prefix("domains::") == Some(*domain)
             || selector.starts_with(&format!("domains::{domain}::"))
     });
     let command = if let Some(domain) = suite_domain {
