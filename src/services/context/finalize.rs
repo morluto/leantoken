@@ -1,4 +1,15 @@
 impl Services {
+    fn finalize_context_response_accounting(
+        &self,
+        response: &mut ContextResponse,
+        options: ServiceCallOptions,
+    ) -> Result<()> {
+        match options.mcp_response_shape() {
+            Some(shape) => self.response_accountant.finalize_for(response, Some(shape)),
+            None => self.finalize_response(response),
+        }
+    }
+
     pub(super) fn context_response_with_receipt_reserve(
         &self,
         response: &ContextResponse,
@@ -27,8 +38,12 @@ impl Services {
             }
         }
         set_routing_consistency(&mut sized, IndexConsistency::ReconcileWorkingTree);
-        self.response_accountant
-            .finalize_with_receipt_resource(&mut sized, options.mcp_response_shape())?;
+        if options.mcp_response_shape().is_some() {
+            self.response_accountant
+                .finalize_with_receipt_resource(&mut sized, options.mcp_response_shape())?;
+        } else {
+            self.finalize_response(&mut sized)?;
+        }
         Ok(sized)
     }
 
@@ -53,8 +68,7 @@ impl Services {
             self.context_response_tokens_with_receipt_reserve(response, policy, options)?;
         let mut mandatory = response.clone();
         set_routing_consistency(&mut mandatory, IndexConsistency::ReconcileWorkingTree);
-        self.response_accountant
-            .finalize_for(&mut mandatory, options.mcp_response_shape())?;
+        self.finalize_context_response_accounting(&mut mandatory, options)?;
         Ok(Self::response_budget_exceeded(
             &mandatory.meta,
             provided_max_response_tokens,
@@ -133,8 +147,7 @@ impl Services {
         let max_response_tokens = options
             .max_response_tokens()
             .expect("context fitting requires a response token limit");
-        self.response_accountant
-            .finalize_for(response, options.mcp_response_shape())?;
+        self.finalize_context_response_accounting(response, options)?;
         if self.context_response_fits(response, policy, max_response_tokens, options)? {
             return Ok(());
         }
@@ -145,8 +158,7 @@ impl Services {
         response.omission_summary.by_reason.clear();
         response.omission_summary.by_score_band.clear();
         if self.context_response_fits(response, policy, max_response_tokens, options)? {
-            self.response_accountant
-                .finalize_for(response, options.mcp_response_shape())?;
+            self.finalize_context_response_accounting(response, options)?;
             return Ok(());
         }
 
@@ -154,15 +166,13 @@ impl Services {
             scope.evidence = None;
         }
         if self.context_response_fits(response, policy, max_response_tokens, options)? {
-            self.response_accountant
-                .finalize_for(response, options.mcp_response_shape())?;
+            self.finalize_context_response_accounting(response, options)?;
             return Ok(());
         }
 
         response.routing = None;
         if self.context_response_fits(response, policy, max_response_tokens, options)? {
-            self.response_accountant
-                .finalize_for(response, options.mcp_response_shape())?;
+            self.finalize_context_response_accounting(response, options)?;
             return Ok(());
         }
 
@@ -175,8 +185,7 @@ impl Services {
             fragment.reason.clear();
         }
         if self.context_response_fits(response, policy, max_response_tokens, options)? {
-            self.response_accountant
-                .finalize_for(response, options.mcp_response_shape())?;
+            self.finalize_context_response_accounting(response, options)?;
             return Ok(());
         }
 
@@ -210,8 +219,7 @@ impl Services {
             })?;
             if let Some(keep) = keep {
                 Self::trim_context_selection(response, keep);
-                self.response_accountant
-                    .finalize_for(response, options.mcp_response_shape())?;
+                self.finalize_context_response_accounting(response, options)?;
                 if self.context_response_fits(response, policy, max_response_tokens, options)? {
                     return Ok(());
                 }

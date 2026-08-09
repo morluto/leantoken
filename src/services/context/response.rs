@@ -273,7 +273,11 @@ impl Services {
         if let Some(manifest) = &mut response.handoff_manifest {
             manifest.receipt_id.clone_from(&response.meta.receipt_id);
         }
-        self.finalize_bounded_response(response, options)?;
+        if options.mcp_response_shape().is_some() {
+            self.finalize_bounded_response(response, options)?;
+        } else {
+            self.finalize_response(response)?;
+        }
         if let Some(max_response_tokens) = options.max_response_tokens()
             && response.meta.total_response_tokens > max_response_tokens
         {
