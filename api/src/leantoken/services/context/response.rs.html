@@ -208,8 +208,8 @@
 <a href=#208 id=208 data-nosnippet>208</a>            options,
 <a href=#209 id=209 data-nosnippet>209</a>            generation,
 <a href=#210 id=210 data-nosnippet>210</a>        } = finalization;
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(max_response_tokens) = options.max_response_tokens() {
-<a href=#212 id=212 data-nosnippet>212</a>            <span class="self">self</span>.fit_context_response(response, request, policy, max_response_tokens)<span class="question-mark">?</span>;
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">if </span>options.max_response_tokens().is_some() {
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="self">self</span>.fit_context_response(response, request, policy, options)<span class="question-mark">?</span>;
 <a href=#213 id=213 data-nosnippet>213</a>        }
 <a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">if </span>!policy.is_plan() {
 <a href=#215 id=215 data-nosnippet>215</a>            <span class="kw">let </span>receipt_candidates = response
@@ -273,25 +273,29 @@
 <a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(manifest) = <span class="kw-2">&amp;mut </span>response.handoff_manifest {
 <a href=#274 id=274 data-nosnippet>274</a>            manifest.receipt_id.clone_from(<span class="kw-2">&amp;</span>response.meta.receipt_id);
 <a href=#275 id=275 data-nosnippet>275</a>        }
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="self">self</span>.finalize_response(response)<span class="question-mark">?</span>;
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(max_response_tokens) = options.max_response_tokens()
-<a href=#278 id=278 data-nosnippet>278</a>            &amp;&amp; response.meta.total_response_tokens &gt; max_response_tokens
-<a href=#279 id=279 data-nosnippet>279</a>        {
-<a href=#280 id=280 data-nosnippet>280</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::ResponseAccountingInvariant(
-<a href=#281 id=281 data-nosnippet>281</a>                <span class="string">"context response exceeded its fitted serialized-response budget"</span>.into(),
-<a href=#282 id=282 data-nosnippet>282</a>            ));
-<a href=#283 id=283 data-nosnippet>283</a>        }
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">if </span>policy.is_plan() {
-<a href=#285 id=285 data-nosnippet>285</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#286 id=286 data-nosnippet>286</a>        }
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>paths = response
-<a href=#288 id=288 data-nosnippet>288</a>            .fragments
-<a href=#289 id=289 data-nosnippet>289</a>            .iter()
-<a href=#290 id=290 data-nosnippet>290</a>            .map(|fragment| fragment.path.clone())
-<a href=#291 id=291 data-nosnippet>291</a>            .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#292 id=292 data-nosnippet>292</a>            .into_iter()
-<a href=#293 id=293 data-nosnippet>293</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#294 id=294 data-nosnippet>294</a>        session.whole_file_source_tokens(<span class="kw-2">&amp;</span>paths, <span class="self">self</span>.config.tokenizer.name())
-<a href=#295 id=295 data-nosnippet>295</a>    }
-<a href=#296 id=296 data-nosnippet>296</a>}
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">if </span>options.mcp_response_shape().is_some() {
+<a href=#277 id=277 data-nosnippet>277</a>            <span class="self">self</span>.finalize_bounded_response(response, options)<span class="question-mark">?</span>;
+<a href=#278 id=278 data-nosnippet>278</a>        } <span class="kw">else </span>{
+<a href=#279 id=279 data-nosnippet>279</a>            <span class="self">self</span>.finalize_response(response)<span class="question-mark">?</span>;
+<a href=#280 id=280 data-nosnippet>280</a>        }
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(max_response_tokens) = options.max_response_tokens()
+<a href=#282 id=282 data-nosnippet>282</a>            &amp;&amp; response.meta.total_response_tokens &gt; max_response_tokens
+<a href=#283 id=283 data-nosnippet>283</a>        {
+<a href=#284 id=284 data-nosnippet>284</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::ResponseAccountingInvariant(
+<a href=#285 id=285 data-nosnippet>285</a>                <span class="string">"context response exceeded its fitted serialized-response budget"</span>.into(),
+<a href=#286 id=286 data-nosnippet>286</a>            ));
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">if </span>policy.is_plan() {
+<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#290 id=290 data-nosnippet>290</a>        }
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>paths = response
+<a href=#292 id=292 data-nosnippet>292</a>            .fragments
+<a href=#293 id=293 data-nosnippet>293</a>            .iter()
+<a href=#294 id=294 data-nosnippet>294</a>            .map(|fragment| fragment.path.clone())
+<a href=#295 id=295 data-nosnippet>295</a>            .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#296 id=296 data-nosnippet>296</a>            .into_iter()
+<a href=#297 id=297 data-nosnippet>297</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#298 id=298 data-nosnippet>298</a>        session.whole_file_source_tokens(<span class="kw-2">&amp;</span>paths, <span class="self">self</span>.config.tokenizer.name())
+<a href=#299 id=299 data-nosnippet>299</a>    }
+<a href=#300 id=300 data-nosnippet>300</a>}
 </code></pre></div></section></main></body></html>

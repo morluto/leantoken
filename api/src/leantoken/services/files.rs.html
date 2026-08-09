@@ -807,7 +807,7 @@
 <a href=#807 id=807 data-nosnippet>807</a>                .entries
 <a href=#808 id=808 data-nosnippet>808</a>                .last()
 <a href=#809 id=809 data-nosnippet>809</a>                .map(|entry| files_cursor_for_entry(<span class="kw-2">&amp;</span>operation, entry).encode(generation));
-<a href=#810 id=810 data-nosnippet>810</a>            <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate)
+<a href=#810 id=810 data-nosnippet>810</a>            <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate, options)
 <a href=#811 id=811 data-nosnippet>811</a>        })<span class="question-mark">?</span>;
 <a href=#812 id=812 data-nosnippet>812</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep.filter(|keep| <span class="kw-2">*</span>keep &gt; <span class="number">0</span>) {
 <a href=#813 id=813 data-nosnippet>813</a>            response.entries.truncate(keep);
@@ -831,7 +831,7 @@
 <a href=#831 id=831 data-nosnippet>831</a>                minimum
 <a href=#832 id=832 data-nosnippet>832</a>            })
 <a href=#833 id=833 data-nosnippet>833</a>            .unwrap_or(original);
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(<span class="kw-2">&amp;</span>minimum, max_response_tokens)<span class="question-mark">?</span>)
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(<span class="kw-2">&amp;</span>minimum, max_response_tokens, options)<span class="question-mark">?</span>)
 <a href=#835 id=835 data-nosnippet>835</a>    }
 <a href=#836 id=836 data-nosnippet>836</a>
 <a href=#837 id=837 data-nosnippet>837</a>    <span class="kw">fn </span>fit_files_paths_response(
@@ -857,7 +857,7 @@
 <a href=#857 id=857 data-nosnippet>857</a>            candidate.meta.next_cursor = entries
 <a href=#858 id=858 data-nosnippet>858</a>                .get(keep.saturating_sub(<span class="number">1</span>))
 <a href=#859 id=859 data-nosnippet>859</a>                .map(|entry| files_cursor_for_entry(<span class="kw-2">&amp;</span>operation, entry).encode(generation));
-<a href=#860 id=860 data-nosnippet>860</a>            <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate)
+<a href=#860 id=860 data-nosnippet>860</a>            <span class="self">self</span>.finalized_response_tokens(<span class="kw-2">&amp;</span>candidate, options)
 <a href=#861 id=861 data-nosnippet>861</a>        })<span class="question-mark">?</span>;
 <a href=#862 id=862 data-nosnippet>862</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(keep) = keep.filter(|keep| <span class="kw-2">*</span>keep &gt; <span class="number">0</span>) {
 <a href=#863 id=863 data-nosnippet>863</a>            response.paths.truncate(keep);
@@ -879,7 +879,7 @@
 <a href=#879 id=879 data-nosnippet>879</a>                minimum
 <a href=#880 id=880 data-nosnippet>880</a>            })
 <a href=#881 id=881 data-nosnippet>881</a>            .unwrap_or(original);
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(<span class="kw-2">&amp;</span>minimum, max_response_tokens)<span class="question-mark">?</span>)
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="prelude-val">Err</span>(<span class="self">self</span>.response_budget_error(<span class="kw-2">&amp;</span>minimum, max_response_tokens, options)<span class="question-mark">?</span>)
 <a href=#883 id=883 data-nosnippet>883</a>    }
 <a href=#884 id=884 data-nosnippet>884</a>}
 <a href=#885 id=885 data-nosnippet>885</a>
