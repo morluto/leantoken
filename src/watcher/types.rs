@@ -74,14 +74,57 @@ pub struct WatcherDiagnostics {
 pub(super) struct WatchAdmission {
     pub(super) entries: usize,
     pub(super) directories: usize,
-    pub(super) complete: bool,
-    pub(super) fallback_reason: Option<WatcherFallbackReason>,
+    pub(super) outcome: WatchAdmissionOutcome,
+}
+
+impl WatchAdmission {
+    pub(super) const fn complete(self) -> bool {
+        matches!(self.outcome, WatchAdmissionOutcome::Complete)
+    }
+
+    pub(super) const fn fallback_reason(self) -> Option<WatcherFallbackReason> {
+        match self.outcome {
+            WatchAdmissionOutcome::Complete => None,
+            WatchAdmissionOutcome::Fallback(reason) => Some(reason),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum WatchAdmissionOutcome {
+    Complete,
+    Fallback(WatcherFallbackReason),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum WatcherSelection {
+    Native,
+    PeriodicPolling(WatcherFallbackReason),
+}
+
+impl WatcherSelection {
+    pub(super) const fn backend(self) -> WatcherBackend {
+        match self {
+            Self::Native => WatcherBackend::Native,
+            Self::PeriodicPolling(_) => WatcherBackend::PeriodicPolling,
+        }
+    }
+
+    pub(super) const fn fallback_reason(self) -> Option<WatcherFallbackReason> {
+        match self {
+            Self::Native => None,
+            Self::PeriodicPolling(reason) => Some(reason),
+        }
+    }
+
+    pub(super) const fn is_native(self) -> bool {
+        matches!(self, Self::Native)
+    }
 }
 
 #[derive(Debug)]
 pub(super) struct WatcherReady {
-    pub(super) backend: WatcherBackend,
-    pub(super) fallback_reason: Option<WatcherFallbackReason>,
+    pub(super) selection: WatcherSelection,
     pub(super) admission: WatchAdmission,
 }
 
@@ -114,6 +157,42 @@ pub enum WatcherAction {
 pub(super) enum PendingReconciliation {
     Paths(BTreeSet<String>),
     Full,
+}
+
+impl PendingReconciliation {
+    pub(super) fn empty() -> Self {
+        Self::Paths(BTreeSet::new())
+    }
+
+    pub(super) const fn is_full(&self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        matches!(self, Self::Paths(paths) if paths.is_empty())
+    }
+
+    pub(super) fn require_full(&mut self) {
+        *self = Self::Full;
+    }
+
+    pub(super) fn insert(&mut self, path: String) {
+        if let Self::Paths(paths) = self {
+            paths.insert(path);
+        }
+    }
+
+    pub(super) fn extend(&mut self, paths: impl IntoIterator<Item = String>) {
+        if let Self::Paths(pending) = self {
+            pending.extend(paths);
+        }
+    }
+
+    pub(super) fn bound(&mut self, limit: usize) {
+        if matches!(self, Self::Paths(paths) if paths.len() > limit) {
+            self.require_full();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

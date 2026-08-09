@@ -44,8 +44,7 @@ pub struct Candidate {
     pub concept_weight: f64,
     pub representation: String,
     pub symbol_name: Option<String>,
-    pub target_start_line: Option<usize>,
-    pub target_end_line: Option<usize>,
+    pub target_range: Option<CandidateTargetRange>,
     pub exact: f64,
     pub symbol: f64,
     pub reference: f64,
@@ -56,6 +55,28 @@ pub struct Candidate {
     pub focus_boost: f64,
     pub import_boost: f64,
     pub change_boost: f64,
+}
+
+/// Complete one-based source range for a candidate's enclosing target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CandidateTargetRange {
+    start_line: std::num::NonZeroUsize,
+    end_line: std::num::NonZeroUsize,
+}
+
+impl CandidateTargetRange {
+    pub fn new(start_line: usize, end_line: usize) -> Option<Self> {
+        let start_line = std::num::NonZeroUsize::new(start_line)?;
+        let end_line = std::num::NonZeroUsize::new(end_line)?;
+        (end_line >= start_line).then_some(Self {
+            start_line,
+            end_line,
+        })
+    }
+
+    pub const fn lines(self) -> (usize, usize) {
+        (self.start_line.get(), self.end_line.get())
+    }
 }
 
 impl Candidate {
@@ -77,8 +98,7 @@ impl Candidate {
             concept_weight: 0.0,
             representation: "source".into(),
             symbol_name: None,
-            target_start_line: None,
-            target_end_line: None,
+            target_range: None,
             exact: 0.0,
             symbol: 0.0,
             reference: 0.0,
@@ -133,15 +153,20 @@ impl Candidate {
         self
     }
 
-    pub fn target_range(mut self, start_line: usize, end_line: usize) -> Self {
-        self.target_start_line = Some(start_line);
-        self.target_end_line = Some(end_line);
+    pub fn target_range(mut self, range: CandidateTargetRange) -> Self {
+        self.target_range = Some(range);
         self
     }
 
+    pub const fn target_lines(&self) -> Option<(usize, usize)> {
+        match self.target_range {
+            Some(range) => Some(range.lines()),
+            None => None,
+        }
+    }
+
     pub(in crate::ranking) fn target_truncated(&self) -> bool {
-        self.target_start_line
-            .zip(self.target_end_line)
+        self.target_lines()
             .is_some_and(|(start, end)| self.start_line > start || self.end_line < end)
     }
 

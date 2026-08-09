@@ -25,16 +25,16 @@ pub(super) fn inspect_watch_admission(
             return WatchAdmission {
                 entries,
                 directories,
-                complete: false,
-                fallback_reason: Some(WatcherFallbackReason::AdmissionCancelled),
+                outcome: WatchAdmissionOutcome::Fallback(WatcherFallbackReason::AdmissionCancelled),
             };
         }
         if entries >= entry_cap {
             return WatchAdmission {
                 entries,
                 directories,
-                complete: false,
-                fallback_reason: Some(WatcherFallbackReason::AdmissionEntryLimit),
+                outcome: WatchAdmissionOutcome::Fallback(
+                    WatcherFallbackReason::AdmissionEntryLimit,
+                ),
             };
         }
         entries += 1;
@@ -48,8 +48,9 @@ pub(super) fn inspect_watch_admission(
                     return WatchAdmission {
                         entries,
                         directories,
-                        complete: false,
-                        fallback_reason: Some(WatcherFallbackReason::AdmissionDirectoryLimit),
+                        outcome: WatchAdmissionOutcome::Fallback(
+                            WatcherFallbackReason::AdmissionDirectoryLimit,
+                        ),
                     };
                 }
             }
@@ -59,8 +60,7 @@ pub(super) fn inspect_watch_admission(
                 return WatchAdmission {
                     entries,
                     directories,
-                    complete: false,
-                    fallback_reason: Some(WatcherFallbackReason::AdmissionError),
+                    outcome: WatchAdmissionOutcome::Fallback(WatcherFallbackReason::AdmissionError),
                 };
             }
         }
@@ -68,8 +68,7 @@ pub(super) fn inspect_watch_admission(
     WatchAdmission {
         entries,
         directories,
-        complete: true,
-        fallback_reason: None,
+        outcome: WatchAdmissionOutcome::Complete,
     }
 }
 

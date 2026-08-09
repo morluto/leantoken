@@ -43,6 +43,19 @@ struct ResolvedHistoricalSymbol {
     content: String,
 }
 
+enum HistoricalSymbolEndpoints {
+    Modified {
+        before: Box<ResolvedHistoricalSymbol>,
+        after: Box<ResolvedHistoricalSymbol>,
+    },
+    Added {
+        after: Box<ResolvedHistoricalSymbol>,
+    },
+    Removed {
+        before: Box<ResolvedHistoricalSymbol>,
+    },
+}
+
 struct ParsedHistoricalFile {
     content: String,
     symbols: Vec<Symbol>,
@@ -54,6 +67,89 @@ struct ParsedHistoricalBatch {
     unavailable: BTreeMap<String, String>,
     blob_bytes: usize,
     parsed_symbols: usize,
+}
+
+#[derive(Debug)]
+struct ParsedHistoryRequest {
+    operation: ParsedHistoryOperation,
+    max_results: Option<usize>,
+    max_tokens: Option<usize>,
+}
+
+#[derive(Debug)]
+enum ParsedHistoryOperation {
+    ReadSymbol {
+        path: String,
+        symbol: String,
+        revision: String,
+    },
+    DiffSymbol {
+        path: String,
+        symbol: String,
+        base_revision: String,
+        head_revision: String,
+    },
+    SymbolLog {
+        path: String,
+        symbol: String,
+        revision: Option<String>,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct HistoricalSymbolTarget {
+    path: String,
+    symbol: String,
+}
+
+#[derive(Debug)]
+enum HistoricalHeadTarget {
+    SameAsBase,
+    Override(HistoricalSymbolTarget),
+}
+
+#[derive(Debug)]
+struct ParsedDiffSymbolsTarget {
+    base: HistoricalSymbolTarget,
+    head: HistoricalHeadTarget,
+}
+
+#[derive(Debug)]
+struct ParsedDiffSymbolsRequest {
+    targets: Vec<ParsedDiffSymbolsTarget>,
+    base_revision: String,
+    head_revision: String,
+    max_results: Option<usize>,
+    max_tokens: Option<usize>,
+    cursor: Option<String>,
+}
+
+impl ParsedDiffSymbolsTarget {
+    fn head(&self) -> &HistoricalSymbolTarget {
+        match &self.head {
+            HistoricalHeadTarget::SameAsBase => &self.base,
+            HistoricalHeadTarget::Override(target) => target,
+        }
+    }
+
+    fn identity_changed(&self) -> bool {
+        self.base != *self.head()
+    }
+
+    fn response_target(&self) -> crate::model::DiffSymbolsTarget {
+        let (head_path, head_symbol) = match &self.head {
+            HistoricalHeadTarget::SameAsBase => (None, None),
+            HistoricalHeadTarget::Override(target) => {
+                (Some(target.path.clone()), Some(target.symbol.clone()))
+            }
+        };
+        crate::model::DiffSymbolsTarget {
+            path: self.base.path.clone(),
+            symbol: self.base.symbol.clone(),
+            head_path,
+            head_symbol,
+        }
+    }
 }
 
 fn char_boundaries(value: &str) -> Vec<usize> {
@@ -73,73 +169,17 @@ fn symbol_diff_buffer(content: &str) -> Cow<'_, str> {
     }
 }
 
-#[cfg(test)]
-fn validate_history_request(request: &HistoryRequest) -> Result<()> {
-    validate_history_request_with_limit(request, MAX_HISTORY_RESULTS)
-}
-
-fn validate_history_request_with_limit(
-    request: &HistoryRequest,
+fn parse_history_request(
+    request: HistoryRequest,
     max_results_limit: usize,
-) -> Result<()> {
-    fn validate_non_empty(value: &str, field: &'static str) -> Result<()> {
-        if value.trim().is_empty() {
-            return Err(Error::InvalidInput {
-                field,
-                reason: "must not be empty",
-            });
-        }
-        Ok(())
+) -> Result<ParsedHistoryRequest> {
+    fn parse_path(value: String) -> Result<String> {
+        validate_input(&value, "path", MAX_PATH_BYTES)?;
+        normalize_relative(&value)
     }
 
-    match &request.operation {
-        HistoryOperation::ReadSymbol {
-            path,
-            symbol,
-            revision,
-        }
-        | HistoryOperation::SymbolLog {
-            path,
-            symbol,
-            revision: Some(revision),
-        } => {
-            validate_input(path, "path", MAX_PATH_BYTES)?;
-            validate_input(symbol, "symbol", MAX_PATTERN_BYTES)?;
-            validate_non_empty(symbol, "symbol")?;
-            validate_input(revision, "revision", MAX_PATTERN_BYTES)?;
-            validate_non_empty(revision, "revision")?;
-        }
-        HistoryOperation::SymbolLog {
-            path,
-            symbol,
-            revision: None,
-        } => {
-            validate_input(path, "path", MAX_PATH_BYTES)?;
-            validate_input(symbol, "symbol", MAX_PATTERN_BYTES)?;
-        }
-        HistoryOperation::DiffSymbol {
-            path,
-            symbol,
-            base_revision,
-            head_revision,
-        } => {
-            validate_input(path, "path", MAX_PATH_BYTES)?;
-            validate_input(symbol, "symbol", MAX_PATTERN_BYTES)?;
-            validate_non_empty(symbol, "symbol")?;
-            validate_input(base_revision, "base revision", MAX_PATTERN_BYTES)?;
-            validate_non_empty(base_revision, "base revision")?;
-            validate_input(head_revision, "head revision", MAX_PATTERN_BYTES)?;
-            validate_non_empty(head_revision, "head revision")?;
-        }
-    }
-    if let Some(max_results) = request.max_results {
-        validate_positive_request_limit("max_results", max_results, max_results_limit)?;
-    }
-    Ok(())
-}
-
-fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> {
-    fn normalize_non_empty(value: String, field: &'static str) -> Result<String> {
+    fn parse_non_empty(value: String, field: &'static str, max_bytes: usize) -> Result<String> {
+        validate_input(&value, field, max_bytes)?;
         let value = value.trim().to_owned();
         if value.is_empty() {
             return Err(Error::InvalidInput {
@@ -150,70 +190,71 @@ fn normalize_operation(operation: HistoryOperation) -> Result<HistoryOperation> 
         Ok(value)
     }
 
-    Ok(match operation {
+    if let Some(max_results) = request.max_results {
+        validate_positive_request_limit("max_results", max_results, max_results_limit)?;
+    }
+    let operation = match request.operation {
         HistoryOperation::ReadSymbol {
             path,
             symbol,
             revision,
-        } => HistoryOperation::ReadSymbol {
-            path: normalize_relative(&path)?,
-            symbol: normalize_non_empty(symbol, "symbol")?,
-            revision: normalize_non_empty(revision, "revision")?,
+        } => ParsedHistoryOperation::ReadSymbol {
+            path: parse_path(path)?,
+            symbol: parse_non_empty(symbol, "symbol", MAX_PATTERN_BYTES)?,
+            revision: parse_non_empty(revision, "revision", MAX_PATTERN_BYTES)?,
+        },
+        HistoryOperation::SymbolLog {
+            path,
+            symbol,
+            revision,
+        } => ParsedHistoryOperation::SymbolLog {
+            path: parse_path(path)?,
+            symbol: parse_non_empty(symbol, "symbol", MAX_PATTERN_BYTES)?,
+            revision: revision
+                .map(|revision| parse_non_empty(revision, "revision", MAX_PATTERN_BYTES))
+                .transpose()?,
         },
         HistoryOperation::DiffSymbol {
             path,
             symbol,
             base_revision,
             head_revision,
-        } => HistoryOperation::DiffSymbol {
-            path: normalize_relative(&path)?,
-            symbol: normalize_non_empty(symbol, "symbol")?,
-            base_revision: normalize_non_empty(base_revision, "base revision")?,
-            head_revision: normalize_non_empty(head_revision, "head revision")?,
+        } => ParsedHistoryOperation::DiffSymbol {
+            path: parse_path(path)?,
+            symbol: parse_non_empty(symbol, "symbol", MAX_PATTERN_BYTES)?,
+            base_revision: parse_non_empty(base_revision, "base revision", MAX_PATTERN_BYTES)?,
+            head_revision: parse_non_empty(head_revision, "head revision", MAX_PATTERN_BYTES)?,
         },
-        HistoryOperation::SymbolLog {
-            path,
-            symbol,
-            revision,
-        } => HistoryOperation::SymbolLog {
-            path: normalize_relative(&path)?,
-            symbol: normalize_non_empty(symbol, "symbol")?,
-            revision: revision
-                .map(|revision| normalize_non_empty(revision, "revision"))
-                .transpose()?,
-        },
+    };
+    Ok(ParsedHistoryRequest {
+        operation,
+        max_results: request.max_results,
+        max_tokens: request.max_tokens,
     })
 }
 
-fn normalize_history_request(mut request: HistoryRequest) -> Result<HistoryRequest> {
-    request.operation = normalize_operation(request.operation)?;
-    Ok(request)
-}
-
-#[cfg(test)]
-fn validate_diff_symbols_request(request: &DiffSymbolsRequest) -> Result<()> {
-    validate_diff_symbols_request_with_limit(request, MAX_HISTORY_RESULTS)
-}
-
-fn validate_diff_symbols_request_with_limit(
-    request: &DiffSymbolsRequest,
+fn parse_diff_symbols_request(
+    request: DiffSymbolsRequest,
     max_results_limit: usize,
-) -> Result<()> {
-    fn validate_non_empty(value: &str, field: &'static str) -> Result<()> {
-        if value.trim().is_empty() {
+) -> Result<ParsedDiffSymbolsRequest> {
+    fn parse_path(value: String, field: &'static str) -> Result<String> {
+        validate_input(&value, field, MAX_PATH_BYTES)?;
+        normalize_relative(&value)
+    }
+
+    fn parse_non_empty(value: String, field: &'static str) -> Result<String> {
+        validate_input(&value, field, MAX_PATTERN_BYTES)?;
+        let value = value.trim().to_owned();
+        if value.is_empty() {
             return Err(Error::InvalidInput {
                 field,
                 reason: "must not be empty",
             });
         }
-        Ok(())
+        Ok(value)
     }
 
     validate_positive_request_limit("targets", request.targets.len(), MAX_DIFF_SYMBOL_TARGETS)?;
-    validate_input(&request.base_revision, "base revision", MAX_PATTERN_BYTES)?;
-    validate_non_empty(&request.base_revision, "base revision")?;
-    validate_input(&request.head_revision, "head revision", MAX_PATTERN_BYTES)?;
-    validate_non_empty(&request.head_revision, "head revision")?;
     if let Some(max_results) = request.max_results {
         validate_positive_request_limit(
             "max_results",
@@ -228,30 +269,48 @@ fn validate_diff_symbols_request_with_limit(
     {
         return Err(Error::StaleCursor);
     }
+    let base_revision = parse_non_empty(request.base_revision, "base revision")?;
+    let head_revision = parse_non_empty(request.head_revision, "head revision")?;
     let mut base_paths = BTreeSet::new();
     let mut head_paths = BTreeSet::new();
-    for target in &request.targets {
-        validate_input(&target.path, "path", MAX_PATH_BYTES)?;
-        validate_input(&target.symbol, "symbol", MAX_PATTERN_BYTES)?;
-        validate_non_empty(&target.symbol, "symbol")?;
-        match (&target.head_path, &target.head_symbol) {
-            (Some(path), Some(symbol)) => {
-                validate_input(path, "head path", MAX_PATH_BYTES)?;
-                validate_input(symbol, "head symbol", MAX_PATTERN_BYTES)?;
-                validate_non_empty(symbol, "head symbol")?;
-                head_paths.insert(path.as_str());
-            }
-            (None, None) => {
-                head_paths.insert(target.path.as_str());
-            }
+    let mut seen = BTreeSet::new();
+    let mut targets = Vec::with_capacity(request.targets.len());
+    for target in request.targets {
+        let base = HistoricalSymbolTarget {
+            path: parse_path(target.path, "path")?,
+            symbol: parse_non_empty(target.symbol, "symbol")?,
+        };
+        let head = match (target.head_path, target.head_symbol) {
+            (Some(path), Some(symbol)) => HistoricalHeadTarget::Override(HistoricalSymbolTarget {
+                path: parse_path(path, "head path")?,
+                symbol: parse_non_empty(symbol, "head symbol")?,
+            }),
+            (None, None) => HistoricalHeadTarget::SameAsBase,
             _ => {
                 return Err(Error::InvalidInput {
                     field: "targets",
                     reason: "head_path and head_symbol must be supplied together",
                 });
             }
+        };
+        let head_target = match &head {
+            HistoricalHeadTarget::SameAsBase => &base,
+            HistoricalHeadTarget::Override(target) => target,
+        };
+        if !seen.insert((
+            base.path.clone(),
+            base.symbol.clone(),
+            head_target.path.clone(),
+            head_target.symbol.clone(),
+        )) {
+            return Err(Error::InvalidInput {
+                field: "targets",
+                reason: "must not contain duplicate symbol pairings",
+            });
         }
-        base_paths.insert(target.path.as_str());
+        base_paths.insert(base.path.clone());
+        head_paths.insert(head_target.path.clone());
+        targets.push(ParsedDiffSymbolsTarget { base, head });
     }
     for (field, requested) in [
         ("base paths", base_paths.len()),
@@ -265,51 +324,18 @@ fn validate_diff_symbols_request_with_limit(
             });
         }
     }
-    Ok(())
-}
-
-fn normalize_diff_symbols_request(mut request: DiffSymbolsRequest) -> Result<DiffSymbolsRequest> {
-    fn normalize_non_empty(value: String, field: &'static str) -> Result<String> {
-        let value = value.trim().to_owned();
-        if value.is_empty() {
-            return Err(Error::InvalidInput {
-                field,
-                reason: "must not be empty",
-            });
-        }
-        Ok(value)
-    }
-
-    request.base_revision = normalize_non_empty(request.base_revision, "base revision")?;
-    request.head_revision = normalize_non_empty(request.head_revision, "head revision")?;
-    let mut seen = BTreeSet::new();
-    for target in &mut request.targets {
-        target.path = normalize_relative(&target.path)?;
-        target.symbol = normalize_non_empty(target.symbol.clone(), "symbol")?;
-        if let Some(path) = &mut target.head_path {
-            *path = normalize_relative(path)?;
-        }
-        if let Some(symbol) = &mut target.head_symbol {
-            *symbol = normalize_non_empty(symbol.clone(), "head symbol")?;
-        }
-        let key = (
-            target.path.clone(),
-            target.symbol.clone(),
-            target.head_path.clone(),
-            target.head_symbol.clone(),
-        );
-        if !seen.insert(key) {
-            return Err(Error::InvalidInput {
-                field: "targets",
-                reason: "must not contain duplicate symbol pairings",
-            });
-        }
-    }
-    Ok(request)
+    Ok(ParsedDiffSymbolsRequest {
+        targets,
+        base_revision,
+        head_revision,
+        max_results: request.max_results,
+        max_tokens: request.max_tokens,
+        cursor: request.cursor,
+    })
 }
 
 fn diff_symbols_query_hash(
-    request: &DiffSymbolsRequest,
+    request: &ParsedDiffSymbolsRequest,
     base_revision: &str,
     head_revision: &str,
 ) -> String {
@@ -323,17 +349,17 @@ fn diff_symbols_query_hash(
     update(&mut hasher, head_revision);
     hasher.update(&(request.targets.len() as u64).to_le_bytes());
     for target in &request.targets {
-        update(&mut hasher, &target.path);
-        update(&mut hasher, &target.symbol);
-        for value in [&target.head_path, &target.head_symbol] {
-            match value {
-                Some(value) => {
-                    hasher.update(&[1]);
-                    update(&mut hasher, value);
-                }
-                None => {
-                    hasher.update(&[0]);
-                }
+        update(&mut hasher, &target.base.path);
+        update(&mut hasher, &target.base.symbol);
+        match &target.head {
+            HistoricalHeadTarget::SameAsBase => {
+                hasher.update(&[0, 0]);
+            }
+            HistoricalHeadTarget::Override(head) => {
+                hasher.update(&[1]);
+                update(&mut hasher, &head.path);
+                hasher.update(&[1]);
+                update(&mut hasher, &head.symbol);
             }
         }
     }
@@ -341,7 +367,7 @@ fn diff_symbols_query_hash(
 }
 
 fn make_diff_symbols_cursor(
-    request: &DiffSymbolsRequest,
+    request: &ParsedDiffSymbolsRequest,
     base_revision: &str,
     head_revision: &str,
     offset: usize,
@@ -353,7 +379,7 @@ fn make_diff_symbols_cursor(
 }
 
 fn parse_diff_symbols_cursor(
-    request: &DiffSymbolsRequest,
+    request: &ParsedDiffSymbolsRequest,
     base_revision: &str,
     head_revision: &str,
 ) -> Result<usize> {
@@ -585,14 +611,9 @@ impl Services {
     ) -> Result<HistoryResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(
+        let request = self.observe_service_result(
             operation,
-            validate_history_request_with_limit(&request, self.config.max_results),
-        )?;
-        let request = self.observe_service_result(operation, normalize_history_request(request))?;
-        self.observe_service_result(
-            operation,
-            validate_history_request_with_limit(&request, self.config.max_results),
+            parse_history_request(request, self.config.max_results),
         )?;
         let this = self.clone();
         let result = self
@@ -654,15 +675,9 @@ impl Services {
     ) -> Result<DiffSymbolsResponse> {
         let operation = TokenAccountingOperation::History;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(
+        let request = self.observe_service_result(
             operation,
-            validate_diff_symbols_request_with_limit(&request, self.config.max_results),
-        )?;
-        let request =
-            self.observe_service_result(operation, normalize_diff_symbols_request(request))?;
-        self.observe_service_result(
-            operation,
-            validate_diff_symbols_request_with_limit(&request, self.config.max_results),
+            parse_diff_symbols_request(request, self.config.max_results),
         )?;
         let this = self.clone();
         let result = self
@@ -676,14 +691,11 @@ impl Services {
 
     fn history_diff_symbols_sync(
         &self,
-        request: DiffSymbolsRequest,
+        request: ParsedDiffSymbolsRequest,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<DiffSymbolsResponse> {
         check_cancelled(cancellation)?;
-        validate_diff_symbols_request_with_limit(&request, self.config.max_results)?;
-        let request = normalize_diff_symbols_request(request)?;
-        validate_diff_symbols_request_with_limit(&request, self.config.max_results)?;
         let max_results = request
             .max_results
             .unwrap_or(self.config.default_results)
@@ -706,18 +718,13 @@ impl Services {
         let page_targets = &request.targets[page_start..page_end];
         let base_paths = page_targets
             .iter()
-            .map(|target| target.path.clone())
+            .map(|target| target.base.path.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
         let head_paths = page_targets
             .iter()
-            .map(|target| {
-                target
-                    .head_path
-                    .clone()
-                    .unwrap_or_else(|| target.path.clone())
-            })
+            .map(|target| target.head().path.clone())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -767,17 +774,18 @@ impl Services {
         for (page_index, target) in page_targets.iter().enumerate() {
             check_cancelled(cancellation)?;
             let request_index = page_start + page_index;
-            let head_path = target.head_path.as_deref().unwrap_or(&target.path);
-            let head_symbol = target.head_symbol.as_deref().unwrap_or(&target.symbol);
+            let head_target = target.head();
+            let head_path = head_target.path.as_str();
+            let head_symbol = head_target.symbol.as_str();
             let unavailable_reason = base
                 .unavailable
-                .get(&target.path)
+                .get(&target.base.path)
                 .or_else(|| head.unavailable.get(head_path))
                 .cloned();
             if let Some(reason) = unavailable_reason {
                 results.push(DiffSymbolsResult {
                     request_index,
-                    target: target.clone(),
+                    target: target.response_target(),
                     status: DiffSymbolsStatus::Unavailable,
                     before: None,
                     after: None,
@@ -789,13 +797,16 @@ impl Services {
                 });
                 continue;
             }
-            let before = match resolve_parsed_historical_symbol(&base, &target.path, &target.symbol)
-            {
+            let before = match resolve_parsed_historical_symbol(
+                &base,
+                &target.base.path,
+                &target.base.symbol,
+            ) {
                 Ok(symbol) => symbol,
                 Err(Error::AmbiguousSymbol { .. }) => {
                     results.push(DiffSymbolsResult {
                         request_index,
-                        target: target.clone(),
+                        target: target.response_target(),
                         status: DiffSymbolsStatus::Unavailable,
                         before: None,
                         after: None,
@@ -814,7 +825,7 @@ impl Services {
                 Err(Error::AmbiguousSymbol { .. }) => {
                     results.push(DiffSymbolsResult {
                         request_index,
-                        target: target.clone(),
+                        target: target.response_target(),
                         status: DiffSymbolsStatus::Unavailable,
                         before: None,
                         after: None,
@@ -828,13 +839,13 @@ impl Services {
                 }
                 Err(error) => return Err(error),
             };
-            let identity_changed = target.path != head_path || target.symbol != head_symbol;
+            let identity_changed = target.identity_changed();
             let (status, semantic_change) = match (&before, &after) {
                 (Some(before), Some(after)) if identity_changed => (
                     DiffSymbolsStatus::Renamed,
                     Some(classify_historical_symbol_rename(
                         HistoricalSymbolChangeEndpoint {
-                            path: &target.path,
+                            path: &target.base.path,
                             symbol: &before.symbol,
                             signature: before.signature.as_deref(),
                             content: &before.content,
@@ -849,7 +860,7 @@ impl Services {
                 ),
                 (Some(before), Some(after)) => {
                     let change = classify_historical_symbol_change(
-                        &target.path,
+                        &target.base.path,
                         &before.symbol,
                         before.signature.as_deref(),
                         &before.content,
@@ -877,7 +888,7 @@ impl Services {
                 (Some(before), None) => (
                     DiffSymbolsStatus::Removed,
                     Some(classify_historical_symbol_removed(
-                        &target.path,
+                        &target.base.path,
                         &before.symbol,
                         before.signature.as_deref(),
                     )),
@@ -910,7 +921,7 @@ impl Services {
                         .unified_diff()
                         .context_radius(3)
                         .header(
-                            &format!("{}:{}", base.revision, target.path),
+                            &format!("{}:{}", base.revision, target.base.path),
                             &format!("{}:{head_path}", head.revision),
                         )
                         .to_string();
@@ -943,7 +954,7 @@ impl Services {
             };
             results.push(DiffSymbolsResult {
                 request_index,
-                target: target.clone(),
+                target: target.response_target(),
                 status,
                 before: before.map(historical_metadata),
                 after: after.map(historical_metadata),
@@ -995,20 +1006,17 @@ impl Services {
 
     fn history_sync(
         &self,
-        request: HistoryRequest,
+        request: ParsedHistoryRequest,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<HistoryResponse> {
         check_cancelled(cancellation)?;
-        validate_history_request_with_limit(&request, self.config.max_results)?;
-        let request = normalize_history_request(request)?;
-        validate_history_request_with_limit(&request, self.config.max_results)?;
         let max_results = request.max_results.unwrap_or(self.config.default_results);
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let operation = request.operation;
         let generation = self.consistent(|snapshot| Ok(snapshot.generation()))?;
         let mut response = match operation {
-            HistoryOperation::ReadSymbol {
+            ParsedHistoryOperation::ReadSymbol {
                 path,
                 symbol,
                 revision,
@@ -1036,7 +1044,7 @@ impl Services {
                     meta: self.meta(generation, emitted_tokens, None),
                 }
             }
-            HistoryOperation::DiffSymbol {
+            ParsedHistoryOperation::DiffSymbol {
                 path,
                 symbol,
                 base_revision,
@@ -1050,21 +1058,34 @@ impl Services {
                 check_cancelled(cancellation)?;
                 let after =
                     self.historical_symbol_optional(&path, &symbol, &revisions.head_revision)?;
-                if before.is_none() && after.is_none() {
-                    return Err(Error::SymbolNotFound {
-                        path: format!(
-                            "{path}@{}..{}",
-                            revisions.base_revision, revisions.head_revision
-                        ),
-                        symbol,
-                    });
-                }
-                let before_content = before
-                    .as_ref()
-                    .map_or("", |resolved| resolved.content.as_str());
-                let after_content = after
-                    .as_ref()
-                    .map_or("", |resolved| resolved.content.as_str());
+                let endpoints = match (before, after) {
+                    (Some(before), Some(after)) => HistoricalSymbolEndpoints::Modified {
+                        before: Box::new(before),
+                        after: Box::new(after),
+                    },
+                    (None, Some(after)) => HistoricalSymbolEndpoints::Added {
+                        after: Box::new(after),
+                    },
+                    (Some(before), None) => HistoricalSymbolEndpoints::Removed {
+                        before: Box::new(before),
+                    },
+                    (None, None) => {
+                        return Err(Error::SymbolNotFound {
+                            path: format!(
+                                "{path}@{}..{}",
+                                revisions.base_revision, revisions.head_revision
+                            ),
+                            symbol,
+                        });
+                    }
+                };
+                let (before_content, after_content) = match &endpoints {
+                    HistoricalSymbolEndpoints::Modified { before, after } => {
+                        (before.content.as_str(), after.content.as_str())
+                    }
+                    HistoricalSymbolEndpoints::Added { after } => ("", after.content.as_str()),
+                    HistoricalSymbolEndpoints::Removed { before } => (before.content.as_str(), ""),
+                };
                 let before_diff = symbol_diff_buffer(before_content);
                 let after_diff = symbol_diff_buffer(after_content);
                 let full_diff = TextDiff::from_lines(&before_diff, &after_diff)
@@ -1078,38 +1099,49 @@ impl Services {
                 let total_diff_tokens = self.config.tokenizer.count(&full_diff);
                 let (diff, emitted_tokens) = self.config.tokenizer.truncate(&full_diff, max_tokens);
                 let diff_truncated = emitted_tokens < total_diff_tokens;
-                let semantic_change = match (&before, &after) {
-                    (Some(before), Some(after)) => classify_historical_symbol_change(
-                        &path,
-                        &before.symbol,
-                        before.signature.as_deref(),
-                        &before.content,
-                        &after.symbol,
-                        after.signature.as_deref(),
-                        &after.content,
-                    ),
-                    (None, Some(after)) => Some(classify_historical_symbol_added(
-                        &path,
-                        &after.symbol,
-                        after.signature.as_deref(),
-                    )),
-                    (Some(before), None) => Some(classify_historical_symbol_removed(
-                        &path,
-                        &before.symbol,
-                        before.signature.as_deref(),
-                    )),
-                    (None, None) => unreachable!("both absent endpoints returned above"),
+                let semantic_change = match &endpoints {
+                    HistoricalSymbolEndpoints::Modified { before, after } => {
+                        classify_historical_symbol_change(
+                            &path,
+                            &before.symbol,
+                            before.signature.as_deref(),
+                            &before.content,
+                            &after.symbol,
+                            after.signature.as_deref(),
+                            &after.content,
+                        )
+                    }
+                    HistoricalSymbolEndpoints::Added { after } => {
+                        Some(classify_historical_symbol_added(
+                            &path,
+                            &after.symbol,
+                            after.signature.as_deref(),
+                        ))
+                    }
+                    HistoricalSymbolEndpoints::Removed { before } => {
+                        Some(classify_historical_symbol_removed(
+                            &path,
+                            &before.symbol,
+                            before.signature.as_deref(),
+                        ))
+                    }
                 };
-                let before = before.map(|mut resolved| {
+                let clear_content = |mut resolved: ResolvedHistoricalSymbol| {
                     resolved.symbol.content = None;
                     resolved.symbol.returned_end_line = 0;
                     resolved.symbol
-                });
-                let after = after.map(|mut resolved| {
-                    resolved.symbol.content = None;
-                    resolved.symbol.returned_end_line = 0;
-                    resolved.symbol
-                });
+                };
+                let (before, after) = match endpoints {
+                    HistoricalSymbolEndpoints::Modified { before, after } => {
+                        (Some(clear_content(*before)), Some(clear_content(*after)))
+                    }
+                    HistoricalSymbolEndpoints::Added { after } => {
+                        (None, Some(clear_content(*after)))
+                    }
+                    HistoricalSymbolEndpoints::Removed { before } => {
+                        (Some(clear_content(*before)), None)
+                    }
+                };
                 HistoryResponse {
                     kind: "diff_symbol".into(),
                     symbol: None,
@@ -1123,7 +1155,7 @@ impl Services {
                     meta: self.meta(generation, emitted_tokens, None),
                 }
             }
-            HistoryOperation::SymbolLog {
+            ParsedHistoryOperation::SymbolLog {
                 path,
                 symbol,
                 revision,
@@ -1253,7 +1285,7 @@ impl Services {
     fn fit_diff_symbols_response(
         &self,
         response: &mut DiffSymbolsResponse,
-        request: &DiffSymbolsRequest,
+        request: &ParsedDiffSymbolsRequest,
         page_start: usize,
         options: ServiceCallOptions,
     ) -> Result<()> {
@@ -1525,18 +1557,21 @@ mod tests {
 
     #[test]
     fn history_normalization_trims_symbols_and_revisions_before_resolution() {
-        let request = normalize_history_request(HistoryRequest {
-            operation: HistoryOperation::ReadSymbol {
-                path: "lib.rs".into(),
-                symbol: "  Services.handle_request ".into(),
-                revision: " HEAD\n".into(),
+        let request = parse_history_request(
+            HistoryRequest {
+                operation: HistoryOperation::ReadSymbol {
+                    path: "lib.rs".into(),
+                    symbol: "  Services.handle_request ".into(),
+                    revision: " HEAD\n".into(),
+                },
+                max_results: None,
+                max_tokens: None,
             },
-            max_results: None,
-            max_tokens: None,
-        })
+            MAX_HISTORY_RESULTS,
+        )
         .expect("normalized history request");
 
-        let HistoryOperation::ReadSymbol {
+        let ParsedHistoryOperation::ReadSymbol {
             symbol, revision, ..
         } = request.operation
         else {
@@ -1548,15 +1583,18 @@ mod tests {
 
     #[test]
     fn history_normalization_rejects_whitespace_only_symbols_and_revisions() {
-        let error = normalize_history_request(HistoryRequest {
-            operation: HistoryOperation::ReadSymbol {
-                path: "lib.rs".into(),
-                symbol: " \t".into(),
-                revision: "HEAD".into(),
+        let error = parse_history_request(
+            HistoryRequest {
+                operation: HistoryOperation::ReadSymbol {
+                    path: "lib.rs".into(),
+                    symbol: " \t".into(),
+                    revision: "HEAD".into(),
+                },
+                max_results: None,
+                max_tokens: None,
             },
-            max_results: None,
-            max_tokens: None,
-        })
+            MAX_HISTORY_RESULTS,
+        )
         .expect_err("whitespace-only symbol");
         assert!(matches!(
             error,
@@ -1566,15 +1604,18 @@ mod tests {
             }
         ));
 
-        let error = normalize_history_request(HistoryRequest {
-            operation: HistoryOperation::ReadSymbol {
-                path: "lib.rs".into(),
-                symbol: "handle_request".into(),
-                revision: " \n".into(),
+        let error = parse_history_request(
+            HistoryRequest {
+                operation: HistoryOperation::ReadSymbol {
+                    path: "lib.rs".into(),
+                    symbol: "handle_request".into(),
+                    revision: " \n".into(),
+                },
+                max_results: None,
+                max_tokens: None,
             },
-            max_results: None,
-            max_tokens: None,
-        })
+            MAX_HISTORY_RESULTS,
+        )
         .expect_err("whitespace-only revision");
         assert!(matches!(
             error,
@@ -1587,28 +1628,31 @@ mod tests {
 
     #[test]
     fn batch_history_normalization_refines_endpoint_values() {
-        let request = normalize_diff_symbols_request(DiffSymbolsRequest {
-            targets: vec![crate::model::DiffSymbolsTarget {
-                path: "lib.rs".into(),
-                symbol: "  handle_request ".into(),
-                head_path: None,
-                head_symbol: Some(" handle_request ".into()),
-            }],
-            base_revision: " HEAD~1 ".into(),
-            head_revision: " HEAD ".into(),
-            max_results: None,
-            max_tokens: None,
-            cursor: None,
-        })
+        let request = parse_diff_symbols_request(
+            DiffSymbolsRequest {
+                targets: vec![crate::model::DiffSymbolsTarget {
+                    path: "lib.rs".into(),
+                    symbol: "  handle_request ".into(),
+                    head_path: Some("lib.rs".into()),
+                    head_symbol: Some(" handle_request ".into()),
+                }],
+                base_revision: " HEAD~1 ".into(),
+                head_revision: " HEAD ".into(),
+                max_results: None,
+                max_tokens: None,
+                cursor: None,
+            },
+            MAX_HISTORY_RESULTS,
+        )
         .expect("normalized batch history request");
 
         assert_eq!(request.base_revision, "HEAD~1");
         assert_eq!(request.head_revision, "HEAD");
-        assert_eq!(request.targets[0].symbol, "handle_request");
-        assert_eq!(
-            request.targets[0].head_symbol.as_deref(),
-            Some("handle_request")
-        );
+        assert_eq!(request.targets[0].base.symbol, "handle_request");
+        let HistoricalHeadTarget::Override(head) = &request.targets[0].head else {
+            panic!("expected an explicit head target");
+        };
+        assert_eq!(head.symbol, "handle_request");
     }
 
     #[test]
@@ -1624,7 +1668,7 @@ mod tests {
         };
 
         assert!(matches!(
-            validate_history_request(&request),
+            parse_history_request(request, MAX_HISTORY_RESULTS),
             Err(Error::InputTooLong {
                 field: "symbol",
                 max_bytes: MAX_PATTERN_BYTES,
@@ -1649,7 +1693,8 @@ mod tests {
             cursor: None,
         };
 
-        let error = validate_diff_symbols_request(&request).expect_err("target count limit");
+        let error = parse_diff_symbols_request(request, MAX_HISTORY_RESULTS)
+            .expect_err("target count limit");
         assert!(matches!(
             error,
             Error::RequestLimitExceeded {
@@ -1673,7 +1718,7 @@ mod tests {
         };
 
         assert!(matches!(
-            validate_history_request_with_limit(&request, 2),
+            parse_history_request(request, 2),
             Err(Error::RequestLimitExceeded {
                 field: "max_results",
                 requested: 3,

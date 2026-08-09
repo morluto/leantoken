@@ -15,7 +15,7 @@ impl CacheManager {
     }
 
     pub(super) fn list_with(&self, request: &CacheListRequest) -> Result<CacheListReport> {
-        validate_list_request(request)?;
+        let mode = parse_list_mode(request)?;
         if request.compatibilities.len() > MAX_CACHE_COMPATIBILITY_FILTERS {
             return Err(Error::RequestLimitExceeded {
                 field: "cache compatibility filters",
@@ -41,9 +41,11 @@ impl CacheManager {
             .as_deref()
             .map(normalize_repository_root_filter);
         let filter_hash = cache_list_filter_hash(request, repository_root.as_deref());
-        let after_id = request
-            .cursor
-            .as_deref()
+        let cursor = match mode {
+            CacheListMode::Summary => None,
+            CacheListMode::Page { cursor, .. } => cursor,
+        };
+        let after_id = cursor
             .map(|cursor| {
                 decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, &filter_hash)
                     .or_else(|error| {
@@ -126,10 +128,9 @@ impl CacheManager {
         let start = after_id.as_deref().map_or(0, |after_id| {
             matching.partition_point(|cache| cache.entry.id.as_str() <= after_id)
         });
-        let end = if request.summary {
-            start
-        } else {
-            start.saturating_add(request.limit).min(matching.len())
+        let end = match mode {
+            CacheListMode::Summary => start,
+            CacheListMode::Page { limit, .. } => start.saturating_add(limit).min(matching.len()),
         };
         let page = matching[start..end]
             .iter()
@@ -138,23 +139,28 @@ impl CacheManager {
                 compatibility: cache.compatibility,
             })
             .collect::<Vec<_>>();
-        let next_cursor = if !request.summary && end < matching.len() {
-            page.last().map(|entry| {
+        let next_cursor = match mode {
+            CacheListMode::Page { .. } if end < matching.len() => page.last().map(|entry| {
                 encode_cache_list_cursor_with_prefix(
                     CACHE_LIST_CURSOR_PREFIX,
                     &filter_hash,
                     &entry.entry.id,
                 )
-            })
-        } else {
-            None
+            }),
+            CacheListMode::Summary | CacheListMode::Page { .. } => None,
+        };
+        let contents = match mode {
+            CacheListMode::Summary => CacheListContents::Summary,
+            CacheListMode::Page { .. } => CacheListContents::Page {
+                next_cursor,
+                entries: page,
+            },
         };
         Ok(CacheListReport {
             report_version: 2,
             cache_root: self.root.clone(),
             total_entries: entries.len(),
             matched_entries: matching.len(),
-            returned_entries: page.len(),
             total_bytes,
             matched_bytes,
             active_entries,
@@ -164,9 +170,7 @@ impl CacheManager {
             safely_reclaimable_incompatible_entries,
             safely_reclaimable_incompatible_bytes,
             ignored_entries,
-            summary_only: request.summary,
-            next_cursor,
-            entries: page,
+            contents,
         })
     }
 }

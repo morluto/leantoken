@@ -2,10 +2,24 @@ pub(super) struct PreparedSearch {
     pub(super) regex: Option<regex::Regex>,
     pub(super) literal_regex: Option<regex::Regex>,
     pub(super) occurrence_literal_regex: Option<regex::Regex>,
-    pub(super) query_predicate: Option<ExactQueryPredicate>,
+    pub(super) query_receipt: PreparedQueryReceipt,
     pub(super) limit: usize,
     pub(super) token_limit: usize,
     pub(super) context_lines: usize,
+}
+
+pub(super) struct ParsedSearchRequest {
+    pub(super) request: SearchRequest,
+    pub(super) prepared: PreparedSearch,
+}
+
+pub(super) enum PreparedQueryReceipt {
+    None,
+    Record(ExactQueryPredicate),
+    Reuse {
+        receipt_id: String,
+        predicate: ExactQueryPredicate,
+    },
 }
 
 pub(super) struct LexicalSearchBatch {
@@ -23,8 +37,22 @@ pub(super) struct SearchSnapshotResult {
 }
 
 impl Services {
-    pub(super) fn prepare_search(&self, request: &SearchRequest) -> Result<PreparedSearch> {
+    pub(super) fn parse_search_request(
+        &self,
+        request: SearchRequest,
+        output_shape: SearchOutputShape,
+    ) -> Result<ParsedSearchRequest> {
+        let prepared = self.prepare_search(&request, output_shape)?;
+        Ok(ParsedSearchRequest { request, prepared })
+    }
+
+    pub(super) fn prepare_search(
+        &self,
+        request: &SearchRequest,
+        output_shape: SearchOutputShape,
+    ) -> Result<PreparedSearch> {
         validate_search_input(request)?;
+        validate_search_output(request, output_shape)?;
         let regex = matches!(request.mode, SearchMode::Regex)
             .then(|| compile_regex(request))
             .transpose()?;
@@ -37,16 +65,21 @@ impl Services {
             && matches!(request.mode, SearchMode::Text))
         .then(|| compile_occurrence_literal_regex(request))
         .transpose()?;
-        let query_predicate = request
-            .query_receipt
-            .as_ref()
-            .map(|_| ExactQueryPredicate::from_request(request))
-            .transpose()?;
+        let query_receipt = match &request.query_receipt {
+            None => PreparedQueryReceipt::None,
+            Some(QueryReceiptAction::Record) => {
+                PreparedQueryReceipt::Record(ExactQueryPredicate::from_request(request)?)
+            }
+            Some(QueryReceiptAction::Reuse { receipt_id }) => PreparedQueryReceipt::Reuse {
+                receipt_id: receipt_id.clone(),
+                predicate: ExactQueryPredicate::from_request(request)?,
+            },
+        };
         Ok(PreparedSearch {
             regex,
             literal_regex,
             occurrence_literal_regex,
-            query_predicate,
+            query_receipt,
             limit: self.result_limit(request.max_results)?,
             token_limit: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
             context_lines: self.context_line_limit(request.context_lines)?,
@@ -66,26 +99,16 @@ impl Services {
             cancellation,
         } = snapshot;
         let SearchQuery { request, prepared } = query;
-        if request.query_receipt.is_some()
-            && !matches!(
-                execution.output_shape,
-                SearchOutputShape::OccurrenceGroups { .. }
-            )
+        if let PreparedQueryReceipt::Reuse {
+            receipt_id,
+            predicate,
+        } = &prepared.query_receipt
         {
-            return Err(Error::InvalidInput {
-                field: "query_receipt",
-                reason: "requires the occurrences projection",
-            });
-        }
-        if let Some(QueryReceiptAction::Reuse { receipt_id }) = &request.query_receipt {
             return self.reuse_query_receipt(
                 session,
                 generation,
                 receipt_id,
-                prepared
-                    .query_predicate
-                    .as_ref()
-                    .expect("query receipt action prepares a predicate"),
+                predicate,
                 cancellation,
             );
         }
@@ -373,7 +396,7 @@ impl Services {
                     regex_planning,
                 )?;
                 phases = scan.phases;
-                let primitive_kind = match phases.regex_candidate_strategy {
+                let primitive_kind = match phases.regex_planning.strategy() {
                     RegexCandidateStrategy::Trigram => "regex_trigram_candidates",
                     RegexCandidateStrategy::FullScan => "regex_full_scan",
                 };
@@ -670,14 +693,8 @@ impl Services {
             ),
         };
         receipt.apply_meta(&mut response.meta);
-        let query_receipt = if matches!(
-            request.query_receipt.as_ref(),
-            Some(QueryReceiptAction::Record)
-        ) {
-            let predicate = prepared
-                .query_predicate
-                .as_ref()
-                .expect("query receipt action prepares a predicate");
+        let query_receipt = if let PreparedQueryReceipt::Record(predicate) = &prepared.query_receipt
+        {
             let predicate_blake3 = predicate.digest()?;
             if !has_more && occurrences_returned == total_candidates {
                 let path_filter =

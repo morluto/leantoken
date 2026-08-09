@@ -1,4 +1,5 @@
 use super::*;
+use serde::ser::SerializeStruct;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -386,6 +387,58 @@ pub enum RegexCandidateStrategy {
     Trigram,
 }
 
+/// Regex candidate-planning decision with mutually exclusive diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegexPlanningOutcome {
+    /// No sound bounded candidate plan was selected.
+    FullScan {
+        /// Stable reason planning fell back, absent before a regex scan runs.
+        fallback_reason: Option<RegexPlanFallbackReason>,
+    },
+    /// A sound trigram candidate expression was selected.
+    Trigram {
+        /// HIR analysis that produced the plan.
+        source: RegexPlanSource,
+    },
+}
+
+impl Default for RegexPlanningOutcome {
+    fn default() -> Self {
+        Self::FullScan {
+            fallback_reason: None,
+        }
+    }
+}
+
+impl RegexPlanningOutcome {
+    /// Candidate strategy implied by this planning outcome.
+    #[must_use]
+    pub const fn strategy(self) -> RegexCandidateStrategy {
+        match self {
+            Self::FullScan { .. } => RegexCandidateStrategy::FullScan,
+            Self::Trigram { .. } => RegexCandidateStrategy::Trigram,
+        }
+    }
+
+    /// Planner source, present only for a selected trigram plan.
+    #[must_use]
+    pub const fn source(self) -> Option<RegexPlanSource> {
+        match self {
+            Self::Trigram { source } => Some(source),
+            Self::FullScan { .. } => None,
+        }
+    }
+
+    /// Fallback reason, present only for a diagnosed full scan.
+    #[must_use]
+    pub const fn fallback_reason(self) -> Option<RegexPlanFallbackReason> {
+        match self {
+            Self::FullScan { fallback_reason } => fallback_reason,
+            Self::Trigram { .. } => None,
+        }
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -420,15 +473,11 @@ pub enum RegexPlanFallbackReason {
     LiteralSequenceUnavailable,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 /// Deterministic phase and candidate counts for an evaluation-only search.
 pub struct SearchPhaseCounters {
-    /// Candidate source selected for a regex request.
-    pub regex_candidate_strategy: RegexCandidateStrategy,
-    /// Planner analysis that produced the candidate expression.
-    pub regex_plan_source: Option<RegexPlanSource>,
-    /// Stable reason the request used the full-scan fallback.
-    pub regex_plan_fallback_reason: Option<RegexPlanFallbackReason>,
+    /// Candidate strategy and its applicable diagnostic payload.
+    pub regex_planning: RegexPlanningOutcome,
     /// HIR nodes visited before selecting or rejecting a bounded plan.
     pub regex_plan_nodes: usize,
     /// Trigram terms in the selected candidate plan.
@@ -448,4 +497,28 @@ pub struct SearchPhaseCounters {
     pub regex_chunks_verified: usize,
     /// Matching chunks retained for occurrence hydration.
     pub regex_retained_chunks: usize,
+}
+
+impl Serialize for SearchPhaseCounters {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("SearchPhaseCounters", 11)?;
+        state.serialize_field("regex_candidate_strategy", &self.regex_planning.strategy())?;
+        state.serialize_field("regex_plan_source", &self.regex_planning.source())?;
+        state.serialize_field(
+            "regex_plan_fallback_reason",
+            &self.regex_planning.fallback_reason(),
+        )?;
+        state.serialize_field("regex_plan_nodes", &self.regex_plan_nodes)?;
+        state.serialize_field("regex_plan_terms", &self.regex_plan_terms)?;
+        state.serialize_field("regex_plan_term_bytes", &self.regex_plan_term_bytes)?;
+        state.serialize_field("regex_files_considered", &self.regex_files_considered)?;
+        state.serialize_field("regex_chunks_loaded", &self.regex_chunks_loaded)?;
+        state.serialize_field("regex_candidate_chunks", &self.regex_candidate_chunks)?;
+        state.serialize_field("regex_chunks_verified", &self.regex_chunks_verified)?;
+        state.serialize_field("regex_retained_chunks", &self.regex_retained_chunks)?;
+        state.end()
+    }
 }

@@ -42,9 +42,9 @@ impl Services {
     pub(super) fn validate_context_request(
         &self,
         request: &ContextRequest,
-        handoff: Option<&HandoffManifestRequest>,
-    ) -> Result<()> {
-        validate_context_option_constraints(request, handoff)?;
+        handoff: Option<HandoffManifestRequest>,
+    ) -> Result<ContextPolicy> {
+        let policy = ContextPolicy::parse(request, handoff)?;
         if request.task.trim().is_empty() {
             return Err(Error::InvalidInput {
                 field: "task",
@@ -205,13 +205,6 @@ impl Services {
         if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
             return Err(Error::LimitExceeded);
         }
-        for path in &request.changed_paths {
-            validate_input(path, "changed path", MAX_PATH_BYTES)?;
-            validate_relative(path)?;
-        }
-        if let Some(revision) = request.base_revision.as_deref() {
-            validate_revision_field(revision)?;
-        }
         for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
             .queries
             .iter()
@@ -219,68 +212,7 @@ impl Services {
         {
             compile_literal_regex(&query.value, false)?;
         }
-        if let Some(handoff) = handoff {
-            handoff::validate_request(handoff)?;
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn validate_revision_field(revision: &str) -> Result<()> {
-    if revision.trim().is_empty() {
-        return Err(Error::InvalidInput {
-            field: "base revision",
-            reason: "must not be empty",
-        });
-    }
-    if revision != revision.trim() {
-        return Err(Error::InvalidInput {
-            field: "base revision",
-            reason: "must not have leading or trailing whitespace",
-        });
-    }
-    validate_input(revision, "base revision", MAX_BASE_REVISION_BYTES)?;
-    parse_revision_range(revision)?;
-    Ok(())
-}
-
-pub(super) fn validate_context_option_constraints(
-    request: &ContextRequest,
-    handoff: Option<&HandoffManifestRequest>,
-) -> Result<()> {
-    let mut violations = Vec::with_capacity(3);
-    if (request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some())
-        && request.focus_paths.is_empty()
-    {
-        violations.push(crate::InputViolation::new(
-            "focus paths",
-            "must not be empty when focus path constraints are enabled",
-        ));
-    }
-    if request.plan_only && request.receipt_id.is_some() {
-        violations.push(crate::InputViolation::new(
-            "receipt_id",
-            "must be omitted when plan_only is true",
-        ));
-    }
-    if request.plan_only && handoff.is_some() {
-        violations.push(crate::InputViolation::new(
-            "plan_only",
-            "cannot be combined with a handoff manifest",
-        ));
-    }
-    match violations.len() {
-        0 => Ok(()),
-        1 => {
-            let violation = violations[0];
-            Err(Error::InvalidInput {
-                field: violation.field,
-                reason: violation.reason,
-            })
-        }
-        _ => Err(Error::InvalidInputConstraints(crate::InputViolations::new(
-            violations,
-        ))),
+        Ok(policy)
     }
 }
 

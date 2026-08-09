@@ -1,5 +1,13 @@
 use super::*;
 
+fn assert_summary_wire_shape(report: &crate::cache::CacheListReport) {
+    let serialized = serde_json::to_value(report).expect("serialize cache summary");
+    assert_eq!(serialized["returned_entries"], 0);
+    assert_eq!(serialized["summary_only"], true);
+    assert_eq!(serialized["entries"], serde_json::json!([]));
+    assert!(serialized.get("next_cursor").is_none());
+}
+
 #[test]
 fn list_reports_current_metadata_and_ignores_non_cache_directories() {
     let temp = tempfile::tempdir().expect("temporary directory");
@@ -14,35 +22,35 @@ fn list_reports_current_metadata_and_ignores_non_cache_directories() {
         .list_with(&CacheListRequest::default())
         .expect("cache list");
 
-    assert_eq!(report.entries.len(), 1);
+    assert_eq!(report.entries().len(), 1);
     assert_eq!(report.total_entries, 1);
     assert_eq!(report.matched_entries, 1);
-    assert_eq!(report.returned_entries, 1);
+    assert_eq!(report.returned_entries(), 1);
     assert_eq!(report.ignored_entries, 1);
     assert_eq!(report.active_entries, 0);
     assert_eq!(report.missing_root_entries, 0);
     assert_eq!(report.state_counts["current"], 1);
-    assert!(!report.summary_only);
-    assert!(report.next_cursor.is_none());
-    assert_eq!(report.entries[0].entry.state, CacheState::Current);
-    assert_eq!(report.entries[0].entry.index_scope, IndexScopeMode::Full);
-    assert_eq!(report.entries[0].entry.index_scope_digest, None);
+    assert!(!report.summary_only());
+    assert!(report.next_cursor().is_none());
+    assert_eq!(report.entries()[0].entry.state, CacheState::Current);
+    assert_eq!(report.entries()[0].entry.index_scope, IndexScopeMode::Full);
+    assert_eq!(report.entries()[0].entry.index_scope_digest, None);
     assert_eq!(
-        report.entries[0].entry.index_content_version,
+        report.entries()[0].entry.index_content_version,
         Some(INDEX_CONTENT_VERSION)
     );
     assert_eq!(
-        report.entries[0].entry.repository_root.as_deref(),
+        report.entries()[0].entry.repository_root.as_deref(),
         Some(repository.as_path())
     );
-    assert_eq!(report.entries[0].entry.repository_available, Some(true));
+    assert_eq!(report.entries()[0].entry.repository_available, Some(true));
     assert_eq!(
-        report.entries[0].entry.last_access_unix_seconds,
+        report.entries()[0].entry.last_access_unix_seconds,
         Some(9_000)
     );
-    assert_eq!(report.entries[0].entry.age_seconds, Some(1_000));
+    assert_eq!(report.entries()[0].entry.age_seconds, Some(1_000));
     assert_eq!(
-        report.entries[0].entry.access_time_source,
+        report.entries()[0].entry.access_time_source,
         Some(AccessTimeSource::Database)
     );
     assert!(report.total_bytes > 0);
@@ -64,7 +72,7 @@ fn list_distinguishes_scoped_cache_identity_without_exposing_patterns() {
     let report = manager
         .list_with(&CacheListRequest::default())
         .expect("cache list");
-    let entry = report.entries.first().expect("scoped entry");
+    let entry = report.entries().first().expect("scoped entry");
     assert_eq!(entry.entry.id, id);
     assert_eq!(entry.entry.index_scope, IndexScopeMode::Scoped);
     assert_eq!(entry.entry.index_scope_digest.as_deref(), scope.digest());
@@ -126,7 +134,7 @@ fn list_separates_metadata_state_from_content_compatibility() {
     assert!(report.safely_reclaimable_incompatible_bytes > 0);
     let project = |id: &str| {
         report
-            .entries
+            .entries()
             .iter()
             .find(|entry| entry.entry.id == id)
             .map(|entry| (entry.entry.state, entry.compatibility))
@@ -156,6 +164,9 @@ fn list_separates_metadata_state_from_content_compatibility() {
         (CacheState::Corrupt, CacheCompatibility::Unknown)
     );
     let serialized = serde_json::to_value(&report).expect("serialize cache report");
+    assert_eq!(serialized["returned_entries"], report.entries().len());
+    assert_eq!(serialized["summary_only"], false);
+    assert!(serialized.get("next_cursor").is_none());
     assert!(
         serialized["entries"]
             .as_array()
@@ -199,8 +210,8 @@ fn list_filters_and_cursors_bind_every_compatibility_dimension() {
         .list_with(&first_request)
         .expect("first incompatible page");
     assert_eq!(first.matched_entries, 2);
-    assert_eq!(first.returned_entries, 1);
-    let cursor = first.next_cursor.expect("next cursor");
+    assert_eq!(first.returned_entries(), 1);
+    let cursor = first.next_cursor().expect("next cursor").to_owned();
     let second = manager
         .list_with(&CacheListRequest {
             limit: 1,
@@ -209,8 +220,8 @@ fn list_filters_and_cursors_bind_every_compatibility_dimension() {
             ..CacheListRequest::default()
         })
         .expect("second incompatible page");
-    assert_eq!(second.returned_entries, 1);
-    assert!(second.next_cursor.is_none());
+    assert_eq!(second.returned_entries(), 1);
+    assert!(second.next_cursor().is_none());
 
     for changed in [
         CacheListRequest {
@@ -248,7 +259,7 @@ fn list_filters_and_cursors_bind_every_compatibility_dimension() {
         .expect("exact content-version filter");
     assert_eq!(exact.matched_entries, 1);
     assert_eq!(
-        exact.entries[0].compatibility,
+        exact.entries()[0].compatibility,
         CacheCompatibility::CompatibleCurrent
     );
 }
@@ -278,16 +289,16 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
         .expect("first cache page");
     assert_eq!(first.total_entries, 3);
     assert_eq!(first.matched_entries, 3);
-    assert_eq!(first.returned_entries, 2);
+    assert_eq!(first.returned_entries(), 2);
     assert_eq!(
         first
-            .entries
+            .entries()
             .iter()
             .map(|entry| entry.entry.id.as_str())
             .collect::<Vec<_>>(),
         vec![FIRST_ID, SECOND_ID]
     );
-    let cursor = first.next_cursor.clone().expect("next cache cursor");
+    let cursor = first.next_cursor().expect("next cache cursor").to_owned();
 
     let second = manager
         .list_with(&CacheListRequest {
@@ -296,9 +307,9 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
             ..CacheListRequest::default()
         })
         .expect("second cache page");
-    assert_eq!(second.returned_entries, 1);
-    assert_eq!(second.entries[0].entry.state, CacheState::Current);
-    assert!(second.next_cursor.is_none());
+    assert_eq!(second.returned_entries(), 1);
+    assert_eq!(second.entries()[0].entry.state, CacheState::Current);
+    assert!(second.next_cursor().is_none());
 
     let summary = manager
         .list_with(&CacheListRequest {
@@ -307,15 +318,16 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
             ..CacheListRequest::default()
         })
         .expect("corrupt cache summary");
-    assert!(summary.summary_only);
+    assert!(summary.summary_only());
     assert_eq!(summary.total_entries, 3);
     assert_eq!(summary.matched_entries, 2);
-    assert_eq!(summary.returned_entries, 0);
+    assert_eq!(summary.returned_entries(), 0);
     assert_eq!(summary.state_counts["corrupt"], 2);
     assert_eq!(summary.state_counts["current"], 0);
     assert!(summary.matched_bytes > 0);
-    assert!(summary.entries.is_empty());
-    assert!(summary.next_cursor.is_none());
+    assert!(summary.entries().is_empty());
+    assert!(summary.next_cursor().is_none());
+    assert_summary_wire_shape(&summary);
 
     let by_root = manager
         .list_with(&CacheListRequest {
@@ -324,9 +336,9 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
         })
         .expect("repository cache filter");
     assert_eq!(by_root.matched_entries, 1);
-    assert_eq!(by_root.entries[0].entry.state, CacheState::Current);
+    assert_eq!(by_root.entries()[0].entry.state, CacheState::Current);
     assert_eq!(
-        by_root.entries[0].entry.repository_root.as_deref(),
+        by_root.entries()[0].entry.repository_root.as_deref(),
         Some(repository.as_path())
     );
 
@@ -473,13 +485,16 @@ fn legacy_repository_only_identity_remains_visible_and_prunable() {
         .list_with(&CacheListRequest::default())
         .expect("cache list");
 
-    assert_eq!(listed.entries.len(), 1);
-    assert_eq!(listed.entries[0].entry.index_content_version, None);
-    assert_eq!(listed.entries[0].entry.state, CacheState::Current);
+    assert_eq!(listed.entries().len(), 1);
+    assert_eq!(listed.entries()[0].entry.index_content_version, None);
+    assert_eq!(listed.entries()[0].entry.state, CacheState::Current);
 
     let mut request = request();
     request.max_total_bytes = Some(0);
     let pruned = manager.prune(&request).expect("legacy prune plan");
-    assert_eq!(pruned.results[0].action, CachePruneAction::WouldDelete);
+    assert_eq!(
+        pruned.results[0].outcome.action(),
+        CachePruneAction::WouldDelete
+    );
     assert!(database.exists());
 }

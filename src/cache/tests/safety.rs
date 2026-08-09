@@ -27,16 +27,19 @@ fn corrupt_and_legacy_caches_are_listed_without_mutation() {
         .list_with(&CacheListRequest::default())
         .expect("cache list");
 
-    assert_eq!(report.entries[0].entry.state, CacheState::Corrupt);
-    assert_eq!(report.entries[1].entry.state, CacheState::OlderSchema);
+    assert_eq!(report.entries()[0].entry.state, CacheState::Corrupt);
+    assert_eq!(report.entries()[1].entry.state, CacheState::OlderSchema);
     assert!(corrupt.join(DATABASE_NAME).exists());
     assert!(legacy.join(DATABASE_NAME).exists());
 
     let mut prune = request();
     prune.max_total_bytes = Some(0);
     let plan = manager.prune(&prune).expect("prune plan");
-    assert_eq!(plan.results[0].action, CachePruneAction::Kept);
-    assert_eq!(plan.results[1].action, CachePruneAction::WouldDelete);
+    assert_eq!(plan.results[0].outcome.action(), CachePruneAction::Kept);
+    assert_eq!(
+        plan.results[1].outcome.action(),
+        CachePruneAction::WouldDelete
+    );
     assert!(corrupt.join(DATABASE_NAME).exists());
     assert!(legacy.join(DATABASE_NAME).exists());
 }
@@ -120,22 +123,22 @@ fn legacy_wal_list_keeps_file_mtime_access_age_stable() {
         .list_with(&CacheListRequest::default())
         .expect("second cache list");
 
-    assert_eq!(first.entries[0].entry.state, CacheState::OlderSchema);
+    assert_eq!(first.entries()[0].entry.state, CacheState::OlderSchema);
     assert_eq!(
-        first.entries[0].entry.access_time_source,
+        first.entries()[0].entry.access_time_source,
         Some(AccessTimeSource::FileMtime)
     );
     assert_eq!(
-        first.entries[0].entry.last_access_unix_seconds,
+        first.entries()[0].entry.last_access_unix_seconds,
         Some(SECONDS_PER_DAY)
     );
     assert_eq!(
-        second.entries[0].entry.last_access_unix_seconds,
-        first.entries[0].entry.last_access_unix_seconds
+        second.entries()[0].entry.last_access_unix_seconds,
+        first.entries()[0].entry.last_access_unix_seconds
     );
     assert_eq!(
-        second.entries[0].entry.age_seconds,
-        first.entries[0].entry.age_seconds
+        second.entries()[0].entry.age_seconds,
+        first.entries()[0].entry.age_seconds
     );
 }
 
@@ -150,7 +153,10 @@ fn legacy_wal_dry_run_keeps_age_selection_stable() {
     let first = manager.prune(&request).expect("first prune plan");
     let second = manager.prune(&request).expect("second prune plan");
 
-    assert_eq!(first.results[0].action, CachePruneAction::WouldDelete);
+    assert_eq!(
+        first.results[0].outcome.action(),
+        CachePruneAction::WouldDelete
+    );
     assert_eq!(first.results[0].reasons, ["older_than"]);
     assert_eq!(second.results[0], first.results[0]);
 }
@@ -170,7 +176,7 @@ fn unexpected_content_is_never_removed_automatically() {
 
     let report = manager.prune(&prune).expect("prune");
 
-    assert_eq!(report.results[0].action, CachePruneAction::Kept);
+    assert_eq!(report.results[0].outcome.action(), CachePruneAction::Kept);
     assert!(report.results[0].reasons.is_empty());
     assert!(directory.join(DATABASE_NAME).exists());
     assert!(directory.join("keep.txt").exists());
@@ -235,9 +241,9 @@ fn future_schema_and_mismatched_identity_are_never_removed_automatically() {
         .iter()
         .find(|result| result.id == future_migration_id)
         .expect("future migration result");
-    assert_eq!(future.action, CachePruneAction::Kept);
-    assert_eq!(mismatch.action, CachePruneAction::Kept);
-    assert_eq!(future_migration.action, CachePruneAction::Kept);
+    assert_eq!(future.outcome.action(), CachePruneAction::Kept);
+    assert_eq!(mismatch.outcome.action(), CachePruneAction::Kept);
+    assert_eq!(future_migration.outcome.action(), CachePruneAction::Kept);
     assert!(future_database.exists());
     assert!(mismatch_database.exists());
     assert!(future_migration_database.exists());
@@ -265,21 +271,21 @@ fn future_index_content_cache_is_visible_but_never_removed() {
         .list_with(&CacheListRequest::default())
         .expect("cache list");
 
-    assert_eq!(listed.entries.len(), 1);
-    assert_eq!(listed.entries[0].entry.id, future_id);
+    assert_eq!(listed.entries().len(), 1);
+    assert_eq!(listed.entries()[0].entry.id, future_id);
     assert_eq!(
-        listed.entries[0].entry.index_content_version,
+        listed.entries()[0].entry.index_content_version,
         Some(INDEX_CONTENT_VERSION + 1)
     );
-    assert_eq!(listed.entries[0].entry.state, CacheState::Unsupported);
+    assert_eq!(listed.entries()[0].entry.state, CacheState::Unsupported);
     assert_eq!(
-        listed.entries[0].entry.detail.as_deref(),
+        listed.entries()[0].entry.detail.as_deref(),
         Some("cache uses a newer index-content version")
     );
 
     let mut request = request();
     request.max_total_bytes = Some(0);
     let pruned = manager.prune(&request).expect("future cache prune plan");
-    assert_eq!(pruned.results[0].action, CachePruneAction::Kept);
+    assert_eq!(pruned.results[0].outcome.action(), CachePruneAction::Kept);
     assert!(database.exists());
 }

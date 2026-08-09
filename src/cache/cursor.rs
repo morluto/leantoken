@@ -1,6 +1,15 @@
 use super::*;
 
-pub(super) fn validate_list_request(request: &CacheListRequest) -> Result<()> {
+#[derive(Clone, Copy)]
+pub(super) enum CacheListMode<'a> {
+    Summary,
+    Page {
+        limit: usize,
+        cursor: Option<&'a str>,
+    },
+}
+
+pub(super) fn parse_list_mode(request: &CacheListRequest) -> Result<CacheListMode<'_>> {
     if request.limit == 0 {
         return Err(Error::InvalidInput {
             field: "cache list limit",
@@ -20,7 +29,14 @@ pub(super) fn validate_list_request(request: &CacheListRequest) -> Result<()> {
             reason: "cannot be combined with summary mode",
         });
     }
-    Ok(())
+    if request.summary {
+        Ok(CacheListMode::Summary)
+    } else {
+        Ok(CacheListMode::Page {
+            limit: request.limit,
+            cursor: request.cursor.as_deref(),
+        })
+    }
 }
 
 pub(super) fn normalize_repository_root_filter(path: &Path) -> PathBuf {
@@ -152,7 +168,6 @@ pub(super) fn decode_cache_list_cursor_with_prefix(
             hash.len() != CACHE_LIST_CURSOR_HASH_CHARS
                 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
         })
-        || after_id.is_none_or(|id| !is_cache_id(id))
     {
         return Err(Error::InvalidInput {
             field: "cache list cursor",
@@ -165,5 +180,11 @@ pub(super) fn decode_cache_list_cursor_with_prefix(
             reason: "does not match the active cache filters",
         });
     }
-    Ok(after_id.expect("validated cache cursor id").to_owned())
+    let after_id = after_id
+        .filter(|id| is_cache_id(id))
+        .ok_or_else(|| Error::InvalidInput {
+            field: "cache list cursor",
+            reason: "must be an opaque cursor returned by cache list",
+        })?;
+    Ok(after_id.to_owned())
 }

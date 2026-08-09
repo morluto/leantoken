@@ -37,12 +37,16 @@ impl Drop for DispatchedToolCall {
 pub(super) struct BoundedStdioTransport {
     reader: tokio::io::BufReader<tokio::io::Stdin>,
     writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
-    frame: Vec<u8>,
-    discarding_oversized_frame: bool,
+    frame_state: FrameReadState,
     request_dispatch: RequestAdmission,
     dispatched_calls:
         Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
     result_mode: McpResultMode,
+}
+
+enum FrameReadState {
+    Collecting(Vec<u8>),
+    DiscardingOversized,
 }
 
 impl BoundedStdioTransport {
@@ -50,18 +54,29 @@ impl BoundedStdioTransport {
         Self {
             reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
             writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
-            frame: Vec::new(),
-            discarding_oversized_frame: false,
+            frame_state: FrameReadState::Collecting(Vec::new()),
             request_dispatch,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
             result_mode,
         }
     }
 
-    fn release_frame(&mut self) {
-        self.frame.clear();
-        if self.frame.capacity() > RETAINED_MCP_FRAME_CAPACITY {
-            self.frame = Vec::new();
+    fn take_frame(&mut self) -> Vec<u8> {
+        match std::mem::replace(
+            &mut self.frame_state,
+            FrameReadState::Collecting(Vec::new()),
+        ) {
+            FrameReadState::Collecting(frame) => frame,
+            FrameReadState::DiscardingOversized => {
+                unreachable!("discard mode never materializes a frame")
+            }
+        }
+    }
+
+    fn retain_frame_buffer(&mut self, mut frame: Vec<u8>) {
+        frame.clear();
+        if frame.capacity() <= RETAINED_MCP_FRAME_CAPACITY {
+            self.frame_state = FrameReadState::Collecting(frame);
         }
     }
 
@@ -182,21 +197,28 @@ impl Transport<RoleServer> for BoundedStdioTransport {
             };
             let newline = available.iter().position(|byte| *byte == b'\n');
 
-            if self.discarding_oversized_frame {
+            if matches!(self.frame_state, FrameReadState::DiscardingOversized) {
                 let consumed = newline.map_or(available.len(), |position| position + 1);
                 self.reader.consume(consumed);
                 if newline.is_some() {
-                    self.discarding_oversized_frame = false;
+                    self.frame_state = FrameReadState::Collecting(Vec::new());
                 }
                 continue;
             }
 
             let payload_bytes = newline.unwrap_or(available.len());
-            if self.frame.len().saturating_add(payload_bytes) > MAX_MCP_STDIO_FRAME_BYTES {
+            let frame_len = match &self.frame_state {
+                FrameReadState::Collecting(frame) => frame.len(),
+                FrameReadState::DiscardingOversized => unreachable!("handled above"),
+            };
+            if frame_len.saturating_add(payload_bytes) > MAX_MCP_STDIO_FRAME_BYTES {
                 let consumed = newline.map_or(available.len(), |position| position + 1);
                 self.reader.consume(consumed);
-                self.release_frame();
-                self.discarding_oversized_frame = newline.is_none();
+                self.frame_state = if newline.is_none() {
+                    FrameReadState::DiscardingOversized
+                } else {
+                    FrameReadState::Collecting(Vec::new())
+                };
                 tracing::warn!(
                     limit = MAX_MCP_STDIO_FRAME_BYTES,
                     "discarded oversized MCP stdio frame"
@@ -204,21 +226,26 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                 continue;
             }
 
-            self.frame.extend_from_slice(&available[..payload_bytes]);
+            let FrameReadState::Collecting(frame) = &mut self.frame_state else {
+                unreachable!("discard mode is handled before buffering")
+            };
+            frame.extend_from_slice(&available[..payload_bytes]);
             self.reader
                 .consume(newline.map_or(payload_bytes, |position| position + 1));
             if newline.is_none() {
                 continue;
             }
-            if self.frame.last() == Some(&b'\r') {
-                self.frame.pop();
+            let mut frame = self.take_frame();
+            if frame.last() == Some(&b'\r') {
+                frame.pop();
             }
-            if self.frame.is_empty() {
+            if frame.is_empty() {
+                self.retain_frame_buffer(frame);
                 continue;
             }
 
-            let parsed = serde_json::from_slice(&self.frame);
-            self.release_frame();
+            let parsed = serde_json::from_slice(&frame);
+            self.retain_frame_buffer(frame);
             match parsed {
                 Ok(mut message) => match self.admit_message(&mut message) {
                     Ok(()) => return Some(message),

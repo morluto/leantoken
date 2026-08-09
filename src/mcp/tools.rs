@@ -80,8 +80,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (request, projection, coordinates_only, consistency, options, expected_repository_id) =
-            req.into_parts();
+        let (request, output, consistency, options, expected_repository_id) = req.into_parts();
         self.run_prepared(
             "search",
             prepared,
@@ -91,11 +90,8 @@ impl LeanTokenMcp {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
-                    match projection {
-                        SearchMcpProjection::Auto => {
-                            unreachable!("search projection is resolved by into_parts")
-                        }
-                        SearchMcpProjection::Full => services
+                    match output {
+                        SearchMcpOutput::Full => services
                             .search_with_options_consistency_cancellable(
                                 request,
                                 consistency,
@@ -104,7 +100,7 @@ impl LeanTokenMcp {
                             )
                             .await
                             .and_then(serialized_response),
-                        SearchMcpProjection::Grouped => services
+                        SearchMcpOutput::Grouped => services
                             .search_grouped_with_options_consistency_cancellable(
                                 request,
                                 consistency,
@@ -113,7 +109,7 @@ impl LeanTokenMcp {
                             )
                             .await
                             .and_then(serialized_response),
-                        SearchMcpProjection::Occurrences => services
+                        SearchMcpOutput::Occurrences { coordinates_only } => services
                             .search_occurrences_with_options_consistency_cancellable(
                                 request,
                                 coordinates_only,

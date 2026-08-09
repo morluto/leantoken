@@ -98,7 +98,7 @@ fn resource_value<'a>(
                 start_line: evidence.start_line,
                 end_line: evidence.end_line,
                 content_hash: &evidence.content_hash,
-                exact_only: evidence.exact_only,
+                exact_only: evidence.exact_only(),
             })
             .collect(),
         complete: receipt.complete,

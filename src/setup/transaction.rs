@@ -29,12 +29,80 @@ pub(super) enum SetupTransactionState {
     Committed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub(super) struct SetupTransactionEntry {
     pub(super) path: PathBuf,
     pub(super) original: Option<String>,
-    pub(super) updated_hash: Option<String>,
-    pub(super) updated_exists: bool,
+    pub(super) updated: SetupTransactionUpdate,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum SetupTransactionUpdate {
+    Present { content_hash: String },
+    Absent,
+}
+
+impl Serialize for SetupTransactionEntry {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        #[derive(Serialize)]
+        struct WireEntry<'a> {
+            path: &'a Path,
+            original: &'a Option<String>,
+            updated_hash: Option<&'a str>,
+            updated_exists: bool,
+        }
+
+        let (updated_hash, updated_exists) = match &self.updated {
+            SetupTransactionUpdate::Present { content_hash } => (Some(content_hash.as_str()), true),
+            SetupTransactionUpdate::Absent => (None, false),
+        };
+        WireEntry {
+            path: &self.path,
+            original: &self.original,
+            updated_hash,
+            updated_exists,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SetupTransactionEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireEntry {
+            path: PathBuf,
+            original: Option<String>,
+            updated_hash: Option<String>,
+            updated_exists: bool,
+        }
+
+        let wire = WireEntry::deserialize(deserializer)?;
+        let updated = match (wire.updated_exists, wire.updated_hash) {
+            (true, Some(content_hash)) => SetupTransactionUpdate::Present { content_hash },
+            (false, None) => SetupTransactionUpdate::Absent,
+            (true, None) => {
+                return Err(serde::de::Error::custom(
+                    "updated_hash is required when updated_exists is true",
+                ));
+            }
+            (false, Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "updated_hash must be absent when updated_exists is false",
+                ));
+            }
+        };
+        Ok(Self {
+            path: wire.path,
+            original: wire.original,
+            updated,
+        })
+    }
 }
 
 pub(super) struct SetupTransaction {
@@ -116,13 +184,12 @@ pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()>
     for entry in &journal.entries {
         let current = read_optional(&entry.path)?;
         let still_original = current == entry.original;
-        let matches_applied = current.as_ref().is_some_and(|value| {
-            entry.updated_exists
-                && entry
-                    .updated_hash
-                    .as_deref()
-                    .is_some_and(|hash| content_hash(value) == hash)
-        }) || (!entry.updated_exists && current.is_none());
+        let matches_applied = match &entry.updated {
+            SetupTransactionUpdate::Present { content_hash: hash } => current
+                .as_ref()
+                .is_some_and(|value| content_hash(value) == *hash),
+            SetupTransactionUpdate::Absent => current.is_none(),
+        };
         if !still_original && !matches_applied {
             return Err(Error::SetupFailure(format!(
                 "cannot recover interrupted setup because {} changed afterward",
@@ -140,28 +207,35 @@ pub(super) fn begin_setup_transaction(
 ) -> Result<Option<SetupTransaction>> {
     let mut entries = Vec::new();
     for edit in &plan.edits {
-        if let Some(updated) = &edit.updated {
+        if let Some(updated) = edit.updated() {
             entries.push(SetupTransactionEntry {
                 path: edit.public.path.clone(),
-                original: edit.original.clone(),
-                updated_hash: Some(content_hash(updated)),
-                updated_exists: true,
+                original: edit.original().map(str::to_owned),
+                updated: SetupTransactionUpdate::Present {
+                    content_hash: content_hash(updated),
+                },
             });
         }
     }
     for edit in &plan.discovery_edits {
-        let (updated_hash, updated_exists) = match edit.public.action {
+        let updated = match edit.public.action {
             ClientPlanAction::Create | ClientPlanAction::Update => {
-                (edit.updated.as_deref().map(content_hash), true)
+                SetupTransactionUpdate::Present {
+                    content_hash: content_hash(edit.updated.as_deref().ok_or_else(|| {
+                        Error::SetupFailure(format!(
+                            "setup plan omitted updated content for {}",
+                            edit.public.path.display()
+                        ))
+                    })?),
+                }
             }
-            ClientPlanAction::Remove => (None, false),
+            ClientPlanAction::Remove => SetupTransactionUpdate::Absent,
             ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => continue,
         };
         entries.push(SetupTransactionEntry {
             path: edit.public.path.clone(),
             original: edit.original.clone(),
-            updated_hash,
-            updated_exists,
+            updated,
         });
     }
     if entries.is_empty() {

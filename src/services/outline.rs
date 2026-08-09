@@ -61,7 +61,20 @@ fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     }
 }
 
-fn decode_outline_cursor(cursor: &str) -> Result<(u64, usize, String)> {
+struct OutlineCursor {
+    generation: u64,
+    offset: usize,
+    query_hash: String,
+}
+
+struct ParsedOutlineRequest {
+    request: OutlineRequest,
+    cursor: Option<OutlineCursor>,
+    limit: usize,
+    token_limit: usize,
+}
+
+fn decode_outline_cursor(cursor: &str) -> Result<OutlineCursor> {
     let fields = cursor.split(':').collect::<Vec<_>>();
     let [generation, kind, offset, query_hash] = fields.as_slice() else {
         return Err(Error::StaleCursor);
@@ -69,11 +82,11 @@ fn decode_outline_cursor(cursor: &str) -> Result<(u64, usize, String)> {
     if *kind != "outline" || query_hash.len() != 16 || !query_hash.bytes().all(is_lower_hex) {
         return Err(Error::StaleCursor);
     }
-    Ok((
-        generation.parse().map_err(|_| Error::StaleCursor)?,
-        offset.parse().map_err(|_| Error::StaleCursor)?,
-        (*query_hash).into(),
-    ))
+    Ok(OutlineCursor {
+        generation: generation.parse().map_err(|_| Error::StaleCursor)?,
+        offset: offset.parse().map_err(|_| Error::StaleCursor)?,
+        query_hash: (*query_hash).into(),
+    })
 }
 
 fn outline_query_hash(request: &OutlineRequest, projection: Option<&str>) -> String {
@@ -105,8 +118,8 @@ fn outline_query_hash(request: &OutlineRequest, projection: Option<&str>) -> Str
     hasher.finalize().to_hex()[..16].to_string()
 }
 
-fn parse_outline_cursor(
-    cursor: Option<&str>,
+fn outline_cursor_offset(
+    cursor: Option<&OutlineCursor>,
     generation: u64,
     request: &OutlineRequest,
     projection: Option<&str>,
@@ -114,11 +127,12 @@ fn parse_outline_cursor(
     let Some(cursor) = cursor else {
         return Ok(0);
     };
-    let (cursor_generation, offset, query_hash) = decode_outline_cursor(cursor)?;
-    if cursor_generation != generation || query_hash != outline_query_hash(request, projection) {
+    if cursor.generation != generation
+        || cursor.query_hash != outline_query_hash(request, projection)
+    {
         return Err(Error::StaleCursor);
     }
-    Ok(offset)
+    Ok(cursor.offset)
 }
 
 fn make_outline_cursor(
@@ -133,7 +147,10 @@ fn make_outline_cursor(
     )
 }
 
-fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
+fn parse_outline_input(
+    services: &Services,
+    mut request: OutlineRequest,
+) -> Result<ParsedOutlineRequest> {
     if request.paths.is_empty() {
         return Err(Error::InvalidInput {
             field: "paths",
@@ -158,10 +175,23 @@ fn validate_outline_input(request: &OutlineRequest) -> Result<()> {
         MAX_PATTERN_BYTES,
     )?;
     validate_optional_input(request.cursor.as_deref(), "cursor", 256)?;
-    if let Some(cursor) = request.cursor.as_deref() {
-        decode_outline_cursor(cursor)?;
-    }
-    Ok(())
+    let cursor = request
+        .cursor
+        .take()
+        .map(|cursor| decode_outline_cursor(&cursor))
+        .transpose()?;
+    request.paths = request
+        .paths
+        .iter()
+        .map(|path| normalize_relative(path))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ParsedOutlineRequest {
+        limit: services.result_limit(request.max_results)?,
+        token_limit: services
+            .token_limit(request.max_tokens, services.config.default_read_tokens)?,
+        request,
+        cursor,
+    })
 }
 
 impl Services {
@@ -237,13 +267,8 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, validate_outline_input(&request))?;
-            self.observe_service_result(operation, self.result_limit(request.max_results))?;
-            self.observe_service_result(
-                operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
-            )?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -312,13 +337,8 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, validate_outline_input(&request))?;
-            self.observe_service_result(operation, self.result_limit(request.max_results))?;
-            self.observe_service_result(
-                operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
-            )?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -390,30 +410,24 @@ impl Services {
 
     fn outline_sync(
         &self,
-        mut request: OutlineRequest,
+        parsed: ParsedOutlineRequest,
         options: ServiceCallOptions,
         include_imports: bool,
         record_savings: bool,
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
-        validate_outline_input(&request)?;
-        request.paths = request
-            .paths
-            .iter()
-            .map(|path| normalize_relative(path))
-            .collect::<Result<Vec<_>>>()?;
-        let limit = self.result_limit(request.max_results)?;
-        let token_limit = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        let ParsedOutlineRequest {
+            request,
+            cursor,
+            limit,
+            token_limit,
+        } = parsed;
         let (mut response, baseline_source_tokens) = self.consistent(|session| {
             let generation = session.generation();
             let cursor_projection = (!include_imports).then_some("signatures");
-            let offset = parse_outline_cursor(
-                request.cursor.as_deref(),
-                generation,
-                &request,
-                cursor_projection,
-            )?;
+            let offset =
+                outline_cursor_offset(cursor.as_ref(), generation, &request, cursor_projection)?;
             let mut total_symbols = 0usize;
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
@@ -720,22 +734,25 @@ mod tests {
         };
         let full = make_outline_cursor(7, 3, &request, None);
         let signatures = make_outline_cursor(7, 3, &request, Some("signatures"));
+        let full_cursor = decode_outline_cursor(&full).expect("decode full cursor");
+        let signatures_cursor =
+            decode_outline_cursor(&signatures).expect("decode signature cursor");
         assert_ne!(full, signatures);
         assert_eq!(
-            parse_outline_cursor(Some(&full), 7, &request, None).expect("full cursor"),
+            outline_cursor_offset(Some(&full_cursor), 7, &request, None).expect("full cursor"),
             3
         );
         assert_eq!(
-            parse_outline_cursor(Some(&signatures), 7, &request, Some("signatures"))
+            outline_cursor_offset(Some(&signatures_cursor), 7, &request, Some("signatures"))
                 .expect("signature cursor"),
             3
         );
         assert!(matches!(
-            parse_outline_cursor(Some(&full), 7, &request, Some("signatures")),
+            outline_cursor_offset(Some(&full_cursor), 7, &request, Some("signatures")),
             Err(Error::StaleCursor)
         ));
         assert!(matches!(
-            parse_outline_cursor(Some(&signatures), 7, &request, None),
+            outline_cursor_offset(Some(&signatures_cursor), 7, &request, None),
             Err(Error::StaleCursor)
         ));
     }

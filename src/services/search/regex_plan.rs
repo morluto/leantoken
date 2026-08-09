@@ -440,8 +440,9 @@ impl Services {
             self.config.chunk_bytes,
         );
         let mut phases = SearchPhaseCounters {
-            regex_candidate_strategy: RegexCandidateStrategy::FullScan,
-            regex_plan_fallback_reason: Some(fallback.fallback_reason),
+            regex_planning: RegexPlanningOutcome::FullScan {
+                fallback_reason: Some(fallback.fallback_reason),
+            },
             regex_plan_nodes: fallback.nodes_visited,
             regex_plan_terms: fallback.term_count,
             regex_plan_term_bytes: fallback.term_bytes,
@@ -516,8 +517,9 @@ impl Services {
             plan,
         } = params;
         let mut phases = SearchPhaseCounters {
-            regex_candidate_strategy: RegexCandidateStrategy::Trigram,
-            regex_plan_source: Some(plan.source),
+            regex_planning: RegexPlanningOutcome::Trigram {
+                source: plan.source,
+            },
             regex_plan_nodes: plan.nodes_visited,
             regex_plan_terms: plan.term_count,
             regex_plan_term_bytes: plan.term_bytes,

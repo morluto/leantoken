@@ -424,7 +424,7 @@ impl Indexer {
             },
         )?;
         source_bytes.enforce()?;
-        staged.finish()?;
+        let staged = staged.finish()?;
         check_cancelled(cancellation)?;
 
         // Phase 2: Publication inside BEGIN IMMEDIATE.  Relocations and import

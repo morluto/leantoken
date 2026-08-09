@@ -105,7 +105,7 @@ impl Services {
         };
         let storage = match open_storage() {
             Ok(storage) => storage,
-            Err(error) if config.database_is_managed_cache && is_database_corruption(&error) => {
+            Err(error) if config.database_is_managed_cache() && is_database_corruption(&error) => {
                 tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
                 remove_database_artifacts(&config.database_path)?;
                 open_storage()?
@@ -117,6 +117,7 @@ impl Services {
 
     fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let tokenizer = config.tokenizer;
+        let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
@@ -143,12 +144,13 @@ impl Services {
             response_accountant: accounting::ResponseAccountant::new(tokenizer),
             observer,
             reconciliation,
+            context_exclude_paths,
         })
     }
 }
 
 fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
-    if !config.database_is_managed_cache {
+    if !config.database_is_managed_cache() {
         return Ok(());
     }
     for suffix in ["", "-wal", "-shm", "-journal"]
@@ -436,7 +438,7 @@ mod tests {
 
         let mut config = Config::discover(root.path(), Some(link.clone())).expect("config");
         config.database_path = link;
-        config.database_is_managed_cache = true;
+        config.mark_database_as_managed_platform();
 
         let error = Services::open(config).expect_err("managed symlink must be rejected");
         assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
@@ -458,7 +460,7 @@ mod tests {
 
         let mut config =
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        config.database_is_managed_cache = true;
+        config.mark_database_as_managed_platform();
 
         let error = Services::open(config).expect_err("managed journal symlink must be rejected");
         assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
@@ -480,7 +482,7 @@ mod tests {
 
         let mut config =
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        config.database_is_managed_cache = true;
+        config.mark_database_as_managed_platform();
 
         let error = Services::open(config).expect_err("managed lock symlink must be rejected");
         assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");

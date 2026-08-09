@@ -2,13 +2,13 @@ impl Services {
     pub(super) fn context_response_with_receipt_reserve(
         &self,
         response: &ContextResponse,
-        request: &ContextRequest,
+        policy: &ContextPolicy,
     ) -> Result<ContextResponse> {
         let mut sized = response.clone();
-        if !request.plan_only {
-            let receipt_id = request
-                .receipt_id
-                .clone()
+        if !policy.is_plan() {
+            let receipt_id = policy
+                .receipt_id()
+                .map(str::to_owned)
                 .unwrap_or_else(|| crate::receipt::RECEIPT_ID_RESPONSE_RESERVE.into());
             let selected = sized.fragments.len();
             sized.meta.receipt_id = Some(receipt_id.clone());
@@ -33,9 +33,9 @@ impl Services {
     pub(super) fn context_response_tokens_with_receipt_reserve(
         &self,
         response: &ContextResponse,
-        request: &ContextRequest,
+        policy: &ContextPolicy,
     ) -> Result<usize> {
-        let sized = self.context_response_with_receipt_reserve(response, request)?;
+        let sized = self.context_response_with_receipt_reserve(response, policy)?;
         let budget = ResponseBudget::new(&self.config.tokenizer, usize::MAX);
         let serialized_tokens = budget.serialized_tokens(&sized)?;
         debug_assert_eq!(serialized_tokens, sized.meta.total_response_tokens);
@@ -45,11 +45,11 @@ impl Services {
     pub(super) fn context_response_budget_error(
         &self,
         response: &ContextResponse,
-        request: &ContextRequest,
+        policy: &ContextPolicy,
         provided_max_response_tokens: usize,
     ) -> Result<Error> {
         let minimum_required_response_tokens =
-            self.context_response_tokens_with_receipt_reserve(response, request)?;
+            self.context_response_tokens_with_receipt_reserve(response, policy)?;
         let mut mandatory = response.clone();
         set_routing_consistency(&mut mandatory, IndexConsistency::ReconcileWorkingTree);
         self.finalize_response(&mut mandatory)?;
@@ -63,10 +63,10 @@ impl Services {
     pub(super) fn context_response_fits(
         &self,
         response: &ContextResponse,
-        request: &ContextRequest,
+        policy: &ContextPolicy,
         max_response_tokens: usize,
     ) -> Result<bool> {
-        let sized = self.context_response_with_receipt_reserve(response, request)?;
+        let sized = self.context_response_with_receipt_reserve(response, policy)?;
         ResponseBudget::new(&self.config.tokenizer, max_response_tokens)
             .fits(&sized)
             .map_err(Into::into)
@@ -126,10 +126,11 @@ impl Services {
         &self,
         response: &mut ContextResponse,
         request: &ContextRequest,
+        policy: &ContextPolicy,
         max_response_tokens: usize,
     ) -> Result<()> {
         self.finalize_response(response)?;
-        if self.context_response_fits(response, request, max_response_tokens)? {
+        if self.context_response_fits(response, policy, max_response_tokens)? {
             return Ok(());
         }
 
@@ -138,7 +139,7 @@ impl Services {
         response.omission_summary.by_language_or_file_type.clear();
         response.omission_summary.by_reason.clear();
         response.omission_summary.by_score_band.clear();
-        if self.context_response_fits(response, request, max_response_tokens)? {
+        if self.context_response_fits(response, policy, max_response_tokens)? {
             self.finalize_response(response)?;
             return Ok(());
         }
@@ -146,13 +147,13 @@ impl Services {
         if let Some(scope) = &mut response.diff_scope {
             scope.evidence = None;
         }
-        if self.context_response_fits(response, request, max_response_tokens)? {
+        if self.context_response_fits(response, policy, max_response_tokens)? {
             self.finalize_response(response)?;
             return Ok(());
         }
 
         response.routing = None;
-        if self.context_response_fits(response, request, max_response_tokens)? {
+        if self.context_response_fits(response, policy, max_response_tokens)? {
             self.finalize_response(response)?;
             return Ok(());
         }
@@ -165,7 +166,7 @@ impl Services {
         for fragment in &mut response.fragments {
             fragment.reason.clear();
         }
-        if self.context_response_fits(response, request, max_response_tokens)? {
+        if self.context_response_fits(response, policy, max_response_tokens)? {
             self.finalize_response(response)?;
             return Ok(());
         }
@@ -176,8 +177,7 @@ impl Services {
             && request.required_evidence.is_empty()
             && request.focus_paths.is_empty()
             && request.focus_symbols.is_empty()
-            && !request.strict_focus_paths
-            && request.minimum_fragments_per_focus_path.is_none()
+            && policy.focus_minimum().is_none()
             && request.base_revision.is_none()
             && request.changed_paths.is_empty()
             && !request.strict_changed_paths
@@ -197,12 +197,12 @@ impl Services {
                 Self::trim_context_selection(&mut candidate, keep);
                 candidate.omission_summary.budget_or_result_limit = omission_reserve;
                 Self::refresh_context_omission_warning(&mut candidate);
-                self.context_response_tokens_with_receipt_reserve(&candidate, request)
+                self.context_response_tokens_with_receipt_reserve(&candidate, policy)
             })?;
             if let Some(keep) = keep {
                 Self::trim_context_selection(response, keep);
                 self.finalize_response(response)?;
-                if self.context_response_fits(response, request, max_response_tokens)? {
+                if self.context_response_fits(response, policy, max_response_tokens)? {
                     return Ok(());
                 }
                 return Err(Error::ResponseAccountingInvariant(
@@ -212,7 +212,7 @@ impl Services {
             Self::trim_context_selection(response, 0);
         }
 
-        Err(self.context_response_budget_error(response, request, max_response_tokens)?)
+        Err(self.context_response_budget_error(response, policy, max_response_tokens)?)
     }
 
     pub(super) fn finalize_context_pipeline(
@@ -225,9 +225,10 @@ impl Services {
             session,
             request,
             scoped_request,
-            handoff,
+            policy,
             options,
             response_profile,
+            immutable_diff_scope,
             cancellation,
             diagnostics,
             generation,
@@ -299,6 +300,7 @@ impl Services {
         self.finalize_strict_scope_coverage(
             session,
             scoped_request,
+            policy.focus(),
             &selected_paths,
             &mut coverage,
         )?;
@@ -343,15 +345,17 @@ impl Services {
             }
             scope.indexed_changed_paths = indexed;
             scope.evidence = (response_profile != ContextResponseProfile::Compact
-                && (!request.plan_only || request.explain_diagnostics))
+                && (!policy.is_plan() || request.explain_diagnostics))
                 .then(|| {
-                    self.build_diff_evidence(
+                    self.build_diff_evidence(DiffEvidenceInput {
                         session,
-                        scoped_request,
-                        &scope,
-                        resolved_workflow,
+                        request: scoped_request,
+                        scope: &scope,
+                        workflow: resolved_workflow,
+                        policy,
+                        immutable_range: immutable_diff_scope,
                         cancellation,
-                    )
+                    })
                 })
                 .transpose()?;
             response.routing =
@@ -369,7 +373,7 @@ impl Services {
             }
             response.diff_scope = Some(scope);
         }
-        if let Some(handoff) = &handoff {
+        if let Some(handoff) = policy.handoff() {
             let evidence = response
                 .fragments
                 .iter()
@@ -434,6 +438,7 @@ impl Services {
             response::ContextResponseFinalization {
                 session,
                 request,
+                policy,
                 options,
                 generation,
             },

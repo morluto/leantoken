@@ -11,6 +11,7 @@ impl Services {
             queries: _,
             path_scorer: _,
             cancellation,
+            focus,
         } = expansion;
         let mut coverage = ContextCoverageReceipt::default();
         let mut focus_path_matches = vec![0usize; request.focus_paths.len()];
@@ -42,8 +43,7 @@ impl Services {
             .map(|requirement| PathMatcher::new(std::slice::from_ref(&requirement.path)))
             .collect::<Result<Vec<_>>>()?;
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-        let context_exclude_paths = PathMatcher::new(&self.config.context_exclude_paths)
-            .expect("configured context exclusions are validated at startup");
+        let context_exclude_paths = &self.context_exclude_paths;
         let strict_changed_paths = request.strict_changed_paths.then(|| {
             request
                 .changed_paths
@@ -120,9 +120,11 @@ impl Services {
             .filter(|(_, matched)| **matched == 0)
             .map(|(pattern, _)| pattern.clone())
             .collect();
-        let minimum_focus_fragments = request
-            .minimum_fragments_per_focus_path
-            .unwrap_or(usize::from(request.strict_focus_paths));
+        let minimum_focus_fragments = match focus {
+            ContextFocusPolicy::Advisory => 0,
+            ContextFocusPolicy::Minimum { minimum_fragments }
+            | ContextFocusPolicy::Strict { minimum_fragments } => minimum_fragments,
+        };
         if !request.focus_paths.is_empty() {
             coverage.focus_path_coverage = request
                 .focus_paths
@@ -265,6 +267,15 @@ impl Services {
             .zip(0usize..)
         {
             let Some(excerpt) = excerpt else { continue };
+            let target_range =
+                CandidateTargetRange::new(hit.symbol.start_line, hit.symbol.end_line).ok_or_else(
+                    || {
+                        Error::OperationFailure(format!(
+                            "indexed symbol has an invalid source range: {}:{}-{}",
+                            hit.path, hit.symbol.start_line, hit.symbol.end_line
+                        ))
+                    },
+                )?;
             candidates.push(
                 Candidate::new(
                     hit.path,
@@ -276,7 +287,7 @@ impl Services {
                 .concept(format!("must:symbol:{symbol}"), 2.0)
                 .representation("required_symbol")
                 .symbol_name(hit.symbol.name)
-                .target_range(hit.symbol.start_line, hit.symbol.end_line)
+                .target_range(target_range)
                 .exact(2.0)
                 .symbol(2.0)
                 .focus_boost(2.0)
@@ -321,6 +332,7 @@ impl Services {
             queries,
             path_scorer,
             cancellation,
+            focus: _,
         } = expansion;
         let required_path_entries = request
             .must_include_paths
@@ -410,6 +422,7 @@ impl Services {
             queries: _,
             path_scorer,
             cancellation,
+            focus: _,
         } = expansion;
         for (requirement_index, (requirement, files)) in request
             .required_evidence

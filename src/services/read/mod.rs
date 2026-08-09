@@ -34,7 +34,12 @@ use live::*;
 use types::*;
 pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 
-fn normalize_read_request(mut request: ReadRequest) -> Result<ReadRequest> {
+fn parse_read_request(mut request: ReadRequest) -> Result<ParsedReadRequest> {
+    validate_input(&request.path, "path", MAX_PATH_BYTES)?;
+    validate_relative(&request.path)?;
+    // Bound caller-owned input before normalization so a large whitespace
+    // prefix cannot disappear before the byte limit is applied.
+    validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
     if let Some(symbol) = request.symbol.take() {
         let symbol = symbol.trim().to_owned();
         if symbol.is_empty() {
@@ -45,28 +50,6 @@ fn normalize_read_request(mut request: ReadRequest) -> Result<ReadRequest> {
         }
         request.symbol = Some(symbol);
     }
-    Ok(request)
-}
-
-fn validate_read_request_bounds(request: &ReadRequest) -> Result<()> {
-    // Validate the caller-owned value before trimming it. Otherwise a large
-    // whitespace prefix can be discarded before the bounded validation runs.
-    validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)
-}
-
-pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
-    validate_input(&request.path, "path", MAX_PATH_BYTES)?;
-    if request
-        .symbol
-        .as_deref()
-        .is_some_and(|symbol| symbol.trim().is_empty())
-    {
-        return Err(Error::InvalidInput {
-            field: "symbol",
-            reason: "must not be empty",
-        });
-    }
-    validate_optional_input(request.symbol.as_deref(), "symbol", MAX_PATTERN_BYTES)?;
     if request
         .heading
         .as_deref()
@@ -78,6 +61,18 @@ pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
         });
     }
     validate_optional_input(request.heading.as_deref(), "heading", MAX_PATTERN_BYTES)?;
+    validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
+    validate_optional_input(
+        request.continuation_cursor.as_deref(),
+        "continuation cursor",
+        256,
+    )?;
+    let target = parse_read_target(&request)?;
+    request.path = normalize_relative(&request.path)?;
+    Ok(ParsedReadRequest { request, target })
+}
+
+fn parse_read_target(request: &ReadRequest) -> Result<ParsedReadTarget> {
     if request.heading_occurrence == Some(0) {
         return Err(Error::InvalidInput {
             field: "heading occurrence",
@@ -90,16 +85,6 @@ pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
             reason: "requires a heading target",
         });
     }
-    validate_optional_input(request.expected_hash.as_deref(), "expected hash", 128)?;
-    validate_optional_input(
-        request.continuation_cursor.as_deref(),
-        "continuation cursor",
-        256,
-    )?;
-    if let Some(cursor) = request.continuation_cursor.as_deref() {
-        decode_read_cursor(cursor)?;
-    }
-    validate_relative(&request.path)?;
     let has_line_target = request.start_line.is_some() || request.end_line.is_some();
     if request.symbol.is_some() && has_line_target {
         return Err(Error::InvalidInput {
@@ -133,20 +118,32 @@ pub(super) fn validate_read_input(request: &ReadRequest) -> Result<()> {
             reason: "delta reads require full verification",
         });
     }
-    if request.symbol.is_none()
-        && request.heading.is_none()
-        && request.continuation_cursor.is_none()
-    {
-        let start_line = request.start_line.unwrap_or(1);
-        if start_line == 0
-            || request
-                .end_line
-                .is_some_and(|end_line| end_line < start_line)
-        {
-            return Err(invalid_line_range());
-        }
+    if let Some(cursor) = &request.continuation_cursor {
+        return Ok(ParsedReadTarget::Continuation(decode_read_cursor(cursor)?));
     }
-    Ok(())
+    if let Some(symbol) = &request.symbol {
+        return Ok(ParsedReadTarget::Symbol(symbol.clone()));
+    }
+    if let Some(name) = &request.heading {
+        let occurrence = std::num::NonZeroUsize::new(request.heading_occurrence.unwrap_or(1))
+            .ok_or_else(|| Error::InvalidInput {
+                field: "heading occurrence",
+                reason: "must be one-based",
+            })?;
+        return Ok(ParsedReadTarget::Heading {
+            name: name.clone(),
+            occurrence,
+        });
+    }
+    let start = std::num::NonZeroUsize::new(request.start_line.unwrap_or(1))
+        .ok_or_else(invalid_line_range)?;
+    if request.end_line.is_some_and(|end| end < start.get()) {
+        return Err(invalid_line_range());
+    }
+    Ok(ParsedReadTarget::Lines {
+        start,
+        end: request.end_line,
+    })
 }
 
 impl Services {
@@ -215,8 +212,7 @@ impl Services {
         execution: RetrievalExecution,
     ) -> Result<ReadResponse> {
         let operation = TokenAccountingOperation::Read;
-        self.observe_service_result(operation, validate_read_request_bounds(&request))?;
-        let request = self.observe_service_result(operation, normalize_read_request(request))?;
+        let request = self.observe_service_result(operation, parse_read_request(request))?;
         let RetrievalExecution {
             consistency,
             options,
@@ -225,10 +221,9 @@ impl Services {
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, validate_read_input(&request))?;
             self.observe_service_result(
                 operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
+                self.token_limit(request.request.max_tokens, self.config.default_read_tokens),
             )?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
@@ -249,22 +244,21 @@ impl Services {
         self.observe_service_result(operation, result)
     }
 
-    pub(super) fn read_sync(
+    fn read_sync(
         &self,
-        mut request: ReadRequest,
+        parsed: ParsedReadRequest,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
-        validate_read_request_bounds(&request)?;
-        request = normalize_read_request(request)?;
-        validate_read_input(&request)?;
-        request.path = normalize_relative(&request.path)?;
+        let ParsedReadRequest { request, target } = parsed;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let materialized = self.consistent(|session| {
             let generation = session.generation();
             check_cancelled(cancellation)?;
-            self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
+            self.read_at_generation_with_options(
+                session, &request, &target, generation, max_tokens, options,
+            )
         })?;
         let mut response = materialized.response;
         let direct_response = response.clone();
@@ -391,12 +385,13 @@ impl Services {
         &self,
         session: &IndexReadSnapshot,
         request: &ReadRequest,
+        target: &ParsedReadTarget,
         generation: u64,
         max_tokens: usize,
         options: ServiceCallOptions,
     ) -> Result<MaterializedRead> {
         let (materialized, minimum_progress_tokens) =
-            self.read_at_generation(session, request, generation, max_tokens)?;
+            self.read_at_generation(session, request, target, generation, max_tokens)?;
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
             &materialized.response,
@@ -414,7 +409,7 @@ impl Services {
         let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
             let (candidate, _) =
-                self.read_at_generation(session, request, generation, candidate_limit)?;
+                self.read_at_generation(session, request, target, generation, candidate_limit)?;
             let returned_items = usize::from(!candidate.response.not_modified);
             self.finalized_response_tokens_with_receipt_reserve(
                 &candidate.response,
@@ -425,12 +420,17 @@ impl Services {
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
             return self
-                .read_at_generation(session, request, generation, candidate_limit)
+                .read_at_generation(session, request, target, generation, candidate_limit)
                 .map(|(materialized, _)| materialized);
         }
 
-        let (minimum, _) =
-            self.read_at_generation(session, request, generation, minimum_progress_tokens)?;
+        let (minimum, _) = self.read_at_generation(
+            session,
+            request,
+            target,
+            generation,
+            minimum_progress_tokens,
+        )?;
         Err(self.response_budget_error_with_receipt_reserve(
             &minimum.response,
             usize::from(!minimum.response.not_modified),
@@ -443,13 +443,14 @@ impl Services {
         &self,
         session: &IndexReadSnapshot,
         request: &ReadRequest,
+        target: &ParsedReadTarget,
         generation: u64,
         max_tokens: usize,
     ) -> Result<(MaterializedRead, usize)> {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request, target, generation)?;
 
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
@@ -712,7 +713,7 @@ mod tests {
         };
 
         assert!(matches!(
-            validate_read_request_bounds(&request),
+            parse_read_request(request),
             Err(Error::InputTooLong {
                 field: "symbol",
                 max_bytes: MAX_PATTERN_BYTES,

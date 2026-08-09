@@ -118,6 +118,7 @@ fn cli_retrieval_response_budget_is_carried_in_the_typed_request() {
     let AppRequest::Files {
         request,
         max_response_tokens,
+        ..
     } = cli.app_request()
     else {
         panic!("expected response-bounded files request");
@@ -555,8 +556,8 @@ fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out
         &["context", "--task", "find the owner"][..],
     ] {
         assert_eq!(
-            parse(arguments).retrieval_consistency(),
-            Some(IndexConsistency::ReconcileWorkingTree),
+            request_consistency(parse(arguments).app_request()),
+            IndexConsistency::ReconcileWorkingTree,
             "default consistency for {arguments:?}"
         );
     }
@@ -580,13 +581,27 @@ fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out
         ][..],
     ] {
         assert_eq!(
-            parse(arguments).retrieval_consistency(),
-            Some(IndexConsistency::IndexedGeneration),
+            request_consistency(parse(arguments).app_request()),
+            IndexConsistency::IndexedGeneration,
             "snapshot consistency for {arguments:?}"
         );
     }
 
-    assert_eq!(parse(&["status"]).retrieval_consistency(), None);
+    assert!(matches!(
+        parse(&["status"]).app_request(),
+        AppRequest::Status
+    ));
+}
+
+fn request_consistency(request: AppRequest) -> IndexConsistency {
+    match request {
+        AppRequest::Files { consistency, .. }
+        | AppRequest::Search { consistency, .. }
+        | AppRequest::Outline { consistency, .. }
+        | AppRequest::Read { consistency, .. }
+        | AppRequest::Context { consistency, .. } => consistency,
+        _ => panic!("expected an index-backed retrieval request"),
+    }
 }
 
 #[cfg(unix)]
@@ -685,6 +700,7 @@ fn cli_context_request() {
         handoff,
         max_response_tokens,
         response_profile,
+        ..
     } = cli.app_request()
     else {
         panic!("expected context request");

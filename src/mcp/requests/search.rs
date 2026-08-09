@@ -57,6 +57,13 @@ pub(in crate::mcp) enum SearchMcpProjection {
     Occurrences,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::mcp) enum SearchMcpOutput {
+    Full,
+    Grouped,
+    Occurrences { coordinates_only: bool },
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct SearchMcpRequest {
@@ -306,19 +313,21 @@ impl SearchMcpRequest {
         self,
     ) -> (
         SearchRequest,
-        SearchMcpProjection,
-        bool,
+        SearchMcpOutput,
         IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
         let (mode, options) = self.operation.into_parts();
-        let projection = match options.projection {
-            SearchMcpProjection::Auto if options.all_occurrences => {
-                SearchMcpProjection::Occurrences
-            }
-            SearchMcpProjection::Auto => SearchMcpProjection::Full,
-            projection => projection,
+        let output = match options.projection {
+            SearchMcpProjection::Auto if options.all_occurrences => SearchMcpOutput::Occurrences {
+                coordinates_only: options.coordinates_only,
+            },
+            SearchMcpProjection::Auto | SearchMcpProjection::Full => SearchMcpOutput::Full,
+            SearchMcpProjection::Grouped => SearchMcpOutput::Grouped,
+            SearchMcpProjection::Occurrences => SearchMcpOutput::Occurrences {
+                coordinates_only: options.coordinates_only,
+            },
         };
         let receipt_resource = options.receipt_id.is_some() || options.query_receipt.is_some();
         (
@@ -350,8 +359,7 @@ impl SearchMcpRequest {
                 query_receipt: options.query_receipt,
                 cursor: options.cursor,
             },
-            projection,
-            options.coordinates_only,
+            output,
             options.consistency,
             service_call_options_with_receipt(options.max_response_tokens, receipt_resource),
             self.expected_repository_id,

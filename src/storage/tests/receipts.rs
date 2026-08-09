@@ -1090,7 +1090,7 @@ fn oracle_decide(
     }
     if suppress_overlap
         && previous.iter().any(|seen| {
-            !seen.exact_only
+            !seen.exact_only()
                 && seen.path == candidate.path
                 && seen.start_line <= candidate.end_line
                 && candidate.start_line <= seen.end_line
@@ -1098,11 +1098,11 @@ fn oracle_decide(
     {
         return ReceiptDecision::SuppressOverlap;
     }
-    if candidate.semantic_signature.is_some_and(|signature| {
+    if candidate.semantic_signature().is_some_and(|signature| {
         previous.iter().any(|seen| {
-            !seen.exact_only
+            !seen.exact_only()
                 && seen
-                    .semantic_signature
+                    .semantic_signature()
                     .is_some_and(|prior| (signature ^ prior).count_ones() <= 8)
         })
     }) {

@@ -98,8 +98,6 @@ impl Services {
 
     async fn apply_search_consistency(
         &self,
-        request: &SearchRequest,
-        occurrence_groups: bool,
         consistency: Option<IndexConsistency>,
         deadline: Option<tokio::time::Instant>,
         cancellation: &CancellationToken,
@@ -108,17 +106,6 @@ impl Services {
             return Ok(());
         };
         let operation = TokenAccountingOperation::Search;
-        if occurrence_groups {
-            self.observe_service_result(operation, validate_occurrence_group_input(request))?;
-        } else {
-            self.observe_service_result(operation, validate_search_input(request))?;
-        }
-        self.observe_service_result(operation, self.result_limit(request.max_results))?;
-        self.observe_service_result(
-            operation,
-            self.token_limit(request.max_tokens, self.config.default_read_tokens),
-        )?;
-        self.observe_service_result(operation, self.context_line_limit(request.context_lines))?;
         let consistency_result = self
             .apply_consistency_with_initial_deadline(consistency, cancellation.clone(), deadline)
             .await;
@@ -198,9 +185,10 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let output_shape = SearchOutputShape::Full;
+        let request = self
+            .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
-            &request,
-            false,
             consistency,
             options.initial_reconciliation_deadline(),
             &cancellation,
@@ -216,7 +204,7 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
-                        output_shape: SearchOutputShape::Full,
+                        output_shape,
                         response_options: options,
                         record_savings: true,
                     },
@@ -274,9 +262,10 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let output_shape = SearchOutputShape::Full;
+        let request = self
+            .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
-            &request,
-            false,
             consistency,
             options.initial_reconciliation_deadline(),
             &cancellation,
@@ -293,7 +282,7 @@ impl Services {
                         RegexPlanning::Enabled,
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
-                            output_shape: SearchOutputShape::Full,
+                            output_shape,
                             response_options: ServiceCallOptions::new(),
                             record_savings: false,
                         },
@@ -381,17 +370,15 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let output_shape = SearchOutputShape::OccurrenceGroups { coordinates_only };
+        let request = self
+            .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
-            &request,
-            true,
             consistency,
             options.initial_reconciliation_deadline(),
             &cancellation,
         )
         .await?;
-        if consistency.is_none() {
-            self.observe_service_result(operation, validate_occurrence_group_input(&request))?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -402,7 +389,7 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
-                        output_shape: SearchOutputShape::OccurrenceGroups { coordinates_only },
+                        output_shape,
                         response_options: ServiceCallOptions::new(),
                         record_savings: false,
                     },
@@ -452,6 +439,8 @@ impl Services {
     /// Production adapters should use [`Self::search`]. This method does not
     /// alter the normal response or MCP schemas.
     pub async fn search_evaluation(&self, request: SearchRequest) -> Result<SearchEvaluation> {
+        let output_shape = SearchOutputShape::Full;
+        let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
@@ -461,7 +450,7 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
-                        output_shape: SearchOutputShape::Full,
+                        output_shape,
                         response_options: ServiceCallOptions::new(),
                         record_savings: true,
                     },
@@ -483,6 +472,8 @@ impl Services {
         &self,
         request: SearchRequest,
     ) -> Result<SearchEvaluation> {
+        let output_shape = SearchOutputShape::Full;
+        let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
@@ -492,7 +483,7 @@ impl Services {
                     RegexPlanning::Disabled,
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
-                        output_shape: SearchOutputShape::Full,
+                        output_shape,
                         response_options: ServiceCallOptions::new(),
                         record_savings: true,
                     },
@@ -508,14 +499,14 @@ impl Services {
 
     fn search_sync(
         &self,
-        request: SearchRequest,
+        parsed: ParsedSearchRequest,
         cancellation: &CancellationToken,
         regex_planning: RegexPlanning,
         diagnostics: SearchDiagnostics,
         execution: SearchExecutionOptions,
     ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
-        let prepared = self.prepare_search(&request)?;
+        let ParsedSearchRequest { request, prepared } = parsed;
         let mut snapshot = self.consistent(|session| {
             let generation = session.generation();
             self.search_snapshot(

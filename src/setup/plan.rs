@@ -3,9 +3,21 @@ use super::*;
 #[derive(Debug)]
 pub(super) struct PlannedClientEdit {
     pub(super) public: ClientSetupPlan,
-    pub(super) status: EditStatus,
-    pub(super) original: Option<String>,
-    pub(super) updated: Option<String>,
+    pub(super) resolution: ResolvedEdit,
+}
+
+impl PlannedClientEdit {
+    pub(super) const fn status(&self) -> EditStatus {
+        self.resolution.status()
+    }
+
+    pub(super) fn original(&self) -> Option<&str> {
+        self.resolution.original()
+    }
+
+    pub(super) fn updated(&self) -> Option<&str> {
+        self.resolution.updated()
+    }
 }
 
 #[derive(Debug)]
@@ -61,7 +73,7 @@ pub(super) fn resolve_plan(
             environment.launcher,
             environment.force_unmanaged,
         )?;
-        if let Some(updated) = &edit.updated {
+        if let Some(updated) = edit.updated() {
             validate_setup_content_size(&edit.public.path, updated)?;
         }
     }
@@ -111,7 +123,7 @@ pub(super) fn validate_client_edit_ownership(
         home,
         launcher,
         &definition,
-        edit.original.as_deref(),
+        edit.original(),
     )? && !registration.managed
         && !force_unmanaged
     {
@@ -208,7 +220,7 @@ pub(super) fn resolve_client_edit(
         Some(snapshot) => snapshot.original.clone(),
         None => read_optional(&definition.path)?,
     };
-    let (status, original, updated) = match definition.format {
+    let resolution = match definition.format {
         ConfigFormat::Json { section, shape } => resolve_json_edit_from_source(
             operation,
             &definition.path,
@@ -221,13 +233,7 @@ pub(super) fn resolve_client_edit(
             resolve_toml_edit_from_source(operation, &definition.path, launcher, original)?
         }
     };
-    let action = match status {
-        EditStatus::Configured if original.is_none() => ClientPlanAction::Create,
-        EditStatus::Configured | EditStatus::Updated => ClientPlanAction::Update,
-        EditStatus::AlreadyConfigured => ClientPlanAction::AlreadyCurrent,
-        EditStatus::Removed => ClientPlanAction::Remove,
-        EditStatus::NotConfigured => ClientPlanAction::NotConfigured,
-    };
+    let action = resolution.action();
     Ok(PlannedClientEdit {
         public: ClientSetupPlan {
             client,
@@ -235,8 +241,6 @@ pub(super) fn resolve_client_edit(
             action,
             detected: detected.contains(&client),
         },
-        status,
-        original,
-        updated,
+        resolution,
     })
 }

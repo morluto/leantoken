@@ -341,7 +341,7 @@ impl Indexer {
             },
         )?;
         source_bytes.enforce()?;
-        staged.finish()?;
+        let staged = staged.finish()?;
         let staging = staged.diagnostics();
         check_cancelled(cancellation)?;
 

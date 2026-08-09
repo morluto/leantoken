@@ -19,7 +19,6 @@ pub(super) struct IndexProgressRegistryState {
 pub(super) struct IndexProgressAttemptState {
     internal_id: u64,
     attempt_id: String,
-    active: bool,
     current_generation: u64,
     phase: IndexProgressPhase,
     started: Instant,
@@ -77,7 +76,6 @@ impl IndexProgressRegistry {
         state.current = Some(IndexProgressAttemptState {
             internal_id,
             attempt_id,
-            active: true,
             current_generation,
             phase: IndexProgressPhase::Discovery,
             started,
@@ -110,7 +108,7 @@ impl IndexProgressRegistry {
         Some(IndexProgressSnapshot {
             cache_namespace: self.cache_namespace.to_string(),
             detail_available: true,
-            active: current.active,
+            active: current.phase.is_active(),
             current_generation: current.current_generation,
             attempt_id: Some(current.attempt_id.clone()),
             phase: Some(current.phase),
@@ -139,7 +137,7 @@ impl IndexProgressRegistry {
         let Some(current) = state
             .current
             .as_mut()
-            .filter(|current| current.internal_id == internal_id && current.active)
+            .filter(|current| current.internal_id == internal_id && current.phase.is_active())
         else {
             return;
         };
@@ -183,7 +181,6 @@ impl IndexProgressAttempt {
         self.registry.update(self.internal_id, |current| {
             current.current_generation = generation;
             current.phase = IndexProgressPhase::Completed;
-            current.active = false;
         });
         self.finished = true;
     }
@@ -201,7 +198,6 @@ impl Drop for IndexProgressAttempt {
         };
         self.registry.update(self.internal_id, |current| {
             current.phase = phase;
-            current.active = false;
         });
     }
 }

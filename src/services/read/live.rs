@@ -22,55 +22,56 @@ pub(super) fn resolve_read_target(
     session: &IndexReadSnapshot,
     file_id: i64,
     request: &ReadRequest,
+    target: &ParsedReadTarget,
     generation: u64,
 ) -> Result<ResolvedReadTarget> {
-    if let Some(cursor) = request.continuation_cursor.as_deref() {
-        let cursor = parse_read_cursor(cursor, generation, &request.path)?;
-        if cursor.full != matches!(request.policy, ReadPolicy::Full) {
-            return Err(Error::StaleCursor);
+    let (target_start_line, target_end_line) = match target {
+        ParsedReadTarget::Continuation(cursor) => {
+            validate_read_cursor(cursor, generation, &request.path)?;
+            if cursor.full != matches!(request.policy, ReadPolicy::Full) {
+                return Err(Error::StaleCursor);
+            }
+            return Ok(ResolvedReadTarget {
+                target_start_line: cursor.target_start_line,
+                target_end_line: cursor.target_end_line,
+                page_start_line: cursor.next_start_line,
+                page_start_byte: cursor.next_byte,
+                expected_full_hash: cursor.full_hash.clone(),
+                expected_prefix_hash: cursor.prefix_hash.clone(),
+                expected_file_size: Some(cursor.file_size),
+                expected_modified_ns: cursor.modified_ns,
+                cursor_full: cursor.full,
+            });
         }
-        return Ok(ResolvedReadTarget {
-            target_start_line: cursor.target_start_line,
-            target_end_line: cursor.target_end_line,
-            page_start_line: cursor.next_start_line,
-            page_start_byte: cursor.next_byte,
-            expected_full_hash: cursor.full_hash,
-            expected_prefix_hash: cursor.prefix_hash,
-            expected_file_size: Some(cursor.file_size),
-            expected_modified_ns: cursor.modified_ns,
-            cursor_full: cursor.full,
-        });
-    }
-
-    let (target_start_line, target_end_line) = if let Some(symbol_name) = &request.symbol {
-        let symbol = match session.find_symbol(file_id, symbol_name)? {
-            crate::symbol_identity::SymbolResolution::Unique(symbol) => symbol,
-            crate::symbol_identity::SymbolResolution::NotFound => {
-                return Err(Error::SymbolNotFound {
+        ParsedReadTarget::Symbol(symbol_name) => {
+            let symbol = match session.find_symbol(file_id, symbol_name)? {
+                crate::symbol_identity::SymbolResolution::Unique(symbol) => symbol,
+                crate::symbol_identity::SymbolResolution::NotFound => {
+                    return Err(Error::SymbolNotFound {
+                        path: request.path.clone(),
+                        symbol: symbol_name.clone(),
+                    });
+                }
+                crate::symbol_identity::SymbolResolution::Ambiguous => {
+                    return Err(Error::AmbiguousSymbol {
+                        path: request.path.clone(),
+                        symbol: symbol_name.clone(),
+                    });
+                }
+            };
+            (symbol.start_line, Some(symbol.end_line))
+        }
+        ParsedReadTarget::Heading { name, occurrence } => {
+            let heading = session
+                .find_document_heading(file_id, name, occurrence.get())?
+                .ok_or_else(|| Error::HeadingNotFound {
                     path: request.path.clone(),
-                    symbol: symbol_name.clone(),
-                });
-            }
-            crate::symbol_identity::SymbolResolution::Ambiguous => {
-                return Err(Error::AmbiguousSymbol {
-                    path: request.path.clone(),
-                    symbol: symbol_name.clone(),
-                });
-            }
-        };
-        (symbol.start_line, Some(symbol.end_line))
-    } else if let Some(heading_name) = &request.heading {
-        let occurrence = request.heading_occurrence.unwrap_or(1);
-        let heading = session
-            .find_document_heading(file_id, heading_name, occurrence)?
-            .ok_or_else(|| Error::HeadingNotFound {
-                path: request.path.clone(),
-                heading: heading_name.clone(),
-                occurrence,
-            })?;
-        (heading.start_line, Some(heading.end_line))
-    } else {
-        (request.start_line.unwrap_or(1), request.end_line)
+                    heading: name.clone(),
+                    occurrence: occurrence.get(),
+                })?;
+            (heading.start_line, Some(heading.end_line))
+        }
+        ParsedReadTarget::Lines { start, end } => (start.get(), *end),
     };
 
     if target_start_line == 0

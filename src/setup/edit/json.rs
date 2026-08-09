@@ -8,8 +8,8 @@ pub(super) fn edit_json_config(
     shape: JsonEntryShape,
     launcher: &McpLauncher,
 ) -> Result<EditStatus> {
-    let (status, original, updated) =
-        resolve_json_edit(operation, path, section_name, shape, launcher)?;
+    let resolution = resolve_json_edit(operation, path, section_name, shape, launcher)?;
+    let status = resolution.status();
     let edit = PlannedClientEdit {
         public: ClientSetupPlan {
             client: SetupClient::Claude,
@@ -17,9 +17,7 @@ pub(super) fn edit_json_config(
             action: ClientPlanAction::Update,
             detected: false,
         },
-        status,
-        original,
-        updated,
+        resolution,
     };
     apply_edit(&edit)?;
     Ok(status)
@@ -32,7 +30,7 @@ pub(super) fn resolve_json_edit(
     section_name: &str,
     shape: JsonEntryShape,
     launcher: &McpLauncher,
-) -> Result<(EditStatus, Option<String>, Option<String>)> {
+) -> Result<ResolvedEdit> {
     let original = read_optional(path)?;
     resolve_json_edit_from_source(operation, path, section_name, shape, launcher, original)
 }
@@ -44,7 +42,7 @@ pub(super) fn resolve_json_edit_from_source(
     shape: JsonEntryShape,
     launcher: &McpLauncher,
     original: Option<String>,
-) -> Result<(EditStatus, Option<String>, Option<String>)> {
+) -> Result<ResolvedEdit> {
     let source = original.clone().unwrap_or_else(|| "{}\n".into());
     let root = CstRootNode::parse(&source, &ParseOptions::default())
         .map_err(|error| invalid_config(path, error))?;
@@ -61,7 +59,7 @@ pub(super) fn resolve_json_edit_from_source(
         }
     };
 
-    let status = match operation {
+    match operation {
         SetupOperation::Setup => {
             let expected = json_entry(shape, launcher)?;
             match section.get(SERVER_NAME) {
@@ -75,20 +73,31 @@ pub(super) fn resolve_json_edit_from_source(
                     )
                     .map_err(|error| invalid_config(path, error))?;
                     if current_value == expected {
-                        return Ok((EditStatus::AlreadyConfigured, original, None));
+                        return Ok(ResolvedEdit::AlreadyConfigured { original });
                     }
                     property.set_value(to_cst_input(&expected));
-                    EditStatus::Updated
+                    Ok(ResolvedEdit::Updated {
+                        original,
+                        updated: root.to_string(),
+                    })
                 }
                 None => {
                     section.append(SERVER_NAME, to_cst_input(&expected));
-                    EditStatus::Configured
+                    Ok(ResolvedEdit::Configured {
+                        original,
+                        updated: root.to_string(),
+                    })
                 }
             }
         }
         SetupOperation::Remove => {
+            let Some(original) = original else {
+                return Ok(ResolvedEdit::NotConfigured { original: None });
+            };
             let Some(property) = section.get(SERVER_NAME) else {
-                return Ok((EditStatus::NotConfigured, original, None));
+                return Ok(ResolvedEdit::NotConfigured {
+                    original: Some(original),
+                });
             };
             property.remove();
             if section.properties().is_empty() {
@@ -97,12 +106,12 @@ pub(super) fn resolve_json_edit_from_source(
                     .expect("section property exists")
                     .remove();
             }
-            EditStatus::Removed
+            Ok(ResolvedEdit::Removed {
+                original,
+                updated: root.to_string(),
+            })
         }
-    };
-
-    let updated = root.to_string();
-    Ok((status, original, Some(updated)))
+    }
 }
 
 pub(super) fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {

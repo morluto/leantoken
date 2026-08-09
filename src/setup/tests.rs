@@ -58,11 +58,10 @@ fn setup_rejects_generated_client_configuration_above_the_read_bound() {
 fn failed_launcher_verification_marks_setup_report_failed() {
     let mut report = empty_report(SetupOperation::Setup, true);
     report.cancelled = false;
-    report.verification = Some(SetupVerification {
-        status: SetupVerificationStatus::Failed,
-        stage: Some("handshake".into()),
-        message: Some("launcher closed".into()),
-        repair_command: Some("leantoken doctor --json".into()),
+    report.verification = Some(SetupVerification::Failed {
+        stage: "handshake".into(),
+        message: "launcher closed".into(),
+        repair_command: "leantoken doctor --json".into(),
     });
 
     assert!(report.has_failures());
@@ -408,9 +407,14 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
     )
     .unwrap();
     assert_eq!(first.results.len(), SetupClient::ALL.len());
-    assert!(first.results.iter().all(|result| result.error.is_none()));
+    assert!(
+        first
+            .results
+            .iter()
+            .all(|result| result.outcome.error().is_none())
+    );
     assert_eq!(
-        first.verification.as_ref().map(|result| result.status),
+        first.verification.as_ref().map(SetupVerification::status),
         Some(SetupVerificationStatus::Failed)
     );
 
@@ -454,7 +458,7 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
         second
             .results
             .iter()
-            .all(|result| result.status == "already configured")
+            .all(|result| result.outcome.status() == "already configured")
     );
     for (path, contents) in before {
         assert_eq!(fs::read_to_string(path).unwrap(), contents);
@@ -484,7 +488,7 @@ fn all_clients_receive_global_entries_and_second_setup_is_idempotent() {
         refreshed
             .results
             .iter()
-            .all(|result| result.status == "already configured")
+            .all(|result| result.outcome.status() == "already configured")
     );
 }
 
@@ -934,7 +938,7 @@ fn refresh_updates_only_existing_entries_and_supports_rollback() {
         report
             .results
             .iter()
-            .all(|result| result.status == "updated")
+            .all(|result| result.outcome.status() == "updated")
     );
     assert_eq!(report.launcher.unwrap().version, "2.0.0");
     assert!(
@@ -1017,7 +1021,7 @@ fn refresh_migrates_the_legacy_npm_launcher_with_cache_preference() {
     .unwrap();
 
     assert_eq!(report.results.len(), 1);
-    assert_eq!(report.results[0].status, "updated");
+    assert_eq!(report.results[0].outcome.status(), "updated");
     let updated = fs::read_to_string(config).unwrap();
     assert!(updated.contains("--managed-by-setup"));
     assert!(!updated.contains("npx-cli.js\", \"exec\""));
@@ -1327,11 +1331,14 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     apply.dry_run = false;
     let first = run_with(SetupOperation::Setup, apply.clone(), &environment, &prompt).unwrap();
     assert!(
-        first.results.iter().all(|result| result.error.is_none()),
+        first
+            .results
+            .iter()
+            .all(|result| result.outcome.error().is_none()),
         "{first:#?}"
     );
     assert_eq!(
-        first.verification.as_ref().map(|result| result.status),
+        first.verification.as_ref().map(SetupVerification::status),
         Some(SetupVerificationStatus::Failed)
     );
     assert_eq!(
@@ -1343,9 +1350,14 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     assert!(!codex.contains("npm"));
 
     let second = run_with(SetupOperation::Setup, apply, &environment, &prompt).unwrap();
-    assert!(second.results.iter().all(|result| result.error.is_none()));
+    assert!(
+        second
+            .results
+            .iter()
+            .all(|result| result.outcome.error().is_none())
+    );
     assert_eq!(
-        second.verification.as_ref().map(|result| result.status),
+        second.verification.as_ref().map(SetupVerification::status),
         Some(SetupVerificationStatus::Failed)
     );
     assert_eq!(second.plan[0].action, ClientPlanAction::AlreadyCurrent);
@@ -1431,7 +1443,10 @@ fn private_runtime_retry_recovers_a_published_staging_artifact() {
         install_required: false,
     };
 
-    assert!(!install_runtime(&plan).unwrap().installed());
+    assert!(matches!(
+        install_runtime(&plan).unwrap(),
+        RuntimeInstallReceipt::Unchanged
+    ));
     assert!(!staging.exists());
     assert_eq!(fs::read(&destination).unwrap(), b"verified runtime");
     assert_eq!(
@@ -1463,8 +1478,8 @@ fn private_runtime_rollback_rejects_a_replaced_root_without_unlinking_through_it
         digest: file_digest(&source).unwrap(),
         install_required: true,
     };
-    let mut receipt = install_runtime(&plan).unwrap();
-    assert!(receipt.installed());
+    let receipt = install_runtime(&plan).unwrap();
+    assert!(matches!(&receipt, RuntimeInstallReceipt::Installed(_)));
 
     let pinned_root = temp.path().join("pinned-runtimes");
     fs::rename(&runtime_root, &pinned_root).unwrap();
@@ -1475,7 +1490,7 @@ fn private_runtime_rollback_rejects_a_replaced_root_without_unlinking_through_it
     fs::write(&external_runtime, "external runtime").unwrap();
     symlink(&external, &runtime_root).unwrap();
 
-    let error = rollback_installed_runtime(&mut receipt)
+    let error = rollback_installed_runtime(receipt)
         .expect_err("root replacement must stop rollback")
         .to_string();
 
@@ -1581,7 +1596,7 @@ fn runtime_prune_preserves_partial_results_when_a_config_snapshot_changes() {
     assert_eq!(removals, 1);
     assert_eq!(report.results.len(), 1);
     assert_eq!(report.results[0].version, "2.0.0");
-    assert_eq!(report.results[0].action, "removed");
+    assert_eq!(report.results[0].outcome.action(), "removed");
     assert_eq!(report.total_bytes_before, 10);
     assert_eq!(report.total_bytes_after, 5);
     assert!(
@@ -1632,7 +1647,7 @@ fn runtime_prune_recovers_a_committed_setup_journal() {
     )
     .unwrap();
 
-    assert_eq!(report.results[0].action, "removed");
+    assert_eq!(report.results[0].outcome.action(), "removed");
     assert!(!transaction_path(&runtime_root).exists());
     assert!(!runtime.exists());
 }
@@ -1677,7 +1692,7 @@ fn runtime_prune_stops_when_the_runtime_root_path_is_replaced() {
     assert_eq!(removals, 1);
     assert_eq!(report.results.len(), 1);
     assert_eq!(report.results[0].version, "2.0.0");
-    assert_eq!(report.results[0].action, "removed");
+    assert_eq!(report.results[0].outcome.action(), "removed");
     assert!(
         report
             .apply_error
@@ -1761,9 +1776,10 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
                 action: ClientPlanAction::Create,
                 detected: true,
             },
-            status: EditStatus::Configured,
-            original: None,
-            updated: Some("{\"mcpServers\":{}}".into()),
+            resolution: ResolvedEdit::Configured {
+                original: None,
+                updated: "{\"mcpServers\":{}}".into(),
+            },
         },
         PlannedClientEdit {
             public: ClientSetupPlan {
@@ -1772,9 +1788,10 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
                 action: ClientPlanAction::Create,
                 detected: true,
             },
-            status: EditStatus::Configured,
-            original: None,
-            updated: Some("{\"mcpServers\":{}}".into()),
+            resolution: ResolvedEdit::Configured {
+                original: None,
+                updated: "{\"mcpServers\":{}}".into(),
+            },
         },
     ];
     let plan = ResolvedSetupPlan {
@@ -1791,7 +1808,12 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
 
     let outcome = apply_plan(&plan);
 
-    assert!(outcome.results.iter().all(|result| result.error.is_some()));
+    assert!(
+        outcome
+            .results
+            .iter()
+            .all(|result| result.outcome.error().is_some())
+    );
     assert!(outcome.error.is_some());
     assert!(!first_path.exists(), "first edit must be rolled back");
     assert_eq!(
@@ -1815,9 +1837,10 @@ fn failed_rollback_retains_recovery_journal() {
             action: ClientPlanAction::Update,
             detected: true,
         },
-        status: EditStatus::Updated,
-        original: Some("old".into()),
-        updated: Some("new".into()),
+        resolution: ResolvedEdit::Updated {
+            original: Some("old".into()),
+            updated: "new".into(),
+        },
     };
     let plan = ResolvedSetupPlan {
         operation: SetupOperation::Setup,
@@ -2156,9 +2179,10 @@ fn applied_client_edits_are_revalidated_after_launcher_verification() {
             action: ClientPlanAction::Update,
             detected: true,
         },
-        status: EditStatus::Updated,
-        original: Some("original".into()),
-        updated: Some("updated".into()),
+        resolution: ResolvedEdit::Updated {
+            original: Some("original".into()),
+            updated: "updated".into(),
+        },
     };
     revalidate_applied_client_edits(std::slice::from_ref(&edit)).unwrap();
 
@@ -2253,7 +2277,7 @@ fn discovery_cleanup_revalidates_unselected_configuration_snapshots() {
     )
     .unwrap();
 
-    let error = report.results[0].error.as_deref().unwrap();
+    let error = report.results[0].outcome.error().unwrap();
     assert!(error.contains("configuration changed after preflight"));
     assert!(error.contains(&config_path.to_string_lossy().into_owned()));
     assert_eq!(fs::read_to_string(discovery_path).unwrap(), discovery);
@@ -2305,7 +2329,7 @@ fn discovery_cleanup_failure_is_reported() {
     );
     assert!(report.has_failures());
     assert_eq!(
-        report.verification.as_ref().map(|result| result.status),
+        report.verification.as_ref().map(SetupVerification::status),
         Some(SetupVerificationStatus::Skipped)
     );
     assert!(discovery_path.exists());
@@ -2472,9 +2496,10 @@ fn recovery_journal_uses_its_separate_aggregate_read_bound() {
                 action: ClientPlanAction::Update,
                 detected: true,
             },
-            status: EditStatus::Updated,
-            original: Some(original.clone()),
-            updated: Some("new".into()),
+            resolution: ResolvedEdit::Updated {
+                original: Some(original.clone()),
+                updated: "new".into(),
+            },
         }],
         discovery_edits: Vec::new(),
         configuration_snapshots: Vec::new(),
@@ -2509,14 +2534,16 @@ fn legacy_interrupted_setup_journal_restores_applied_and_unapplied_entries() {
             SetupTransactionEntry {
                 path: applied.clone(),
                 original: Some("old-one".into()),
-                updated_hash: Some(content_hash("new")),
-                updated_exists: true,
+                updated: SetupTransactionUpdate::Present {
+                    content_hash: content_hash("new"),
+                },
             },
             SetupTransactionEntry {
                 path: untouched.clone(),
                 original: Some("old-two".into()),
-                updated_hash: Some(content_hash("new-two")),
-                updated_exists: true,
+                updated: SetupTransactionUpdate::Present {
+                    content_hash: content_hash("new-two"),
+                },
             },
         ],
     };
@@ -2532,6 +2559,36 @@ fn legacy_interrupted_setup_journal_restores_applied_and_unapplied_entries() {
 }
 
 #[test]
+fn recovery_journal_rejects_inconsistent_updated_file_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtime");
+    fs::create_dir_all(&runtime_root).unwrap();
+    let journal_path = transaction_path(&runtime_root);
+
+    for (updated_hash, updated_exists) in [
+        (serde_json::Value::Null, true),
+        (serde_json::Value::String(content_hash("new")), false),
+    ] {
+        let journal = serde_json::json!({
+            "schema_version": 1,
+            "state": "pending",
+            "entries": [{
+                "path": temp.path().join("target.json"),
+                "original": "old",
+                "updated_hash": updated_hash,
+                "updated_exists": updated_exists,
+            }],
+        });
+        fs::write(&journal_path, journal.to_string()).unwrap();
+
+        let error = recover_interrupted_transaction(&runtime_root)
+            .expect_err("inconsistent updated state must fail closed");
+        assert!(error.to_string().contains("invalid setup recovery journal"));
+        assert!(journal_path.exists());
+    }
+}
+
+#[test]
 fn committed_setup_journal_never_restores_applied_edits() {
     let temp = tempfile::tempdir().unwrap();
     let runtime_root = temp.path().join("runtime");
@@ -2544,8 +2601,9 @@ fn committed_setup_journal_never_restores_applied_edits() {
         entries: vec![SetupTransactionEntry {
             path: path.clone(),
             original: Some("old".into()),
-            updated_hash: Some(content_hash("new")),
-            updated_exists: true,
+            updated: SetupTransactionUpdate::Present {
+                content_hash: content_hash("new"),
+            },
         }],
     };
     fs::write(

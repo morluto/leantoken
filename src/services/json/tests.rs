@@ -10,7 +10,7 @@ use super::keys::key_entries;
 use super::projection::{ProjectionState, count_nodes, project_json};
 use super::schema::{SchemaProjectionCounters, build_schema_breadth_first, project_schema_page};
 use super::source::{JsonMeasurementCache, JsonMeasurementKey};
-use super::validation::validate_json_request;
+use super::validation::parse_json_request;
 use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
 use crate::model::{JsonOperation, JsonProjection, JsonRequest};
@@ -118,7 +118,10 @@ fn mcp_depth_is_bounded_and_keys_only() {
         cursor: None,
     };
     assert!(matches!(
-        validate_json_request(&keys, JsonExecutionOptions::mcp(Some(MAX_JSON_DEPTH + 1))),
+        parse_json_request(
+            keys.clone(),
+            JsonExecutionOptions::mcp(Some(MAX_JSON_DEPTH + 1))
+        ),
         Err(Error::RequestLimitExceeded { field: "depth", .. })
     ));
 
@@ -131,7 +134,7 @@ fn mcp_depth_is_bounded_and_keys_only() {
         ..keys
     };
     assert!(matches!(
-        validate_json_request(&value, JsonExecutionOptions::mcp(Some(1))),
+        parse_json_request(value, JsonExecutionOptions::mcp(Some(1))),
         Err(Error::InvalidInput { field: "depth", .. })
     ));
 }

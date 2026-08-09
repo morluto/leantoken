@@ -315,18 +315,18 @@ impl Cli {
         &self,
         arguments: &[OsString],
     ) -> std::result::Result<(), clap::Error> {
-        if !matches!(
-            self.command,
-            Commands::Setup(_)
-                | Commands::Remove(_)
-                | Commands::Cache(_)
-                | Commands::Runtime(_)
-                | Commands::Episode(_)
-                | Commands::Update(_)
-                | Commands::Upgrade(_)
-        ) {
+        let Some(command) = (match &self.command {
+            Commands::Setup(_) => Some("setup"),
+            Commands::Remove(_) => Some("remove"),
+            Commands::Cache(_) => Some("cache"),
+            Commands::Runtime(_) => Some("runtime"),
+            Commands::Episode(_) => Some("episode"),
+            Commands::Update(_) => Some("update"),
+            Commands::Upgrade(_) => Some("upgrade"),
+            _ => None,
+        }) else {
             return Ok(());
-        }
+        };
         let supplied = arguments.iter().skip(1).find_map(|argument| {
             let argument = argument.as_os_str().as_encoded_bytes();
             COMMAND_SCOPE_OPTIONS
@@ -341,16 +341,6 @@ impl Cli {
         });
         let Some(option) = supplied else {
             return Ok(());
-        };
-        let command = match self.command {
-            Commands::Setup(_) => "setup",
-            Commands::Remove(_) => "remove",
-            Commands::Cache(_) => "cache",
-            Commands::Runtime(_) => "runtime",
-            Commands::Episode(_) => "episode",
-            Commands::Update(_) => "update",
-            Commands::Upgrade(_) => "upgrade",
-            _ => unreachable!("repository-free commands checked above"),
         };
         Err(clap::Error::raw(
             clap::error::ErrorKind::ArgumentConflict,
@@ -416,67 +406,62 @@ impl Cli {
         Ok(config)
     }
 
-    /// Return the consistency boundary requested by an index-backed retrieval.
-    #[must_use]
-    pub fn retrieval_consistency(&self) -> Option<IndexConsistency> {
-        let consistency = match &self.command {
-            Commands::Files(args) => args.index_consistency.consistency,
-            Commands::Search(args) => args.index_consistency.consistency,
-            Commands::Outline(args) => args.index_consistency.consistency,
-            Commands::Read(args) => args.index_consistency.consistency,
-            Commands::Context(args) => args.index_consistency.consistency,
-            _ => return None,
-        };
-        Some(consistency.into())
-    }
-
     /// Convert the parsed CLI into an application request.
-    pub fn app_request(self) -> AppRequest {
-        match self.command {
-            Commands::Index { rebuild } => AppRequest::Index { rebuild },
+    #[must_use]
+    pub fn app_request(&self) -> AppRequest {
+        match &self.command {
+            Commands::Index { rebuild } => AppRequest::Index { rebuild: *rebuild },
             Commands::Status => AppRequest::Status,
             Commands::Coverage => AppRequest::Coverage,
-            Commands::Savings(args) => {
-                args.snapshot
-                    .map_or(AppRequest::Savings, |snapshot| AppRequest::SavingsDelta {
-                        snapshot,
-                    })
-            }
+            Commands::Savings(args) => args
+                .snapshot
+                .clone()
+                .map_or(AppRequest::Savings, |snapshot| AppRequest::SavingsDelta {
+                    snapshot,
+                }),
             Commands::Files(args) => {
+                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
-                let request: FilesRequest = args.into();
+                let request: FilesRequest = args.clone().into();
                 AppRequest::Files {
                     request,
+                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::Search(args) => {
+                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
-                let request: SearchRequest = args.into();
+                let request: SearchRequest = args.clone().into();
                 AppRequest::Search {
                     request,
+                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::Outline(args) => {
+                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
-                let request: OutlineRequest = args.into();
+                let request: OutlineRequest = args.clone().into();
                 AppRequest::Outline {
                     request,
+                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::Read(args) => {
+                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
-                let request: ReadRequest = args.into();
+                let request: ReadRequest = args.clone().into();
                 AppRequest::Read {
                     request,
+                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::History(args) => {
                 let max_response_tokens = args.max_response_tokens;
-                let request: HistoryRequest = args.into();
+                let request: HistoryRequest = args.clone().into();
                 AppRequest::History {
                     request,
                     max_response_tokens,
@@ -484,20 +469,22 @@ impl Cli {
             }
             Commands::Json(args) => {
                 let max_response_tokens = args.max_response_tokens;
-                let request: JsonRequest = args.into();
+                let request: JsonRequest = args.clone().into();
                 AppRequest::Json {
                     request,
                     max_response_tokens,
                 }
             }
             Commands::Context(args) => {
+                let consistency = args.index_consistency.consistency.into();
                 let workflow = args.workflow.into();
                 let handoff = args.handoff_request();
                 let workflow_evidence = args.workflow_evidence();
                 let max_response_tokens = args.max_response_tokens;
                 let response_profile = args.response_profile.map(Into::into);
                 AppRequest::Context {
-                    request: (*args).into(),
+                    request: (**args).clone().into(),
+                    consistency,
                     workflow,
                     workflow_evidence,
                     handoff,
@@ -512,18 +499,18 @@ impl Cli {
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
             },
-            Commands::Setup(args) => AppRequest::Setup(args.into()),
-            Commands::Remove(args) => AppRequest::Remove(args.into()),
-            Commands::Cache(args) => match args.command {
-                CacheCommand::List(args) => AppRequest::CacheList(args.into()),
-                CacheCommand::Prune(args) => AppRequest::CachePrune(args.into()),
+            Commands::Setup(args) => AppRequest::Setup(args.clone().into()),
+            Commands::Remove(args) => AppRequest::Remove(args.clone().into()),
+            Commands::Cache(args) => match &args.command {
+                CacheCommand::List(args) => AppRequest::CacheList(args.clone().into()),
+                CacheCommand::Prune(args) => AppRequest::CachePrune(args.clone().into()),
             },
-            Commands::Runtime(args) => match args.command {
+            Commands::Runtime(args) => match &args.command {
                 RuntimeCommand::List => AppRequest::RuntimeList,
-                RuntimeCommand::Prune(args) => AppRequest::RuntimePrune(args.into()),
+                RuntimeCommand::Prune(args) => AppRequest::RuntimePrune(args.clone().into()),
             },
-            Commands::Episode(args) => match args.command {
-                EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.into()),
+            Commands::Episode(args) => match &args.command {
+                EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.clone().into()),
             },
             Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
@@ -548,18 +535,22 @@ pub enum AppRequest {
     },
     Files {
         request: FilesRequest,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Search {
         request: SearchRequest,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Outline {
         request: OutlineRequest,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Read {
         request: ReadRequest,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     History {
@@ -572,6 +563,7 @@ pub enum AppRequest {
     },
     Context {
         request: ContextRequest,
+        consistency: IndexConsistency,
         workflow: crate::model::ContextWorkflow,
         workflow_evidence: WorkflowEvidence,
         handoff: Option<HandoffManifestRequest>,

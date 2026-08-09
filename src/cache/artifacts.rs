@@ -47,8 +47,14 @@ pub(super) struct DatabaseMetadata {
     pub(super) schema_version: Option<i64>,
     pub(super) repository_root: Option<PathBuf>,
     pub(super) last_access_unix_seconds: Option<u64>,
-    pub(super) current: bool,
-    pub(super) future_schema: bool,
+    pub(super) schema: DatabaseSchema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DatabaseSchema {
+    Current,
+    Older,
+    Future,
 }
 
 pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
@@ -64,8 +70,7 @@ pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
             schema_version: None,
             repository_root: None,
             last_access_unix_seconds: None,
-            current: false,
-            future_schema: true,
+            schema: DatabaseSchema::Future,
         });
     }
     let mut statement = connection.prepare("PRAGMA table_info(meta)")?;
@@ -86,8 +91,7 @@ pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
             schema_version: Some(schema_version),
             repository_root: None,
             last_access_unix_seconds: None,
-            current: false,
-            future_schema: true,
+            schema: DatabaseSchema::Future,
         });
     }
     let repository_root = if columns.contains("repository_root") {
@@ -113,8 +117,12 @@ pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
         schema_version: Some(schema_version),
         repository_root,
         last_access_unix_seconds,
-        current: schema_version == CURRENT_SCHEMA_VERSION
-            && columns.contains("last_access_unix_seconds"),
-        future_schema: false,
+        schema: if schema_version == CURRENT_SCHEMA_VERSION
+            && columns.contains("last_access_unix_seconds")
+        {
+            DatabaseSchema::Current
+        } else {
+            DatabaseSchema::Older
+        },
     })
 }

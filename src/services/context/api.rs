@@ -200,31 +200,17 @@ impl Services {
         execution: RetrievalExecution,
     ) -> Result<ContextResponse> {
         let operation = context_accounting_operation(&request);
-        let ContextExecution {
-            handoff,
-            workflow,
-            workflow_evidence,
-        } = context;
         let RetrievalExecution {
             consistency,
             options,
             cancellation,
         } = execution;
+        let parsed = self.observe_service_result(
+            operation,
+            self.parse_context_input(request, context, options),
+        )?;
 
         if let Some(consistency) = consistency {
-            self.observe_service_result(operation, self.validate_call_options(options))?;
-            self.observe_service_result(
-                operation,
-                response::effective_context_response_profile(&request, options).map(|_| ()),
-            )?;
-            self.observe_service_result(
-                operation,
-                self.validate_context_request(&request, handoff.as_ref()),
-            )?;
-            self.observe_service_result(
-                operation,
-                self.validate_workflow_evidence(&workflow_evidence),
-            )?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -235,16 +221,7 @@ impl Services {
             self.observe_service_result(operation, consistency_result)?;
         }
 
-        let accounted = self
-            .context_run(
-                request,
-                workflow,
-                handoff,
-                options,
-                workflow_evidence,
-                cancellation,
-            )
-            .await?;
+        let accounted = self.context_run(parsed, options, cancellation).await?;
         let mut response = accounted.response;
         if let Some(consistency) = consistency {
             set_routing_consistency(&mut response, consistency);
@@ -273,26 +250,18 @@ impl Services {
 
     async fn context_run(
         &self,
-        request: ContextRequest,
-        workflow: ContextWorkflow,
-        handoff: Option<HandoffManifestRequest>,
+        parsed: super::execution::ParsedContextRequest,
         options: ServiceCallOptions,
-        workflow_evidence: WorkflowEvidence,
         cancellation: CancellationToken,
     ) -> Result<AccountedContextResponse> {
-        let operation = context_accounting_operation(&request);
+        let operation = context_accounting_operation(&parsed.request);
         let this = self.clone();
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let (evaluation, baseline_source_tokens) =
                     this.context_sync(super::execution::ContextSyncRequest {
-                        request,
-                        context: ContextExecution {
-                            workflow,
-                            handoff,
-                            workflow_evidence,
-                        },
+                        parsed,
                         retrieval: super::execution::ContextRetrieval {
                             options,
                             cancellation,
@@ -315,12 +284,16 @@ impl Services {
     /// Production adapters should use [`Self::context`]. This method exists for
     /// frozen retrieval benchmarks and does not alter the MCP response schema.
     pub async fn context_evaluation(&self, request: ContextRequest) -> Result<ContextEvaluation> {
+        let parsed = self.parse_context_input(
+            request,
+            ContextExecution::new(ContextWorkflow::Implementation),
+            ServiceCallOptions::default(),
+        )?;
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
-                    request,
-                    context: ContextExecution::new(ContextWorkflow::Implementation),
+                    parsed,
                     retrieval: super::execution::ContextRetrieval {
                         options: ServiceCallOptions::default(),
                         cancellation,
@@ -339,13 +312,17 @@ impl Services {
         request: ContextRequest,
         workflow_evidence: WorkflowEvidence,
     ) -> Result<ContextEvaluation> {
+        let parsed = self.parse_context_input(
+            request,
+            ContextExecution::new(ContextWorkflow::Implementation)
+                .with_workflow_evidence(workflow_evidence),
+            ServiceCallOptions::default(),
+        )?;
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
-                    request,
-                    context: ContextExecution::new(ContextWorkflow::Implementation)
-                        .with_workflow_evidence(workflow_evidence),
+                    parsed,
                     retrieval: super::execution::ContextRetrieval {
                         options: ServiceCallOptions::default(),
                         cancellation,
@@ -367,12 +344,16 @@ impl Services {
         request: ContextRequest,
         policy: ContextSignalPolicy,
     ) -> Result<ContextEvaluation> {
+        let parsed = self.parse_context_input(
+            request,
+            ContextExecution::new(ContextWorkflow::Implementation),
+            ServiceCallOptions::default(),
+        )?;
         let this = self.clone();
         self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
-                    request,
-                    context: ContextExecution::new(ContextWorkflow::Implementation),
+                    parsed,
                     retrieval: super::execution::ContextRetrieval {
                         options: ServiceCallOptions::default(),
                         cancellation,

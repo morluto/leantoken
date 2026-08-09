@@ -97,21 +97,19 @@ enum WaiterExit {
 
 struct WaiterGuard {
     coordinator: ReconciliationCoordinator,
-    waiter_id: u64,
-    armed: bool,
+    waiter_id: Option<u64>,
 }
 
 impl WaiterGuard {
     fn new(coordinator: ReconciliationCoordinator, waiter_id: u64) -> Self {
         Self {
             coordinator,
-            waiter_id,
-            armed: true,
+            waiter_id: Some(waiter_id),
         }
     }
 
     fn disarm(&mut self) {
-        self.armed = false;
+        self.waiter_id = None;
     }
 
     fn cancel(&mut self) -> Result<()> {
@@ -123,9 +121,8 @@ impl WaiterGuard {
     }
 
     fn exit(&mut self, reason: WaiterExit) -> Result<()> {
-        if self.armed {
-            self.armed = false;
-            self.coordinator.exit_waiter(self.waiter_id, reason)?;
+        if let Some(waiter_id) = self.waiter_id.take() {
+            self.coordinator.exit_waiter(waiter_id, reason)?;
         }
         Ok(())
     }

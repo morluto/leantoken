@@ -2,55 +2,42 @@ use super::*;
 
 impl CacheManager {
     pub(super) fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
-        validate_prune_request(request, request.incompatible_with_current)?;
+        let plan = CachePrunePlan::try_from(request)?;
         let (entries, _) = self.inspect_all()?;
         let total_bytes_before = entries.iter().fold(0u64, |total, cache| {
             total.saturating_add(cache.entry.size_bytes)
         });
-        let selected = select_prune_candidates(
-            &entries,
-            request,
-            total_bytes_before,
-            request.incompatible_with_current,
-        );
+        let selected = select_prune_candidates(&entries, &plan, total_bytes_before);
         let mut reclaimed_bytes = 0u64;
         let mut results = Vec::with_capacity(entries.len());
 
         for cache in entries {
             let Some(mut reasons) = selected.get(&cache.entry.id).cloned() else {
-                results.push(prune_result(
-                    &cache,
-                    CachePruneAction::Kept,
-                    Vec::new(),
-                    None,
-                ));
+                results.push(prune_result(&cache, CachePruneOutcome::Kept, Vec::new()));
                 continue;
             };
             if cache.entry.active {
                 results.push(prune_result(
                     &cache,
-                    CachePruneAction::SkippedActive,
+                    CachePruneOutcome::skipped_active(),
                     reasons,
-                    None,
                 ));
                 continue;
             }
             if !cache.safe_to_prune {
                 results.push(prune_result(
                     &cache,
-                    CachePruneAction::SkippedUnsafe,
+                    CachePruneOutcome::skipped_unsafe(cache.entry.detail.clone()),
                     reasons,
-                    None,
                 ));
                 continue;
             }
-            if request.dry_run {
+            if plan.execution.is_dry_run() {
                 reclaimed_bytes = reclaimed_bytes.saturating_add(cache.entry.size_bytes);
                 results.push(prune_result(
                     &cache,
-                    CachePruneAction::WouldDelete,
+                    CachePruneOutcome::WouldDelete,
                     reasons,
-                    None,
                 ));
                 continue;
             }
@@ -63,34 +50,36 @@ impl CacheManager {
                     reasons.push("prune_lease_unavailable".into());
                     results.push(prune_result(
                         &cache,
-                        CachePruneAction::SkippedActive,
+                        CachePruneOutcome::skipped_active(),
                         reasons,
-                        None,
                     ));
                     continue;
                 }
                 Err(error) => {
                     results.push(prune_result(
                         &cache,
-                        CachePruneAction::Failed,
+                        CachePruneOutcome::Failed {
+                            error: error.to_string(),
+                        },
                         reasons,
-                        Some(error.to_string()),
                     ));
                     continue;
                 }
             };
-            let current = match self.inspect_cache(&cache.entry.id, false) {
-                Ok(current) => current,
-                Err(error) => {
-                    results.push(prune_result(
-                        &cache,
-                        CachePruneAction::Failed,
-                        reasons,
-                        Some(error.to_string()),
-                    ));
-                    continue;
-                }
-            };
+            let current =
+                match self.inspect_managed_cache(&cache.entry.id, cache.identity.clone(), false) {
+                    Ok(current) => current,
+                    Err(error) => {
+                        results.push(prune_result(
+                            &cache,
+                            CachePruneOutcome::Failed {
+                                error: error.to_string(),
+                            },
+                            reasons,
+                        ));
+                        continue;
+                    }
+                };
             let selected_for_compatibility = reasons
                 .iter()
                 .any(|reason| reason.starts_with("incompatible_with_current:"));
@@ -101,21 +90,15 @@ impl CacheManager {
                         "incompatible_with_current_revalidated:{}",
                         current.compatibility.label()
                     ));
-                    results.push(prune_result(
-                        &current,
-                        CachePruneAction::Kept,
-                        reasons,
-                        None,
-                    ));
+                    results.push(prune_result(&current, CachePruneOutcome::Kept, reasons));
                     continue;
                 }
             }
             if !current.safe_to_prune {
                 results.push(prune_result(
                     &current,
-                    CachePruneAction::SkippedUnsafe,
+                    CachePruneOutcome::skipped_unsafe(current.entry.detail.clone()),
                     reasons,
-                    None,
                 ));
                 continue;
             }
@@ -123,12 +106,7 @@ impl CacheManager {
                 && reasons[0] == "missing_repository"
                 && current.entry.repository_available != Some(false)
             {
-                results.push(prune_result(
-                    &current,
-                    CachePruneAction::Kept,
-                    reasons,
-                    None,
-                ));
+                results.push(prune_result(&current, CachePruneOutcome::Kept, reasons));
                 continue;
             }
 
@@ -136,18 +114,12 @@ impl CacheManager {
             reclaimed_bytes = reclaimed_bytes.saturating_add(removal.reclaimed_bytes);
             match removal.error {
                 None => {
-                    results.push(prune_result(
-                        &current,
-                        CachePruneAction::Deleted,
-                        reasons,
-                        None,
-                    ));
+                    results.push(prune_result(&current, CachePruneOutcome::Deleted, reasons));
                 }
                 Some(error) => results.push(prune_result(
                     &current,
-                    CachePruneAction::Failed,
+                    CachePruneOutcome::Failed { error },
                     reasons,
-                    Some(error),
                 )),
             }
         }
@@ -155,7 +127,7 @@ impl CacheManager {
         results.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(CachePruneReport {
             cache_root: self.root.clone(),
-            dry_run: request.dry_run,
+            dry_run: plan.execution.is_dry_run(),
             total_bytes_before,
             total_bytes_after: total_bytes_before.saturating_sub(reclaimed_bytes),
             reclaimed_bytes,

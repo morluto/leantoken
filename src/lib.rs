@@ -25,6 +25,7 @@ mod invocation;
 pub mod mcp;
 /// Request and response models shared by CLI, MCP, and services.
 pub mod model;
+mod mutation;
 /// Tree-sitter language detection and syntax extraction.
 pub mod parser;
 mod query_receipt;

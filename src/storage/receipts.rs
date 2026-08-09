@@ -345,9 +345,9 @@ impl Storage {
                     usize_to_i64(evidence.end_line)?,
                     evidence.content_hash,
                     evidence
-                        .semantic_signature
+                        .semantic_signature()
                         .map(|signature| signature as i64),
-                    i64::from(evidence.exact_only),
+                    i64::from(evidence.exact_only()),
                     usize_to_i64(logical_bytes)?
                 ],
             )?;
@@ -648,7 +648,7 @@ impl Storage {
                     usize_to_i64(evidence.end_line)?,
                     evidence.content_hash,
                     evidence
-                        .semantic_signature
+                        .semantic_signature()
                         .map(|signature| signature as i64),
                     1_i64,
                     usize_to_i64(evidence.logical_bytes())?,
@@ -773,14 +773,14 @@ pub(crate) fn load_receipt_evidence_connection(
     )?;
     statement
         .query_map([receipt_id], |row| {
-            Ok(ReceiptEvidence {
-                path: row.get(0)?,
-                start_line: i64_to_usize(row.get(1)?)?,
-                end_line: i64_to_usize(row.get(2)?)?,
-                content_hash: row.get(3)?,
-                semantic_signature: row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
-                exact_only: row.get::<_, i64>(5)? != 0,
-            })
+            Ok(ReceiptEvidence::from_stored(
+                row.get(0)?,
+                i64_to_usize(row.get(1)?)?,
+                i64_to_usize(row.get(2)?)?,
+                row.get(3)?,
+                row.get::<_, Option<i64>>(4)?.map(|value| value as u64),
+                row.get::<_, i64>(5)? != 0,
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)

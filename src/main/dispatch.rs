@@ -2,26 +2,19 @@ use super::*;
 
 pub(super) async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
-    match &cli.command {
-        leantoken::cli::Commands::Update(_) | leantoken::cli::Commands::Upgrade(_) => {
-            run_upgrade_command(cli, json)
-        }
-        leantoken::cli::Commands::Cache(_) => run_cache_command(cli, json),
-        leantoken::cli::Commands::Runtime(_) => run_runtime_command(cli, json),
-        leantoken::cli::Commands::Episode(_) => run_episode_command(cli, json),
-        leantoken::cli::Commands::Setup(_) | leantoken::cli::Commands::Remove(_) => {
-            run_integration_command(cli, json)
-        }
-        leantoken::cli::Commands::Mcp(args) => {
-            let result_mode = args.result_mode;
-            run_mcp(cli, result_mode).await
-        }
-        _ => run_repository_command(cli, json).await,
-    }
-}
-
-pub(super) fn run_runtime_command(cli: Cli, json: bool) -> Result<()> {
     match cli.app_request() {
+        AppRequest::Upgrade { check, yes } => {
+            upgrade::run(upgrade::UpgradeOptions { check, yes, json })
+        }
+        AppRequest::CacheList(request) => {
+            let report = cache::list_with(&request)?;
+            cache::print_list(&report, json)
+        }
+        AppRequest::CachePrune(request) => {
+            let report = cache::prune(&request)?;
+            cache::print_prune(&report, json)?;
+            ensure_cache_prune_succeeded(&report)
+        }
         AppRequest::RuntimeList => setup::print_runtime_list(&setup::list_runtimes()?, json),
         AppRequest::RuntimePrune(request) => {
             let report = setup::prune_runtimes(request)?;
@@ -33,231 +26,157 @@ pub(super) fn run_runtime_command(cli: Cli, json: bool) -> Result<()> {
             }
             Ok(())
         }
-        _ => unreachable!("runtime command checked by dispatch"),
-    }
-}
-
-pub(super) fn run_episode_command(cli: Cli, json: bool) -> Result<()> {
-    let AppRequest::EpisodeAudit(request) = cli.app_request() else {
-        unreachable!("episode command checked by dispatch")
-    };
-    let report = episode::audit_episode(&request)?;
-    if json {
-        return print(&report, true);
-    }
-    let stdout = std::io::stdout();
-    let mut lock = stdout.lock();
-    lock.write_all(report.to_markdown().as_bytes())?;
-    Ok(())
-}
-
-pub(super) fn run_upgrade_command(cli: Cli, json: bool) -> Result<()> {
-    let AppRequest::Upgrade { check, yes } = cli.app_request() else {
-        unreachable!("upgrade command checked by dispatch")
-    };
-    upgrade::run(upgrade::UpgradeOptions { check, yes, json })
-}
-
-pub(super) fn run_cache_command(cli: Cli, json: bool) -> Result<()> {
-    match cli.app_request() {
-        AppRequest::CacheList(request) => {
-            let report = cache::list_with(&request)?;
-            cache::print_list(&report, json)
-        }
-        AppRequest::CachePrune(request) => {
-            let report = cache::prune(&request)?;
-            cache::print_prune(&report, json)?;
-            ensure_cache_prune_succeeded(&report)
-        }
-        _ => unreachable!("cache command checked by dispatch"),
-    }
-}
-
-pub(super) fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> {
-    if report.has_failures() {
-        return Err(leantoken::Error::CachePruneFailure(
-            "one or more managed caches could not be pruned".into(),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn run_integration_command(cli: Cli, json: bool) -> Result<()> {
-    let (operation, request) = match cli.app_request() {
-        AppRequest::Setup(request) => (SetupOperation::Setup, request),
-        AppRequest::Remove(request) => (SetupOperation::Remove, request),
-        _ => unreachable!("integration command checked by dispatch"),
-    };
-    let report = setup::run(operation, request, json)?;
-    setup::print_report(&report, json)?;
-    if report.has_failures() {
-        let message = if report.has_apply_failure() {
-            if report.has_verification_failure() {
-                "setup transaction and launcher verification failed"
-            } else {
-                "setup transaction failed"
+        AppRequest::EpisodeAudit(request) => run_episode_audit(&request, json),
+        AppRequest::Setup(request) => run_integration(SetupOperation::Setup, request, json),
+        AppRequest::Remove(request) => run_integration(SetupOperation::Remove, request, json),
+        AppRequest::Mcp { result_mode } => run_mcp(cli, result_mode).await,
+        AppRequest::Doctor {
+            ready_timeout,
+            client,
+        } => {
+            let config = cli.config()?;
+            if !json {
+                doctor::print_progress()?;
             }
-        } else {
-            match (
-                report.has_client_failures(),
-                report.has_verification_failure(),
-            ) {
-                (true, true) => "MCP client configuration and launcher verification failed",
-                (true, false) => "one or more MCP client configurations failed",
-                (false, true) => "MCP launcher verification failed",
-                (false, false) => unreachable!("failure predicate already checked"),
-            }
-        };
-        return Err(leantoken::Error::SetupFailure(message.into()));
-    }
-    Ok(())
-}
-
-pub(super) async fn run_repository_command(cli: Cli, json: bool) -> Result<()> {
-    let requested_consistency = cli.retrieval_consistency();
-    let config = cli.config()?;
-    let request = cli.app_request();
-
-    if let AppRequest::Doctor {
-        ready_timeout,
-        client,
-    } = request
-    {
-        if !json {
-            doctor::print_progress()?;
+            let report = client.map_or_else(
+                || doctor::run(&config, ready_timeout),
+                |client| doctor::run_configured_client(&config, ready_timeout, client),
+            )?;
+            doctor::print_report(&report, json)
         }
-        let report = client.map_or_else(
-            || doctor::run(&config, ready_timeout),
-            |client| doctor::run_configured_client(&config, ready_timeout, client),
-        )?;
-        doctor::print_report(&report, json)?;
-        return Ok(());
-    }
-
-    if matches!(&request, AppRequest::Status) {
-        return print(&Services::status_without_initializing(config)?, json);
-    }
-
-    let services = Arc::new(Services::open(config)?);
-    let consistency = resolve_retrieval_consistency(&services, requested_consistency).await?;
-    dispatch_repository_request(services, request, consistency, json).await
-}
-
-pub(super) async fn resolve_retrieval_consistency(
-    services: &Services,
-    requested: Option<IndexConsistency>,
-) -> Result<IndexConsistency> {
-    match requested {
-        Some(IndexConsistency::ReconcileWorkingTree)
-            if services.status().await?.index_state == IndexState::Uninitialized =>
-        {
-            Ok(IndexConsistency::IndexedGeneration)
+        AppRequest::Status => print(&Services::status_without_initializing(cli.config()?)?, json),
+        AppRequest::Index { rebuild } => {
+            let services = repository_services(&cli)?;
+            print(&services.index_report(rebuild).await?, json)
         }
-        Some(consistency) => Ok(consistency),
-        None => Ok(IndexConsistency::IndexedGeneration),
-    }
-}
-
-pub(super) async fn dispatch_repository_request(
-    services: Arc<Services>,
-    request: AppRequest,
-    consistency: IndexConsistency,
-    json: bool,
-) -> Result<()> {
-    match request {
-        AppRequest::Index { rebuild } => print(&services.index_report(rebuild).await?, json),
-        AppRequest::Coverage => print(&services.parser_coverage().await?, json),
+        AppRequest::Coverage => {
+            let services = repository_services(&cli)?;
+            print(&services.parser_coverage().await?, json)
+        }
         AppRequest::Savings => {
+            let services = repository_services(&cli)?;
             savings::print_report(&services.observed_token_savings_snapshot(None).await?, json)
         }
-        AppRequest::SavingsDelta { snapshot } => savings::print_report(
-            &services
-                .observed_token_savings_snapshot(Some(snapshot))
-                .await?,
-            json,
-        ),
+        AppRequest::SavingsDelta { snapshot } => {
+            let services = repository_services(&cli)?;
+            savings::print_report(
+                &services
+                    .observed_token_savings_snapshot(Some(snapshot))
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Files {
             request,
+            consistency,
             max_response_tokens,
-        } => print(
-            &services
-                .files_with_options_consistency_cancellable(
-                    request,
-                    consistency,
-                    service_call_options(max_response_tokens),
-                    CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
+            print(
+                &services
+                    .files_with_options_consistency_cancellable(
+                        request,
+                        consistency,
+                        service_call_options(max_response_tokens),
+                        CancellationToken::new(),
+                    )
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Search {
             request,
+            consistency,
             max_response_tokens,
-        } => print(
-            &services
-                .search_with_options_consistency_cancellable(
-                    request,
-                    consistency,
-                    service_call_options(max_response_tokens),
-                    CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
+            print(
+                &services
+                    .search_with_options_consistency_cancellable(
+                        request,
+                        consistency,
+                        service_call_options(max_response_tokens),
+                        CancellationToken::new(),
+                    )
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Outline {
             request,
+            consistency,
             max_response_tokens,
-        } => print(
-            &services
-                .outline_with_options_consistency_cancellable(
-                    request,
-                    consistency,
-                    service_call_options(max_response_tokens),
-                    CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
+            print(
+                &services
+                    .outline_with_options_consistency_cancellable(
+                        request,
+                        consistency,
+                        service_call_options(max_response_tokens),
+                        CancellationToken::new(),
+                    )
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Read {
             request,
+            consistency,
             max_response_tokens,
-        } => print(
-            &services
-                .read_with_options_consistency_cancellable(
-                    request,
-                    consistency,
-                    service_call_options(max_response_tokens),
-                    CancellationToken::new(),
-                )
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
+            print(
+                &services
+                    .read_with_options_consistency_cancellable(
+                        request,
+                        consistency,
+                        service_call_options(max_response_tokens),
+                        CancellationToken::new(),
+                    )
+                    .await?,
+                json,
+            )
+        }
         AppRequest::History {
             request,
             max_response_tokens,
-        } => print(
-            &services
-                .history_with_options(request, service_call_options(max_response_tokens))
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            print(
+                &services
+                    .history_with_options(request, service_call_options(max_response_tokens))
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Json {
             request,
             max_response_tokens,
-        } => print(
-            &services
-                .json_with_options(request, service_call_options(max_response_tokens))
-                .await?,
-            json,
-        ),
+        } => {
+            let services = repository_services(&cli)?;
+            print(
+                &services
+                    .json_with_options(request, service_call_options(max_response_tokens))
+                    .await?,
+                json,
+            )
+        }
         AppRequest::Context {
             request,
+            consistency,
             workflow,
             workflow_evidence,
             handoff,
             max_response_tokens,
             response_profile,
         } => {
+            let services = repository_services(&cli)?;
+            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             let mut options = service_call_options(max_response_tokens);
             if let Some(profile) = response_profile {
                 options = options.with_context_response_profile(profile);
@@ -277,19 +196,63 @@ pub(super) async fn dispatch_repository_request(
                 .await?;
             print(&response, json)
         }
-        AppRequest::Status | AppRequest::Doctor { .. } => {
-            unreachable!("handled before repository service setup")
-        }
-        AppRequest::Mcp { .. }
-        | AppRequest::Setup(_)
-        | AppRequest::Remove(_)
-        | AppRequest::CacheList(_)
-        | AppRequest::CachePrune(_)
-        | AppRequest::RuntimeList
-        | AppRequest::RuntimePrune(_)
-        | AppRequest::EpisodeAudit(_)
-        | AppRequest::Upgrade { .. } => {
-            unreachable!("repository-free command handled by top-level dispatch")
-        }
     }
+}
+
+fn repository_services(cli: &Cli) -> Result<Arc<Services>> {
+    Ok(Arc::new(Services::open(cli.config()?)?))
+}
+
+fn run_episode_audit(request: &episode::EpisodeAuditRequest, json: bool) -> Result<()> {
+    let report = episode::audit_episode(request)?;
+    if json {
+        return print(&report, true);
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    lock.write_all(report.to_markdown().as_bytes())?;
+    Ok(())
+}
+
+fn ensure_cache_prune_succeeded(report: &cache::CachePruneReport) -> Result<()> {
+    if report.has_failures() {
+        return Err(leantoken::Error::CachePruneFailure(
+            "one or more managed caches could not be pruned".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn run_integration(
+    operation: SetupOperation,
+    request: setup::SetupRequest,
+    json: bool,
+) -> Result<()> {
+    let report = setup::run(operation, request, json)?;
+    setup::print_report(&report, json)?;
+    let message = match (
+        report.has_apply_failure(),
+        report.has_client_failures(),
+        report.has_verification_failure(),
+    ) {
+        (false, false, false) => return Ok(()),
+        (true, _, true) => "setup transaction and launcher verification failed",
+        (true, _, false) => "setup transaction failed",
+        (false, true, true) => "MCP client configuration and launcher verification failed",
+        (false, true, false) => "one or more MCP client configurations failed",
+        (false, false, true) => "MCP launcher verification failed",
+    };
+    Err(leantoken::Error::SetupFailure(message.into()))
+}
+
+async fn resolve_retrieval_consistency(
+    services: &Services,
+    requested: IndexConsistency,
+) -> Result<IndexConsistency> {
+    if requested == IndexConsistency::ReconcileWorkingTree
+        && services.status().await?.index_state == IndexState::Uninitialized
+    {
+        return Ok(IndexConsistency::IndexedGeneration);
+    }
+    Ok(requested)
 }

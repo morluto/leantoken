@@ -1,6 +1,7 @@
 use super::*;
-#[derive(Debug, Clone, Copy, Default)]
-pub(in crate::ranking) struct GeneratedFocusFacts {
+#[derive(Debug, Clone, Copy)]
+pub(in crate::ranking) struct GeneratedFocusFacts<'matcher> {
+    pub(in crate::ranking) matcher: &'matcher PathMatcher,
     pub(in crate::ranking) fragments: usize,
     pub(in crate::ranking) symbol_fragments: usize,
 }
@@ -22,16 +23,13 @@ pub(in crate::ranking) fn unique_focus_candidates(
         .collect()
 }
 
-pub(in crate::ranking) fn generated_focus_facts(
+pub(in crate::ranking) fn generated_focus_facts<'matcher>(
     candidates: &[Candidate],
-    request: &ContextRequest,
-) -> Vec<GeneratedFocusFacts> {
-    request
-        .focus_paths
+    matchers: &'matcher [PathMatcher],
+) -> Vec<GeneratedFocusFacts<'matcher>> {
+    matchers
         .iter()
-        .map(|pattern| {
-            let matcher = PathMatcher::new(std::slice::from_ref(pattern))
-                .expect("focus paths are validated at request admission");
+        .map(|matcher| {
             let mut generated = HashSet::new();
             let mut symbols = HashSet::new();
             for candidate in candidates
@@ -44,11 +42,12 @@ pub(in crate::ranking) fn generated_focus_facts(
                     candidate.end_line,
                 );
                 generated.insert(key.clone());
-                if candidate.target_start_line.is_some() && candidate.target_end_line.is_some() {
+                if candidate.target_range.is_some() {
                     symbols.insert(key);
                 }
             }
             GeneratedFocusFacts {
+                matcher,
                 fragments: generated.len(),
                 symbol_fragments: symbols.len(),
             }
@@ -74,6 +73,7 @@ pub(in crate::ranking) fn focus_limit_suppressions(
     selected: &[ScoredCandidate],
     matcher: &PathMatcher,
     request: &ContextRequest,
+    policy: ContextSelectionPolicy,
 ) -> [usize; 4] {
     let selected_tokens = selected
         .iter()
@@ -90,8 +90,7 @@ pub(in crate::ranking) fn focus_limit_suppressions(
         });
     let max_per_file = (request.token_budget / DIVERSITY_DIVISOR).clamp(1, 3);
     let max_fragments = request.max_fragments.unwrap_or(DEFAULT_CONTEXT_FRAGMENTS);
-    let enforced_focus_minimum =
-        request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
+    let enforced_focus_minimum = policy.focus_minimum().is_some();
     let mut counts = [0usize; 4];
     for candidate in omitted
         .iter()
@@ -171,27 +170,25 @@ pub(in crate::ranking) fn focus_capacity_blocker(
 
 pub(in crate::ranking) fn build_focus_path_coverage(
     request: &ContextRequest,
-    generated: &[GeneratedFocusFacts],
+    generated: &[GeneratedFocusFacts<'_>],
     path_omitted: &[ScoredCandidate],
     known_omitted: &[ScoredCandidate],
     selected: &[ScoredCandidate],
     limit_omitted: &[ScoredCandidate],
+    policy: ContextSelectionPolicy,
 ) -> Vec<ContextFocusPathCoverage> {
-    let minimum_fragments = request
-        .minimum_fragments_per_focus_path
-        .unwrap_or(usize::from(request.strict_focus_paths));
+    let minimum_fragments = policy.focus_minimum().unwrap_or(0);
     request
         .focus_paths
         .iter()
         .zip(generated)
         .map(|(pattern, generated)| {
-            let matcher = PathMatcher::new(std::slice::from_ref(pattern))
-                .expect("focus paths are validated at request admission");
-            let path_omitted = unique_focus_candidates(path_omitted, &matcher).len();
-            let known_omitted = unique_focus_candidates(known_omitted, &matcher).len();
-            let selected_ranges = unique_focus_candidates(selected, &matcher);
+            let matcher = generated.matcher;
+            let path_omitted = unique_focus_candidates(path_omitted, matcher).len();
+            let known_omitted = unique_focus_candidates(known_omitted, matcher).len();
+            let selected_ranges = unique_focus_candidates(selected, matcher);
             let selected_fragments = selected_ranges.len();
-            let omitted_ranges = unique_focus_candidates(limit_omitted, &matcher);
+            let omitted_ranges = unique_focus_candidates(limit_omitted, matcher);
             let classified_fragments = path_omitted
                 .saturating_add(known_omitted)
                 .saturating_add(selected_fragments)
@@ -202,15 +199,14 @@ pub(in crate::ranking) fn build_focus_path_coverage(
                 .filter(|candidate| matcher.is_match(&candidate.candidate.path))
                 .map(|candidate| candidate.token_count)
                 .sum();
-            let enforced_focus_minimum =
-                request.strict_focus_paths || request.minimum_fragments_per_focus_path.is_some();
+            let enforced_focus_minimum = policy.focus_minimum().is_some();
             let reserved_fragments = if enforced_focus_minimum {
                 selected_fragments.min(minimum_fragments)
             } else {
                 0
             };
             let [token_budget, max_fragments, file_diversity, global_ranking] =
-                focus_limit_suppressions(limit_omitted, selected, &matcher, request);
+                focus_limit_suppressions(limit_omitted, selected, matcher, request, policy);
             let mut suppressed_by = Vec::new();
             push_focus_suppression(
                 &mut suppressed_by,

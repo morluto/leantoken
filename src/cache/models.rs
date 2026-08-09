@@ -193,8 +193,6 @@ pub struct CacheListReport {
     pub total_entries: usize,
     /// Number of recognized caches after filters.
     pub matched_entries: usize,
-    /// Number of entries included in this response page.
-    pub returned_entries: usize,
     /// Sum of managed artifact bytes before filters.
     pub total_bytes: u64,
     /// Sum of managed artifact bytes after filters.
@@ -213,13 +211,77 @@ pub struct CacheListReport {
     pub safely_reclaimable_incompatible_bytes: u64,
     /// Entries ignored because their names are not managed cache identities.
     pub ignored_entries: usize,
+    /// Summary-only or paginated result contents.
+    #[serde(flatten)]
+    pub(super) contents: CacheListContents,
+}
+
+/// Mutually exclusive result shapes for cache-list summary and page requests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CacheListContents {
+    Summary,
+    Page {
+        next_cursor: Option<String>,
+        entries: Vec<CacheEntryReport>,
+    },
+}
+
+impl Serialize for CacheListContents {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut map = serializer.serialize_map(None)?;
+        match self {
+            Self::Summary => {
+                map.serialize_entry("returned_entries", &0usize)?;
+                map.serialize_entry("summary_only", &true)?;
+                map.serialize_entry("entries", &Vec::<CacheEntryReport>::new())?;
+            }
+            Self::Page {
+                next_cursor,
+                entries,
+            } => {
+                map.serialize_entry("returned_entries", &entries.len())?;
+                map.serialize_entry("summary_only", &false)?;
+                if let Some(cursor) = next_cursor {
+                    map.serialize_entry("next_cursor", cursor)?;
+                }
+                map.serialize_entry("entries", entries)?;
+            }
+        }
+        map.end()
+    }
+}
+
+impl CacheListReport {
     /// Whether the request omitted per-cache entries.
-    pub summary_only: bool,
+    pub const fn summary_only(&self) -> bool {
+        matches!(self.contents, CacheListContents::Summary)
+    }
+
+    /// Number of entries included in this response page.
+    pub fn returned_entries(&self) -> usize {
+        self.entries().len()
+    }
+
     /// Cursor for the next stable identifier page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
+    pub fn next_cursor(&self) -> Option<&str> {
+        match &self.contents {
+            CacheListContents::Summary => None,
+            CacheListContents::Page { next_cursor, .. } => next_cursor.as_deref(),
+        }
+    }
+
     /// Stable cache entries sorted by identifier and bounded to one page.
-    pub entries: Vec<CacheEntryReport>,
+    pub fn entries(&self) -> &[CacheEntryReport] {
+        match &self.contents {
+            CacheListContents::Summary => &[],
+            CacheListContents::Page { entries, .. } => entries,
+        }
+    }
 }
 
 /// Result action for one cache considered by prune.
@@ -247,18 +309,58 @@ pub struct CachePruneResult {
     pub id: String,
     /// Managed cache directory.
     pub path: PathBuf,
-    /// Decision outcome.
-    pub action: CachePruneAction,
+    /// Decision outcome and its applicable diagnostic payload.
+    #[serde(flatten)]
+    pub outcome: CachePruneOutcome,
     /// Selection reasons such as age, missing root, or total-byte budget.
     pub reasons: Vec<String>,
     /// Bytes associated with the entry at decision time.
     pub size_bytes: u64,
-    /// Explanation for a skipped entry.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-    /// Failure detail for a failed deletion.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+}
+
+/// Cache-prune decision with skip and failure details bound to valid actions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum CachePruneOutcome {
+    Kept,
+    WouldDelete,
+    Deleted,
+    SkippedActive { detail: String },
+    SkippedUnsafe { detail: String },
+    Failed { error: String },
+}
+
+impl CachePruneOutcome {
+    pub(super) fn skipped_active() -> Self {
+        Self::SkippedActive {
+            detail: "cache lease is held by a running process".into(),
+        }
+    }
+
+    pub(super) fn skipped_unsafe(detail: Option<String>) -> Self {
+        Self::SkippedUnsafe {
+            detail: detail.unwrap_or_else(|| "cache metadata is not safe to prune".into()),
+        }
+    }
+
+    pub(super) const fn action(&self) -> CachePruneAction {
+        match self {
+            Self::Kept => CachePruneAction::Kept,
+            Self::WouldDelete => CachePruneAction::WouldDelete,
+            Self::Deleted => CachePruneAction::Deleted,
+            Self::SkippedActive { .. } => CachePruneAction::SkippedActive,
+            Self::SkippedUnsafe { .. } => CachePruneAction::SkippedUnsafe,
+            Self::Failed { .. } => CachePruneAction::Failed,
+        }
+    }
+
+    pub(super) fn diagnostic(&self) -> Option<&str> {
+        match self {
+            Self::SkippedActive { detail } | Self::SkippedUnsafe { detail } => Some(detail),
+            Self::Failed { error } => Some(error),
+            Self::Kept | Self::WouldDelete | Self::Deleted => None,
+        }
+    }
 }
 
 /// Complete report for `cache prune`.
@@ -284,7 +386,7 @@ impl CachePruneReport {
     pub fn has_failures(&self) -> bool {
         self.results
             .iter()
-            .any(|result| result.action == CachePruneAction::Failed)
+            .any(|result| matches!(result.outcome, CachePruneOutcome::Failed { .. }))
     }
 }
 
@@ -367,6 +469,7 @@ pub(super) struct CacheManager {
 
 #[derive(Debug)]
 pub(super) struct InspectedCache {
+    pub(super) identity: ManagedCacheIdentity,
     pub(super) entry: CacheEntry,
     pub(super) compatibility: CacheCompatibility,
     pub(super) safe_to_prune: bool,

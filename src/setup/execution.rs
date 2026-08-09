@@ -3,12 +3,107 @@ use std::time::Duration;
 
 const SETUP_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Debug)]
+struct PreparedSetupRequest {
+    selection: SetupSelection,
+    disposition: SetupDisposition,
+    private_runtime: bool,
+    allow_outdated: bool,
+    force_unmanaged: bool,
+}
+
+#[derive(Debug)]
+enum SetupSelection {
+    Refresh,
+    All,
+    Explicit(Vec<SetupClient>),
+    Interactive,
+}
+
+impl SetupSelection {
+    const fn is_refresh(&self) -> bool {
+        matches!(self, Self::Refresh)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SetupDisposition {
+    DryRun,
+    Confirmed,
+    NeedsConfirmation,
+}
+
+impl SetupDisposition {
+    const fn is_dry_run(self) -> bool {
+        matches!(self, Self::DryRun)
+    }
+
+    const fn is_confirmed(self) -> bool {
+        matches!(self, Self::Confirmed)
+    }
+}
+
+impl PreparedSetupRequest {
+    fn parse(operation: SetupOperation, request: SetupRequest) -> Result<Self> {
+        if request.refresh && operation != SetupOperation::Setup {
+            return Err(Error::InvalidRequest(
+                "--refresh is only valid with the setup command".into(),
+            ));
+        }
+        if request.refresh && (request.all || !request.clients.is_empty()) {
+            return Err(Error::InvalidRequest(
+                "--refresh cannot be combined with client flags or --all".into(),
+            ));
+        }
+        if request.private_runtime && operation != SetupOperation::Setup {
+            return Err(Error::InvalidRequest(
+                "--private-runtime is only valid with the setup command".into(),
+            ));
+        }
+        if request.allow_outdated && operation != SetupOperation::Setup {
+            return Err(Error::InvalidRequest(
+                "--allow-outdated is only valid with the setup command".into(),
+            ));
+        }
+
+        let selection = if request.refresh {
+            SetupSelection::Refresh
+        } else if request.all {
+            SetupSelection::All
+        } else if request.clients.is_empty() {
+            SetupSelection::Interactive
+        } else {
+            SetupSelection::Explicit(deduplicate(request.clients))
+        };
+        if request.yes && matches!(selection, SetupSelection::Interactive) {
+            return Err(Error::InvalidRequest(
+                "--yes requires explicit client flags or --all; detection is not consent".into(),
+            ));
+        }
+        let disposition = if request.dry_run {
+            SetupDisposition::DryRun
+        } else if request.yes {
+            SetupDisposition::Confirmed
+        } else {
+            SetupDisposition::NeedsConfirmation
+        };
+        Ok(Self {
+            selection,
+            disposition,
+            private_runtime: request.private_runtime,
+            allow_outdated: request.allow_outdated,
+            force_unmanaged: request.force_unmanaged,
+        })
+    }
+}
+
 /// Run global MCP setup or removal using the current user environment.
 pub fn run(
     operation: SetupOperation,
     request: SetupRequest,
     json_output: bool,
 ) -> Result<SetupReport> {
+    let request = PreparedSetupRequest::parse(operation, request)?;
     let home = home_directory()
         .ok_or_else(|| Error::SetupFailure("could not determine the home directory".into()))?;
     let launcher = McpLauncher::current()?;
@@ -34,55 +129,45 @@ pub fn run(
             && std::io::stdin().is_terminal()
             && std::io::stderr().is_terminal(),
     };
-    run_with(operation, request, &environment, &InteractivePrompt)
+    run_prepared(operation, request, &environment, &InteractivePrompt)
 }
 
+#[cfg(test)]
 pub(super) fn run_with(
     operation: SetupOperation,
     request: SetupRequest,
     environment: &SetupEnvironment,
     prompt: &dyn SetupPrompt,
 ) -> Result<SetupReport> {
+    let request = PreparedSetupRequest::parse(operation, request)?;
+    run_prepared(operation, request, environment, prompt)
+}
+
+fn run_prepared(
+    operation: SetupOperation,
+    request: PreparedSetupRequest,
+    environment: &SetupEnvironment,
+    prompt: &dyn SetupPrompt,
+) -> Result<SetupReport> {
     let recovery_path = transaction_path(&environment.runtime_root);
-    if request.dry_run && recovery_path.exists() {
+    if request.disposition.is_dry_run() && recovery_path.exists() {
         return Err(Error::SetupFailure(format!(
             "interrupted setup requires recovery before dry-run: {}",
             recovery_path.display()
         )));
     }
-    let _setup_lock = (!request.dry_run)
+    let _setup_lock = (!request.disposition.is_dry_run())
         .then(|| acquire_setup_lock(&environment.runtime_root))
         .transpose()?;
-    if !request.dry_run {
+    if !request.disposition.is_dry_run() {
         recover_interrupted_transaction(&environment.runtime_root)?;
     }
-    if request.refresh && operation != SetupOperation::Setup {
-        return Err(Error::InvalidRequest(
-            "--refresh is only valid with the setup command".into(),
-        ));
-    }
-    if request.refresh && (request.all || !request.clients.is_empty()) {
-        return Err(Error::InvalidRequest(
-            "--refresh cannot be combined with client flags or --all".into(),
-        ));
-    }
-    if request.private_runtime && operation != SetupOperation::Setup {
-        return Err(Error::InvalidRequest(
-            "--private-runtime is only valid with the setup command".into(),
-        ));
-    }
-    if request.allow_outdated && operation != SetupOperation::Setup {
-        return Err(Error::InvalidRequest(
-            "--allow-outdated is only valid with the setup command".into(),
-        ));
-    }
 
-    let inventory_required_for_selection = request.refresh
+    let inventory_required_for_selection = request.selection.is_refresh()
         || (operation == SetupOperation::Remove
             && environment.interactive
-            && !request.all
-            && request.clients.is_empty()
-            && !request.yes);
+            && matches!(request.selection, SetupSelection::Interactive)
+            && !request.disposition.is_confirmed());
     let selection_inventory = inventory_required_for_selection
         .then(|| {
             configured_registrations_with_snapshots(
@@ -98,48 +183,47 @@ pub(super) fn run_with(
         .filter(|client| client.is_detected(&environment.home))
         .collect::<Vec<_>>();
 
-    let clients = if request.refresh {
-        managed_clients_from_registrations(
+    let refreshing = request.selection.is_refresh();
+    let clients = match request.selection {
+        SetupSelection::Refresh => managed_clients_from_registrations(
             &selection_inventory
                 .as_ref()
                 .expect("refresh captured configuration inventory")
                 .0,
-        )
-    } else if request.all {
-        SetupClient::ALL.to_vec()
-    } else if !request.clients.is_empty() {
-        deduplicate(request.clients)
-    } else if request.yes {
-        return Err(Error::InvalidRequest(
-            "--yes requires explicit client flags or --all; detection is not consent".into(),
-        ));
-    } else {
-        if !environment.interactive {
-            return Err(Error::InvalidRequest(
-                "interactive setup requires a terminal; pass client flags or --all with --yes"
-                    .into(),
-            ));
+        ),
+        SetupSelection::All => SetupClient::ALL.to_vec(),
+        SetupSelection::Explicit(clients) => clients,
+        SetupSelection::Interactive => {
+            if !environment.interactive {
+                return Err(Error::InvalidRequest(
+                    "interactive setup requires a terminal; pass client flags or --all with --yes"
+                        .into(),
+                ));
+            }
+            let preferred = if operation == SetupOperation::Setup {
+                detected.clone()
+            } else {
+                managed_clients_from_registrations(
+                    &selection_inventory
+                        .as_ref()
+                        .expect("interactive remove captured configuration inventory")
+                        .0,
+                )
+            };
+            let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
+                return Ok(empty_report(operation, environment.persistent_cli));
+            };
+            if selected.is_empty() {
+                return Ok(empty_report(operation, environment.persistent_cli));
+            }
+            selected
         }
-        let preferred = if operation == SetupOperation::Setup {
-            detected.clone()
-        } else {
-            managed_clients_from_registrations(
-                &selection_inventory
-                    .as_ref()
-                    .expect("interactive remove captured configuration inventory")
-                    .0,
-            )
-        };
-        let Some(selected) = prompt.select(operation, &detected, &preferred)? else {
-            return Ok(empty_report(operation, environment.persistent_cli));
-        };
-        if selected.is_empty() {
-            return Ok(empty_report(operation, environment.persistent_cli));
-        }
-        selected
     };
 
-    if !environment.interactive && !request.dry_run && !request.yes {
+    if !environment.interactive
+        && !request.disposition.is_dry_run()
+        && !request.disposition.is_confirmed()
+    {
         return Err(Error::InvalidRequest(
             "non-interactive setup requires explicit client flags, --all, or --refresh with --yes"
                 .into(),
@@ -183,7 +267,7 @@ pub(super) fn run_with(
             .map(|registration| registration.client.discovery_path(&environment.home))
             .collect::<std::collections::BTreeSet<_>>();
         required_paths.extend(selected_discovery_paths.iter().cloned());
-        let cleanup_paths = if request.refresh && clients.is_empty() {
+        let cleanup_paths = if refreshing && clients.is_empty() {
             Vec::new()
         } else {
             [
@@ -242,11 +326,11 @@ pub(super) fn run_with(
         },
     )?;
 
-    if request.dry_run {
+    if request.disposition.is_dry_run() {
         return Ok(report_from_plan(&plan, false, true, Vec::new(), None, None));
     }
 
-    if !request.yes && !prompt.confirm(operation, &plan)? {
+    if !request.disposition.is_confirmed() && !prompt.confirm(operation, &plan)? {
         return Ok(report_from_plan(&plan, true, false, Vec::new(), None, None));
     }
 
@@ -283,12 +367,14 @@ fn verify_applied_setup(
             launcher.version
         )
     };
-    if apply_error.is_some() || results.iter().any(|result| result.error.is_some()) {
-        return Some(SetupVerification {
-            status: SetupVerificationStatus::Skipped,
-            stage: None,
-            message: Some("setup transaction did not complete".into()),
-            repair_command: Some(repair_command),
+    if apply_error.is_some()
+        || results
+            .iter()
+            .any(|result| result.outcome.error().is_some())
+    {
+        return Some(SetupVerification::Skipped {
+            message: "setup transaction did not complete".into(),
+            repair_command,
         });
     }
 
@@ -313,30 +399,23 @@ fn verify_applied_setup(
     })();
 
     Some(match result {
-        Ok(_) => SetupVerification {
-            status: SetupVerificationStatus::Passed,
-            stage: None,
-            message: None,
-            repair_command: Some(repair_command),
+        Ok(_) => SetupVerification::Passed { repair_command },
+        Err(Error::DoctorFailure { stage, message }) => SetupVerification::Failed {
+            stage: stage.into(),
+            message,
+            repair_command,
         },
-        Err(Error::DoctorFailure { stage, message }) => SetupVerification {
-            status: SetupVerificationStatus::Failed,
-            stage: Some(stage.into()),
-            message: Some(message),
-            repair_command: Some(repair_command),
-        },
-        Err(error) => SetupVerification {
-            status: SetupVerificationStatus::Failed,
-            stage: Some("launch".into()),
-            message: Some(error.to_string()),
-            repair_command: Some(repair_command),
+        Err(error) => SetupVerification::Failed {
+            stage: "launch".into(),
+            message: error.to_string(),
+            repair_command,
         },
     })
 }
 
 pub(super) fn revalidate_applied_client_edits(edits: &[PlannedClientEdit]) -> Result<()> {
     for edit in edits {
-        let expected = edit.updated.as_ref().or(edit.original.as_ref());
+        let expected = edit.updated().or(edit.original());
         let current = read_optional(&edit.public.path).map_err(|error| Error::DoctorFailure {
             stage: "registration",
             message: format!(
@@ -344,7 +423,7 @@ pub(super) fn revalidate_applied_client_edits(edits: &[PlannedClientEdit]) -> Re
                 edit.public.path.display()
             ),
         })?;
-        if current.as_ref() != expected {
+        if current.as_deref() != expected {
             return Err(Error::DoctorFailure {
                 stage: "registration",
                 message: format!(

@@ -2,19 +2,18 @@
 
 use serde_json::Value;
 
-use super::cursor::{decode_json_cursor, json_query_hash, make_json_cursor};
+use super::cursor::make_json_cursor;
 use super::execution::{JsonCursorVersion, JsonExecutionOptions};
 use super::keys::{KeyProjectionContext, project_key_page};
 use super::numeric::numeric_summary;
 use super::projection::{ProjectionState, project_json, projection_item_count};
 use super::schema::project_schema_page;
-use super::selection::select_json;
+use super::selection::{ParsedJsonSelector, select_json};
 use super::source::{JsonMeasurementCache, JsonMeasurementKey, json_tokens};
-use super::validation::validate_json_request;
+use super::validation::{ParsedJsonOperation, ParsedJsonRequest};
 use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS};
 use crate::model::{
-    JsonFieldDiff, JsonIncompleteReason, JsonOperation, JsonProjection, JsonRequest, JsonResponse,
-    JsonSelector, TokenAccountingOperation,
+    JsonFieldDiff, JsonIncompleteReason, JsonProjection, JsonResponse, TokenAccountingOperation,
 };
 use crate::services::validation::check_cancelled;
 use crate::services::{ServiceCallOptions, Services};
@@ -43,7 +42,7 @@ struct JsonOperationResult {
 
 struct QueryExecution<'a> {
     path: String,
-    selector: Option<JsonSelector>,
+    selector: Option<ParsedJsonSelector>,
     projection: JsonProjection,
     limits: &'a JsonLimits,
     cursor: Option<&'a super::cursor::JsonCursor>,
@@ -56,7 +55,7 @@ struct QueryExecution<'a> {
 struct DiffExecution<'a> {
     base_path: String,
     head_path: String,
-    selectors: Vec<JsonSelector>,
+    selectors: Vec<ParsedJsonSelector>,
     projection: JsonProjection,
     limits: &'a JsonLimits,
     generation: u64,
@@ -102,13 +101,12 @@ fn query_response(
 impl Services {
     pub(super) fn json_sync(
         &self,
-        request: JsonRequest,
+        request: ParsedJsonRequest,
         options: ServiceCallOptions,
         execution: JsonExecutionOptions,
         cancellation: &tokio_util::sync::CancellationToken,
     ) -> Result<JsonResponse> {
         check_cancelled(cancellation)?;
-        validate_json_request(&request, execution)?;
         let limits = JsonLimits {
             max_tokens: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
             max_items: request.max_items.unwrap_or(DEFAULT_JSON_ITEMS),
@@ -116,19 +114,15 @@ impl Services {
                 .array_sample_size
                 .unwrap_or(DEFAULT_ARRAY_SAMPLE_SIZE),
         };
-        let cursor = request
-            .cursor
-            .as_deref()
-            .map(|cursor| decode_json_cursor(cursor, execution.cursor_version()))
-            .transpose()?;
-        let query_hash = json_query_hash(&request.operation, execution)?;
         let generation = self.storage.repository_generation()?;
         let mut measurements = JsonMeasurementCache::default();
         let mut result = match request.operation {
-            JsonOperation::Query {
+            ParsedJsonOperation::Query {
                 path,
                 selector,
                 projection,
+                cursor,
+                query_hash,
             } => self.execute_json_query(QueryExecution {
                 path,
                 selector,
@@ -140,10 +134,10 @@ impl Services {
                 generation,
                 measurements: &mut measurements,
             })?,
-            JsonOperation::NumericSummary { path, selector } => {
+            ParsedJsonOperation::NumericSummary { path, selector } => {
                 self.execute_json_numeric_summary(path, selector, generation)?
             }
-            JsonOperation::DiffFields {
+            ParsedJsonOperation::DiffFields {
                 base_path,
                 head_path,
                 selectors,
@@ -289,7 +283,7 @@ impl Services {
     fn execute_json_numeric_summary(
         &self,
         path: String,
-        selector: Option<JsonSelector>,
+        selector: Option<ParsedJsonSelector>,
         generation: u64,
     ) -> Result<JsonOperationResult> {
         let loaded = self.load_json(&path)?;
@@ -380,7 +374,7 @@ impl Services {
                 }
             }
             differences.push(JsonFieldDiff {
-                selector,
+                selector: selector.into_wire(),
                 before_present: before_selected.is_present(),
                 before: before_value,
                 after_present: after_selected.is_present(),

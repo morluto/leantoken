@@ -102,13 +102,20 @@ impl RepositoryWatcher {
             .unwrap_or(WatchAdmission {
                 entries: 0,
                 directories: 0,
-                complete: false,
-                fallback_reason: Some(WatcherFallbackReason::AdmissionError),
+                outcome: WatchAdmissionOutcome::Fallback(WatcherFallbackReason::AdmissionError),
             });
             let mut watcher = None;
-            let mut watch_enabled = false;
-            let mut fallback_reason = admission.fallback_reason;
-            if fallback_reason.is_none() {
+            let selection = if let Some(reason) = admission.fallback_reason() {
+                tracing::warn!(
+                    entries = admission.entries,
+                    directories = admission.directories,
+                    cap = MAX_WATCHED_DIRECTORIES,
+                    ?reason,
+                    "native recursive watcher admission did not complete; \
+                     falling back to periodic full reconciliation"
+                );
+                WatcherSelection::PeriodicPolling(reason)
+            } else {
                 let callback: EventCallback = Box::new({
                     let overflowed = Arc::clone(&overflowed);
                     move |event: notify::Result<Event>| {
@@ -124,69 +131,58 @@ impl RepositoryWatcher {
                     Ok(mut candidate) => {
                         match candidate.watch(&watched_root, RecursiveMode::Recursive) {
                             Ok(()) => {
-                                watch_enabled = true;
                                 watcher = Some(candidate);
+                                WatcherSelection::Native
                             }
                             Err(error) => {
-                                fallback_reason =
-                                    Some(WatcherFallbackReason::BackendRegistrationFailed);
                                 tracing::warn!(
                                     %error,
                                     "filesystem watcher registration failed; \
                                      falling back to periodic full reconciliation"
                                 );
+                                WatcherSelection::PeriodicPolling(
+                                    WatcherFallbackReason::BackendRegistrationFailed,
+                                )
                             }
                         }
                     }
                     Err(error) => {
-                        fallback_reason = Some(WatcherFallbackReason::BackendCreationFailed);
                         tracing::warn!(
                             %error,
                             "filesystem watcher creation failed; \
                              falling back to periodic full reconciliation"
                         );
+                        WatcherSelection::PeriodicPolling(
+                            WatcherFallbackReason::BackendCreationFailed,
+                        )
                     }
                 }
-            } else {
-                tracing::warn!(
-                    entries = admission.entries,
-                    directories = admission.directories,
-                    cap = MAX_WATCHED_DIRECTORIES,
-                    reason = ?fallback_reason,
-                    "native recursive watcher admission did not complete; \
-                     falling back to periodic full reconciliation"
-                );
-            }
-            let backend = if watch_enabled {
-                WatcherBackend::Native
-            } else {
-                WatcherBackend::PeriodicPolling
             };
+            let backend = selection.backend();
+            let fallback_reason = selection.fallback_reason();
             tracing::info!(
                 ?backend,
                 ?fallback_reason,
                 admission_entries = admission.entries,
                 admission_directories = admission.directories,
-                admission_complete = admission.complete,
+                admission_complete = admission.complete(),
                 "repository watcher initialized"
             );
             let _ = ready_tx.send(WatcherReady {
-                backend,
-                fallback_reason,
+                selection,
                 admission,
             });
 
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
-            let mut pending = BTreeSet::<String>::new();
-            let mut reconcile = false;
+            let mut pending = PendingReconciliation::empty();
             let poll_started_at = Instant::now()
-                + if watch_enabled {
+                + if selection.is_native() {
                     long_sleep
                 } else {
                     poll_interval
                 };
-            let mut poll_timer = if !watch_enabled {
+            let mut poll_timer = if !selection.is_native() {
                 interval_at(poll_started_at, poll_interval)
             } else {
                 interval_at(poll_started_at, long_sleep)
@@ -195,10 +191,9 @@ impl RepositoryWatcher {
 
             loop {
                 if overflowed.swap(false, Ordering::Acquire) {
-                    reconcile = true;
-                    pending.clear();
+                    pending.require_full();
                 }
-                if reconcile {
+                if pending.is_full() {
                     sleep.as_mut().reset(Instant::now());
                 }
 
@@ -206,25 +201,20 @@ impl RepositoryWatcher {
                     biased;
                     _ = cancellation.cancelled() => break,
                     Some(raw) = raw_rx.recv() => {
-                        if !reconcile {
+                        if !pending.is_full() {
                             process_raw_event(
                                 raw,
                                 &watched_root,
                                 &policy,
                                 &mut pending,
-                                &mut reconcile,
                             );
-                            bound_pending_state(
-                                &mut pending,
-                                &mut reconcile,
-                                raw_capacity,
-                            );
+                            bound_pending_state(&mut pending, raw_capacity);
                         } else {
                             if let Err(err) = raw {
                                 tracing::warn!(%err, "notify error");
                             }
                         }
-                        if reconcile {
+                        if pending.is_full() {
                             sleep.as_mut().reset(Instant::now());
                         } else if !pending.is_empty() {
                             sleep.as_mut().reset(Instant::now() + debounce);
@@ -233,21 +223,20 @@ impl RepositoryWatcher {
                         }
                     }
                     _ = poll_timer.tick() => {
-                        if !watch_enabled {
+                        if !selection.is_native() {
                             task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
-                            reconcile = true;
+                            pending.require_full();
                         }
                     }
                     _ = sleep.as_mut() => {
                         if !flush(
                             &mut pending,
-                            &mut reconcile,
                             &tx,
                             &task_counters,
                         ) {
                             return;
                         }
-                        if reconcile {
+                        if pending.is_full() {
                             sleep.as_mut().reset(Instant::now() + debounce);
                         } else if pending.is_empty() {
                             sleep.as_mut().reset(Instant::now() + long_sleep);
@@ -259,7 +248,7 @@ impl RepositoryWatcher {
                 }
             }
 
-            let _ = flush(&mut pending, &mut reconcile, &tx, &task_counters);
+            let _ = flush(&mut pending, &tx, &task_counters);
             drop(watcher);
         });
 
@@ -319,11 +308,11 @@ pub(super) fn diagnostics_snapshot(
     counters: &WatcherCounters,
 ) -> WatcherDiagnostics {
     WatcherDiagnostics {
-        backend: ready.backend,
-        fallback_reason: ready.fallback_reason,
+        backend: ready.selection.backend(),
+        fallback_reason: ready.selection.fallback_reason(),
         admission_entries: ready.admission.entries,
         admission_directories: ready.admission.directories,
-        admission_complete: ready.admission.complete,
+        admission_complete: ready.admission.complete(),
         poll_ticks: counters.poll_ticks.load(Ordering::Relaxed),
         changed_path_deliveries: counters.changed_path_deliveries.load(Ordering::Relaxed),
         full_reconciliation_deliveries: counters

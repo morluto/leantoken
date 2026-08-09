@@ -96,14 +96,11 @@ impl Services {
     ) -> Result<crate::model::JsonResponse> {
         let operation = TokenAccountingOperation::Json;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(
-            operation,
-            validation::validate_json_request(&request, execution),
-        )?;
         let this = self.clone();
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
+                let request = validation::parse_json_request(request, execution)?;
                 this.json_sync(request, options, execution, cancellation)
             })
             .await;

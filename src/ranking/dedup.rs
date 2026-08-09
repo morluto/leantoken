@@ -129,10 +129,9 @@ pub(in crate::ranking) fn merge_candidate_signals(existing: &mut Candidate, dupl
         }
     }
     existing.concept_weight = existing.concept_weight.max(duplicate.concept_weight);
-    if existing.target_start_line.is_none() && duplicate.target_start_line.is_some() {
+    if existing.target_range.is_none() && duplicate.target_range.is_some() {
         existing.symbol_name.clone_from(&duplicate.symbol_name);
-        existing.target_start_line = duplicate.target_start_line;
-        existing.target_end_line = duplicate.target_end_line;
+        existing.target_range = duplicate.target_range;
         existing
             .representation
             .clone_from(&duplicate.representation);

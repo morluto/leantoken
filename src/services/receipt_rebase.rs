@@ -76,7 +76,7 @@ impl Services {
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        self.observe_service_result(operation, validate_rebase_request(&request))?;
+        let request = self.observe_service_result(operation, parse_rebase_request(request))?;
         if let Some(consistency) = consistency {
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
@@ -99,12 +99,11 @@ impl Services {
 
     fn rebase_receipt_sync(
         &self,
-        request: ReceiptRebaseRequest,
+        request: ParsedReceiptRebaseRequest,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<ReceiptRebaseResponse> {
         check_cancelled(cancellation)?;
-        validate_rebase_request(&request)?;
         let source = self
             .storage
             .load_receipt_rebase_source(&request.receipt_id)?;
@@ -118,9 +117,7 @@ impl Services {
             }
             classify_receipt(self, session, generation, &source, cancellation)
         })?;
-        let requested_samples = request
-            .max_samples_per_outcome
-            .unwrap_or(DEFAULT_RECEIPT_REBASE_SAMPLES_PER_OUTCOME);
+        let requested_samples = request.samples_per_outcome;
         let mut selected = None;
         for sample_limit in (0..=requested_samples).rev() {
             let response = build_response(self, &source, &classification, sample_limit);
@@ -156,7 +153,12 @@ impl Services {
     }
 }
 
-fn validate_rebase_request(request: &ReceiptRebaseRequest) -> Result<()> {
+struct ParsedReceiptRebaseRequest {
+    receipt_id: String,
+    samples_per_outcome: usize,
+}
+
+fn parse_rebase_request(request: ReceiptRebaseRequest) -> Result<ParsedReceiptRebaseRequest> {
     super::validation::validate_input(&request.receipt_id, "receipt_id", 128)?;
     if request
         .max_samples_per_outcome
@@ -168,7 +170,12 @@ fn validate_rebase_request(request: &ReceiptRebaseRequest) -> Result<()> {
             limit: MAX_RECEIPT_REBASE_SAMPLES_PER_OUTCOME,
         });
     }
-    Ok(())
+    Ok(ParsedReceiptRebaseRequest {
+        receipt_id: request.receipt_id,
+        samples_per_outcome: request
+            .max_samples_per_outcome
+            .unwrap_or(DEFAULT_RECEIPT_REBASE_SAMPLES_PER_OUTCOME),
+    })
 }
 
 fn classify_receipt(

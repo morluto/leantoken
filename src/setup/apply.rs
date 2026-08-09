@@ -14,13 +14,13 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
         .and_then(|()| preflight_edits(&plan.edits))
         .and_then(|()| preflight_discovery(&plan.discovery_edits))
     {
-        let message = rollback_runtime_message(error, runtime_installation.as_mut());
+        let message = rollback_runtime_message(error, runtime_installation.take());
         return failed_outcome(plan, message);
     }
     let transaction = match begin_setup_transaction(plan) {
         Ok(transaction) => transaction,
         Err(error) => {
-            let message = rollback_runtime_message(error, runtime_installation.as_mut());
+            let message = rollback_runtime_message(error, runtime_installation.take());
             return failed_outcome(plan, message);
         }
     };
@@ -30,7 +30,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
     for edit in &plan.edits {
         if let Err(error) = apply_edit(edit) {
             let rollback = rollback_setup(
-                runtime_installation.as_mut(),
+                runtime_installation.take(),
                 &applied,
                 &applied_discovery,
                 transaction,
@@ -42,7 +42,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
     for edit in &plan.discovery_edits {
         if let Err(error) = apply_discovery_edit(edit) {
             let rollback = rollback_setup(
-                runtime_installation.as_mut(),
+                runtime_installation.take(),
                 &applied,
                 &applied_discovery,
                 transaction,
@@ -55,7 +55,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
         && let Err(error) = transaction.commit()
     {
         let rollback = rollback_setup(
-            runtime_installation.as_mut(),
+            runtime_installation.take(),
             &applied,
             &applied_discovery,
             Some(transaction),
@@ -69,8 +69,7 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
             .map(|edit| ClientSetupResult {
                 client: edit.public.client,
                 path: edit.public.path.clone(),
-                status: edit.status.to_string(),
-                error: None,
+                outcome: edit.status().into(),
             })
             .collect(),
         error: None,
@@ -79,13 +78,14 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
 
 fn rollback_runtime_message(
     error: Error,
-    runtime_installation: Option<&mut RuntimeInstallReceipt>,
+    runtime_installation: Option<RuntimeInstallReceipt>,
 ) -> String {
-    let Some(runtime_installation) = runtime_installation.filter(|receipt| receipt.installed())
-    else {
-        return error.to_string();
-    };
-    rollback_message(error, rollback_installed_runtime(runtime_installation))
+    match runtime_installation {
+        Some(receipt @ RuntimeInstallReceipt::Installed(_)) => {
+            rollback_message(error, rollback_installed_runtime(receipt))
+        }
+        Some(RuntimeInstallReceipt::Unchanged) | None => error.to_string(),
+    }
 }
 
 fn failed_outcome(plan: &ResolvedSetupPlan, error: String) -> SetupApplyOutcome {
@@ -96,7 +96,7 @@ fn failed_outcome(plan: &ResolvedSetupPlan, error: String) -> SetupApplyOutcome 
 }
 
 pub(super) fn rollback_setup(
-    runtime_installation: Option<&mut RuntimeInstallReceipt>,
+    runtime_installation: Option<RuntimeInstallReceipt>,
     applied: &[&PlannedClientEdit],
     applied_discovery: &[&PlannedDiscoveryEdit],
     transaction: Option<SetupTransaction>,
@@ -141,7 +141,7 @@ pub(super) fn preflight_configuration_snapshots(
 
 pub(super) fn preflight_edits(edits: &[PlannedClientEdit]) -> Result<()> {
     for edit in edits {
-        if read_optional(&edit.public.path)? != edit.original {
+        if read_optional(&edit.public.path)?.as_deref() != edit.original() {
             return Err(Error::SetupFailure(format!(
                 "configuration changed after preflight: {}",
                 edit.public.path.display()
@@ -169,14 +169,15 @@ pub(super) fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<
         .map(|edit| ClientSetupResult {
             client: edit.public.client,
             path: edit.public.path.clone(),
-            status: "failed".into(),
-            error: Some(error.clone()),
+            outcome: ClientSetupOutcome::Failed {
+                error: error.clone(),
+            },
         })
         .collect()
 }
 
 pub(super) fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
-    restore_path(&edit.public.path, edit.original.as_deref())
+    restore_path(&edit.public.path, edit.original())
 }
 
 pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
@@ -209,16 +210,16 @@ pub(super) fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> 
 
 pub(super) fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
     let current = read_optional(&edit.public.path)?;
-    if current != edit.original {
+    if current.as_deref() != edit.original() {
         return Err(Error::SetupFailure(format!(
             "configuration changed after preflight: {}",
             edit.public.path.display()
         )));
     }
-    if let Some(updated) = &edit.updated {
+    if let Some(updated) = edit.updated() {
         write_if_changed(
             &edit.public.path,
-            edit.original.as_deref().unwrap_or_default(),
+            edit.original().unwrap_or_default(),
             updated,
         )?;
     }

@@ -4,6 +4,7 @@ use super::super::{
     ServiceCallOptions, Services,
     receipts::{ReceiptDecision, ReceiptEvidence},
 };
+use super::ContextPolicy;
 use super::IndexReadSnapshot;
 use crate::{
     Error, Result,
@@ -33,6 +34,7 @@ pub(super) fn effective_context_response_profile(
 pub(super) struct ContextResponseFinalization<'a> {
     pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
+    pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
     pub(super) generation: u64,
 }
@@ -202,13 +204,14 @@ impl Services {
         let ContextResponseFinalization {
             session,
             request,
+            policy,
             options,
             generation,
         } = finalization;
         if let Some(max_response_tokens) = options.max_response_tokens() {
-            self.fit_context_response(response, request, max_response_tokens)?;
+            self.fit_context_response(response, request, policy, max_response_tokens)?;
         }
-        if !request.plan_only {
+        if !policy.is_plan() {
             let receipt_candidates = response
                 .fragments
                 .iter()
@@ -222,11 +225,8 @@ impl Services {
                     )
                 })
                 .collect::<Vec<_>>();
-            let receipt = self.evaluate_receipt(
-                request.receipt_id.as_deref(),
-                generation,
-                &receipt_candidates,
-            )?;
+            let receipt =
+                self.evaluate_receipt(policy.receipt_id(), generation, &receipt_candidates)?;
             response.fragments = response
                 .fragments
                 .drain(..)
@@ -281,7 +281,7 @@ impl Services {
                 "context response exceeded its fitted serialized-response budget".into(),
             ));
         }
-        if request.plan_only {
+        if policy.is_plan() {
             return Ok(None);
         }
         let paths = response
