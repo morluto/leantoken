@@ -156,7 +156,23 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
     } else {
         1
     };
-    let natural_phrases = natural_phrases(task, &atom_parts, natural_phrase_limit);
+    let primary_task = primary_task_text(task);
+    let mut selected_natural_phrases =
+        natural_phrases(&primary_task, &atom_parts, natural_phrase_limit);
+    if selected_natural_phrases.len() < natural_phrase_limit && primary_task != task {
+        for phrase in natural_phrases(task, &atom_parts, natural_phrase_limit) {
+            if selected_natural_phrases
+                .iter()
+                .all(|existing| !existing.eq_ignore_ascii_case(&phrase))
+            {
+                selected_natural_phrases.push(phrase);
+                if selected_natural_phrases.len() == natural_phrase_limit {
+                    break;
+                }
+            }
+        }
+    }
+    let natural_phrases = selected_natural_phrases;
 
     for phrase in quoted_phrases.iter().chain(&natural_phrases) {
         push_facet(
@@ -351,7 +367,13 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
                 || terms.contains(&value)
                 || terms.contains(&query.fusion_key.to_ascii_lowercase())
         }) {
-            query.facets.extend(roles.iter().map(|role| role.facet()));
+            let generic_test_path_prior = query.is_generic_test_path_prior();
+            query.facets.extend(
+                roles
+                    .iter()
+                    .filter(|role| **role != TaskRole::TestIntent || generic_test_path_prior)
+                    .map(|role| role.facet()),
+            );
         }
     }
     if !queries
@@ -366,9 +388,28 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
 fn task_clauses(task: &str) -> Vec<&str> {
     task.split(['\n', ';'])
         .flat_map(|part| part.split(". "))
+        .flat_map(split_role_transitions)
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
         .collect()
+}
+
+fn split_role_transitions(part: &str) -> Vec<&str> {
+    let normalized = part.to_ascii_lowercase();
+    let mut boundaries = [" while ", " without ", " but "]
+        .into_iter()
+        .filter_map(|marker| normalized.find(marker).map(|position| position + 1))
+        .collect::<Vec<_>>();
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut start = 0;
+    let mut clauses = Vec::with_capacity(boundaries.len() + 1);
+    for boundary in boundaries {
+        clauses.push(&part[start..boundary]);
+        start = boundary;
+    }
+    clauses.push(&part[start..]);
+    clauses
 }
 
 fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
@@ -379,13 +420,23 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         .filter(|word| !word.is_empty())
         .collect::<HashSet<_>>();
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
-    let preserve = has_word(&["preserve", "keep", "retain", "unchanged"])
-        || has_any(&[
-            "without changing",
-            "must remain",
-            "do not change",
-            "while maintaining",
-        ]);
+    let preserve = has_word(&[
+        "preserve",
+        "preserved",
+        "preserves",
+        "preserving",
+        "keep",
+        "keeping",
+        "retain",
+        "retained",
+        "retaining",
+        "unchanged",
+    ]) || has_any(&[
+        "without changing",
+        "must remain",
+        "do not change",
+        "while maintaining",
+    ]);
     let test = has_word(&["test", "tests", "regression", "spec", "coverage", "assert"]);
     let primary = !preserve
         && !test
@@ -1306,6 +1357,36 @@ mod tests {
                 .queries
                 .iter()
                 .any(|query| query.has_facet(FacetKind::TestIntent))
+        );
+
+        let mixed = plan(
+            "Add SearchCompactResponse compact output while preserving full ranking and regression tests",
+            16,
+        );
+        let exact = mixed
+            .queries
+            .iter()
+            .find(|query| query.value == "SearchCompactResponse")
+            .expect("exact implementation query");
+        assert!(exact.has_facet(FacetKind::PrimaryChange));
+        assert!(!exact.has_facet(FacetKind::TestIntent));
+        assert!(mixed.queries.iter().any(|query| {
+            query.has_facet(FacetKind::PreserveConstraint)
+                && !query.has_facet(FacetKind::TestIntent)
+        }));
+        let primary_phrase = ["search", "projection"].join(" ");
+        let natural_task = format!(
+            "Add a source-free compact {primary_phrase} to CLI and MCP while preserving full ranking"
+        );
+        let natural = plan(&natural_task, 16);
+        assert!(natural.queries.iter().any(|query| {
+            query.value == primary_phrase && query.has_facet(FacetKind::PrimaryChange)
+        }));
+        assert_eq!(
+            primary_task_text(
+                "Add SearchCompactResponse compact output while preserving full ranking"
+            ),
+            "Add SearchCompactResponse compact output"
         );
     }
 }

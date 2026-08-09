@@ -1493,13 +1493,22 @@ Implementation-shaped tasks additionally classify bounded query facets as the
 primary change, failure trace, preservation constraint, or test intent. Path
 priors prefer production services and dispatch/call-edge code for those tasks;
 request schemas, snapshots, fixtures, agent skills, benchmark reports, and
-unscoped root prose are auxiliary evidence. Greedy selection first reserves the
-highest-utility production fragment carrying the primary-change facet, then
-admits at most one auxiliary fragment, two failure-trace fragments, two test
-fragments, and two preservation fragments. The reservation and caps apply only
-after explicit required/focus evidence is selected, inspect only the already
-bounded candidate pool, add no repository scan or candidate fan-out, and never
-relax source-token or fragment bounds.
+unscoped root prose are auxiliary evidence. Greedy selection first reserves a
+production fragment carrying a specific exact atom and primary-change facet;
+short surface acronyms such as CLI and MCP and prose hyphen compounds do not
+override a matching service owner. Deterministic fallbacks prefer the
+`src/services` or dispatch owner matching the most distinct primary facets
+before other production primary evidence. Natural phrase queries prefer the
+primary clause and fall back to trailing clauses only when a query slot remains.
+It then reserves one relevant test path and one non-auxiliary preservation
+fragment when each exists and fits, before admitting at most one auxiliary
+fragment, two failure-trace fragments, two test fragments, and two preservation
+fragments. Role parsing splits preservation transitions and keeps the generic
+test path prior from marking every query in a mixed implementation/test clause.
+The reservations require at most five linear passes over the already bounded
+candidate pool. They apply only after explicit required/focus evidence is
+selected, add no repository scan or candidate fan-out, and never relax
+source-token or fragment bounds.
 
 An opt-in handoff manifest is assembled inside the same pinned context
 generation. It captures selected coordinates and hashes before server-receipt

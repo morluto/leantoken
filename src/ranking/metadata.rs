@@ -43,6 +43,39 @@ pub(in crate::ranking) fn carries_facet(candidate: &Candidate, facet: &str) -> b
         .any(|kind| kind.starts_with(&prefix))
 }
 
+pub(in crate::ranking) fn carries_specific_exact_atom(candidate: &Candidate) -> bool {
+    let prefix = format!("{FACET_PREFIX}exact_atom:");
+    candidate.match_kinds.iter().any(|kind| {
+        let Some(atom) = kind.strip_prefix(&prefix) else {
+            return false;
+        };
+        let prose_hyphen = atom.contains('-')
+            && atom
+                .chars()
+                .all(|character| character.is_ascii_lowercase() || character == '-');
+        !prose_hyphen
+            && (atom.chars().count() >= 5
+                || atom
+                    .chars()
+                    .any(|character| !character.is_ascii_alphanumeric()))
+    })
+}
+
+pub(in crate::ranking) fn facet_value_count(candidate: &Candidate, facet: &str) -> usize {
+    let prefix = format!("{FACET_PREFIX}{facet}:");
+    candidate
+        .match_kinds
+        .iter()
+        .filter(|kind| kind.starts_with(&prefix))
+        .count()
+}
+
+pub(in crate::ranking) fn is_primary_owner_path(path: &str) -> bool {
+    path.starts_with("src/services/")
+        || path == "src/main/dispatch.rs"
+        || path.ends_with("/dispatch.rs")
+}
+
 pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
     let path = path.to_ascii_lowercase();
     let root_markdown = !path.contains('/')

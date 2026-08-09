@@ -202,12 +202,33 @@ async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
         })
         .count();
     assert!(auxiliary <= 1, "auxiliary quota exceeded: {paths:?}");
+    let selected_tests = paths
+        .iter()
+        .filter(|path| path.starts_with("tests/"))
+        .count();
     assert!(
-        paths
-            .iter()
-            .filter(|path| path.starts_with("tests/"))
-            .count()
-            <= 2,
-        "test quota exceeded: {paths:?}"
+        (1..=2).contains(&selected_tests),
+        "test reservation or quota failed: {paths:?}"
+    );
+    let selected_preservation = evaluation
+        .response
+        .fragments
+        .iter()
+        .filter(|fragment| {
+            evaluation.generated_candidates.iter().any(|candidate| {
+                candidate.path == fragment.path
+                    && candidate.start_line == fragment.start_line
+                    && candidate.end_line == fragment.end_line
+                    && candidate.representation == fragment.representation
+                    && candidate
+                        .match_kinds
+                        .iter()
+                        .any(|kind| kind.starts_with("facet:preserve_constraint:"))
+            })
+        })
+        .count();
+    assert!(
+        (1..=2).contains(&selected_preservation),
+        "preservation reservation or quota failed: {paths:?}"
     );
 }
