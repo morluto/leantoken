@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[tokio::test]
 async fn retrieval_call_options_enforce_final_service_response_bounds() {
     let (root, services) = fixture().await;
@@ -197,12 +196,12 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
     };
     let (search_minimum, search_breakdown) = assert_response_budget_error(
         services
-        .search_with_options(
-            search_request.clone(),
-            ServiceCallOptions::new().with_max_response_tokens(1),
-        )
-        .await
-        .expect_err("one token cannot fit a search response"),
+            .search_with_options(
+                search_request.clone(),
+                ServiceCallOptions::new().with_max_response_tokens(1),
+            )
+            .await
+            .expect_err("one token cannot fit a search response"),
         1,
     );
     assert!(search_breakdown.receipt_reserve_tokens > 0);
@@ -215,12 +214,13 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         .expect("reported search minimum must be directly retryable");
     assert!(retried_search.meta.total_response_tokens <= search_minimum);
     let (repeated_search_minimum, _) = assert_response_budget_error(
-        services.search_with_options(
-            search_request,
-            ServiceCallOptions::new().with_max_response_tokens(search_minimum - 1),
-        )
-        .await
-        .expect_err("one token below the search minimum must fail"),
+        services
+            .search_with_options(
+                search_request,
+                ServiceCallOptions::new().with_max_response_tokens(search_minimum - 1),
+            )
+            .await
+            .expect_err("one token below the search minimum must fail"),
         search_minimum - 1,
     );
     assert_eq!(repeated_search_minimum, search_minimum);
@@ -236,12 +236,12 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
     };
     let (outline_minimum, outline_breakdown) = assert_response_budget_error(
         services
-        .outline_with_options(
-            outline_request.clone(),
-            ServiceCallOptions::new().with_max_response_tokens(1),
-        )
-        .await
-        .expect_err("one token cannot fit an outline response"),
+            .outline_with_options(
+                outline_request.clone(),
+                ServiceCallOptions::new().with_max_response_tokens(1),
+            )
+            .await
+            .expect_err("one token cannot fit an outline response"),
         1,
     );
     assert!(outline_breakdown.receipt_reserve_tokens > 0);
@@ -254,12 +254,13 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
         .expect("reported outline minimum must be directly retryable");
     assert!(retried_outline.meta.total_response_tokens <= outline_minimum);
     let (repeated_outline_minimum, _) = assert_response_budget_error(
-        services.outline_with_options(
-            outline_request,
-            ServiceCallOptions::new().with_max_response_tokens(outline_minimum - 1),
-        )
-        .await
-        .expect_err("one token below the outline minimum must fail"),
+        services
+            .outline_with_options(
+                outline_request,
+                ServiceCallOptions::new().with_max_response_tokens(outline_minimum - 1),
+            )
+            .await
+            .expect_err("one token below the outline minimum must fail"),
         outline_minimum - 1,
     );
     assert_eq!(repeated_outline_minimum, outline_minimum);
@@ -322,7 +323,10 @@ async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
         cursor: None,
         depth: Some(1),
     };
-    let full = services.files(request.clone()).await.expect("full files page");
+    let full = services
+        .files(request.clone())
+        .await
+        .expect("full files page");
     assert!(full.entries.len() > 10);
     let limit = full.meta.total_response_tokens.saturating_sub(600);
     let bounded = services
@@ -390,7 +394,10 @@ async fn json_keys_response_budget_preserves_cursor_completeness() {
         array_sample_size: None,
         cursor: None,
     };
-    let full = services.json(request.clone()).await.expect("full keys page");
+    let full = services
+        .json(request.clone())
+        .await
+        .expect("full keys page");
     let full_items = full.returned_items.expect("keys item count");
     assert!(full_items > 50);
     let limit = full.meta.total_response_tokens.saturating_sub(600);
@@ -408,7 +415,11 @@ async fn json_keys_response_budget_preserves_cursor_completeness() {
         bounded.incomplete_reason,
         Some(JsonIncompleteReason::MaxTokens)
     );
-    let cursor = bounded.meta.next_cursor.clone().expect("continuation cursor");
+    let cursor = bounded
+        .meta
+        .next_cursor
+        .clone()
+        .expect("continuation cursor");
     let continuation = services
         .json(JsonRequest {
             cursor: Some(cursor),

@@ -7,12 +7,11 @@ use leantoken::{
     FileOperation, FilesRequest, Freshness, HandoffManifestRequest, HandoffValidation,
     HandoffValidationStatus, HandoffWorkingTreeState, HistoryOperation, HistoryRequest,
     IndexConsistency, IndexScope, IndexScopeMode, IndexState, JsonIncompleteReason, JsonOperation,
-    JsonProjection, JsonRequest,
-    JsonSelector, OutlinePathResult, OutlinePathStatus, OutlineRequest, ReadDeltaBaseSource,
-    ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback, ReadRequest, ReadStatus,
-    ReceiptRebaseRequest, ReferenceRole, SearchMode, SearchRequest, TokenAccountingOperation,
-    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence, QueryReceiptAction,
-    QueryReceiptScopeRelation, QueryReceiptStatus,
+    JsonProjection, JsonRequest, JsonSelector, OutlinePathResult, OutlinePathStatus,
+    OutlineRequest, QueryReceiptAction, QueryReceiptScopeRelation, QueryReceiptStatus,
+    ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
+    ReadRequest, ReadStatus, ReceiptRebaseRequest, ReferenceRole, SearchMode, SearchRequest,
+    TokenAccountingOperation, TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -71,28 +70,28 @@ async fn fixture() -> (tempfile::TempDir, Services) {
 }
 
 mod budgets;
-mod receipts;
-mod query_receipts;
-mod search_planning;
-mod path_safety;
-mod context_workflow;
+mod consistency;
 mod context_planning;
 mod context_regressions;
-mod limits;
-mod repository;
-mod smoke;
-mod savings;
-mod languages;
 mod context_signals;
+mod context_workflow;
+mod diff;
 mod files;
-mod search;
-mod read;
-mod outline;
-mod lifecycle;
 mod history;
 mod json;
-mod consistency;
-mod diff;
+mod languages;
+mod lifecycle;
+mod limits;
+mod outline;
+mod path_safety;
+mod query_receipts;
+mod read;
+mod receipts;
+mod repository;
+mod savings;
+mod search;
+mod search_planning;
+mod smoke;
 
 fn assert_zero_limit(error: Error, expected_field: &'static str) {
     assert!(
@@ -148,9 +147,7 @@ fn assert_response_budget_error(
         minimum_required_response_tokens
     );
     assert_eq!(
-        breakdown.source_tokens
-            + breakdown.protocol_tokens
-            + breakdown.path_and_metadata_tokens,
+        breakdown.source_tokens + breakdown.protocol_tokens + breakdown.path_and_metadata_tokens,
         breakdown.mandatory_response_tokens
     );
     (minimum_required_response_tokens, breakdown)
@@ -191,10 +188,7 @@ fn search_limit_request(
     }
 }
 
-fn outline_limit_request(
-    max_results: Option<usize>,
-    max_tokens: Option<usize>,
-) -> OutlineRequest {
+fn outline_limit_request(max_results: Option<usize>, max_tokens: Option<usize>) -> OutlineRequest {
     OutlineRequest {
         paths: vec!["src/lib.rs".into()],
         symbol_name: None,

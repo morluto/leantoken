@@ -67,7 +67,11 @@ async fn token_limited_search_cursor_defers_a_hit_without_skipping_it() {
 
 #[tokio::test]
 async fn token_limited_search_skips_unfit_hits_while_advancing_the_cursor() {
-    let source = format!("needle {}\nneedle {}\n", "context ".repeat(40), "context ".repeat(40));
+    let source = format!(
+        "needle {}\nneedle {}\n",
+        "context ".repeat(40),
+        "context ".repeat(40)
+    );
     let (_root, services) = indexed_source("oversized.txt", source.as_bytes()).await;
 
     let request = SearchRequest {
@@ -91,7 +95,10 @@ async fn token_limited_search_skips_unfit_hits_while_advancing_the_cursor() {
         .await
         .expect("an unfit result is a valid empty page");
     assert!(first.hits.is_empty());
-    let cursor = first.meta.next_cursor.expect("the next candidate remains reachable");
+    let cursor = first
+        .meta
+        .next_cursor
+        .expect("the next candidate remains reachable");
 
     let final_page = services
         .search(SearchRequest {
@@ -342,7 +349,11 @@ async fn symbol_search_caps_a_long_definition_without_losing_its_declaration() {
 
 #[tokio::test]
 async fn reference_search_window_keeps_the_required_reference_span() {
-    let mut lines = vec!["fn target() {}".to_string(), String::new(), "fn caller() {".into()];
+    let mut lines = vec![
+        "fn target() {}".to_string(),
+        String::new(),
+        "fn caller() {".into(),
+    ];
     lines.extend((1..=25).map(|line| format!("    let value_{line} = {line};")));
     let reference_line = lines.len() + 1;
     lines.push("    target();".into());

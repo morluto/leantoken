@@ -136,7 +136,8 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
     )
     .expect("base services");
     let linked_services = Services::open(
-        Config::discover(&linked, Some(parent.path().join("linked.sqlite"))).expect("linked config"),
+        Config::discover(&linked, Some(parent.path().join("linked.sqlite")))
+            .expect("linked config"),
     )
     .expect("linked services");
     base_services.index(false).await.expect("index base");

@@ -889,5 +889,4 @@ mod tests {
         assert_eq!(normalized, canonical);
         assert_eq!(blake3::hash(&normalized), blake3::hash(&canonical));
     }
-
 }

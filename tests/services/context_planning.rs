@@ -1,6 +1,5 @@
 use super::*;
 
-
 #[tokio::test]
 async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
     let (_root, services) = fixture().await;
@@ -17,7 +16,12 @@ async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
         .await
         .expect("typed workflow evidence");
 
-    assert!(evaluation.generated_candidate_paths.iter().any(|path| path == "src/lib.rs"));
+    assert!(
+        evaluation
+            .generated_candidate_paths
+            .iter()
+            .any(|path| path == "src/lib.rs")
+    );
     assert!(evaluation.generated_candidates.iter().any(|candidate| {
         candidate
             .match_kinds
@@ -63,7 +67,10 @@ async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
         "struct RegistrationFailure;\n",
     )
     .expect("write unrelated registration fixture");
-    services.index(false).await.expect("index MCP routing fixture");
+    services
+        .index(false)
+        .await
+        .expect("index MCP routing fixture");
 
     let mut request = context_limit_request(600);
     request.task = "Where is MCP tool registration and catalog schema defined?".into();
@@ -72,14 +79,17 @@ async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
     let response = services.context(request).await.expect("context plan");
     let plan = response.plan.expect("plan-only response");
     assert_eq!(
-        plan.candidates.first().map(|candidate| candidate.path.as_str()),
+        plan.candidates
+            .first()
+            .map(|candidate| candidate.path.as_str()),
         Some("src/mcp/tools.rs")
     );
-    assert!(plan
-        .candidates
-        .iter()
-        .take(2)
-        .all(|candidate| candidate.path.starts_with("src/mcp")));
+    assert!(
+        plan.candidates
+            .iter()
+            .take(2)
+            .all(|candidate| candidate.path.starts_with("src/mcp"))
+    );
 }
 
 #[tokio::test]
@@ -147,7 +157,10 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
     );
 
     request.plan_only = false;
-    let materialized = services.context(request).await.expect("materialized context");
+    let materialized = services
+        .context(request)
+        .await
+        .expect("materialized context");
     assert!(materialized.plan.is_none());
     assert_eq!(
         plan.candidates
@@ -455,15 +468,13 @@ async fn context_response_profiles_only_change_bounded_presentation() {
     std::fs::create_dir_all(root.path().join("src/browser")).expect("browser directory");
     std::fs::create_dir_all(root.path().join("src/managed")).expect("managed directory");
     let source = "pub fn shared_capture_target() -> bool { true }\n";
-    std::fs::write(root.path().join("src/browser/capture.rs"), source)
-        .expect("browser source");
+    std::fs::write(root.path().join("src/browser/capture.rs"), source).expect("browser source");
     std::fs::write(
         root.path().join("src/browser/secondary.rs"),
         "pub fn shared_capture_target_secondary() -> bool { true }\n",
     )
     .expect("secondary browser source");
-    std::fs::write(root.path().join("src/managed/evidence.rs"), source)
-        .expect("managed source");
+    std::fs::write(root.path().join("src/managed/evidence.rs"), source).expect("managed source");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
@@ -513,10 +524,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         )
         .await
         .expect("explicit explain accepts explain diagnostics");
-    let default_explain = services
-        .context(request)
-        .await
-        .expect("default response");
+    let default_explain = services.context(request).await.expect("default response");
 
     assert_eq!(
         balanced.effective_response_profile,
@@ -663,10 +671,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         serde_json::to_value(&default_explain.omitted).expect("legacy omission details"),
         serde_json::to_value(&explain.omitted).expect("explicit omission details")
     );
-    assert_eq!(
-        default_explain.omission_summary,
-        explain.omission_summary
-    );
+    assert_eq!(default_explain.omission_summary, explain.omission_summary);
 
     assert!(
         compact.meta.total_response_tokens < balanced.meta.total_response_tokens,
@@ -814,7 +819,10 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
 
     request.explain_diagnostics = true;
 
-    let response = services.context(request).await.expect("constrained context");
+    let response = services
+        .context(request)
+        .await
+        .expect("constrained context");
 
     assert!(!response.fragments.is_empty());
     assert!(
@@ -1023,7 +1031,10 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     request.strict_focus_paths = true;
     request.minimum_fragments_per_focus_path = Some(2);
     request.max_fragments = Some(4);
-    let response = services.context(request).await.expect("strict focus context");
+    let response = services
+        .context(request)
+        .await
+        .expect("strict focus context");
 
     assert_eq!(response.fragments.len(), 4);
     assert!(
@@ -1136,7 +1147,10 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     missing.focus_paths = vec!["src/missing/**".into()];
     missing.strict_focus_paths = true;
     missing.explain_diagnostics = true;
-    let missing = services.context(missing).await.expect("missing strict focus");
+    let missing = services
+        .context(missing)
+        .await
+        .expect("missing strict focus");
     assert!(missing.fragments.is_empty());
     assert_eq!(missing.coverage.path_scope_satisfied, Some(false));
     assert_eq!(missing.coverage.unmatched_focus_paths, ["src/missing/**"]);
@@ -1202,11 +1216,15 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
         .expect("deterministic focused context");
 
     assert_eq!(first.fragments.len(), focus_paths.len());
-    assert!(first.coverage.focus_path_coverage.iter().all(
-        |focus| focus.indexed_paths == 1
-            && focus.selected_fragments == 1
-            && focus.satisfied
-    ));
+    assert!(
+        first
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|focus| focus.indexed_paths == 1
+                && focus.selected_fragments == 1
+                && focus.satisfied)
+    );
     assert_eq!(
         first
             .fragments
@@ -1260,8 +1278,7 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
 
     let mut overlapping = context_limit_request(1_000);
     overlapping.task = "change buried_focus_target".into();
-    overlapping.focus_paths =
-        vec!["focus/owner_0.rs".into(), "focus/owner_*.rs".into()];
+    overlapping.focus_paths = vec!["focus/owner_0.rs".into(), "focus/owner_*.rs".into()];
     overlapping.strict_focus_paths = true;
     overlapping.max_fragments = Some(1);
     let overlapping = services
@@ -1270,9 +1287,13 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
         .expect("overlapping exact and glob focus");
     assert_eq!(overlapping.fragments.len(), 1);
     assert_eq!(overlapping.fragments[0].path, "focus/owner_0.rs");
-    assert!(overlapping.coverage.focus_path_coverage.iter().all(
-        |focus| focus.selected_fragments == 1 && focus.satisfied
-    ));
+    assert!(
+        overlapping
+            .coverage
+            .focus_path_coverage
+            .iter()
+            .all(|focus| focus.selected_fragments == 1 && focus.satisfied)
+    );
 
     let mut broad = context_limit_request(2_000);
     broad.task = "change buried_focus_target".into();
@@ -1397,8 +1418,7 @@ async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
     ];
     for (path_index, path) in focus_paths.iter().enumerate() {
         let path = root.path().join(path);
-        std::fs::create_dir_all(path.parent().expect("fixture parent"))
-            .expect("fixture directory");
+        std::fs::create_dir_all(path.parent().expect("fixture parent")).expect("fixture directory");
         let mut source = String::new();
         for symbol_index in 0..2 {
             source.push_str(&format!(
@@ -1469,11 +1489,9 @@ async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
         Some(ContextFocusCapacityBlocker::MaxFragments)
     );
     assert!(
-        diagnostics
-            .suppressed_by
-            .iter()
-            .any(|suppression| suppression.boundary
-                == ContextFocusSuppressionBoundary::MaxFragments)
+        diagnostics.suppressed_by.iter().any(
+            |suppression| suppression.boundary == ContextFocusSuppressionBoundary::MaxFragments
+        )
     );
     for focus in &materialized.coverage.focus_path_coverage {
         let diagnostics = focus
@@ -1641,7 +1659,10 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
     request.task = "change strict_changed_target".into();
     request.changed_paths = vec!["src/active.rs".into()];
     request.strict_changed_paths = true;
-    let response = services.context(request).await.expect("strict changed scope");
+    let response = services
+        .context(request)
+        .await
+        .expect("strict changed scope");
 
     assert!(!response.fragments.is_empty());
     assert!(
@@ -1779,10 +1800,7 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
         response.coverage.unmatched_must_include_symbols,
         vec!["missing_symbol"]
     );
-    assert_eq!(
-        response.coverage.unmatched_include_paths,
-        vec!["absent/**"]
-    );
+    assert_eq!(response.coverage.unmatched_include_paths, vec!["absent/**"]);
     assert_eq!(
         response.coverage.unmatched_focus_paths,
         vec!["missing-focus/**"]
@@ -1969,7 +1987,11 @@ async fn context_required_evidence_covers_doq_ranges_and_rejects_intro_fallbacks
 
     assert_eq!(missing.coverage.evidence_scope_satisfied, Some(false));
     assert!(!missing.coverage.required_evidence[0].satisfied);
-    assert!(missing.coverage.required_evidence[0].matched_queries.is_empty());
+    assert!(
+        missing.coverage.required_evidence[0]
+            .matched_queries
+            .is_empty()
+    );
     assert_eq!(
         missing.fragments[0].representation,
         "required_path_fallback"
@@ -2112,9 +2134,7 @@ async fn oversized_context_reports_bounded_routing_with_reconcile_working_tree_r
     assert_eq!(routing.path_groups_total, 3);
     assert!(routing.path_groups.len() <= 5);
     assert!(routing.suggestions.len() <= 3);
-    assert!(
-        routing.consistency == IndexConsistency::ReconcileWorkingTree
-    );
+    assert!(routing.consistency == IndexConsistency::ReconcileWorkingTree);
     assert!(
         response
             .warnings

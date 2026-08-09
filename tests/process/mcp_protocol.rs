@@ -66,7 +66,10 @@ pub(super) fn mcp_approved_repository_contexts_are_isolated() {
     }));
     let docs_response = process.response(Duration::from_secs(30));
     assert_eq!(docs_response["id"], 1201);
-    assert!(docs_response.to_string().contains("docs.rs"), "{docs_response}");
+    assert!(
+        docs_response.to_string().contains("docs.rs"),
+        "{docs_response}"
+    );
 
     process.send(serde_json::json!({
         "jsonrpc": "2.0",

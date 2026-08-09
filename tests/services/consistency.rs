@@ -35,10 +35,10 @@ async fn working_tree_diff_boosts_changed_files() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        explain_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
         })
         .await
         .unwrap();
@@ -88,10 +88,10 @@ async fn tokenizer_configuration_is_scoped_to_each_service() {
         known_hashes: Vec::new(),
         receipt_id: None,
         prior_repository_generation: None,
-    base_revision: None,
-    changed_paths: Vec::new(),
-    strict_changed_paths: false,
-    explain_diagnostics: false,
+        base_revision: None,
+        changed_paths: Vec::new(),
+        strict_changed_paths: false,
+        explain_diagnostics: false,
     };
 
     let (exact_response, estimate_response) =
@@ -138,10 +138,10 @@ async fn context_declaration_excerpt_retains_long_body_across_chunks() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        explain_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("context");
@@ -191,19 +191,17 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        explain_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("context");
     let text_fragment = response
         .fragments
         .iter()
-        .find(|fragment| {
-            fragment.path == "lib.rs" && fragment.reason.contains("text")
-        })
+        .find(|fragment| fragment.path == "lib.rs" && fragment.reason.contains("text"))
         .expect("text fragment");
 
     assert!(
@@ -355,8 +353,11 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("initial index");
 
-    std::fs::write(root.path().join("files_package.rs"), "fn files_package() {}\n")
-        .expect("files source");
+    std::fs::write(
+        root.path().join("files_package.rs"),
+        "fn files_package() {}\n",
+    )
+    .expect("files source");
     let files = services
         .files_with_consistency_cancellable(
             FilesRequest {
@@ -373,7 +374,12 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
         )
         .await
         .expect("working-tree files");
-    assert!(files.entries.iter().any(|entry| entry.path == "files_package.rs"));
+    assert!(
+        files
+            .entries
+            .iter()
+            .any(|entry| entry.path == "files_package.rs")
+    );
 
     std::fs::write(
         root.path().join("outline_package.rs"),
@@ -424,7 +430,11 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
         )
         .await
         .expect("working-tree read");
-    assert!(read.content.as_deref().is_some_and(|value| value.contains("readable_package")));
+    assert!(
+        read.content
+            .as_deref()
+            .is_some_and(|value| value.contains("readable_package"))
+    );
     assert!(!read.index_stale);
 
     std::fs::write(
@@ -451,10 +461,10 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
                 known_hashes: Vec::new(),
                 receipt_id: None,
                 prior_repository_generation: None,
-            base_revision: None,
-            changed_paths: Vec::new(),
-            strict_changed_paths: false,
-            explain_diagnostics: false,
+                base_revision: None,
+                changed_paths: Vec::new(),
+                strict_changed_paths: false,
+                explain_diagnostics: false,
             },
             IndexConsistency::ReconcileWorkingTree,
             CancellationToken::new(),
@@ -511,8 +521,16 @@ async fn read_reports_index_stale_when_live_file_diverges() {
         })
         .await
         .expect("read");
-    assert!(response.index_stale, "live rewrite without reindex must set index_stale");
-    assert!(response.content.as_deref().is_some_and(|c| c.contains("second")));
+    assert!(
+        response.index_stale,
+        "live rewrite without reindex must set index_stale"
+    );
+    assert!(
+        response
+            .content
+            .as_deref()
+            .is_some_and(|c| c.contains("second"))
+    );
     assert!(response.indexed_hash.is_some());
     assert_ne!(
         response.indexed_hash.as_deref(),
@@ -575,7 +593,12 @@ async fn read_not_modified_still_reports_index_stale_against_live_file() {
     // Content + index_stale rather than NotModified.
     assert_eq!(second.status, ReadStatus::Content);
     assert!(second.index_stale);
-    assert!(second.content.as_deref().is_some_and(|c| c.contains("other")));
+    assert!(
+        second
+            .content
+            .as_deref()
+            .is_some_and(|c| c.contains("other"))
+    );
 }
 
 #[tokio::test]

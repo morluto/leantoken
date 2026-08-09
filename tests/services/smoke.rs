@@ -8,11 +8,8 @@ async fn context_required_evidence_reports_bounded_path_inspection() {
     for name in ["a.tex", "b.tex", "c.tex", "d.tex"] {
         std::fs::write(docs.join(name), "ordinary background\n").expect("background fixture");
     }
-    std::fs::write(
-        docs.join("e.tex"),
-        "EVIDENCE_OUTSIDE_INSPECTION_BOUND\n",
-    )
-    .expect("bounded fixture");
+    std::fs::write(docs.join("e.tex"), "EVIDENCE_OUTSIDE_INSPECTION_BOUND\n")
+        .expect("bounded fixture");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");

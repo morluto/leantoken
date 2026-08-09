@@ -42,10 +42,10 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        explain_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("exact evaluation");
@@ -74,10 +74,10 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             known_hashes: Vec::new(),
             receipt_id: None,
             prior_repository_generation: None,
-        base_revision: None,
-        changed_paths: Vec::new(),
-        strict_changed_paths: false,
-        explain_diagnostics: false,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
         })
         .await
         .expect("multi-concept evaluation");
@@ -143,10 +143,10 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         known_hashes: Vec::new(),
         receipt_id: None,
         prior_repository_generation: None,
-    base_revision: None,
-    changed_paths: Vec::new(),
-    strict_changed_paths: false,
-    explain_diagnostics: false,
+        base_revision: None,
+        changed_paths: Vec::new(),
+        strict_changed_paths: false,
+        explain_diagnostics: false,
     };
 
     let baseline = services
@@ -196,10 +196,12 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         candidate.representation == "import_symbol"
             && candidate.match_kinds.iter().any(|kind| kind == "import")
     }));
-    assert!(callers
-        .generated_candidates
-        .iter()
-        .any(|candidate| candidate.match_kinds.iter().any(|kind| kind == "reference")));
+    assert!(
+        callers
+            .generated_candidates
+            .iter()
+            .any(|candidate| candidate.match_kinds.iter().any(|kind| kind == "reference"))
+    );
     assert!(reverse.generated_candidates.iter().any(|candidate| {
         candidate.path == "src/seed.js"
             && candidate
@@ -207,10 +209,12 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
                 .iter()
                 .any(|kind| kind == "reverse-import")
     }));
-    assert!(imports
-        .generated_candidates
-        .iter()
-        .all(|candidate| !candidate.match_kinds.iter().any(|kind| kind == "reference")));
+    assert!(
+        imports
+            .generated_candidates
+            .iter()
+            .all(|candidate| !candidate.match_kinds.iter().any(|kind| kind == "reference"))
+    );
     assert!(callers.generated_candidates.iter().all(|candidate| {
         candidate.representation != "import_symbol"
             && !candidate

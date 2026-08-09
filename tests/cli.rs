@@ -5,8 +5,8 @@ use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
     JsonProjection, JsonSelector, SearchMode,
 };
-use leantoken::tokens::Tokenizer;
 use leantoken::setup::SetupClient;
+use leantoken::tokens::Tokenizer;
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("leantoken").chain(args.iter().copied())).unwrap()
@@ -125,14 +125,8 @@ fn cli_retrieval_response_budget_is_carried_in_the_typed_request() {
     assert_eq!(request.operation, FileOperation::Tree);
     assert_eq!(max_response_tokens, Some(777));
 
-    let error = Cli::try_parse_from([
-        "leantoken",
-        "search",
-        "foo",
-        "--max-response-tokens",
-        "0",
-    ])
-    .expect_err("zero response budget");
+    let error = Cli::try_parse_from(["leantoken", "search", "foo", "--max-response-tokens", "0"])
+        .expect_err("zero response budget");
     assert_eq!(error.kind(), ErrorKind::ValueValidation);
 }
 
@@ -569,24 +563,14 @@ fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out
 
     for arguments in [
         &["files", "tree", "--consistency", "indexed_generation"][..],
-        &[
-            "search",
-            "needle",
-            "--consistency",
-            "indexed_generation",
-        ][..],
+        &["search", "needle", "--consistency", "indexed_generation"][..],
         &[
             "outline",
             "src/lib.rs",
             "--consistency",
             "indexed_generation",
         ][..],
-        &[
-            "read",
-            "src/lib.rs",
-            "--consistency",
-            "indexed_generation",
-        ][..],
+        &["read", "src/lib.rs", "--consistency", "indexed_generation"][..],
         &[
             "context",
             "--task",
@@ -701,7 +685,8 @@ fn cli_context_request() {
         handoff,
         max_response_tokens,
         response_profile,
-    } = cli.app_request() else {
+    } = cli.app_request()
+    else {
         panic!("expected context request");
     };
     assert!(handoff.is_none());
@@ -718,10 +703,7 @@ fn cli_context_request() {
     assert_eq!(request.task, "fix the bug");
     assert_eq!(request.token_budget, 1024);
     assert_eq!(request.include_paths, vec!["src/**".to_string()]);
-    assert_eq!(
-        request.must_include_paths,
-        vec!["src/owner.rs".to_string()]
-    );
+    assert_eq!(request.must_include_paths, vec!["src/owner.rs".to_string()]);
     assert_eq!(
         request.must_include_symbols,
         vec!["owner_symbol".to_string()]
@@ -768,7 +750,8 @@ fn cli_context_requires_task_and_defaults_budget() {
 
     let no_budget = Cli::try_parse_from(["leantoken", "context", "--task", "x"]);
     assert!(no_budget.is_ok());
-    let AppRequest::Context { request, .. } = no_budget.expect("default budget").app_request() else {
+    let AppRequest::Context { request, .. } = no_budget.expect("default budget").app_request()
+    else {
         panic!("expected context request");
     };
     assert_eq!(request.token_budget, 3_000);
@@ -831,13 +814,7 @@ fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
         for args in [
             vec!["leantoken", "files", "tree", "--max-results", value],
             vec!["leantoken", "search", "x", "--max-results", value],
-            vec![
-                "leantoken",
-                "outline",
-                "src/lib.rs",
-                "--max-results",
-                value,
-            ],
+            vec!["leantoken", "outline", "src/lib.rs", "--max-results", value],
         ] {
             assert!(Cli::try_parse_from(args).is_ok(), "rejected {value}");
         }
@@ -846,20 +823,8 @@ fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
     for value in ["1", "32000", "32001"] {
         for args in [
             vec!["leantoken", "search", "x", "--max-tokens", value],
-            vec![
-                "leantoken",
-                "outline",
-                "src/lib.rs",
-                "--max-tokens",
-                value,
-            ],
-            vec![
-                "leantoken",
-                "read",
-                "src/lib.rs",
-                "--max-tokens",
-                value,
-            ],
+            vec!["leantoken", "outline", "src/lib.rs", "--max-tokens", value],
+            vec!["leantoken", "read", "src/lib.rs", "--max-tokens", value],
             vec!["leantoken", "context", "--task", "x", "--budget", value],
         ] {
             assert!(Cli::try_parse_from(args).is_ok(), "rejected {value}");
@@ -868,14 +833,7 @@ fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
 
     for value in ["0", "1", "20", "21"] {
         assert!(
-            Cli::try_parse_from([
-                "leantoken",
-                "search",
-                "x",
-                "--context-lines",
-                value,
-            ])
-            .is_ok(),
+            Cli::try_parse_from(["leantoken", "search", "x", "--context-lines", value,]).is_ok(),
             "CLI should defer context-lines={value} to Services"
         );
     }
@@ -1063,8 +1021,7 @@ fn cli_cache_list_resolves_without_repository_configuration() {
         "--cursor",
         "opaque",
     ])
-    .app_request()
-    else {
+    .app_request() else {
         panic!("expected filtered cache list request");
     };
     assert_eq!(
@@ -1102,9 +1059,7 @@ fn cli_cache_list_resolves_without_repository_configuration() {
         ])
         .is_err()
     );
-    assert!(
-        Cli::try_parse_from(["leantoken", "cache", "list", "--limit", "101"]).is_err()
-    );
+    assert!(Cli::try_parse_from(["leantoken", "cache", "list", "--limit", "101"]).is_err());
 }
 
 #[test]
@@ -1131,8 +1086,7 @@ fn cli_cache_prune_resolves_without_repository_configuration() {
     assert!(!request.incompatible_with_current);
 
     let AppRequest::CachePrune(zero_budget) =
-        parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"])
-            .app_request()
+        parse(&["cache", "prune", "--max-total-bytes", "0", "--dry-run"]).app_request()
     else {
         panic!("expected zero-budget cache prune request");
     };
@@ -1170,16 +1124,7 @@ fn cli_runtime_lifecycle_is_bounded_and_dry_run_by_default() {
     assert_eq!(apply.keep_latest, 0);
     assert!(!apply.dry_run);
     assert!(apply.yes);
-    assert!(
-        Cli::try_parse_from([
-            "leantoken",
-            "runtime",
-            "prune",
-            "--keep-latest",
-            "65"
-        ])
-        .is_err()
-    );
+    assert!(Cli::try_parse_from(["leantoken", "runtime", "prune", "--keep-latest", "65"]).is_err());
 }
 
 #[test]
@@ -1240,10 +1185,7 @@ fn cli_index_scope_is_repeatable_normalized_and_cache_identified() {
         scoped_config.index_scope().includes(),
         ["src/**", "tests/**"]
     );
-    assert_eq!(
-        scoped_config.index_scope().excludes(),
-        ["third_party/**"]
-    );
+    assert_eq!(scoped_config.index_scope().excludes(), ["third_party/**"]);
     assert_ne!(scoped_config.database_path, full_config.database_path);
 }
 
@@ -1336,11 +1278,5 @@ fn cli_index_worker_limit_is_explicit_and_positive() {
         "2",
     ]);
     assert_eq!(cli.config().expect("config").max_index_workers, 2);
-    assert!(Cli::try_parse_from([
-        "leantoken",
-        "status",
-        "--max-index-workers",
-        "0",
-    ])
-    .is_err());
+    assert!(Cli::try_parse_from(["leantoken", "status", "--max-index-workers", "0",]).is_err());
 }

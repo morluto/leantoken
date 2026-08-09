@@ -115,8 +115,11 @@ pub(super) fn doctor_human_output_uses_context_distillery_handoff() {
 pub(super) fn doctor_can_exercise_the_exact_codex_registration() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
-        .expect("write fixture");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn configured_doctor_ready() {}\n",
+    )
+    .expect("write fixture");
     let database = root.path().join("index.sqlite");
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
@@ -172,19 +175,25 @@ pub(super) fn doctor_can_exercise_the_exact_codex_registration() {
 pub(super) fn configured_doctor_launches_workspace_relative_commands_from_the_workspace() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
-        .expect("write fixture");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn configured_doctor_ready() {}\n",
+    )
+    .expect("write fixture");
     let bin = root.path().join("bin");
     std::fs::create_dir(&bin).expect("create workspace bin");
-    let executable_name = if cfg!(windows) { "leantoken.exe" } else { "leantoken" };
+    let executable_name = if cfg!(windows) {
+        "leantoken.exe"
+    } else {
+        "leantoken"
+    };
     std::fs::copy(
         assert_cmd::cargo::cargo_bin!("leantoken"),
         bin.join(executable_name),
     )
     .expect("copy workspace launcher");
     let config = home.path().join(".codex/config.toml");
-    std::fs::create_dir_all(config.parent().expect("config parent"))
-        .expect("create config parent");
+    std::fs::create_dir_all(config.parent().expect("config parent")).expect("create config parent");
     std::fs::write(
         &config,
         format!(
@@ -202,7 +211,10 @@ pub(super) fn configured_doctor_launches_workspace_relative_commands_from_the_wo
             "--root",
             root.path().to_str().expect("root UTF-8"),
             "--database",
-            root.path().join("index.sqlite").to_str().expect("database UTF-8"),
+            root.path()
+                .join("index.sqlite")
+                .to_str()
+                .expect("database UTF-8"),
             "--json",
             "doctor",
             "--client",
@@ -224,8 +236,11 @@ pub(super) fn configured_doctor_launches_workspace_relative_commands_from_the_wo
 pub(super) fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("lib.rs"), "fn configured_doctor_ready() {}\n")
-        .expect("write fixture");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn configured_doctor_ready() {}\n",
+    )
+    .expect("write fixture");
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", home.path())
@@ -262,9 +277,11 @@ pub(super) fn configured_doctor_isolates_selected_client_from_unrelated_config_e
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("doctor report");
     assert_eq!(report["integration"]["verified_client"], "codex");
     assert_eq!(report["integration"]["registration_status"], "unknown");
-    assert!(report["integration"]["registrations"]
-        .as_array()
-        .is_some_and(Vec::is_empty));
+    assert!(
+        report["integration"]["registrations"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
 }
 
 pub(super) fn configured_doctor_maps_malformed_client_config_to_registration_stage() {
@@ -272,8 +289,7 @@ pub(super) fn configured_doctor_maps_malformed_client_config_to_registration_sta
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
     let config = home.path().join(".codex/config.toml");
-    std::fs::create_dir_all(config.parent().expect("config parent"))
-        .expect("create config parent");
+    std::fs::create_dir_all(config.parent().expect("config parent")).expect("create config parent");
     std::fs::write(config, "[broken").expect("write malformed config");
 
     let output = Command::cargo_bin("leantoken")
@@ -292,7 +308,8 @@ pub(super) fn configured_doctor_maps_malformed_client_config_to_registration_sta
         .expect("run configured doctor");
 
     assert!(!output.status.success());
-    let error: serde_json::Value = serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
     assert_eq!(error["category"], "doctor_failure");
     assert_eq!(error["stage"], "registration");
 }
@@ -302,8 +319,7 @@ pub(super) fn configured_doctor_rejects_a_disabled_opencode_registration() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
     let config = home.path().join(".config/opencode/opencode.json");
-    std::fs::create_dir_all(config.parent().expect("config parent"))
-        .expect("create config parent");
+    std::fs::create_dir_all(config.parent().expect("config parent")).expect("create config parent");
     let executable = assert_cmd::cargo::cargo_bin!("leantoken")
         .canonicalize()
         .expect("canonical executable");
@@ -324,7 +340,10 @@ pub(super) fn configured_doctor_rejects_a_disabled_opencode_registration() {
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
         .args([
-            "--root", root.path().to_str().expect("root UTF-8"), "--json", "doctor",
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
         ])
         .output()
         .expect("run aggregate doctor");
@@ -333,25 +352,39 @@ pub(super) fn configured_doctor_rejects_a_disabled_opencode_registration() {
         "doctor stderr: {}",
         String::from_utf8_lossy(&aggregate.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&aggregate.stdout).expect("aggregate doctor report");
+    let report: serde_json::Value =
+        serde_json::from_slice(&aggregate.stdout).expect("aggregate doctor report");
     assert_eq!(report["integration"]["registration_health"], "disabled");
     assert_eq!(report["integration"]["registrations"][0]["enabled"], false);
-    assert_eq!(report["integration"]["repair_command"], "leantoken setup --refresh --yes");
+    assert_eq!(
+        report["integration"]["repair_command"],
+        "leantoken setup --refresh --yes"
+    );
 
     let output = Command::cargo_bin("leantoken")
         .expect("binary")
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
         .args([
-            "--root", root.path().to_str().expect("root UTF-8"), "--json", "doctor", "--client", "opencode",
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "opencode",
         ])
         .output()
         .expect("run configured doctor");
     assert!(!output.status.success());
-    let error: serde_json::Value = serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
     assert_eq!(error["category"], "doctor_failure");
     assert_eq!(error["stage"], "registration");
-    assert!(error["error"].as_str().is_some_and(|message| message.contains("disabled")));
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("disabled"))
+    );
 }
 
 #[cfg(unix)]
@@ -370,7 +403,9 @@ pub(super) fn configured_doctor_rejects_a_registration_changed_during_the_probe(
         "#!/bin/sh\nprintf '\\n# changed during doctor probe\\n' >> \"$LEANTOKEN_TEST_CONFIG\"\nexec \"$LEANTOKEN_TEST_BINARY\" \"$@\"\n",
     )
     .expect("write launcher shim");
-    let mut permissions = std::fs::metadata(&launcher).expect("launcher metadata").permissions();
+    let mut permissions = std::fs::metadata(&launcher)
+        .expect("launcher metadata")
+        .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&launcher, permissions).expect("make launcher executable");
     let launcher_toml = serde_json::to_string(launcher.to_str().expect("launcher UTF-8"))
@@ -386,17 +421,32 @@ pub(super) fn configured_doctor_rejects_a_registration_changed_during_the_probe(
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
         .env("LEANTOKEN_TEST_CONFIG", &config)
-        .env("LEANTOKEN_TEST_BINARY", assert_cmd::cargo::cargo_bin!("leantoken"))
+        .env(
+            "LEANTOKEN_TEST_BINARY",
+            assert_cmd::cargo::cargo_bin!("leantoken"),
+        )
         .args([
-            "--root", root.path().to_str().expect("root UTF-8"), "--database", database.to_str().expect("database UTF-8"),
-            "--json", "doctor", "--client", "codex",
+            "--root",
+            root.path().to_str().expect("root UTF-8"),
+            "--database",
+            database.to_str().expect("database UTF-8"),
+            "--json",
+            "doctor",
+            "--client",
+            "codex",
         ])
         .output()
         .expect("run configured doctor");
 
     assert!(!output.status.success());
-    let error: serde_json::Value = serde_json::from_slice(&output.stderr).expect("structured doctor error");
+    let error: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("structured doctor error");
     assert_eq!(error["category"], "doctor_failure");
     assert_eq!(error["stage"], "registration");
-    assert!(error["error"].as_str().is_some_and(|message| message.contains("changed while")), "{error}");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("changed while")),
+        "{error}"
+    );
 }

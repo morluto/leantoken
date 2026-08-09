@@ -227,7 +227,6 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
     assert!(!batch.result_complete);
 }
 
-
 #[tokio::test]
 async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
     require_git();
@@ -356,10 +355,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
         .to_owned()
     };
     let commit = |message: &str| {
-        for args in [
-            vec!["add", "-A"],
-            vec!["commit", "-m", message],
-        ] {
+        for args in [vec!["add", "-A"], vec!["commit", "-m", message]] {
             let output = std::process::Command::new("git")
                 .args(args)
                 .current_dir(root.path())
@@ -821,10 +817,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
         Some("Other")
     );
     let renamed = &response.results[3];
-    let semantic_rename = renamed
-        .semantic_change
-        .as_ref()
-        .expect("semantic rename");
+    let semantic_rename = renamed.semantic_change.as_ref().expect("semantic rename");
     assert_eq!(semantic_rename.kind, DiffSymbolChangeKind::Renamed);
     assert_eq!(
         semantic_rename

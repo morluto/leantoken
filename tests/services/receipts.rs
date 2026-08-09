@@ -130,11 +130,12 @@ async fn server_managed_receipt_survives_service_restart() {
     let mut request = search_limit_request(Some(100), Some(2_000), Some(1));
     request.receipt_id = Some(receipt_id.clone());
     let repeated = reopened.search(request).await.expect("reuse after restart");
-    assert_eq!(repeated.meta.receipt_id.as_deref(), Some(receipt_id.as_str()));
-    assert!(repeated.hits.is_empty());
-    assert!(
-        repeated.meta.receipt_suppressed_exact + repeated.meta.receipt_suppressed_overlap > 0
+    assert_eq!(
+        repeated.meta.receipt_id.as_deref(),
+        Some(receipt_id.as_str())
     );
+    assert!(repeated.hits.is_empty());
+    assert!(repeated.meta.receipt_suppressed_exact + repeated.meta.receipt_suppressed_overlap > 0);
 }
 
 #[tokio::test]
@@ -164,13 +165,13 @@ async fn context_handoff_preserves_coordinates_provenance_and_host_state_without
         .expect("context handoff");
 
     assert!(!response.fragments.is_empty());
-    let manifest = response.handoff_manifest.as_ref().expect("handoff manifest");
+    let manifest = response
+        .handoff_manifest
+        .as_ref()
+        .expect("handoff manifest");
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.summary, "Implement the greeting change");
-    assert_eq!(
-        manifest.task_fingerprint,
-        response.receipt.task_fingerprint
-    );
+    assert_eq!(manifest.task_fingerprint, response.receipt.task_fingerprint);
     assert_eq!(manifest.repository_id, response.meta.repository_id);
     assert_eq!(
         manifest.repository_generation,
@@ -181,10 +182,7 @@ async fn context_handoff_preserves_coordinates_provenance_and_host_state_without
         manifest.receipt_id.as_deref(),
         response.meta.receipt_id.as_deref()
     );
-    assert_eq!(
-        manifest.held_fragment_hashes,
-        vec!["held-fragment-hash"]
-    );
+    assert_eq!(manifest.held_fragment_hashes, vec!["held-fragment-hash"]);
     assert_eq!(manifest.focus_paths, vec!["src"]);
     assert_eq!(manifest.focus_symbols, vec!["greet"]);
     assert_eq!(manifest.validations.len(), 1);
@@ -264,7 +262,10 @@ async fn context_handoff_retains_selected_coordinates_after_receipt_suppression(
 
     assert!(repeated.fragments.is_empty());
     assert_eq!(repeated.meta.source_tokens, 0);
-    assert_eq!(repeated.meta.receipt_id.as_deref(), Some(receipt_id.as_str()));
+    assert_eq!(
+        repeated.meta.receipt_id.as_deref(),
+        Some(receipt_id.as_str())
+    );
     assert_eq!(
         repeated
             .handoff_manifest
@@ -515,8 +516,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
         "// inserted above\nfn above() {}\n",
     )
     .expect("insert above");
-    std::fs::write(root.path().join("body.rs"), "fn body() -> u8 { 2 }\n")
-        .expect("edit body");
+    std::fs::write(root.path().join("body.rs"), "fn body() -> u8 { 2 }\n").expect("edit body");
     std::fs::write(
         root.path().join("moved.rs"),
         "// old coordinate changed\n\nfn moved() {}\n",
@@ -587,10 +587,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
         .await
         .expect("exact rebase");
     assert_eq!(response.source_receipt_id, source_receipt);
-    assert_eq!(
-        response.source_repository_generation,
-        source_generation
-    );
+    assert_eq!(response.source_repository_generation, source_generation);
     assert_eq!(response.meta.repository_generation, current_generation);
     assert_eq!(response.counts.carried, 2);
     assert_eq!(response.counts.changed, 4);
@@ -640,8 +637,11 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
 async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed() {
     require_git();
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(root.path().join("branch.rs"), "fn branch_value() -> u8 { 1 }\n")
-        .expect("write branch source");
+    std::fs::write(
+        root.path().join("branch.rs"),
+        "fn branch_value() -> u8 { 1 }\n",
+    )
+    .expect("write branch source");
     init_git_repo(root.path());
     let original_branch = std::process::Command::new("git")
         .args(["branch", "--show-current"])
@@ -665,8 +665,11 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
         .status()
         .expect("switch branch");
     assert!(switched.success());
-    std::fs::write(root.path().join("branch.rs"), "fn branch_value() -> u8 { 2 }\n")
-        .expect("write alternate branch");
+    std::fs::write(
+        root.path().join("branch.rs"),
+        "fn branch_value() -> u8 { 2 }\n",
+    )
+    .expect("write alternate branch");
     let committed = std::process::Command::new("git")
         .args(["add", "branch.rs"])
         .current_dir(root.path())

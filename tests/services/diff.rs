@@ -151,7 +151,10 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
         .context(range_request)
         .await
         .expect("strict immutable context");
-    let range_scope = range_response.diff_scope.as_ref().expect("range diff scope");
+    let range_scope = range_response
+        .diff_scope
+        .as_ref()
+        .expect("range diff scope");
     assert_eq!(range_scope.changed_paths, ["src/selected.rs"]);
     assert!(
         !range_response.fragments.is_empty()
@@ -219,11 +222,8 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
     )
     .expect("untracked owner test");
 
-    let config = Config::discover(
-        root.path(),
-        Some(database.path().join("index.sqlite")),
-    )
-    .expect("config");
+    let config =
+        Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index working tree");
     let response = services
@@ -329,22 +329,21 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
             evidence.changed_symbols
         );
     }
-    assert!(evidence.gaps.contains(
-        &"src/obsolete.py:not_indexed_or_deleted".to_owned()
-    ));
+    assert!(
+        evidence
+            .gaps
+            .contains(&"src/obsolete.py:not_indexed_or_deleted".to_owned())
+    );
     assert!(evidence.related_paths.iter().any(|relationship| {
         relationship.changed_path == "src/service.py"
             && relationship.related_path == "tests/service_test.py"
             && relationship.signal == "test_name_match"
     }));
-    assert!(
-        evidence
-            .semantic_change
-            .as_ref()
-            .is_some_and(|semantic| semantic
-                .gaps
-                .contains(&"semantic_change_requires_immutable_range".to_owned()))
-    );
+    assert!(evidence.semantic_change.as_ref().is_some_and(|semantic| {
+        semantic
+            .gaps
+            .contains(&"semantic_change_requires_immutable_range".to_owned())
+    }));
 
     let mut working_tree_request = context_limit_request(1_000);
     working_tree_request.task = "review compute and rust_changed".into();
@@ -436,11 +435,8 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
     assert!(commit.status.success());
     let head = revision("HEAD");
 
-    let config = Config::discover(
-        root.path(),
-        Some(database.path().join("index.sqlite")),
-    )
-    .expect("config");
+    let config =
+        Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services.index(false).await.expect("index head");
     let mut request = context_limit_request(2_000);
@@ -515,10 +511,7 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
         Some("old_name")
     );
     assert!(renamed.public_contract_changed);
-    assert_eq!(
-        symbol_change("removed").kind,
-        DiffSymbolChangeKind::Removed
-    );
+    assert_eq!(symbol_change("removed").kind, DiffSymbolChangeKind::Removed);
     assert_eq!(symbol_change("added").kind, DiffSymbolChangeKind::Added);
     assert_eq!(
         symbol_change("deleted_file_symbol").kind,
@@ -661,7 +654,9 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
 async fn diff_scoped_context_rejects_excessive_changed_path_count() {
     let (_root, services) = fixture().await;
 
-    let too_many = (0..600).map(|i| format!("src/file{i}.rs")).collect::<Vec<_>>();
+    let too_many = (0..600)
+        .map(|i| format!("src/file{i}.rs"))
+        .collect::<Vec<_>>();
     let error = services
         .context(ContextRequest {
             task: "change greet caller".into(),

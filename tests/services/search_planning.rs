@@ -70,8 +70,11 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
     let root = tempfile::tempdir().expect("temporary repository");
     let source = "const first = \"audit_key audit_key\";\nconst second = \"audit_key\";\n";
     std::fs::write(root.path().join("occurrences.js"), source).expect("write source");
-    std::fs::write(root.path().join("excluded.js"), "const value = 'audit_key';\n")
-        .expect("write excluded source");
+    std::fs::write(
+        root.path().join("excluded.js"),
+        "const value = 'audit_key';\n",
+    )
+    .expect("write excluded source");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
@@ -128,10 +131,7 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
 
     let mut next = request;
     next.cursor = first.meta.next_cursor;
-    let second = services
-        .search(next)
-        .await
-        .expect("second occurrence page");
+    let second = services.search(next).await.expect("second occurrence page");
 
     assert_eq!(second.occurrences_total, Some(3));
     assert_eq!(second.occurrences_returned, 1);
@@ -166,8 +166,7 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
 #[tokio::test]
 async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repeated_excerpts() {
     let root = tempfile::tempdir().expect("temporary repository");
-    let line =
-        "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";
+    let line = "F4-P 0-RTT forbidden-phase early-data Handshake handshake completion\n";
     let source = line.repeat(10);
     std::fs::write(root.path().join("probe-e.tex"), &source).expect("write source");
     let config =
@@ -207,9 +206,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     assert_eq!(grouped.occurrences_returned, 60);
     assert_eq!(grouped.groups_returned, 10);
     assert!(grouped.groups.iter().all(|group| {
-        group.excerpt.is_some()
-            && group.content_hash.is_some()
-            && group.occurrences.len() == 6
+        group.excerpt.is_some() && group.content_hash.is_some() && group.occurrences.len() == 6
     }));
     let coordinates = grouped
         .groups
@@ -259,9 +256,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     assert!(coordinate_only.groups[0].excerpt.is_none());
     assert!(coordinate_only.groups[0].content_hash.is_none());
     assert_eq!(coordinate_only.meta.source_tokens, 0);
-    assert!(
-        coordinate_only.meta.total_response_tokens < grouped.meta.total_response_tokens
-    );
+    assert!(coordinate_only.meta.total_response_tokens < grouped.meta.total_response_tokens);
     assert_response_token_accounting!(coordinate_only, Tokenizer::default());
 }
 
@@ -512,7 +507,10 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             optimized.phases.regex_candidate_strategy, expected_strategy,
             "{pattern}"
         );
-        assert_eq!(optimized.phases.regex_plan_source, expected_source, "{pattern}");
+        assert_eq!(
+            optimized.phases.regex_plan_source, expected_source,
+            "{pattern}"
+        );
         assert_eq!(
             optimized.phases.regex_plan_fallback_reason, expected_fallback,
             "{pattern}"
@@ -542,8 +540,7 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
             "{pattern}"
         );
         assert!(
-            full_scan.phases.regex_retained_chunks
-                <= full_scan.phases.regex_chunks_loaded,
+            full_scan.phases.regex_retained_chunks <= full_scan.phases.regex_chunks_loaded,
             "{pattern}"
         );
     }

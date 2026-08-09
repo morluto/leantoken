@@ -29,12 +29,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
     let (_root, services) = fixture().await;
     let recorded = services
         .search_occurrences(
-            exact_request(
-                "greet",
-                Vec::new(),
-                Vec::new(),
-                QueryReceiptAction::Record,
-            ),
+            exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
             true,
         )
         .await
@@ -43,10 +38,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
     assert_eq!(proof.status, QueryReceiptStatus::Recorded);
     assert!(proof.complete);
     assert_eq!(proof.match_count, recorded.occurrences_total);
-    assert_eq!(
-        proof.scope_relation,
-        QueryReceiptScopeRelation::Exact
-    );
+    assert_eq!(proof.scope_relation, QueryReceiptScopeRelation::Exact);
     let receipt_id = proof.receipt_id.expect("query receipt id");
     assert!(receipt_id.starts_with('q'));
 
@@ -66,7 +58,10 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
         .expect("reuse query receipt");
     let reused_proof = reused.query_receipt.expect("reuse proof");
     assert_eq!(reused_proof.status, QueryReceiptStatus::AlreadyCovered);
-    assert_eq!(reused_proof.receipt_id.as_deref(), Some(receipt_id.as_str()));
+    assert_eq!(
+        reused_proof.receipt_id.as_deref(),
+        Some(receipt_id.as_str())
+    );
     assert_eq!(reused_proof.result_blake3, proof.result_blake3);
     assert_eq!(reused_proof.match_count, proof.match_count);
     assert!(!reused_proof.reused_across_generation);
@@ -82,12 +77,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
 async fn incomplete_response_and_pre_write_cancellation_never_persist_query_receipts() {
     let (root, services) = fixture().await;
     let database = root.path().join("index.sqlite");
-    let mut paged = exact_request(
-        "greet",
-        Vec::new(),
-        Vec::new(),
-        QueryReceiptAction::Record,
-    );
+    let mut paged = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     paged.max_results = Some(1);
     let response = services
         .search_occurrences(paged, true)
@@ -106,12 +96,7 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
     cancellation.cancel();
     let error = services
         .search_occurrences_with_options_consistency_cancellable(
-            exact_request(
-                "greet",
-                Vec::new(),
-                Vec::new(),
-                QueryReceiptAction::Record,
-            ),
+            exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
             true,
             IndexConsistency::IndexedGeneration,
             ServiceCallOptions::new(),
@@ -127,12 +112,7 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
 async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
     let (root, services) = fixture().await;
     let database = root.path().join("index.sqlite");
-    let request = exact_request(
-        "greet",
-        Vec::new(),
-        Vec::new(),
-        QueryReceiptAction::Record,
-    );
+    let request = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     let error = services
         .search_occurrences_with_options(
             request.clone(),
@@ -153,8 +133,7 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
         .search_occurrences_with_options(
             request,
             true,
-            ServiceCallOptions::new()
-                .with_max_response_tokens(minimum_required_response_tokens),
+            ServiceCallOptions::new().with_max_response_tokens(minimum_required_response_tokens),
         )
         .await
         .expect("exact retry minimum");
@@ -164,12 +143,7 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
     );
     assert_eq!(query_receipt_count(&database), 1);
 
-    let mut invalid_regex = exact_request(
-        "(",
-        Vec::new(),
-        Vec::new(),
-        QueryReceiptAction::Record,
-    );
+    let mut invalid_regex = exact_request("(", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     invalid_regex.mode = SearchMode::Regex;
     assert!(matches!(
         services.search_occurrences(invalid_regex, true).await,
@@ -207,12 +181,7 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
         QueryReceiptStatus::AlreadyCovered
     );
 
-    let mut ranked = exact_request(
-        "greet",
-        Vec::new(),
-        Vec::new(),
-        QueryReceiptAction::Record,
-    );
+    let mut ranked = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     ranked.mode = SearchMode::Identifier;
     let error = services
         .search_occurrences(ranked, true)
@@ -290,12 +259,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
 
     let present = services
         .search_occurrences(
-            exact_request(
-                "greet",
-                Vec::new(),
-                Vec::new(),
-                QueryReceiptAction::Record,
-            ),
+            exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
             true,
         )
         .await
@@ -395,12 +359,7 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
     services.index(false).await.expect("index");
     let recorded = services
         .search_occurrences(
-            exact_request(
-                "needle",
-                Vec::new(),
-                Vec::new(),
-                QueryReceiptAction::Record,
-            ),
+            exact_request("needle", Vec::new(), Vec::new(), QueryReceiptAction::Record),
             true,
         )
         .await
@@ -450,11 +409,9 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
 fn query_receipt_count(database: &std::path::Path) -> usize {
     let connection = rusqlite::Connection::open(database).expect("open database");
     let count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM query_coverage_receipts",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM query_coverage_receipts", [], |row| {
+            row.get(0)
+        })
         .expect("query receipt count");
     usize::try_from(count).expect("non-negative query receipt count")
 }

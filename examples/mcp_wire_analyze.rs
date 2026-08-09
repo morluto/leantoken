@@ -1348,5 +1348,4 @@ mod tests {
         assert_eq!(report.event_categories["other"].events, 1);
         assert!(!report.required_exchange_parts["initialize_response"]);
     }
-
 }

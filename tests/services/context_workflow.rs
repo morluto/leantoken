@@ -97,8 +97,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
             .any(|symbol| symbol.name == "parse_contribution_target")
     );
     assert!(diff_evidence.related_paths.iter().any(|relationship| {
-        relationship.related_path == "tests/parser.rs"
-            && relationship.signal == "test_name_match"
+        relationship.related_path == "tests/parser.rs" && relationship.signal == "test_name_match"
     }));
     assert!(paths.contains("AGENTS.md"));
     assert!(paths.contains("docs/development.md"));
