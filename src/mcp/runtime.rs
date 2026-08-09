@@ -25,8 +25,9 @@ impl LeanTokenMcp {
         &self,
         value: T,
         max_response_tokens: Option<usize>,
+        protocol: Option<&ProtocolVersion>,
     ) -> Result<CallToolResult, ErrorData> {
-        tool_result_with_limit(value, self.result_mode, max_response_tokens)
+        tool_result_with_limit(value, self.result_mode, max_response_tokens, protocol)
     }
 
     pub(in crate::mcp) fn services(
@@ -102,6 +103,7 @@ impl LeanTokenMcp {
         prepared: PreparedRetrievalCall,
         expected_repository_id: Option<String>,
         max_response_tokens: Option<usize>,
+        protocol: Option<ProtocolVersion>,
         mut operation: F,
     ) -> Result<CallToolResult, ErrorData>
     where
@@ -120,6 +122,7 @@ impl LeanTokenMcp {
             services,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services| async move {
                 retry_after_initial_index(
                     tool,
@@ -214,7 +217,7 @@ impl LeanTokenMcp {
         F: FnOnce(Arc<Services>) -> Fut,
         Fut: Future<Output = crate::Result<T>>,
     {
-        self.run_admitted_with_limit(services, expected_repository_id, None, operation)
+        self.run_admitted_with_limit(services, expected_repository_id, None, None, operation)
             .await
     }
 
@@ -223,6 +226,7 @@ impl LeanTokenMcp {
         services: Arc<Services>,
         expected_repository_id: Option<String>,
         max_response_tokens: Option<usize>,
+        protocol: Option<ProtocolVersion>,
         operation: F,
     ) -> Result<CallToolResult, ErrorData>
     where
@@ -247,10 +251,12 @@ impl LeanTokenMcp {
             })
             .then(|| progress_services.index_progress_for_retry());
         match result {
-            Ok(value) => match self.result_with_limit(value, max_response_tokens) {
-                Ok(result) => Ok(result),
-                Err(error) => visible_mcp_error(error),
-            },
+            Ok(value) => {
+                match self.result_with_limit(value, max_response_tokens, protocol.as_ref()) {
+                    Ok(result) => Ok(result),
+                    Err(error) => visible_mcp_error(error),
+                }
+            }
             // This centralizes retryable-state projection and converts every
             // remaining semantic failure with `into_tool_error`; internal
             // failures still emerge as protocol errors from that conversion.

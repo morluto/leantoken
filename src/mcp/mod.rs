@@ -4,11 +4,13 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use rmcp::model::ContentBlock;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
     model::{
-        CacheScope, CallToolResult, ContentBlock, ListResourceTemplatesResult, ListResourcesResult,
+        CacheScope, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
         PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
         ReadResourceResult, ResourceContents, ResourceTemplate,
     },

@@ -23,6 +23,14 @@ impl ResponseAccountant {
     }
 
     pub(super) fn finalize<T: RetrievalResponse>(&self, response: &mut T) -> Result<()> {
+        self.finalize_for(response, None)
+    }
+
+    pub(super) fn finalize_for<T: RetrievalResponse>(
+        &self,
+        response: &mut T,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
+    ) -> Result<()> {
         let source_tokens = {
             let meta = response.meta_mut();
             meta.protocol_tokens = 0;
@@ -31,7 +39,8 @@ impl ResponseAccountant {
             meta.source_tokens
         };
         for _ in 0..MAX_ACCOUNTING_PASSES {
-            let accounting = response_token_accounting(&*response, source_tokens, &self.tokenizer)?;
+            let accounting =
+                self.accounting(&*response, source_tokens, mcp_response_shape, false)?;
             let meta = response.meta_mut();
             if meta.protocol_tokens == accounting.protocol_tokens
                 && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
@@ -48,33 +57,41 @@ impl ResponseAccountant {
         ))
     }
 
-    pub(super) fn finalized_tokens<T>(&self, response: &T) -> Result<usize>
+    pub(super) fn finalized_tokens_for<T>(
+        &self,
+        response: &T,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
+    ) -> Result<usize>
     where
         T: RetrievalResponse + Clone,
     {
         let mut sized = response.clone();
-        self.finalize(&mut sized)?;
+        self.finalize_for(&mut sized, mcp_response_shape)?;
         Ok(sized.meta_mut().total_response_tokens)
     }
 
-    pub(super) fn finalized_tokens_with_receipt_resource<T>(&self, response: &T) -> Result<usize>
+    pub(super) fn finalized_tokens_with_receipt_resource<T>(
+        &self,
+        response: &T,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
+    ) -> Result<usize>
     where
         T: RetrievalResponse + Clone,
     {
         let mut sized = response.clone();
-        self.finalize_with_receipt_resource(&mut sized)?;
+        self.finalize_with_receipt_resource(&mut sized, mcp_response_shape)?;
         Ok(sized.meta_mut().total_response_tokens)
     }
 
     pub(super) fn finalize_with_receipt_resource<T: RetrievalResponse>(
         &self,
         response: &mut T,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
     ) -> Result<()> {
         let source_tokens = response.meta_mut().source_tokens;
-        let receipt_id = response.meta_mut().receipt_id.clone();
-        let Some(receipt_id) = receipt_id else {
-            return self.finalize(response);
-        };
+        if response.meta_mut().receipt_id.is_none() {
+            return self.finalize_for(response, mcp_response_shape);
+        }
         {
             let meta = response.meta_mut();
             meta.protocol_tokens = 0;
@@ -82,18 +99,8 @@ impl ResponseAccountant {
             meta.total_response_tokens = 0;
         }
         for _ in 0..MAX_ACCOUNTING_PASSES {
-            let mut value = serde_json::to_value(&*response)?;
-            if let Some(object) = value.as_object_mut() {
-                object.insert(
-                    "receipt_resource".into(),
-                    serde_json::json!({
-                        "kind": "retrieval_receipt",
-                        "id": receipt_id.clone(),
-                        "uri": format!("leantoken://receipt/v1/{receipt_id}"),
-                    }),
-                );
-            }
-            let accounting = response_token_accounting(&value, source_tokens, &self.tokenizer)?;
+            let accounting =
+                self.accounting(&*response, source_tokens, mcp_response_shape, true)?;
             let meta = response.meta_mut();
             if meta.protocol_tokens == accounting.protocol_tokens
                 && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
@@ -115,7 +122,7 @@ impl ResponseAccountant {
         T: RetrievalResponse + Clone,
     {
         options.max_response_tokens().map_or(Ok(true), |limit| {
-            Ok(self.finalized_tokens(response)? <= limit)
+            Ok(self.finalized_tokens_for(response, options.mcp_response_shape())? <= limit)
         })
     }
 
@@ -129,7 +136,10 @@ impl ResponseAccountant {
         T: RetrievalResponse + Clone,
     {
         options.max_response_tokens().map_or(Ok(true), |limit| {
-            Ok(self.finalized_tokens_with_receipt_reserve(response, returned_items)? <= limit)
+            Ok(
+                self.finalized_tokens_with_receipt_reserve(response, returned_items, options)?
+                    <= limit,
+            )
         })
     }
 
@@ -137,6 +147,7 @@ impl ResponseAccountant {
         &self,
         response: &T,
         returned_items: usize,
+        options: ServiceCallOptions,
     ) -> Result<usize>
     where
         T: RetrievalResponse + Clone,
@@ -153,7 +164,7 @@ impl ResponseAccountant {
             meta.receipt_suppressed_overlap = returned_items;
             meta.receipt_near_duplicates = returned_items;
         }
-        self.finalize_with_receipt_resource(&mut sized)?;
+        self.finalize_with_receipt_resource(&mut sized, options.mcp_response_shape())?;
         Ok(sized.meta_mut().total_response_tokens)
     }
 
@@ -188,12 +199,13 @@ impl ResponseAccountant {
         &self,
         response: &T,
         provided_max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<Error>
     where
         T: RetrievalResponse + Clone,
     {
         let mut mandatory = response.clone();
-        self.finalize(&mut mandatory)?;
+        self.finalize_for(&mut mandatory, options.mcp_response_shape())?;
         let meta = mandatory.meta_mut();
         Ok(Self::budget_exceeded(
             meta,
@@ -207,14 +219,15 @@ impl ResponseAccountant {
         response: &T,
         returned_items: usize,
         provided_max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<Error>
     where
         T: RetrievalResponse + Clone,
     {
         let minimum_required_response_tokens =
-            self.finalized_tokens_with_receipt_reserve(response, returned_items)?;
+            self.finalized_tokens_with_receipt_reserve(response, returned_items, options)?;
         let mut mandatory = response.clone();
-        self.finalize(&mut mandatory)?;
+        self.finalize_for(&mut mandatory, options.mcp_response_shape())?;
         Ok(Self::budget_exceeded(
             mandatory.meta_mut(),
             provided_max_response_tokens,
@@ -230,7 +243,7 @@ impl ResponseAccountant {
     where
         T: RetrievalResponse,
     {
-        self.finalize(response)?;
+        self.finalize_for(response, options.mcp_response_shape())?;
         if let Some(limit) = options.max_response_tokens()
             && response.meta_mut().total_response_tokens > limit
         {
@@ -242,5 +255,42 @@ impl ResponseAccountant {
             ));
         }
         Ok(())
+    }
+
+    fn accounting<T: serde::Serialize>(
+        &self,
+        response: &T,
+        source_tokens: usize,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
+        receipt_resource: bool,
+    ) -> serde_json::Result<crate::tokens::ResponseTokenAccounting> {
+        if mcp_response_shape.is_none() && !receipt_resource {
+            return response_token_accounting(response, source_tokens, &self.tokenizer);
+        }
+        let mut value = serde_json::to_value(response)?;
+        if receipt_resource {
+            let receipt_id = value
+                .pointer("/meta/receipt_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if let (Some(receipt_id), Some(object)) = (receipt_id, value.as_object_mut()) {
+                object.insert(
+                    "receipt_resource".into(),
+                    serde_json::json!({
+                        "kind": "retrieval_receipt",
+                        "id": receipt_id,
+                        "uri": format!("leantoken://receipt/v1/{receipt_id}"),
+                    }),
+                );
+            }
+        }
+        match mcp_response_shape {
+            Some(shape) => response_token_accounting(
+                &crate::tokens::model_visible_mcp_result(value, shape),
+                source_tokens,
+                &self.tokenizer,
+            ),
+            None => response_token_accounting(&value, source_tokens, &self.tokenizer),
+        }
     }
 }

@@ -3,6 +3,7 @@ impl Services {
         &self,
         response: &ContextResponse,
         policy: &ContextPolicy,
+        options: ServiceCallOptions,
     ) -> Result<ContextResponse> {
         let mut sized = response.clone();
         if !policy.is_plan() {
@@ -26,7 +27,8 @@ impl Services {
             }
         }
         set_routing_consistency(&mut sized, IndexConsistency::ReconcileWorkingTree);
-        self.finalize_response(&mut sized)?;
+        self.response_accountant
+            .finalize_with_receipt_resource(&mut sized, options.mcp_response_shape())?;
         Ok(sized)
     }
 
@@ -34,12 +36,10 @@ impl Services {
         &self,
         response: &ContextResponse,
         policy: &ContextPolicy,
+        options: ServiceCallOptions,
     ) -> Result<usize> {
-        let sized = self.context_response_with_receipt_reserve(response, policy)?;
-        let budget = ResponseBudget::new(&self.config.tokenizer, usize::MAX);
-        let serialized_tokens = budget.serialized_tokens(&sized)?;
-        debug_assert_eq!(serialized_tokens, sized.meta.total_response_tokens);
-        Ok(serialized_tokens)
+        let sized = self.context_response_with_receipt_reserve(response, policy, options)?;
+        Ok(sized.meta.total_response_tokens)
     }
 
     pub(super) fn context_response_budget_error(
@@ -47,12 +47,14 @@ impl Services {
         response: &ContextResponse,
         policy: &ContextPolicy,
         provided_max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<Error> {
         let minimum_required_response_tokens =
-            self.context_response_tokens_with_receipt_reserve(response, policy)?;
+            self.context_response_tokens_with_receipt_reserve(response, policy, options)?;
         let mut mandatory = response.clone();
         set_routing_consistency(&mut mandatory, IndexConsistency::ReconcileWorkingTree);
-        self.finalize_response(&mut mandatory)?;
+        self.response_accountant
+            .finalize_for(&mut mandatory, options.mcp_response_shape())?;
         Ok(Self::response_budget_exceeded(
             &mandatory.meta,
             provided_max_response_tokens,
@@ -65,11 +67,10 @@ impl Services {
         response: &ContextResponse,
         policy: &ContextPolicy,
         max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<bool> {
-        let sized = self.context_response_with_receipt_reserve(response, policy)?;
-        ResponseBudget::new(&self.config.tokenizer, max_response_tokens)
-            .fits(&sized)
-            .map_err(Into::into)
+        let sized = self.context_response_with_receipt_reserve(response, policy, options)?;
+        Ok(sized.meta.total_response_tokens <= max_response_tokens)
     }
 
     pub(super) fn refresh_context_omission_warning(response: &mut ContextResponse) {
@@ -127,10 +128,14 @@ impl Services {
         response: &mut ContextResponse,
         request: &ContextRequest,
         policy: &ContextPolicy,
-        max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<()> {
-        self.finalize_response(response)?;
-        if self.context_response_fits(response, policy, max_response_tokens)? {
+        let max_response_tokens = options
+            .max_response_tokens()
+            .expect("context fitting requires a response token limit");
+        self.response_accountant
+            .finalize_for(response, options.mcp_response_shape())?;
+        if self.context_response_fits(response, policy, max_response_tokens, options)? {
             return Ok(());
         }
 
@@ -139,22 +144,25 @@ impl Services {
         response.omission_summary.by_language_or_file_type.clear();
         response.omission_summary.by_reason.clear();
         response.omission_summary.by_score_band.clear();
-        if self.context_response_fits(response, policy, max_response_tokens)? {
-            self.finalize_response(response)?;
+        if self.context_response_fits(response, policy, max_response_tokens, options)? {
+            self.response_accountant
+                .finalize_for(response, options.mcp_response_shape())?;
             return Ok(());
         }
 
         if let Some(scope) = &mut response.diff_scope {
             scope.evidence = None;
         }
-        if self.context_response_fits(response, policy, max_response_tokens)? {
-            self.finalize_response(response)?;
+        if self.context_response_fits(response, policy, max_response_tokens, options)? {
+            self.response_accountant
+                .finalize_for(response, options.mcp_response_shape())?;
             return Ok(());
         }
 
         response.routing = None;
-        if self.context_response_fits(response, policy, max_response_tokens)? {
-            self.finalize_response(response)?;
+        if self.context_response_fits(response, policy, max_response_tokens, options)? {
+            self.response_accountant
+                .finalize_for(response, options.mcp_response_shape())?;
             return Ok(());
         }
 
@@ -166,8 +174,9 @@ impl Services {
         for fragment in &mut response.fragments {
             fragment.reason.clear();
         }
-        if self.context_response_fits(response, policy, max_response_tokens)? {
-            self.finalize_response(response)?;
+        if self.context_response_fits(response, policy, max_response_tokens, options)? {
+            self.response_accountant
+                .finalize_for(response, options.mcp_response_shape())?;
             return Ok(());
         }
 
@@ -197,12 +206,13 @@ impl Services {
                 Self::trim_context_selection(&mut candidate, keep);
                 candidate.omission_summary.budget_or_result_limit = omission_reserve;
                 Self::refresh_context_omission_warning(&mut candidate);
-                self.context_response_tokens_with_receipt_reserve(&candidate, policy)
+                self.context_response_tokens_with_receipt_reserve(&candidate, policy, options)
             })?;
             if let Some(keep) = keep {
                 Self::trim_context_selection(response, keep);
-                self.finalize_response(response)?;
-                if self.context_response_fits(response, policy, max_response_tokens)? {
+                self.response_accountant
+                    .finalize_for(response, options.mcp_response_shape())?;
+                if self.context_response_fits(response, policy, max_response_tokens, options)? {
                     return Ok(());
                 }
                 return Err(Error::ResponseAccountingInvariant(
@@ -212,7 +222,7 @@ impl Services {
             Self::trim_context_selection(response, 0);
         }
 
-        Err(self.context_response_budget_error(response, policy, max_response_tokens)?)
+        Err(self.context_response_budget_error(response, policy, max_response_tokens, options)?)
     }
 
     pub(super) fn finalize_context_pipeline(

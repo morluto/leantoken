@@ -11,6 +11,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -24,11 +25,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "files",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -68,6 +72,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -81,11 +86,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, output, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "search",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -135,6 +143,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -148,11 +157,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "outline",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -192,6 +204,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -205,11 +218,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "read",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -237,6 +253,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<HistoryMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -253,11 +270,14 @@ impl LeanTokenMcp {
             Ok(parts) => parts,
             Err(error) => return into_tool_error(error),
         };
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "history",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, _deadline| {
                 let call = call.clone();
                 async move {
@@ -290,6 +310,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<JsonMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -303,11 +324,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, options, execution, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "json",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, _deadline| {
                 let request = request.clone();
                 async move {
@@ -334,6 +358,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -355,11 +380,14 @@ impl LeanTokenMcp {
             expected_repository_id,
             handoff,
         ) = req.into_parts(prepared.limits.default_context_tokens);
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "context",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let handoff = handoff.clone();
@@ -394,6 +422,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReceiptRebaseMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -407,11 +436,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "receipt_rebase",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);

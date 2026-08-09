@@ -1,10 +1,46 @@
 use std::fmt;
 
 use clap::ValueEnum;
+use rmcp::model::{CallToolResult, ContentBlock, ServerResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Result;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpResponseMode {
+    Dual,
+    Text,
+    Structured,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct McpResponseShape {
+    pub(crate) mode: McpResponseMode,
+    pub(crate) modern_protocol: bool,
+}
+
+pub(crate) fn build_mcp_tool_result(value: Value, mode: McpResponseMode) -> CallToolResult {
+    match mode {
+        McpResponseMode::Dual => CallToolResult::structured(value),
+        McpResponseMode::Text => {
+            CallToolResult::success(vec![ContentBlock::text(value.to_string())])
+        }
+        McpResponseMode::Structured => {
+            let mut result = CallToolResult::success(Vec::new());
+            result.structured_content = Some(value);
+            result
+        }
+    }
+}
+
+pub(crate) fn model_visible_mcp_result(value: Value, shape: McpResponseShape) -> ServerResult {
+    let mut result = ServerResult::CallToolResult(build_mcp_tool_result(value, shape.mode));
+    if !shape.modern_protocol {
+        result.strip_result_type_for_legacy_peer();
+    }
+    result
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ResponseTokenAccounting {
@@ -15,18 +51,25 @@ pub(crate) struct ResponseTokenAccounting {
 
 /// Exact serialized-response counter and monotonic prefix fitting primitive.
 pub(crate) struct ResponseBudget<'a> {
+    #[cfg(test)]
     tokenizer: &'a Tokenizer,
+    #[cfg(not(test))]
+    _tokenizer: std::marker::PhantomData<&'a Tokenizer>,
     max_tokens: usize,
 }
 
 impl<'a> ResponseBudget<'a> {
-    pub(crate) const fn new(tokenizer: &'a Tokenizer, max_tokens: usize) -> Self {
+    pub(crate) const fn new(_tokenizer: &'a Tokenizer, max_tokens: usize) -> Self {
         Self {
-            tokenizer,
+            #[cfg(test)]
+            tokenizer: _tokenizer,
+            #[cfg(not(test))]
+            _tokenizer: std::marker::PhantomData,
             max_tokens,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn serialized_tokens<T: Serialize>(
         &self,
         response: &T,
@@ -34,6 +77,7 @@ impl<'a> ResponseBudget<'a> {
         serde_json::to_string(response).map(|payload| self.tokenizer.count(&payload))
     }
 
+    #[cfg(test)]
     pub(crate) fn fits<T: Serialize>(&self, response: &T) -> serde_json::Result<bool> {
         self.serialized_tokens(response)
             .map(|tokens| tokens <= self.max_tokens)

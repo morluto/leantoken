@@ -135,6 +135,78 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
 }
 
 #[tokio::test]
+async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
+    let (_root, services) = indexed_services().await;
+    let request = ReadRequest {
+        path: "lib.rs".into(),
+        start_line: Some(1),
+        end_line: Some(1),
+        symbol: None,
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: None,
+        max_tokens: Some(100),
+        expected_hash: None,
+        delta: false,
+        receipt_id: None,
+        policy: crate::model::ReadPolicy::default(),
+    };
+    let shape = crate::tokens::McpResponseShape {
+        mode: crate::tokens::McpResponseMode::Structured,
+        modern_protocol: true,
+    };
+    let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
+    let successful = services
+        .read_with_options(request.clone(), shaped_options)
+        .await
+        .expect("unbounded MCP-shaped read");
+
+    let mut prototype = successful.clone();
+    prototype.meta.receipt_id = None;
+    let shaped_required = services
+        .response_accountant
+        .finalized_tokens_with_receipt_reserve(&prototype, 1, shaped_options)
+        .expect("MCP receipt reserve");
+    let plain_options = ServiceCallOptions::new();
+    let plain_required = services
+        .response_accountant
+        .finalized_tokens_with_receipt_reserve(&prototype, 1, plain_options)
+        .expect("service receipt reserve");
+    let limit = shaped_required - 1;
+    assert!(
+        plain_required <= limit,
+        "fixture must isolate the MCP wrapper from the service JSON"
+    );
+
+    let tracked_before = services
+        .token_savings()
+        .await
+        .expect("savings before rejected call")
+        .tracked_requests;
+    let error = services
+        .read_with_options(request, shaped_options.with_max_response_tokens(limit))
+        .await
+        .expect_err("MCP wrapper must be reserved before receipt persistence");
+    match error {
+        Error::ResponseBudgetExceeded {
+            provided_max_response_tokens,
+            minimum_required_response_tokens,
+            ..
+        } => {
+            assert_eq!(provided_max_response_tokens, limit);
+            assert!(minimum_required_response_tokens > limit);
+        }
+        error => panic!("unexpected response-budget error: {error:?}"),
+    }
+    let tracked_after = services
+        .token_savings()
+        .await
+        .expect("savings after rejected call")
+        .tracked_requests;
+    assert_eq!(tracked_after, tracked_before);
+}
+
+#[tokio::test]
 async fn concurrent_consistency_requests_share_one_waiting_wave() {
     let (_root, services) = indexed_services().await;
     let held_operation = services

@@ -133,7 +133,7 @@ impl Services {
             let limit = options
                 .max_response_tokens()
                 .expect("response fitting fails only with a configured limit");
-            return Err(self.response_budget_error(&response, limit)?);
+            return Err(self.response_budget_error(&response, limit, options)?);
         };
         check_cancelled(cancellation)?;
         let receipt_id = self.storage.persist_rebased_receipt(

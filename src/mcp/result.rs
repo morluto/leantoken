@@ -47,18 +47,39 @@ pub enum McpResultMode {
     Structured,
 }
 
+impl McpResultMode {
+    pub(in crate::mcp) fn response_shape(
+        self,
+        protocol: Option<&ProtocolVersion>,
+    ) -> crate::tokens::McpResponseShape {
+        let mode = match self {
+            Self::Dual => crate::tokens::McpResponseMode::Dual,
+            Self::Text => crate::tokens::McpResponseMode::Text,
+            Self::Structured => crate::tokens::McpResponseMode::Structured,
+        };
+        crate::tokens::McpResponseShape {
+            mode,
+            modern_protocol: matches!(
+                protocol,
+                Some(version) if version >= &ProtocolVersion::V_2026_07_28
+            ),
+        }
+    }
+}
+
 /// Serialize a successful tool value using an explicit wire representation.
 pub fn tool_result<T: Serialize>(
     value: T,
     mode: McpResultMode,
 ) -> Result<CallToolResult, ErrorData> {
-    tool_result_with_limit(value, mode, None)
+    tool_result_with_limit(value, mode, None, Some(&ProtocolVersion::V_2026_07_28))
 }
 
 pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
     value: T,
     mode: McpResultMode,
     max_response_tokens: Option<usize>,
+    protocol: Option<&ProtocolVersion>,
 ) -> Result<CallToolResult, ErrorData> {
     let mut value = serde_json::to_value(value)
         .map(decorate_receipt_result)
@@ -69,7 +90,8 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
                 mcp_error_data("response_serialization"),
             )
         })?;
-    recalculate_mcp_accounting(&mut value, mode).map_err(|error| {
+    let shape = mode.response_shape(protocol);
+    recalculate_mcp_accounting(&mut value, shape).map_err(|error| {
         tracing::error!(%error, "MCP response accounting failed");
         ErrorData::internal_error(
             "repository retrieval failed",
@@ -115,21 +137,7 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
             })),
         ));
     }
-    Ok(build_tool_result(value, mode))
-}
-
-fn build_tool_result(value: serde_json::Value, mode: McpResultMode) -> CallToolResult {
-    match mode {
-        McpResultMode::Dual => CallToolResult::structured(value),
-        McpResultMode::Text => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
-        McpResultMode::Structured => {
-            // Start from RMCP's successful-result constructor so required SDK
-            // fields (including the negotiated `resultType`) stay native.
-            let mut result = CallToolResult::success(Vec::new());
-            result.structured_content = Some(value);
-            result
-        }
-    }
+    Ok(crate::tokens::build_mcp_tool_result(value, shape.mode))
 }
 
 fn decorate_receipt_result(mut value: serde_json::Value) -> serde_json::Value {
@@ -157,7 +165,7 @@ fn decorate_receipt_result(mut value: serde_json::Value) -> serde_json::Value {
 
 fn recalculate_mcp_accounting(
     value: &mut serde_json::Value,
-    mode: McpResultMode,
+    shape: crate::tokens::McpResponseShape,
 ) -> serde_json::Result<()> {
     let Some(tokenizer_name) = value
         .pointer("/meta/tokenizer")
@@ -174,7 +182,7 @@ fn recalculate_mcp_accounting(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or_default();
     for _ in 0..32 {
-        let result = build_tool_result(value.clone(), mode);
+        let result = crate::tokens::model_visible_mcp_result(value.clone(), shape);
         let accounting =
             crate::tokens::response_token_accounting(&result, source_tokens, &tokenizer)?;
         let meta = value

@@ -208,8 +208,8 @@ impl Services {
             options,
             generation,
         } = finalization;
-        if let Some(max_response_tokens) = options.max_response_tokens() {
-            self.fit_context_response(response, request, policy, max_response_tokens)?;
+        if options.max_response_tokens().is_some() {
+            self.fit_context_response(response, request, policy, options)?;
         }
         if !policy.is_plan() {
             let receipt_candidates = response
@@ -273,7 +273,7 @@ impl Services {
         if let Some(manifest) = &mut response.handoff_manifest {
             manifest.receipt_id.clone_from(&response.meta.receipt_id);
         }
-        self.finalize_response(response)?;
+        self.finalize_bounded_response(response, options)?;
         if let Some(max_response_tokens) = options.max_response_tokens()
             && response.meta.total_response_tokens > max_response_tokens
         {

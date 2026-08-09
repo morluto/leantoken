@@ -749,7 +749,7 @@ impl Services {
                 .entries
                 .last()
                 .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
-            self.finalized_response_tokens(&candidate)
+            self.finalized_response_tokens(&candidate, options)
         })?;
         if let Some(keep) = keep.filter(|keep| *keep > 0) {
             response.entries.truncate(keep);
@@ -773,7 +773,7 @@ impl Services {
                 minimum
             })
             .unwrap_or(original);
-        Err(self.response_budget_error(&minimum, max_response_tokens)?)
+        Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 
     fn fit_files_paths_response(
@@ -799,7 +799,7 @@ impl Services {
             candidate.meta.next_cursor = entries
                 .get(keep.saturating_sub(1))
                 .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
-            self.finalized_response_tokens(&candidate)
+            self.finalized_response_tokens(&candidate, options)
         })?;
         if let Some(keep) = keep.filter(|keep| *keep > 0) {
             response.paths.truncate(keep);
@@ -821,7 +821,7 @@ impl Services {
                 minimum
             })
             .unwrap_or(original);
-        Err(self.response_budget_error(&minimum, max_response_tokens)?)
+        Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 }
 

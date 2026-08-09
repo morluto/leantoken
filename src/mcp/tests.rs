@@ -505,8 +505,13 @@ fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
             "tokenizer": "cl100k_base"
         }
     });
-    let error = tool_result_with_limit(value, McpResultMode::Structured, Some(1))
-        .expect_err("receipt decoration must respect the final response budget");
+    let error = tool_result_with_limit(
+        value,
+        McpResultMode::Structured,
+        Some(1),
+        Some(&ProtocolVersion::V_2026_07_28),
+    )
+    .expect_err("receipt decoration must respect the final response budget");
     assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     assert_eq!(
         error.data.as_ref().and_then(|data| data.get("limit")),
@@ -528,13 +533,14 @@ fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
 
 #[test]
 fn response_accounting_matches_the_selected_model_visible_result() {
-    for mode in [
-        McpResultMode::Structured,
-        McpResultMode::Text,
-        McpResultMode::Dual,
-    ] {
-        let result = tool_result(
-            serde_json::json!({
+    for protocol in [ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2026_07_28] {
+        for mode in [
+            McpResultMode::Structured,
+            McpResultMode::Text,
+            McpResultMode::Dual,
+        ] {
+            let result = tool_result_with_limit(
+                serde_json::json!({
                 "meta": {
                     "source_tokens": 3,
                     "protocol_tokens": 0,
@@ -543,41 +549,58 @@ fn response_accounting_matches_the_selected_model_visible_result() {
                     "tokenizer": "cl100k_base"
                 },
                 "fragments": [{"path": "lib.rs", "content": "fn ready() {}"}]
-            }),
-            mode,
-        )
-        .expect("accounted result");
-        let structured = result.structured_content.clone().unwrap_or_else(|| {
-            let text = result
-                .content
-                .first()
-                .and_then(ContentBlock::as_text)
-                .expect("text result");
-            serde_json::from_str(&text.text).expect("JSON text result")
-        });
-        let reported = structured["meta"]["total_response_tokens"]
-            .as_u64()
-            .expect("reported total") as usize;
-        let accounted = [
-            "source_tokens",
-            "protocol_tokens",
-            "path_and_metadata_tokens",
-        ]
-        .into_iter()
-        .map(|field| {
-            structured["meta"][field]
+                }),
+                mode,
+                None,
+                Some(&protocol),
+            )
+            .expect("accounted result");
+            let structured = result.structured_content.clone().unwrap_or_else(|| {
+                let text = result
+                    .content
+                    .first()
+                    .and_then(ContentBlock::as_text)
+                    .expect("text result");
+                serde_json::from_str(&text.text).expect("JSON text result")
+            });
+            let reported = structured["meta"]["total_response_tokens"]
                 .as_u64()
-                .expect("accounting field") as usize
-        })
-        .sum::<usize>();
-        assert_eq!(accounted, reported);
-        let tokenizer = crate::tokens::Tokenizer::Cl100kBase;
-        assert_eq!(
-            reported,
-            tokenizer.count(&serde_json::to_string(&result).expect("wire result"))
-        );
-        assert!(tool_result_with_limit(structured.clone(), mode, Some(reported - 1)).is_err());
-        assert!(tool_result_with_limit(structured, mode, Some(reported)).is_ok());
+                .expect("reported total") as usize;
+            let accounted = [
+                "source_tokens",
+                "protocol_tokens",
+                "path_and_metadata_tokens",
+            ]
+            .into_iter()
+            .map(|field| {
+                structured["meta"][field]
+                    .as_u64()
+                    .expect("accounting field") as usize
+            })
+            .sum::<usize>();
+            assert_eq!(accounted, reported);
+            let mut visible = rmcp::model::ServerResult::CallToolResult(result);
+            if protocol < ProtocolVersion::V_2026_07_28 {
+                visible.strip_result_type_for_legacy_peer();
+            }
+            let tokenizer = crate::tokens::Tokenizer::Cl100kBase;
+            assert_eq!(
+                reported,
+                tokenizer.count(&serde_json::to_string(&visible).expect("wire result"))
+            );
+            assert!(
+                tool_result_with_limit(
+                    structured.clone(),
+                    mode,
+                    Some(reported - 1),
+                    Some(&protocol),
+                )
+                .is_err()
+            );
+            assert!(
+                tool_result_with_limit(structured, mode, Some(reported), Some(&protocol)).is_ok()
+            );
+        }
     }
 }
 
