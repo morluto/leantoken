@@ -4,13 +4,15 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use rmcp::model::ContentBlock;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
     model::{
-        CacheScope, CallToolResult, ContentBlock, ListResourceTemplatesResult, ListResourcesResult,
+        CacheScope, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
         PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-        ReadResourceResult, Resource, ResourceContents, ResourceTemplate,
+        ReadResourceResult, ResourceContents, ResourceTemplate,
     },
     service::{NotificationContext, RequestContext},
     tool, tool_handler, tool_router,
@@ -45,7 +47,7 @@ fn default_receipt_resource_read_capacity() -> usize {
     default_read_connection_capacity() as usize
 }
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
-const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Its indexed, token-bounded retrieval returns less irrelevant source than shell search and whole-file reads. For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: for autonomous broad coding, debugging, review, or architecture triage, call leantoken.context once with the user's task and plan_only=false; use the materialized evidence directly and make at most one focused follow-up for an explicit coverage gap. Reserve plan_only=true for human or control-plane inspection before expensive or high-risk materialization. PREFER leantoken.search over grep or rg for source search; leantoken.files over find, ls, or glob for paths; leantoken.outline over opening whole files to discover structure; leantoken.read over cat, head, or sed for exact current symbols and ranges; leantoken.history over git show, diff, or log -L for one symbol across immutable revisions; and leantoken.json over jq or whole-file reads for structural JSON queries, summaries, and selected-field diffs. Workflow: known identifier -> search -> read; known file, unknown range -> outline -> read; unknown path -> files. Set consistency=reconcile_working_tree on index-backed tools after edits, generated files, branch changes, or external commits. Use native tools for edits, builds, tests, runtime probes, unsupported files, or when LeanToken reports retrieval unavailable. Retry successful responses with status=retryable after retry_after_ms and reuse returned hashes to suppress unchanged evidence. When an older-generation receipt is worth preserving, call leantoken.receipt_rebase explicitly; it carries only same-path, same-coordinate, same-hash evidence. Approved multi-repository contexts are configured by name in the primary repository's .leantoken.toml; pass repository_context by name and never pass an arbitrary filesystem root. After an upgrade, restart or re-register the host if serverInfo.version or tools/list is older than the current runtime; use leantoken setup --refresh --yes and verify the negotiated server version before relying on new fields.";
+const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Retrieval is indexed and token-bounded. For broad coding, debugging, review, or architecture, call leantoken.context once with the user's task and plan_only=false; use its evidence directly. For a known scope, choose the matching LeanToken tool directly. Use native tools for edits, builds, tests, runtime probes, unsupported files, and path- or repository-wide Git history. After edits, generated files, branch changes, or external commits, set consistency=reconcile_working_tree on index-backed tools. On status=retryable, wait retry_after_ms and retry. Approved alternate repositories use configured repository_context names. Use savings for token statistics and receipt_rebase only to preserve older-generation evidence.";
 
 fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::Value> {
     serde_json::to_value(response)
@@ -90,7 +92,9 @@ pub(crate) fn mcp_runtime_version() -> String {
 mod error;
 mod transport;
 
-use error::{into_mcp_error, mcp_error_data, tool_unavailable};
+#[cfg(test)]
+use error::into_mcp_error;
+use error::{into_tool_error, mcp_error_data, tool_unavailable, visible_mcp_error};
 use transport::BoundedStdioTransport;
 
 mod requests;

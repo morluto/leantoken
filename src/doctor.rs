@@ -591,10 +591,18 @@ fn version_marker_for_release(release: &str) -> &'static str {
 }
 
 fn instructions_match_release(instructions: &str, release: &str) -> bool {
-    let common = instructions.contains("call leantoken.savings directly")
+    let compact_guidance = semver::Version::parse(release).is_ok_and(|release| {
+        semver::Version::parse(env!("CARGO_PKG_VERSION")).is_ok_and(|current| release >= current)
+    });
+    if compact_guidance {
+        return instructions.contains("Use savings for token statistics")
+            && instructions.contains("plan_only=false")
+            && instructions.contains("For a known scope")
+            && instructions.contains("call leantoken.context once");
+    }
+    instructions.contains("call leantoken.savings directly")
         && instructions.contains("plan_only=false")
-        && instructions.contains("leantoken.search over grep or rg");
-    common
+        && instructions.contains("leantoken.search over grep or rg")
         && if release == "0.1.17" {
             instructions.contains("call leantoken.context first")
                 && instructions.contains("context plan_only=true")
@@ -1376,6 +1384,15 @@ mod tests {
         let legacy = "For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: call leantoken.context first. For an uncertain broad task, first use context plan_only=true, then repeat the same request with plan_only=false. PREFER leantoken.search over grep or rg.";
         assert!(instructions_match_release(legacy, "0.1.17"));
         assert!(!instructions_match_release(legacy, "0.1.18"));
+    }
+
+    #[test]
+    fn configured_guidance_validation_accepts_compact_current_guidance() {
+        let current = "Use LeanToken for indexed repository discovery. For broad work, call leantoken.context once with plan_only=false. For a known scope, choose the matching tool. Use savings for token statistics.";
+        assert!(instructions_match_release(
+            current,
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 
     #[test]

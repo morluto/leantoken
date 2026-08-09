@@ -790,7 +790,7 @@ expression: mcp_contract()
       "name": "files"
     },
     {
-      "description": "Preferred over native git show, diff, or log -L for parsed symbol history. Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
+      "description": "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}.",
       "inputSchema": {
         "$defs": {
           "HistoryMcpOperation": {
@@ -1154,7 +1154,7 @@ expression: mcp_contract()
           },
           "operation": {
             "$ref": "#/$defs/HistoryMcpOperation",
-            "description": "Git-backed symbol history operation."
+            "description": "Git-backed symbol operation: `read_symbol`, `diff_symbol`, `diff_symbols`, or\n`symbol_log`. Use `symbol_log` to list commits that touched a symbol."
           },
           "repository_context": {
             "default": null,
@@ -1174,7 +1174,7 @@ expression: mcp_contract()
       "name": "history"
     },
     {
-      "description": "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed.",
+      "description": "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare live JSON without indexing it. Operations are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with omission metadata. JSON requests do not accept consistency. JMESPath evaluates against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}}. A zero numeric count means the selection has no numeric leaves, not that the file is malformed.",
       "inputSchema": {
         "$defs": {
           "JsonMcpOperation": {
@@ -2025,7 +2025,7 @@ expression: mcp_contract()
       "name": "savings"
     },
     {
-      "description": "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity without score/hash metadata. all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the repository's configured cap (default 100; the active cap may be lower), and requests above it fail with the reported limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
+      "description": "Preferred over native grep or rg for repository source search. Search indexed source with operation.kind auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses complete coverage and fails closed when indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the configured cap and rejects larger requests with that limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}.",
       "inputSchema": {
         "$defs": {
           "QueryReceiptAction": {

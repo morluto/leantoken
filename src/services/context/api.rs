@@ -225,7 +225,11 @@ impl Services {
         let mut response = accounted.response;
         if let Some(consistency) = consistency {
             set_routing_consistency(&mut response, consistency);
-            let finalize_result = self.finalize_response(&mut response);
+            let finalize_result = if options.mcp_response_shape().is_some() {
+                self.finalize_bounded_response(&mut response, options)
+            } else {
+                self.finalize_response(&mut response)
+            };
             self.observe_service_result(operation, finalize_result)?;
             if let Some(max_response_tokens) = options.max_response_tokens()
                 && response.meta.total_response_tokens > max_response_tokens

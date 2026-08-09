@@ -11,6 +11,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<FilesMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -24,11 +25,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "files",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -61,13 +65,14 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "search",
-        description = "Preferred over native grep or rg for repository source search. Search indexed source with a tagged operation.kind: auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity without score/hash metadata. all_occurrences=true requires text or regex mode. projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses only complete coverage and fails closed when relevant indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the repository's configured cap (default 100; the active cap may be lower), and requests above it fail with the reported limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive example: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
+        description = "Preferred over native grep or rg for repository source search. Search indexed source with operation.kind auto, symbol, reference, identifier, text, or regex. Symbol and structural modes are ranked; projection=compact returns source-free coordinates and symbol identity. all_occurrences=true requires text or regex mode; projection=occurrences also requires all_occurrences=true; coordinates_only omits excerpts. query_receipt records or reuses complete coverage and fails closed when indexed files change. Counts are exact and bounded; enclosing_symbol and ranges identify the next read target. max_results uses the configured cap and rejects larger requests with that limit. Example: {\"operation\":{\"kind\":\"symbol\",\"query\":\"InternalFailure\",\"projection\":\"compact\"}}; exhaustive: {\"operation\":{\"kind\":\"text\",\"query\":\"InternalFailure\",\"all_occurrences\":true,\"projection\":\"occurrences\"}}."
     )]
     async fn leantoken_search(
         &self,
         Parameters(req): Parameters<SearchMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -81,11 +86,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, output, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "search",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -144,6 +152,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<OutlineMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -157,11 +166,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "outline",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -201,6 +213,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReadMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -214,11 +227,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "read",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -239,13 +255,14 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Preferred over native git show, diff, or log -L for parsed symbol history. Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+        description = "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}."
     )]
     async fn leantoken_history(
         &self,
         Parameters(req): Parameters<HistoryMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -258,12 +275,18 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
+        let (call, options, expected_repository_id) = match req.into_parts() {
+            Ok(parts) => parts,
+            Err(error) => return into_tool_error(error, self.result_mode),
+        };
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "history",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, _deadline| {
                 let call = call.clone();
                 async move {
@@ -289,13 +312,14 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "json",
-        description = "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare bounded live JSON without indexing raw artifacts. The operation kinds are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections, not operation kinds. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with explicit omission metadata. JSON requests do not accept consistency. JMESPath expressions evaluate against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}} or {\"operation\":{\"kind\":\"numeric_summary\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"selector\":{\"kind\":\"jmespath\",\"expression\":\"graph_index.corpora[].cold_index_ms\"}}}. A zero numeric count means the selected path has no numeric leaves; it does not by itself mean the file is malformed."
+        description = "Preferred over native jq or whole-file reads for bounded JSON inspection. Query, summarize, or compare live JSON without indexing it. Operations are query, numeric_summary, and diff_fields; collapsed, keys, and schema are query projections. Use JSON Pointer or JMESPath selectors; keys paginate in depth-then-pointer order with omission metadata. JSON requests do not accept consistency. JMESPath evaluates against the selected document root. Example: {\"operation\":{\"kind\":\"query\",\"path\":\"benchmarks/reports/graph-signal-ablation-v1.json\",\"projection\":\"keys\"}}. A zero numeric count means the selection has no numeric leaves, not that the file is malformed."
     )]
     async fn leantoken_json(
         &self,
         Parameters(req): Parameters<JsonMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -309,11 +333,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens();
         let (request, options, execution, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "json",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, _deadline| {
                 let request = request.clone();
                 async move {
@@ -340,6 +367,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ContextMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -361,11 +389,14 @@ impl LeanTokenMcp {
             expected_repository_id,
             handoff,
         ) = req.into_parts(prepared.limits.default_context_tokens);
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "context",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let handoff = handoff.clone();
@@ -400,6 +431,7 @@ impl LeanTokenMcp {
         Parameters(req): Parameters<ReceiptRebaseMcpRequest>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let protocol = context.protocol_version();
         let prepared = match self
             .prepare_retrieval_call(
                 context.ct.clone(),
@@ -413,11 +445,14 @@ impl LeanTokenMcp {
         };
         let max_response_tokens = req.max_response_tokens;
         let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let options =
+            options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
             "receipt_rebase",
             prepared,
             expected_repository_id,
             max_response_tokens,
+            protocol,
             move |services, cancellation, deadline| {
                 let request = request.clone();
                 let options = options.with_initial_reconciliation_deadline(deadline);
@@ -446,10 +481,10 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mcp_services = self
-            .contexts
-            .resolve(req.repository_context.as_deref())
-            .map_err(into_mcp_error)?;
+        let mcp_services = match self.contexts.resolve(req.repository_context.as_deref()) {
+            Ok(services) => services,
+            Err(error) => return into_tool_error(error, self.result_mode),
+        };
         let state = mcp_services.get();
         let services = match self.services(&state) {
             Ok(services) => services,

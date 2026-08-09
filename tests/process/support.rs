@@ -373,10 +373,7 @@ impl McpProcess {
                 }
             }));
             let response = self.response(deadline.saturating_duration_since(Instant::now()));
-            let message = response["result"]["content"][0]["text"]
-                .as_str()
-                .unwrap_or_default();
-            if message.contains("unavailable") {
+            if response["result"]["structuredContent"]["status"] == "unavailable" {
                 assert_eq!(response["result"]["isError"], true);
                 assert!(self.child.try_wait().expect("poll process").is_none());
                 return;

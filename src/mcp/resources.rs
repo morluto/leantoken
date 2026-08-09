@@ -38,13 +38,6 @@ pub(in crate::mcp) fn receipt_uri(receipt_id: &str) -> String {
     format!("{RECEIPT_RESOURCE_PREFIX}{receipt_id}")
 }
 
-pub(in crate::mcp) fn receipt_resource_link(receipt_id: &str) -> Resource {
-    Resource::new(receipt_uri(receipt_id), "retrieval_receipt")
-        .with_title("LeanToken retrieval receipt")
-        .with_description("Complete source-free evidence identity receipt")
-        .with_mime_type(RECEIPT_RESOURCE_MEDIA_TYPE)
-}
-
 fn parse_receipt_uri(uri: &str) -> Option<&str> {
     let receipt_id = uri.strip_prefix(RECEIPT_RESOURCE_PREFIX)?;
     if receipt_id.len() != crate::receipt::RECEIPT_ID_RESPONSE_RESERVE.len()

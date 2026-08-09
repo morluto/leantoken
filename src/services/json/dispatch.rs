@@ -456,7 +456,7 @@ impl Services {
                         .expect("keys projection keeps a value"),
                 )?;
                 candidate.meta.source_tokens = source_tokens;
-                self.finalized_response_tokens(&candidate)
+                self.finalized_response_tokens(&candidate, options)
             })?;
             if let Some(keep) = keep.filter(|keep| *keep > 0) {
                 let mut value = entries.clone();
@@ -524,6 +524,7 @@ impl Services {
                     options
                         .max_response_tokens()
                         .expect("fitting only runs with a response limit"),
+                    options,
                 )?);
             }
         }
@@ -533,6 +534,7 @@ impl Services {
             options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
+            options,
         )?)
     }
 }

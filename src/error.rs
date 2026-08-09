@@ -279,6 +279,18 @@ pub enum Error {
         /// Configured inclusive maximum.
         limit: usize,
     },
+    /// Retrieval crossed a named hard work bound owned by one indexed path.
+    #[error("retrieval {kind} limit exceeded for {path}: observed {observed}, limit {limit}")]
+    RetrievalPathLimitExceeded {
+        /// Stable privacy-safe retrieval owner.
+        kind: RetrievalLimitKind,
+        /// Repository-relative indexed path that crossed the bound.
+        path: String,
+        /// First observed value outside the configured bound.
+        observed: usize,
+        /// Configured inclusive maximum.
+        limit: usize,
+    },
     /// Regex candidate verification stopped before complete coverage.
     #[error(
         "regex work budget exhausted on {dimension}: files={candidate_files}, chunks={candidate_chunks}, bytes={candidate_bytes}, limit={limit}"
@@ -542,6 +554,7 @@ impl Error {
             Self::RequestLimitExceeded { .. }
             | Self::ResponseBudgetExceeded { .. }
             | Self::RetrievalLimitExceeded { .. }
+            | Self::RetrievalPathLimitExceeded { .. }
             | Self::LimitExceeded => "request_limit_exceeded",
             Self::NotIndexed(_) => "not_indexed",
             Self::SymbolNotFound { .. } => "symbol_not_found",
@@ -608,6 +621,7 @@ impl Error {
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::LimitExceeded => "limit_exceeded",
             Self::RetrievalLimitExceeded { .. } => "request_limit_exceeded",
+            Self::RetrievalPathLimitExceeded { .. } => "request_limit_exceeded",
             Self::RegexWorkBudgetExceeded { .. } => "incomplete_work",
             Self::RequestLimitExceeded { .. } => "request_limit_exceeded",
             Self::ResponseBudgetExceeded { .. } => "request_limit_exceeded",

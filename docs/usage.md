@@ -529,11 +529,13 @@ backoff. Terminal root, discovery-limit, configuration, and cache-binding
 errors stop the indexing runtime and require a corrected configuration or
 restart.
 
-Logs go to stderr. Stdout is reserved for MCP protocol messages. LeanToken
-service errors exposed through MCP use fixed, allowlisted messages and a stable
-`data.category` for client handling. Repository, database, and external
-canonical paths, plus underlying I/O and SQLite details, remain in stderr
-diagnostics rather than protocol responses.
+Logs go to stderr. Stdout is reserved for MCP protocol messages. Semantic
+failures after a valid `tools/call` are native MCP tool-error results with
+`isError: true`; their structured content carries a fixed, allowlisted message,
+`status: "error"`, and stable `category` for model-visible recovery. Malformed
+or unroutable protocol requests and internal failures remain JSON-RPC errors.
+Repository, database, and external canonical paths, plus underlying I/O and
+SQLite details, remain in stderr diagnostics rather than protocol responses.
 
 The default `structured` mode returns the typed result without duplicating its
 JSON as text. Explicit `dual` and `text` modes remain troubleshooting
@@ -635,8 +637,8 @@ repository cap is `config.max_results` and may be lower. Omitted values use
 zero and must not exceed 20. Omitted optional values use their documented
 defaults. Values outside these ranges are rejected rather than silently
 clamped. Disallowed zero values are invalid input; values above a maximum
-produce an MCP error with the public field name, requested value, and active
-maximum.
+produce a model-visible MCP tool error with the public field name, requested
+value, and active maximum.
 
 LeanToken's stdio transport admits at most 16 decoded tool calls into the MCP
 SDK at once and holds that capacity through response delivery; each server also
@@ -849,8 +851,9 @@ incomplete.
 Repository-wide lexical scans have explicit file, per-file chunk, occurrence,
 and compiled-program safety limits. Exhaustive text and regex modes remove the
 candidate-chunk cap, but retain the other limits. If a limit would make the
-answer incomplete, the tool returns `LimitExceeded` instead of reporting a
-partial exhaustive result.
+answer incomplete, the tool returns a typed limit error instead of reporting a
+partial exhaustive result. A `regex_chunks_per_file` error includes the
+repository-relative `blocking_path` so the caller can narrow or exclude it.
 
 ## `leantoken.outline`
 
@@ -1450,8 +1453,10 @@ overhead:
   values neutralized and result arrays emptied.
 - `path_and_metadata_tokens` counts the remaining non-source response cost,
   including paths, metadata values, and repeated result structure.
-- `total_response_tokens` counts the final compact JSON service response,
-  including the nonzero accounting fields themselves.
+- `total_response_tokens` counts the final compact JSON service response for
+  direct/CLI calls. For MCP it counts the complete server-produced
+  `CallToolResult` in the configured result mode, including the nonzero
+  accounting fields themselves.
 - `tokenizer` identifies the tokenizer used for every count.
 
 Accounting is filled repeatedly to a deterministic fixed point. Therefore
@@ -1461,20 +1466,18 @@ exact total. Source limits remain independent and do not by themselves impose a
 hard ceiling on the final serialization. All retrieval callers can opt into
 that second boundary with `ServiceCallOptions`, MCP `max_response_tokens`, or
 CLI `--max-response-tokens`; a mandatory correctness skeleton that cannot fit
-returns a typed `ResponseBudgetExceeded` error. CLI JSON and MCP error data
-include `provided_max_response_tokens`, `minimum_required_response_tokens`,
+returns a typed `ResponseBudgetExceeded` error. CLI JSON and MCP structured
+tool-error content include `provided_max_response_tokens`,
+`minimum_required_response_tokens`,
 `retry_with_at_least`, and a bounded aggregate `breakdown`; the established
 `requested` and `limit` fields remain available. Retrying with the reported
 minimum is exact, while one token less remains insufficient. `files`, `read`,
 history text/commit results,
 context, and JSON keys pages use deterministic operation-aware fitting. Other
 shapes fail loudly instead of dropping evidence without a valid continuation.
-These counts and limits describe the service
-response DTO, not MCP
-text/structured-content duplication, tool schemas, provider framing, or JSON-RPC
-envelopes. The `dual` troubleshooting mode serializes the structured payload in
-both text and `structuredContent`; use the wire-cost harness when that boundary
-matters.
+MCP counts include text/structured-content duplication in `dual` mode. Tool
+schemas, provider framing, and JSON-RPC envelopes remain outside the per-call
+boundary; use the wire-cost harness for those connection-level costs.
 The default tokenizer is `cl100k_base`. Exact built-in modes are `cl100k_base`,
 `o200k_base`, `o200k_harmony`, `p50k_base`, `p50k_edit`, `r50k_base`, and
 `gpt2`.
@@ -1498,9 +1501,9 @@ treated as zero. `observations` retains the lower-level persisted failure and
 exact expected-hash counters.
 
 Source limits do not include JSON keys, paths, scores, hashes, receipts, tool
-schemas, or JSON-RPC envelopes. `total_response_tokens` captures the compact response
-DTO costs; benchmark utilities continue to measure complete transport costs
-when they include schemas, result-mode duplication, and JSON-RPC envelopes.
+schemas, or JSON-RPC envelopes. `total_response_tokens` captures the applicable
+DTO or MCP tool-result boundary; benchmark utilities continue to measure
+complete transport costs when they include schemas and JSON-RPC envelopes.
 
 Every source range has a 128-bit BLAKE3 fingerprint for local identity and
 duplicate suppression. Direct search/read responses carry it with the range;
@@ -1556,9 +1559,10 @@ Future releases may add categories or optional fields, so consumers should
 ignore keys and category values they do not know.
 
 Oversized inputs, invalid regular expressions or globs, stale cursors,
-unsupported structured reads, and unsafe paths return request errors without
-terminating the server. Their MCP `data.category` values are stable enough for
-client branching, while messages never echo caller-supplied or resolved paths.
+unsupported structured reads, and unsafe paths return model-visible tool errors
+without terminating the server. Their structured `category` values are stable
+enough for client branching, while messages never echo caller-supplied or
+resolved paths.
 Internal repository configuration, storage, and I/O failures are logged without
 including source bodies and are returned as generic MCP internal errors.
 

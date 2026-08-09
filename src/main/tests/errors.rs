@@ -107,6 +107,22 @@ fn cli_error_json_has_exact_safe_metadata() {
             }),
         ),
         (
+            leantoken::Error::RetrievalPathLimitExceeded {
+                kind: leantoken::RetrievalLimitKind::RegexChunksPerFile,
+                path: "generated/large.rs".into(),
+                observed: 257,
+                limit: 256,
+            },
+            serde_json::json!({
+                "error": "retrieval regex_chunks_per_file limit exceeded for generated/large.rs: observed 257, limit 256; exclude or narrow paths that include unusually large files",
+                "category": "request_limit_exceeded",
+                "requested": 257,
+                "limit": 256,
+                "blocking_path": "generated/large.rs",
+                "reason": "regex_chunks_per_file"
+            }),
+        ),
+        (
             leantoken::Error::InvalidJson {
                 syntax_category: "syntax",
                 byte_offset: 12,

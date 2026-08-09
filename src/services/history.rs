@@ -1259,7 +1259,7 @@ impl Services {
                 let mut candidate = original.clone();
                 candidate.commits.truncate(keep);
                 candidate.result_complete = false;
-                self.finalized_response_tokens(&candidate)
+                self.finalized_response_tokens(&candidate, options)
             })?;
             if let Some(keep) = keep.filter(|keep| *keep > 0) {
                 response.commits.truncate(keep);
@@ -1279,6 +1279,7 @@ impl Services {
             options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
+            options,
         )?)
     }
 
@@ -1319,7 +1320,7 @@ impl Services {
                 )
             });
             refresh_diff_symbols_accounting(&self.config.tokenizer, &mut candidate);
-            self.finalized_response_tokens(&candidate)
+            self.finalized_response_tokens(&candidate, options)
         })?;
         let Some(keep) = keep.filter(|keep| *keep > 0) else {
             let mut minimum = skeleton.clone();
@@ -1335,7 +1336,7 @@ impl Services {
                 )
             });
             refresh_diff_symbols_accounting(&self.config.tokenizer, &mut minimum);
-            return Err(self.response_budget_error(&minimum, max_response_tokens)?);
+            return Err(self.response_budget_error(&minimum, max_response_tokens, options)?);
         };
 
         let mut fitted = skeleton;
@@ -1372,7 +1373,7 @@ impl Services {
                         .clone_from(&original_result.incomplete_reason);
                 }
                 refresh_diff_symbols_accounting(&self.config.tokenizer, &mut candidate);
-                self.finalized_response_tokens(&candidate)
+                self.finalized_response_tokens(&candidate, options)
             })?;
             let Some(prefix_length) = prefix_length else {
                 continue;
@@ -1414,7 +1415,7 @@ impl Services {
         let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
             let candidate =
                 self.history_text_prefix_candidate(response, text, boundaries, keep, is_diff);
-            self.finalized_response_tokens(&candidate)
+            self.finalized_response_tokens(&candidate, options)
         })?;
         let Some(keep) = keep.filter(|keep| *keep > 0) else {
             return Ok(None);

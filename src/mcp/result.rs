@@ -47,21 +47,42 @@ pub enum McpResultMode {
     Structured,
 }
 
+impl McpResultMode {
+    pub(in crate::mcp) fn response_shape(
+        self,
+        protocol: Option<&ProtocolVersion>,
+    ) -> crate::tokens::McpResponseShape {
+        let mode = match self {
+            Self::Dual => crate::tokens::McpResponseMode::Dual,
+            Self::Text => crate::tokens::McpResponseMode::Text,
+            Self::Structured => crate::tokens::McpResponseMode::Structured,
+        };
+        crate::tokens::McpResponseShape {
+            mode,
+            modern_protocol: matches!(
+                protocol,
+                Some(version) if version >= &ProtocolVersion::V_2026_07_28
+            ),
+        }
+    }
+}
+
 /// Serialize a successful tool value using an explicit wire representation.
 pub fn tool_result<T: Serialize>(
     value: T,
     mode: McpResultMode,
 ) -> Result<CallToolResult, ErrorData> {
-    tool_result_with_limit(value, mode, None)
+    tool_result_with_limit(value, mode, None, Some(&ProtocolVersion::V_2026_07_28))
 }
 
 pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
     value: T,
     mode: McpResultMode,
     max_response_tokens: Option<usize>,
+    protocol: Option<&ProtocolVersion>,
 ) -> Result<CallToolResult, ErrorData> {
-    let (value, receipt_id) = serde_json::to_value(value)
-        .and_then(decorate_receipt_result)
+    let mut value = serde_json::to_value(value)
+        .map(decorate_receipt_result)
         .map_err(|error| {
             tracing::error!(%error, "MCP response serialization failed");
             ErrorData::internal_error(
@@ -69,6 +90,14 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
                 mcp_error_data("response_serialization"),
             )
         })?;
+    let shape = mode.response_shape(protocol);
+    recalculate_mcp_accounting(&mut value, shape).map_err(|error| {
+        tracing::error!(%error, "MCP response accounting failed");
+        ErrorData::internal_error(
+            "repository retrieval failed",
+            mcp_error_data("response_accounting"),
+        )
+    })?;
     if let Some(limit) = max_response_tokens
         && let Some(total) = value
             .pointer("/meta/total_response_tokens")
@@ -76,6 +105,18 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
             .and_then(|total| usize::try_from(total).ok())
         && total > limit
     {
+        let source_tokens = value
+            .pointer("/meta/source_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let protocol_tokens = value
+            .pointer("/meta/protocol_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let path_and_metadata_tokens = value
+            .pointer("/meta/path_and_metadata_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
         return Err(ErrorData::invalid_params(
             format!("max_response_tokens is too small; retry with at least {total}"),
             Some(serde_json::json!({
@@ -86,44 +127,30 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
                 "provided_max_response_tokens": limit,
                 "minimum_required_response_tokens": total,
                 "retry_with_at_least": total,
+                "breakdown": {
+                    "mandatory_response_tokens": total,
+                    "source_tokens": source_tokens,
+                    "protocol_tokens": protocol_tokens,
+                    "path_and_metadata_tokens": path_and_metadata_tokens,
+                    "receipt_reserve_tokens": 0,
+                },
             })),
         ));
     }
-    let mut result = match mode {
-        McpResultMode::Dual => CallToolResult::structured(value.clone()),
-        McpResultMode::Text => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
-        McpResultMode::Structured => {
-            let mut result = CallToolResult::default();
-            result.structured_content = Some(value);
-            result.is_error = Some(false);
-            result
-        }
-    };
-    if let Some(receipt_id) = receipt_id {
-        let uri = resources::receipt_uri(&receipt_id);
-        result.content.push(ContentBlock::text(format!(
-            "Copy the opaque URI exactly and call MCP resources/read: {uri}. In Codex, call read_mcp_resource with the LeanToken server and this exact URI."
-        )));
-        result.content.push(ContentBlock::resource_link(
-            resources::receipt_resource_link(&receipt_id),
-        ));
-    }
-    Ok(result)
+    Ok(crate::tokens::build_mcp_tool_result(value, shape.mode))
 }
 
-fn decorate_receipt_result(
-    mut value: serde_json::Value,
-) -> serde_json::Result<(serde_json::Value, Option<String>)> {
+fn decorate_receipt_result(mut value: serde_json::Value) -> serde_json::Value {
     let receipt_id = value
         .pointer("/meta/receipt_id")
         .and_then(serde_json::Value::as_str)
         .map(str::to_owned);
     let Some(receipt_id) = receipt_id else {
-        return Ok((value, None));
+        return value;
     };
     let uri = resources::receipt_uri(&receipt_id);
     let Some(object) = value.as_object_mut() else {
-        return Ok((value, None));
+        return value;
     };
     object.insert(
         "receipt_resource".into(),
@@ -133,11 +160,13 @@ fn decorate_receipt_result(
             "uri": uri,
         }),
     );
-    recalculate_structured_accounting(&mut value)?;
-    Ok((value, Some(receipt_id)))
+    value
 }
 
-fn recalculate_structured_accounting(value: &mut serde_json::Value) -> serde_json::Result<()> {
+fn recalculate_mcp_accounting(
+    value: &mut serde_json::Value,
+    shape: crate::tokens::McpResponseShape,
+) -> serde_json::Result<()> {
     let Some(tokenizer_name) = value
         .pointer("/meta/tokenizer")
         .and_then(serde_json::Value::as_str)
@@ -153,8 +182,9 @@ fn recalculate_structured_accounting(value: &mut serde_json::Value) -> serde_jso
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or_default();
     for _ in 0..32 {
+        let result = crate::tokens::model_visible_mcp_result(value.clone(), shape);
         let accounting =
-            crate::tokens::response_token_accounting(value, source_tokens, &tokenizer)?;
+            crate::tokens::response_token_accounting(&result, source_tokens, &tokenizer)?;
         let meta = value
             .get_mut("meta")
             .and_then(serde_json::Value::as_object_mut)
@@ -185,7 +215,7 @@ fn recalculate_structured_accounting(value: &mut serde_json::Value) -> serde_jso
         );
     }
     Err(serde_json::Error::io(std::io::Error::other(
-        "structured MCP response accounting did not reach a fixed point",
+        "MCP tool-result accounting did not reach a fixed point",
     )))
 }
 
@@ -213,6 +243,7 @@ pub(in crate::mcp) fn retryable_tool_result(
         tool_unavailable(
             "response_serialization",
             "repository retrieval is temporarily unavailable; retry shortly",
+            mode,
         )
     })
 }

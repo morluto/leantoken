@@ -2,14 +2,25 @@ use std::sync::Arc;
 
 use leantoken::{Config, ContextRequest, mcp::LeanTokenMcp, services::Services};
 use rmcp::{
-    RoleClient,
+    ClientHandler, RoleClient,
     model::{
-        CacheScope, CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, ErrorCode,
-        ProtocolVersion, ReadResourceRequestParams, Request, ResourceContents,
+        CacheScope, CallToolRequestParams, CallToolResult, ClientInfo, ClientRequest, ErrorCode,
+        ProtocolVersion, ReadResourceRequestParams, Request, ResourceContents, ResultType,
     },
     serve_client, serve_server,
     service::{Peer, PeerRequestOptions, ServiceError},
 };
+
+#[derive(Debug, Clone)]
+struct ModernProtocolClient;
+
+impl ClientHandler for ModernProtocolClient {
+    fn get_info(&self) -> ClientInfo {
+        let mut info = ClientInfo::default();
+        info.protocol_version = ProtocolVersion::V_2026_07_28;
+        info
+    }
+}
 
 async fn call_tool(
     peer: &Peer<RoleClient>,
@@ -22,6 +33,22 @@ async fn call_tool(
         .clone();
     peer.call_tool(CallToolRequestParams::new(tool).with_arguments(arguments))
         .await
+}
+
+fn expect_tool_error(
+    result: Result<CallToolResult, ServiceError>,
+    category: &str,
+) -> CallToolResult {
+    let response = result.expect("semantic failure should be model-visible");
+    assert_eq!(response.is_error, Some(true));
+    assert_eq!(
+        response
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["category"].as_str()),
+        Some(category)
+    );
+    response
 }
 
 async fn assert_mcp_limit_contract(
@@ -49,31 +76,27 @@ async fn assert_mcp_limit_contract(
         }
         let result = call_tool(peer, tool, arguments).await;
         if requested == 0 && !zero_is_valid {
-            let ServiceError::McpError(error) = result.expect_err("zero must be rejected") else {
-                panic!("zero returned a non-MCP error");
-            };
-            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            let error = expect_tool_error(result, "invalid_input");
             assert_eq!(
-                error.data,
+                error.structured_content,
                 Some(serde_json::json!({
                     "category": "invalid_input",
                     "field": field,
+                    "message": format!("invalid {field}: must be greater than zero"),
+                    "status": "error",
                 }))
             );
         } else if requested > limit {
-            let ServiceError::McpError(error) =
-                result.expect_err("oversized limit must be rejected")
-            else {
-                panic!("oversized limit returned a non-MCP error");
-            };
-            assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+            let error = expect_tool_error(result, "request_limit_exceeded");
             assert_eq!(
-                error.data,
+                error.structured_content,
                 Some(serde_json::json!({
                     "category": "request_limit_exceeded",
                     "field": field,
                     "requested": requested,
                     "limit": limit,
+                    "message": format!("{field} exceeds its configured limit"),
+                    "status": "error",
                 }))
             );
         } else {
@@ -99,22 +122,72 @@ async fn assert_mcp_limit_exceeded(
     } else {
         arguments[field] = serde_json::json!(requested);
     }
-    let ServiceError::McpError(error) = call_tool(peer, tool, arguments)
-        .await
-        .expect_err("configured limit must be rejected")
-    else {
-        panic!("configured limit returned a non-MCP error");
-    };
-    assert_eq!(error.code, ErrorCode::INVALID_PARAMS);
+    let error = expect_tool_error(
+        call_tool(peer, tool, arguments).await,
+        "request_limit_exceeded",
+    );
     assert_eq!(
-        error.data,
+        error.structured_content,
         Some(serde_json::json!({
             "category": "request_limit_exceeded",
             "field": field,
             "requested": requested,
             "limit": limit,
+            "message": format!("{field} exceeds its configured limit"),
+            "status": "error",
         }))
     );
+}
+
+#[tokio::test]
+async fn modern_rmcp_contract_uses_native_result_and_cache_fields() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
+        .expect("write fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Arc::new(Services::open(config).expect("services"));
+    services.index(false).await.expect("index fixture");
+
+    let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+    let server_start = tokio::spawn(async move {
+        serve_server(LeanTokenMcp::new(services), server_stream)
+            .await
+            .expect("start MCP server")
+    });
+    let mut client = serve_client(ModernProtocolClient, client_stream)
+        .await
+        .expect("start modern MCP client");
+    let mut server = server_start.await.expect("join server startup");
+
+    let tools = client
+        .peer()
+        .list_tools(None)
+        .await
+        .expect("list modern tools");
+    assert_eq!(tools.ttl_ms, Some(0));
+    assert_eq!(tools.cache_scope, Some(CacheScope::Public));
+    let resources = client
+        .peer()
+        .list_resources(None)
+        .await
+        .expect("list modern resources");
+    assert_eq!(resources.ttl_ms, Some(0));
+    assert_eq!(resources.cache_scope, Some(CacheScope::Private));
+
+    let response = call_tool(
+        client.peer(),
+        "files",
+        serde_json::json!({"operation": {"kind": "tree", "max_results": 1}}),
+    )
+    .await
+    .expect("call modern tool");
+    assert_eq!(response.result_type, Some(ResultType::COMPLETE));
+    assert!(response.content.is_empty());
+    assert!(response.structured_content.is_some());
+
+    client.close().await.expect("close client");
+    server.close().await.expect("close server");
 }
 
 #[tokio::test]
@@ -301,23 +374,18 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0]["start_line"], hits[0]["end_line"]);
 
-    let mismatch = call_tool(
-        client.peer(),
-        "search",
-        serde_json::json!({
-            "operation": {"kind": "text", "query": "answer"},
-            "expected_repository_id": "different-repository",
-        }),
-    )
-    .await
-    .expect_err("repository mismatch");
-    assert!(matches!(
-        mismatch,
-        ServiceError::McpError(data)
-            if data.code == ErrorCode::INVALID_PARAMS
-                && data.data.as_ref().and_then(|value| value["category"].as_str())
-                    == Some("repository_identity_mismatch")
-    ));
+    expect_tool_error(
+        call_tool(
+            client.peer(),
+            "search",
+            serde_json::json!({
+                "operation": {"kind": "text", "query": "answer"},
+                "expected_repository_id": "different-repository",
+            }),
+        )
+        .await,
+        "repository_identity_mismatch",
+    );
 
     for (tool, arguments) in [
         ("outline", serde_json::json!({"paths": ["lib.rs"]})),
@@ -548,16 +616,27 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         .clone()
         .expect("server instructions");
     assert!(instructions.contains("preferred repository discovery"));
-    assert!(instructions.contains("call leantoken.savings directly"));
     assert!(instructions.contains("call leantoken.context once"));
     assert!(instructions.contains("plan_only=false"));
-    assert!(instructions.contains("at most one focused follow-up"));
-    assert!(instructions.contains("Reserve plan_only=true"));
-    assert!(instructions.contains("leantoken.search over grep or rg"));
-    assert!(instructions.contains("leantoken.history over git show"));
+    assert!(instructions.contains("For a known scope"));
+    assert!(instructions.contains("Use native tools for edits, builds, tests"));
     assert!(instructions.contains("consistency=reconcile_working_tree"));
-    assert!(instructions.contains("native tools for edits, builds, tests"));
+    assert!(instructions.contains("status=retryable"));
+    assert!(instructions.contains("configured repository_context names"));
+    assert!(instructions.contains("Use savings for token statistics"));
 
+    let tool_page = client
+        .peer()
+        .list_tools(None)
+        .await
+        .expect("list tools page");
+    if server_info.protocol_version >= ProtocolVersion::V_2026_07_28 {
+        assert_eq!(tool_page.ttl_ms, Some(0));
+        assert_eq!(tool_page.cache_scope, Some(CacheScope::Public));
+    } else {
+        assert_eq!(tool_page.ttl_ms, None);
+        assert_eq!(tool_page.cache_scope, None);
+    }
     let tools = client.peer().list_all_tools().await.expect("list tools");
     let names = tools
         .iter()
@@ -666,12 +745,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         structured["receipt_resource"]["id"],
         structured["meta"]["receipt_id"]
     );
-    assert!(response.content.iter().any(|content| {
-        matches!(
-            content,
-            ContentBlock::ResourceLink(resource) if resource.uri == receipt_uri
-        )
-    }));
+    assert!(response.content.is_empty());
     let receipt = client
         .peer()
         .read_resource(ReadResourceRequestParams::new(receipt_uri.clone()))
@@ -920,27 +994,52 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
             .is_some_and(|text| text.text.contains("unknown field") && text.text.contains("bogus"))
     }));
 
-    let missing_json = call_tool(
-        client.peer(),
-        "json",
-        serde_json::json!({
-            "operation": {
-                "kind": "query",
-                "path": "missing.json"
-            }
-        }),
-    )
-    .await
-    .expect_err("missing JSON paths should be invalid parameters");
-    let ServiceError::McpError(data) = missing_json else {
-        panic!("missing JSON path returned a non-MCP error");
-    };
-    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
+    expect_tool_error(
+        call_tool(
+            client.peer(),
+            "json",
+            serde_json::json!({
+                "operation": {
+                    "kind": "query",
+                    "path": "missing.json"
+                }
+            }),
+        )
+        .await,
+        "not_found",
+    );
+
+    let response_budget = expect_tool_error(
+        call_tool(
+            client.peer(),
+            "files",
+            serde_json::json!({
+                "operation": {
+                    "kind": "tree",
+                    "max_results": 1,
+                    "max_response_tokens": 1
+                }
+            }),
+        )
+        .await,
+        "request_limit_exceeded",
+    );
     assert_eq!(
-        data.data
+        response_budget
+            .structured_content
             .as_ref()
-            .and_then(|value| value["category"].as_str()),
-        Some("not_found")
+            .and_then(|value| value["field"].as_str()),
+        Some("max_response_tokens")
+    );
+    assert!(
+        response_budget
+            .structured_content
+            .as_ref()
+            .is_some_and(|value| {
+                value["minimum_required_response_tokens"]
+                    .as_u64()
+                    .is_some_and(|minimum| minimum > 1)
+            })
     );
 
     let oversized_arguments = serde_json::json!({
@@ -954,96 +1053,71 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     .as_object()
     .expect("oversized search arguments")
     .clone();
-    let error = client
-        .peer()
-        .call_tool(CallToolRequestParams::new("search").with_arguments(oversized_arguments))
-        .await
-        .expect_err("oversized request should be rejected");
-    assert!(matches!(
-        error,
-        ServiceError::McpError(data)
-            if data.code == ErrorCode::INVALID_PARAMS
-                && data.data.as_ref().and_then(|value| value["category"].as_str())
-                    == Some("input_too_long")
-    ));
+    expect_tool_error(
+        client
+            .peer()
+            .call_tool(CallToolRequestParams::new("search").with_arguments(oversized_arguments))
+            .await,
+        "input_too_long",
+    );
 
     let boundary_id = "x".repeat(128);
-    let boundary_error = call_tool(
-        client.peer(),
-        "files",
-        serde_json::json!({
-            "operation": {"kind": "tree"},
-            "expected_repository_id": boundary_id
-        }),
-    )
-    .await
-    .expect_err("128-byte mismatched identity should reach identity validation");
-    assert!(matches!(
-        boundary_error,
-        ServiceError::McpError(data)
-            if data.data.as_ref().and_then(|value| value["category"].as_str())
-                == Some("repository_identity_mismatch")
-    ));
+    expect_tool_error(
+        call_tool(
+            client.peer(),
+            "files",
+            serde_json::json!({
+                "operation": {"kind": "tree"},
+                "expected_repository_id": boundary_id
+            }),
+        )
+        .await,
+        "repository_identity_mismatch",
+    );
 
     let oversized_id = "x".repeat(129);
-    let oversized_error = call_tool(
-        client.peer(),
-        "files",
-        serde_json::json!({
-            "operation": {"kind": "tree"},
-            "expected_repository_id": oversized_id
-        }),
-    )
-    .await
-    .expect_err("oversized repository identity should be rejected");
-    let ServiceError::McpError(data) = oversized_error else {
-        panic!("expected MCP invalid-parameter error");
-    };
-    assert_eq!(data.code, ErrorCode::INVALID_PARAMS);
-    assert_eq!(
-        data.data
-            .as_ref()
-            .and_then(|value| value["category"].as_str()),
-        Some("input_too_long")
+    let oversized_error = expect_tool_error(
+        call_tool(
+            client.peer(),
+            "files",
+            serde_json::json!({
+                "operation": {"kind": "tree"},
+                "expected_repository_id": oversized_id
+            }),
+        )
+        .await,
+        "input_too_long",
     );
     assert!(
-        !serde_json::to_string(&data)
-            .expect("serialize bounded MCP error")
+        !serde_json::to_string(&oversized_error)
+            .expect("serialize bounded tool error")
             .contains(&oversized_id)
     );
 
-    let multibyte_boundary_error = call_tool(
-        client.peer(),
-        "files",
-        serde_json::json!({
-            "operation": {"kind": "tree"},
-            "expected_repository_id": "é".repeat(64)
-        }),
-    )
-    .await
-    .expect_err("128-byte multibyte identity should reach identity validation");
-    assert!(matches!(
-        multibyte_boundary_error,
-        ServiceError::McpError(data)
-            if data.data.as_ref().and_then(|value| value["category"].as_str())
-                == Some("repository_identity_mismatch")
-    ));
-    let multibyte_oversized_error = call_tool(
-        client.peer(),
-        "files",
-        serde_json::json!({
-            "operation": {"kind": "tree"},
-            "expected_repository_id": "é".repeat(65)
-        }),
-    )
-    .await
-    .expect_err("130-byte multibyte identity should be rejected");
-    assert!(matches!(
-        multibyte_oversized_error,
-        ServiceError::McpError(data)
-            if data.data.as_ref().and_then(|value| value["category"].as_str())
-                == Some("input_too_long")
-    ));
+    expect_tool_error(
+        call_tool(
+            client.peer(),
+            "files",
+            serde_json::json!({
+                "operation": {"kind": "tree"},
+                "expected_repository_id": "é".repeat(64)
+            }),
+        )
+        .await,
+        "repository_identity_mismatch",
+    );
+    expect_tool_error(
+        call_tool(
+            client.peer(),
+            "files",
+            serde_json::json!({
+                "operation": {"kind": "tree"},
+                "expected_repository_id": "é".repeat(65)
+            }),
+        )
+        .await,
+        "input_too_long",
+    );
 
     let bounded_arguments = serde_json::json!({
         "operation": {
@@ -1459,10 +1533,13 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
         .await
         .expect("failed result");
     assert_eq!(failed.is_error, Some(true));
-    assert!(
-        failed.content[0]
-            .as_text()
-            .is_some_and(|text| text.text.contains("unavailable"))
+    assert!(failed.content.is_empty());
+    assert_eq!(
+        failed
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["status"].as_str()),
+        Some("unavailable")
     );
 
     client.close().await.expect("close client");

@@ -11,7 +11,8 @@ pub(in crate::mcp) struct HistoryMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     pub(in crate::mcp) expected_repository_id: Option<String>,
-    /// Git-backed symbol history operation.
+    /// Git-backed symbol operation: `read_symbol`, `diff_symbol`, `diff_symbols`, or
+    /// `symbol_log`. Use `symbol_log` to list commits that touched a symbol.
     pub(in crate::mcp) operation: HistoryMcpOperation,
 }
 

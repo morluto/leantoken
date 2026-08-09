@@ -21,6 +21,9 @@ pub(super) fn cli_error_message(error: &leantoken::Error) -> String {
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
             format!("{error}; {}", kind.guidance())
         }
+        leantoken::Error::RetrievalPathLimitExceeded { kind, .. } => {
+            format!("{error}; {}", kind.guidance())
+        }
         leantoken::Error::RegexWorkBudgetExceeded { dimension, .. } => {
             format!("{error}; {}", dimension.guidance())
         }
@@ -56,6 +59,8 @@ pub(super) struct CliErrorResponse {
     requested: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocking_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     complete: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,6 +124,7 @@ pub(super) fn cli_parse_error_response(error: &clap::Error) -> CliErrorResponse 
         exhaustive_text_example: None,
         requested: None,
         limit: None,
+        blocking_path: None,
         complete: None,
         candidate_files: None,
         candidate_chunks: None,
@@ -157,6 +163,9 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             limit,
         } => (None, Some(*field), Some(*requested), Some(*limit)),
         leantoken::Error::RetrievalLimitExceeded {
+            observed, limit, ..
+        } => (None, None, Some(*observed), Some(*limit)),
+        leantoken::Error::RetrievalPathLimitExceeded {
             observed, limit, ..
         } => (None, None, Some(*observed), Some(*limit)),
         leantoken::Error::RegexWorkBudgetExceeded { limit, .. } => (None, None, None, Some(*limit)),
@@ -203,6 +212,9 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             Some(*column),
         ),
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
+            (Some(kind.as_str().to_owned()), None, None, None, None, None)
+        }
+        leantoken::Error::RetrievalPathLimitExceeded { kind, .. } => {
             (Some(kind.as_str().to_owned()), None, None, None, None, None)
         }
         leantoken::Error::RegexWorkBudgetExceeded { dimension, .. } => (
@@ -282,6 +294,10 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         exhaustive_text_example,
         requested,
         limit,
+        blocking_path: match error {
+            leantoken::Error::RetrievalPathLimitExceeded { path, .. } => Some(path.clone()),
+            _ => None,
+        },
         complete,
         candidate_files,
         candidate_chunks,

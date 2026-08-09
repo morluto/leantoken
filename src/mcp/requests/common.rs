@@ -1,8 +1,5 @@
 use super::*;
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::mcp) const RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS: usize = 128;
-
 pub(in crate::mcp) fn service_call_options(
     max_response_tokens: Option<usize>,
 ) -> ServiceCallOptions {

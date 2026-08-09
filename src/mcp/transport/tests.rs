@@ -133,3 +133,65 @@ fn dispatch_permit_returns_when_a_request_is_cancelled() {
     drop(request);
     assert_eq!(dispatch.available_permits(), 1);
 }
+
+#[test]
+fn overload_results_follow_the_negotiated_rmcp_result_shape() {
+    let transport = BoundedStdioTransport::new(RequestAdmission::new(1), McpResultMode::Dual);
+    let legacy =
+        serde_json::to_value(transport.overloaded_response(rmcp::model::NumberOrString::Number(1)))
+            .expect("serialize legacy overload response");
+    assert!(legacy.pointer("/result/resultType").is_none());
+
+    *transport
+        .negotiated_protocol
+        .write()
+        .expect("protocol lock") = Some(ProtocolVersion::V_2026_07_28);
+    let modern =
+        serde_json::to_value(transport.overloaded_response(rmcp::model::NumberOrString::Number(2)))
+            .expect("serialize modern overload response");
+    assert_eq!(
+        modern.pointer("/result/resultType"),
+        Some(&serde_json::json!("complete"))
+    );
+}
+
+#[test]
+fn native_rmcp_codec_recovers_after_the_bounded_frame_limit() {
+    let mut transport = BoundedStdioTransport::new(RequestAdmission::new(1), McpResultMode::Dual);
+    transport
+        .read_buffer
+        .extend(std::iter::repeat_n(b'x', MAX_MCP_STDIO_FRAME_BYTES + 1));
+    transport.read_buffer.extend_from_slice(b"\n");
+    let partial = br#"{"jsonrpc""#;
+    transport.read_buffer.extend_from_slice(partial);
+
+    assert!(matches!(
+        transport.decoder.decode(&mut transport.read_buffer),
+        Err(JsonRpcMessageCodecError::MaxLineLengthExceeded)
+    ));
+    assert!(
+        transport
+            .decoder
+            .decode(&mut transport.read_buffer)
+            .expect("discard oversized line")
+            .is_none()
+    );
+    assert_eq!(&transport.read_buffer[..], partial);
+    assert!(transport.read_buffer.capacity() > RETAINED_MCP_FRAME_CAPACITY);
+    transport.release_oversized_read_buffer();
+    assert_eq!(&transport.read_buffer[..], partial);
+    assert!(transport.read_buffer.capacity() <= RETAINED_MCP_FRAME_CAPACITY);
+
+    transport.read_buffer.extend_from_slice(
+        br#":"2.0","id":1,"method":"ping"}
+"#,
+    );
+    let recovered = transport
+        .decoder
+        .decode(&mut transport.read_buffer)
+        .expect("discard oversized line and decode the next frame")
+        .expect("valid frame after oversized line");
+    assert!(matches!(recovered, JsonRpcMessage::Request(_)));
+    transport.release_oversized_read_buffer();
+    assert!(transport.read_buffer.capacity() <= RETAINED_MCP_FRAME_CAPACITY);
+}

@@ -134,6 +134,7 @@ pub struct Services {
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
     receipt_resource_reserve: bool,
+    mcp_response_shape: Option<crate::tokens::McpResponseShape>,
     context_response_profile: Option<ContextResponseProfile>,
     initial_reconciliation_deadline: Option<tokio::time::Instant>,
 }
@@ -145,6 +146,7 @@ impl ServiceCallOptions {
         Self {
             max_response_tokens: None,
             receipt_resource_reserve: false,
+            mcp_response_shape: None,
             context_response_profile: None,
             initial_reconciliation_deadline: None,
         }
@@ -175,6 +177,18 @@ impl ServiceCallOptions {
 
     pub(crate) const fn receipt_resource_reserve(self) -> bool {
         self.receipt_resource_reserve
+    }
+
+    pub(crate) const fn with_mcp_response_shape(
+        mut self,
+        shape: crate::tokens::McpResponseShape,
+    ) -> Self {
+        self.mcp_response_shape = Some(shape);
+        self
+    }
+
+    pub(crate) const fn mcp_response_shape(self) -> Option<crate::tokens::McpResponseShape> {
+        self.mcp_response_shape
     }
 
     /// Select the presentation depth for a context response.
@@ -247,11 +261,16 @@ impl Services {
         self.response_accountant.finalize(response)
     }
 
-    fn finalized_response_tokens<T>(&self, response: &T) -> Result<usize>
+    fn finalized_response_tokens<T>(
+        &self,
+        response: &T,
+        options: ServiceCallOptions,
+    ) -> Result<usize>
     where
         T: RetrievalResponse + Clone,
     {
-        self.response_accountant.finalized_tokens(response)
+        self.response_accountant
+            .finalized_tokens_for(response, options.mcp_response_shape())
     }
 
     fn response_fits<T>(&self, response: &T, options: ServiceCallOptions) -> Result<bool>
@@ -289,9 +308,9 @@ impl Services {
     {
         if options.receipt_resource_reserve() {
             self.response_accountant
-                .finalized_tokens_with_receipt_reserve(response, returned_items)
+                .finalized_tokens_with_receipt_reserve(response, returned_items, options)
         } else {
-            self.finalized_response_tokens(response)
+            self.finalized_response_tokens(response, options)
         }
     }
 
@@ -311,12 +330,13 @@ impl Services {
         &self,
         response: &T,
         provided_max_response_tokens: usize,
+        options: ServiceCallOptions,
     ) -> Result<Error>
     where
         T: RetrievalResponse + Clone,
     {
         self.response_accountant
-            .budget_error(response, provided_max_response_tokens)
+            .budget_error(response, provided_max_response_tokens, options)
     }
 
     fn response_budget_error_with_receipt_reserve<T>(
@@ -334,9 +354,10 @@ impl Services {
                 response,
                 returned_items,
                 provided_max_response_tokens,
+                options,
             )
         } else {
-            self.response_budget_error(response, provided_max_response_tokens)
+            self.response_budget_error(response, provided_max_response_tokens, options)
         }
     }
 
@@ -349,10 +370,17 @@ impl Services {
         T: RetrievalResponse + Clone,
     {
         if options.receipt_resource_reserve() {
-            let reserved_tokens = self
-                .response_accountant
-                .finalized_tokens_with_receipt_resource(response)?;
-            self.response_accountant.finalize(response)?;
+            let reserved_tokens = if options.mcp_response_shape().is_some() {
+                self.response_accountant
+                    .finalize_with_receipt_resource(response, options.mcp_response_shape())?;
+                response.meta_mut().total_response_tokens
+            } else {
+                let reserved = self
+                    .response_accountant
+                    .finalized_tokens_with_receipt_resource(response, None)?;
+                self.response_accountant.finalize_for(response, None)?;
+                reserved
+            };
             if let Some(limit) = options.max_response_tokens()
                 && reserved_tokens > limit
             {
