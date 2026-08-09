@@ -350,7 +350,7 @@
 <a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">let </span>sha = String::from_utf8_lossy(<span class="kw-2">&amp;</span>output).trim().to_owned();
 <a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">if </span>sha.is_empty() {
 <a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#353 id=353 data-nosnippet>353</a>            field: <span class="string">"base revision"</span>,
+<a href=#353 id=353 data-nosnippet>353</a>            field,
 <a href=#354 id=354 data-nosnippet>354</a>            reason: <span class="string">"resolved to an empty SHA"</span>,
 <a href=#355 id=355 data-nosnippet>355</a>        });
 <a href=#356 id=356 data-nosnippet>356</a>    }
@@ -391,38 +391,45 @@
 <a href=#391 id=391 data-nosnippet>391</a>    ) <span class="kw">else </span>{
 <a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
 <a href=#393 id=393 data-nosnippet>393</a>    };
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="prelude-val">Ok</span>(parse_diff_names(output.as_slice(), max, prefix))
+<a href=#394 id=394 data-nosnippet>394</a>    parse_diff_names(output.as_slice(), max, prefix)
 <a href=#395 id=395 data-nosnippet>395</a>}
 <a href=#396 id=396 data-nosnippet>396</a>
-<a href=#397 id=397 data-nosnippet>397</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_diff_names&lt;R: BufRead&gt;(<span class="kw-2">mut </span>reader: R, max: usize, prefix: <span class="kw-2">&amp;</span>str) -&gt; Vec&lt;String&gt; {
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">if </span>max == <span class="number">0 </span>{
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">return </span>Vec::new();
-<a href=#400 id=400 data-nosnippet>400</a>    }
-<a href=#401 id=401 data-nosnippet>401</a>    <span class="kw">let </span><span class="kw-2">mut </span>changed = Vec::new();
-<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span><span class="kw-2">mut </span>record = Vec::new();
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">loop </span>{
-<a href=#404 id=404 data-nosnippet>404</a>        record.clear();
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">match </span>reader.read_until(<span class="number">0</span>, <span class="kw-2">&amp;mut </span>record) {
-<a href=#406 id=406 data-nosnippet>406</a>            <span class="prelude-val">Ok</span>(<span class="number">0</span>) =&gt; <span class="kw">break</span>,
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
-<a href=#408 id=408 data-nosnippet>408</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-<a href=#409 id=409 data-nosnippet>409</a>        }
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">if </span>record.last() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">0</span>) {
-<a href=#411 id=411 data-nosnippet>411</a>            record.pop();
-<a href=#412 id=412 data-nosnippet>412</a>        }
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">if </span>record.is_empty() {
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">continue</span>;
-<a href=#415 id=415 data-nosnippet>415</a>        }
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>path = String::from_utf8_lossy(<span class="kw-2">&amp;</span>record);
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(path) = path.strip_prefix(prefix) <span class="kw">else </span>{
+<a href=#397 id=397 data-nosnippet>397</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse_diff_names&lt;R: BufRead&gt;(
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw-2">mut </span>reader: R,
+<a href=#399 id=399 data-nosnippet>399</a>    max: usize,
+<a href=#400 id=400 data-nosnippet>400</a>    prefix: <span class="kw-2">&amp;</span>str,
+<a href=#401 id=401 data-nosnippet>401</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;&gt; {
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">if </span>max == <span class="number">0 </span>{
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+<a href=#404 id=404 data-nosnippet>404</a>    }
+<a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">let </span><span class="kw-2">mut </span>changed = Vec::new();
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">let </span><span class="kw-2">mut </span>record = Vec::new();
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">loop </span>{
+<a href=#408 id=408 data-nosnippet>408</a>        record.clear();
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">match </span>reader.read_until(<span class="number">0</span>, <span class="kw-2">&amp;mut </span>record) {
+<a href=#410 id=410 data-nosnippet>410</a>            <span class="prelude-val">Ok</span>(<span class="number">0</span>) =&gt; <span class="kw">break</span>,
+<a href=#411 id=411 data-nosnippet>411</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+<a href=#413 id=413 data-nosnippet>413</a>        }
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">if </span>record.last() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">0</span>) {
+<a href=#415 id=415 data-nosnippet>415</a>            record.pop();
+<a href=#416 id=416 data-nosnippet>416</a>        }
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">if </span>record.is_empty() {
 <a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">continue</span>;
-<a href=#419 id=419 data-nosnippet>419</a>        };
-<a href=#420 id=420 data-nosnippet>420</a>        changed.push(slash_path(Path::new(path)));
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">if </span>changed.len() == max {
-<a href=#422 id=422 data-nosnippet>422</a>            <span class="kw">break</span>;
-<a href=#423 id=423 data-nosnippet>423</a>        }
-<a href=#424 id=424 data-nosnippet>424</a>    }
-<a href=#425 id=425 data-nosnippet>425</a>    changed
-<a href=#426 id=426 data-nosnippet>426</a>}
-<a href=#427 id=427 data-nosnippet>427</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#419 id=419 data-nosnippet>419</a>        }
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>path = std::str::from_utf8(<span class="kw-2">&amp;</span>record).map_err(|<span class="kw">_</span>| Error::InvalidInput {
+<a href=#421 id=421 data-nosnippet>421</a>            field: <span class="string">"git diff path"</span>,
+<a href=#422 id=422 data-nosnippet>422</a>            reason: <span class="string">"must be valid UTF-8"</span>,
+<a href=#423 id=423 data-nosnippet>423</a>        })<span class="question-mark">?</span>;
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(path) = path.strip_prefix(prefix) <span class="kw">else </span>{
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">continue</span>;
+<a href=#426 id=426 data-nosnippet>426</a>        };
+<a href=#427 id=427 data-nosnippet>427</a>        changed.push(slash_path(Path::new(path)));
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">if </span>changed.len() == max {
+<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">break</span>;
+<a href=#430 id=430 data-nosnippet>430</a>        }
+<a href=#431 id=431 data-nosnippet>431</a>    }
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="prelude-val">Ok</span>(changed)
+<a href=#433 id=433 data-nosnippet>433</a>}
+<a href=#434 id=434 data-nosnippet>434</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

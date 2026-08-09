@@ -216,492 +216,527 @@
 <a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>tx = connection.transaction()<span class="question-mark">?</span>;
 <a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span><span class="kw-2">mut </span>removals = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.removals);
 <a href=#218 id=218 data-nosnippet>218</a>        removals.sort();
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span>replacements = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.replacements);
-<a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">for </span>path <span class="kw">in </span>removals {
-<a href=#222 id=222 data-nosnippet>222</a>            tx.execute(
-<a href=#223 id=223 data-nosnippet>223</a>                <span class="string">"INSERT OR IGNORE INTO stage_removals(path, ordinal) VALUES (?1, ?2)"</span>,
-<a href=#224 id=224 data-nosnippet>224</a>                <span class="macro">params!</span>[path, <span class="self">self</span>.next_ordinal],
-<a href=#225 id=225 data-nosnippet>225</a>            )<span class="question-mark">?</span>;
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="self">self</span>.next_ordinal = <span class="self">self</span>.next_ordinal.saturating_add(<span class="number">1</span>);
-<a href=#227 id=227 data-nosnippet>227</a>        }
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">for </span>(file, source_token_count) <span class="kw">in </span>replacements {
-<a href=#229 id=229 data-nosnippet>229</a>            <span class="self">Self</span>::insert_stage_file(
-<a href=#230 id=230 data-nosnippet>230</a>                <span class="kw-2">&amp;</span>tx,
-<a href=#231 id=231 data-nosnippet>231</a>                <span class="kw-2">&amp;</span>file,
-<a href=#232 id=232 data-nosnippet>232</a>                source_token_count,
-<a href=#233 id=233 data-nosnippet>233</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.tokenizer,
-<a href=#234 id=234 data-nosnippet>234</a>                <span class="self">self</span>.next_ordinal,
-<a href=#235 id=235 data-nosnippet>235</a>            )<span class="question-mark">?</span>;
-<a href=#236 id=236 data-nosnippet>236</a>            <span class="self">self</span>.next_ordinal = <span class="self">self</span>.next_ordinal.saturating_add(<span class="number">1</span>);
-<a href=#237 id=237 data-nosnippet>237</a>        }
-<a href=#238 id=238 data-nosnippet>238</a>        tx.commit()<span class="question-mark">?</span>;
-<a href=#239 id=239 data-nosnippet>239</a>
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="self">self</span>.diagnostics.write_ms += started.elapsed().as_secs_f64() * <span class="number">1_000.0</span>;
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>write_after = <span class="self">self</span>.profile.then(process_write_bytes).flatten();
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(bytes) = write_before
-<a href=#243 id=243 data-nosnippet>243</a>            .zip(write_after)
-<a href=#244 id=244 data-nosnippet>244</a>            .map(|(before, after)| after.saturating_sub(before))
-<a href=#245 id=245 data-nosnippet>245</a>        {
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="self">self</span>.diagnostics.write_bytes = <span class="prelude-val">Some</span>(
-<a href=#247 id=247 data-nosnippet>247</a>                <span class="self">self</span>.diagnostics
-<a href=#248 id=248 data-nosnippet>248</a>                    .write_bytes
-<a href=#249 id=249 data-nosnippet>249</a>                    .unwrap_or_default()
-<a href=#250 id=250 data-nosnippet>250</a>                    .saturating_add(bytes),
-<a href=#251 id=251 data-nosnippet>251</a>            );
-<a href=#252 id=252 data-nosnippet>252</a>        }
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="prelude-val">Ok</span>(())
-<a href=#254 id=254 data-nosnippet>254</a>    }
-<a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="doccomment">/// Finish writes and close the mutable stage connection before publication.
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>finish(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">if </span><span class="self">self</span>.finished {
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#260 id=260 data-nosnippet>260</a>        }
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="self">self</span>.flush()<span class="question-mark">?</span>;
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="self">self</span>.connection.take();
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="self">self</span>.diagnostics.database_bytes = fs::metadata(<span class="kw-2">&amp;</span><span class="self">self</span>.path)
-<a href=#264 id=264 data-nosnippet>264</a>            .map(|metadata| metadata.len())
-<a href=#265 id=265 data-nosnippet>265</a>            .unwrap_or(<span class="number">0</span>);
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="prelude-val">Ok</span>(())
-<a href=#268 id=268 data-nosnippet>268</a>    }
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>diagnostics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; StagingDiagnostics {
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="self">self</span>.diagnostics.clone()
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// Apply normalized staged rows through the production reconciliation writer.
-<a href=#275 id=275 data-nosnippet>275</a>    ///
-<a href=#276 id=276 data-nosnippet>276</a>    /// The read connection is opened only after stage writes finish. It streams
-<a href=#277 id=277 data-nosnippet>277</a>    /// one file and its child rows at a time, so publication does not reconstruct
-<a href=#278 id=278 data-nosnippet>278</a>    /// the complete prepared generation in memory.
-<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>apply(<span class="kw-2">&amp;mut </span><span class="self">self</span>, writer: <span class="kw-2">&amp;mut </span>ReconciliationWriter&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="self">self</span>.finish()<span class="question-mark">?</span>;
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>connection = Connection::open_with_flags(
-<a href=#282 id=282 data-nosnippet>282</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.path,
-<a href=#283 id=283 data-nosnippet>283</a>            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-<a href=#284 id=284 data-nosnippet>284</a>        )<span class="question-mark">?</span>;
-<a href=#285 id=285 data-nosnippet>285</a>        connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)<span class="question-mark">?</span>;
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>format_version = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"format_version"</span>)<span class="question-mark">?
-<a href=#287 id=287 data-nosnippet>287</a>            </span>.parse::&lt;i64&gt;()
-<a href=#288 id=288 data-nosnippet>288</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"invalid reconciliation stage format"</span>.into()))<span class="question-mark">?</span>;
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">if </span>format_version != STAGE_FORMAT_VERSION {
-<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(<span class="macro">format!</span>(
-<a href=#291 id=291 data-nosnippet>291</a>                <span class="string">"unsupported reconciliation stage format: {format_version}"
-<a href=#292 id=292 data-nosnippet>292</a>            </span>)));
-<a href=#293 id=293 data-nosnippet>293</a>        }
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>baseline_generation = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"baseline_generation"</span>)<span class="question-mark">?
-<a href=#295 id=295 data-nosnippet>295</a>            </span>.parse::&lt;u64&gt;()
-<a href=#296 id=296 data-nosnippet>296</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"invalid reconciliation stage baseline"</span>.into()))<span class="question-mark">?</span>;
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>config_hash = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"config_hash"</span>)<span class="question-mark">?</span>;
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>rebuild = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"rebuild"</span>)<span class="question-mark">?</span>;
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">let </span>tokenizer = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"tokenizer"</span>)<span class="question-mark">?</span>;
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">if </span>baseline_generation != <span class="self">self</span>.baseline_generation
-<a href=#301 id=301 data-nosnippet>301</a>            || config_hash != <span class="self">self</span>.config_hash
-<a href=#302 id=302 data-nosnippet>302</a>            || rebuild != <span class="kw">if </span><span class="self">self</span>.rebuild { <span class="string">"1" </span>} <span class="kw">else </span>{ <span class="string">"0" </span>}
-<a href=#303 id=303 data-nosnippet>303</a>            || tokenizer != <span class="self">self</span>.tokenizer
-<a href=#304 id=304 data-nosnippet>304</a>        {
-<a href=#305 id=305 data-nosnippet>305</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
-<a href=#306 id=306 data-nosnippet>306</a>                <span class="string">"reconciliation stage metadata does not match its owner"</span>.into(),
-<a href=#307 id=307 data-nosnippet>307</a>            ));
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span><span class="kw-2">mut </span>replacements = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.replacements);
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>next_ordinal = <span class="self">self</span>.next_ordinal;
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>result = (|| {
+<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">let </span><span class="kw-2">mut </span>ordinal = next_ordinal;
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">for </span>path <span class="kw">in </span><span class="kw-2">&amp;</span>removals {
+<a href=#224 id=224 data-nosnippet>224</a>                tx.execute(
+<a href=#225 id=225 data-nosnippet>225</a>                    <span class="string">"INSERT OR IGNORE INTO stage_removals(path, ordinal) VALUES (?1, ?2)"</span>,
+<a href=#226 id=226 data-nosnippet>226</a>                    <span class="macro">params!</span>[path, ordinal],
+<a href=#227 id=227 data-nosnippet>227</a>                )<span class="question-mark">?</span>;
+<a href=#228 id=228 data-nosnippet>228</a>                ordinal = ordinal.saturating_add(<span class="number">1</span>);
+<a href=#229 id=229 data-nosnippet>229</a>            }
+<a href=#230 id=230 data-nosnippet>230</a>            <span class="kw">for </span>(file, source_token_count) <span class="kw">in </span><span class="kw-2">&amp;</span>replacements {
+<a href=#231 id=231 data-nosnippet>231</a>                <span class="self">Self</span>::insert_stage_file(<span class="kw-2">&amp;</span>tx, file, <span class="kw-2">*</span>source_token_count, <span class="kw-2">&amp;</span><span class="self">self</span>.tokenizer, ordinal)<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>                ordinal = ordinal.saturating_add(<span class="number">1</span>);
+<a href=#233 id=233 data-nosnippet>233</a>            }
+<a href=#234 id=234 data-nosnippet>234</a>            tx.commit()<span class="question-mark">?</span>;
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="prelude-val">Ok</span>(ordinal)
+<a href=#236 id=236 data-nosnippet>236</a>        })();
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">match </span>result {
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="prelude-val">Ok</span>(ordinal) =&gt; <span class="self">self</span>.next_ordinal = ordinal,
+<a href=#239 id=239 data-nosnippet>239</a>            <span class="prelude-val">Err</span>(error) =&gt; {
+<a href=#240 id=240 data-nosnippet>240</a>                <span class="self">self</span>.removals.append(<span class="kw-2">&amp;mut </span>removals);
+<a href=#241 id=241 data-nosnippet>241</a>                <span class="self">self</span>.replacements.append(<span class="kw-2">&amp;mut </span>replacements);
+<a href=#242 id=242 data-nosnippet>242</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+<a href=#243 id=243 data-nosnippet>243</a>            }
+<a href=#244 id=244 data-nosnippet>244</a>        }
+<a href=#245 id=245 data-nosnippet>245</a>
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="self">self</span>.diagnostics.write_ms += started.elapsed().as_secs_f64() * <span class="number">1_000.0</span>;
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>write_after = <span class="self">self</span>.profile.then(process_write_bytes).flatten();
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(bytes) = write_before
+<a href=#249 id=249 data-nosnippet>249</a>            .zip(write_after)
+<a href=#250 id=250 data-nosnippet>250</a>            .map(|(before, after)| after.saturating_sub(before))
+<a href=#251 id=251 data-nosnippet>251</a>        {
+<a href=#252 id=252 data-nosnippet>252</a>            <span class="self">self</span>.diagnostics.write_bytes = <span class="prelude-val">Some</span>(
+<a href=#253 id=253 data-nosnippet>253</a>                <span class="self">self</span>.diagnostics
+<a href=#254 id=254 data-nosnippet>254</a>                    .write_bytes
+<a href=#255 id=255 data-nosnippet>255</a>                    .unwrap_or_default()
+<a href=#256 id=256 data-nosnippet>256</a>                    .saturating_add(bytes),
+<a href=#257 id=257 data-nosnippet>257</a>            );
+<a href=#258 id=258 data-nosnippet>258</a>        }
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="prelude-val">Ok</span>(())
+<a href=#260 id=260 data-nosnippet>260</a>    }
+<a href=#261 id=261 data-nosnippet>261</a>
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// Finish writes and close the mutable stage connection before publication.
+<a href=#263 id=263 data-nosnippet>263</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>finish(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">if </span><span class="self">self</span>.finished {
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#266 id=266 data-nosnippet>266</a>        }
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="self">self</span>.flush()<span class="question-mark">?</span>;
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="self">self</span>.connection.take();
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="self">self</span>.diagnostics.database_bytes = fs::metadata(<span class="kw-2">&amp;</span><span class="self">self</span>.path)
+<a href=#270 id=270 data-nosnippet>270</a>            .map(|metadata| metadata.len())
+<a href=#271 id=271 data-nosnippet>271</a>            .unwrap_or(<span class="number">0</span>);
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="prelude-val">Ok</span>(())
+<a href=#274 id=274 data-nosnippet>274</a>    }
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>diagnostics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; StagingDiagnostics {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="self">self</span>.diagnostics.clone()
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// Apply normalized staged rows through the production reconciliation writer.
+<a href=#281 id=281 data-nosnippet>281</a>    ///
+<a href=#282 id=282 data-nosnippet>282</a>    /// The read connection is opened only after stage writes finish. It streams
+<a href=#283 id=283 data-nosnippet>283</a>    /// one file and its child rows at a time, so publication does not reconstruct
+<a href=#284 id=284 data-nosnippet>284</a>    /// the complete prepared generation in memory.
+<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>apply(<span class="kw-2">&amp;mut </span><span class="self">self</span>, writer: <span class="kw-2">&amp;mut </span>ReconciliationWriter&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="self">self</span>.finish()<span class="question-mark">?</span>;
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>connection = Connection::open_with_flags(
+<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.path,
+<a href=#289 id=289 data-nosnippet>289</a>            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+<a href=#290 id=290 data-nosnippet>290</a>        )<span class="question-mark">?</span>;
+<a href=#291 id=291 data-nosnippet>291</a>        connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)<span class="question-mark">?</span>;
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>format_version = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"format_version"</span>)<span class="question-mark">?
+<a href=#293 id=293 data-nosnippet>293</a>            </span>.parse::&lt;i64&gt;()
+<a href=#294 id=294 data-nosnippet>294</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"invalid reconciliation stage format"</span>.into()))<span class="question-mark">?</span>;
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">if </span>format_version != STAGE_FORMAT_VERSION {
+<a href=#296 id=296 data-nosnippet>296</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(<span class="macro">format!</span>(
+<a href=#297 id=297 data-nosnippet>297</a>                <span class="string">"unsupported reconciliation stage format: {format_version}"
+<a href=#298 id=298 data-nosnippet>298</a>            </span>)));
+<a href=#299 id=299 data-nosnippet>299</a>        }
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>baseline_generation = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"baseline_generation"</span>)<span class="question-mark">?
+<a href=#301 id=301 data-nosnippet>301</a>            </span>.parse::&lt;u64&gt;()
+<a href=#302 id=302 data-nosnippet>302</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"invalid reconciliation stage baseline"</span>.into()))<span class="question-mark">?</span>;
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>config_hash = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"config_hash"</span>)<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>rebuild = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"rebuild"</span>)<span class="question-mark">?</span>;
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">let </span>tokenizer = <span class="self">Self</span>::stage_meta(<span class="kw-2">&amp;</span>connection, <span class="string">"tokenizer"</span>)<span class="question-mark">?</span>;
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">if </span>baseline_generation != <span class="self">self</span>.baseline_generation
+<a href=#307 id=307 data-nosnippet>307</a>            || config_hash != <span class="self">self</span>.config_hash
+<a href=#308 id=308 data-nosnippet>308</a>            || rebuild != <span class="kw">if </span><span class="self">self</span>.rebuild { <span class="string">"1" </span>} <span class="kw">else </span>{ <span class="string">"0" </span>}
+<a href=#309 id=309 data-nosnippet>309</a>            || tokenizer != <span class="self">self</span>.tokenizer
 <a href=#310 id=310 data-nosnippet>310</a>        {
-<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement =
-<a href=#312 id=312 data-nosnippet>312</a>                connection.prepare(<span class="string">"SELECT path FROM stage_removals ORDER BY ordinal"</span>)<span class="question-mark">?</span>;
-<a href=#313 id=313 data-nosnippet>313</a>            <span class="kw">let </span><span class="kw-2">mut </span>rows = statement.query([])<span class="question-mark">?</span>;
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next()<span class="question-mark">? </span>{
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">let </span>path = row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>)<span class="question-mark">?</span>;
-<a href=#316 id=316 data-nosnippet>316</a>                writer.delete(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
-<a href=#317 id=317 data-nosnippet>317</a>            }
-<a href=#318 id=318 data-nosnippet>318</a>        }
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
-<a href=#321 id=321 data-nosnippet>321</a>            <span class="string">"SELECT id, path, language, structurally_complete, size_bytes,
-<a href=#322 id=322 data-nosnippet>322</a>                    modified_ns, content_hash, source_token_count, source_tokenizer
-<a href=#323 id=323 data-nosnippet>323</a>             FROM stage_files ORDER BY ordinal"</span>,
-<a href=#324 id=324 data-nosnippet>324</a>        )<span class="question-mark">?</span>;
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = statement.query([])<span class="question-mark">?</span>;
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next()<span class="question-mark">? </span>{
-<a href=#327 id=327 data-nosnippet>327</a>            <span class="kw">let </span>row = StageFileRow {
-<a href=#328 id=328 data-nosnippet>328</a>                id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#329 id=329 data-nosnippet>329</a>                path: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#330 id=330 data-nosnippet>330</a>                language: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#331 id=331 data-nosnippet>331</a>                structurally_complete: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-<a href=#332 id=332 data-nosnippet>332</a>                size_bytes: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
-<a href=#333 id=333 data-nosnippet>333</a>                modified_ns: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-<a href=#334 id=334 data-nosnippet>334</a>                content_hash: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
-<a href=#335 id=335 data-nosnippet>335</a>                source_token_count: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
-<a href=#336 id=336 data-nosnippet>336</a>                source_tokenizer: row.get(<span class="number">8</span>)<span class="question-mark">?</span>,
-<a href=#337 id=337 data-nosnippet>337</a>            };
-<a href=#338 id=338 data-nosnippet>338</a>            <span class="kw">let </span>file = <span class="self">Self</span>::read_stage_file(<span class="kw-2">&amp;</span>connection, <span class="kw-2">&amp;</span>row)<span class="question-mark">?</span>;
-<a href=#339 id=339 data-nosnippet>339</a>            writer.replace_with_source_tokens(
-<a href=#340 id=340 data-nosnippet>340</a>                file,
-<a href=#341 id=341 data-nosnippet>341</a>                <span class="kw-2">&amp;</span>row.source_tokenizer,
-<a href=#342 id=342 data-nosnippet>342</a>                i64_to_usize(row.source_token_count)<span class="question-mark">?</span>,
-<a href=#343 id=343 data-nosnippet>343</a>            )<span class="question-mark">?</span>;
-<a href=#344 id=344 data-nosnippet>344</a>        }
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="prelude-val">Ok</span>(())
-<a href=#346 id=346 data-nosnippet>346</a>    }
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">fn </span>stage_meta(connection: <span class="kw-2">&amp;</span>Connection, key: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="prelude-val">Ok</span>(connection.query_row(
-<a href=#350 id=350 data-nosnippet>350</a>            <span class="string">"SELECT value FROM stage_meta WHERE key = ?1"</span>,
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="macro">params!</span>[key],
-<a href=#352 id=352 data-nosnippet>352</a>            |row| row.get(<span class="number">0</span>),
-<a href=#353 id=353 data-nosnippet>353</a>        )<span class="question-mark">?</span>)
-<a href=#354 id=354 data-nosnippet>354</a>    }
-<a href=#355 id=355 data-nosnippet>355</a>
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">fn </span>insert_stage_file(
-<a href=#357 id=357 data-nosnippet>357</a>        tx: <span class="kw-2">&amp;</span>Transaction,
-<a href=#358 id=358 data-nosnippet>358</a>        file: <span class="kw-2">&amp;</span>IndexedFile,
-<a href=#359 id=359 data-nosnippet>359</a>        source_token_count: usize,
-<a href=#360 id=360 data-nosnippet>360</a>        tokenizer: <span class="kw-2">&amp;</span>str,
-<a href=#361 id=361 data-nosnippet>361</a>        ordinal: i64,
-<a href=#362 id=362 data-nosnippet>362</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#363 id=363 data-nosnippet>363</a>        tx.execute(
-<a href=#364 id=364 data-nosnippet>364</a>            <span class="string">"INSERT INTO stage_files(
-<a href=#365 id=365 data-nosnippet>365</a>                ordinal, path, language, structurally_complete, size_bytes,
-<a href=#366 id=366 data-nosnippet>366</a>                modified_ns, content_hash, source_token_count, source_tokenizer
-<a href=#367 id=367 data-nosnippet>367</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"</span>,
-<a href=#368 id=368 data-nosnippet>368</a>            <span class="macro">params!</span>[
-<a href=#369 id=369 data-nosnippet>369</a>                ordinal,
-<a href=#370 id=370 data-nosnippet>370</a>                <span class="kw-2">&amp;</span>file.path,
-<a href=#371 id=371 data-nosnippet>371</a>                file.language.as_deref(),
-<a href=#372 id=372 data-nosnippet>372</a>                file.structurally_complete,
-<a href=#373 id=373 data-nosnippet>373</a>                u64_to_i64(file.size_bytes)<span class="question-mark">?</span>,
-<a href=#374 id=374 data-nosnippet>374</a>                file.modified_ns.map(u128_to_i64).transpose()<span class="question-mark">?</span>,
-<a href=#375 id=375 data-nosnippet>375</a>                <span class="kw-2">&amp;</span>file.content_hash,
-<a href=#376 id=376 data-nosnippet>376</a>                usize_to_i64(source_token_count)<span class="question-mark">?</span>,
-<a href=#377 id=377 data-nosnippet>377</a>                tokenizer,
-<a href=#378 id=378 data-nosnippet>378</a>            ],
-<a href=#379 id=379 data-nosnippet>379</a>        )<span class="question-mark">?</span>;
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>file_id = tx.last_insert_rowid();
-<a href=#381 id=381 data-nosnippet>381</a>
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = tx.prepare_cached(
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="string">"INSERT INTO stage_chunks(
-<a href=#384 id=384 data-nosnippet>384</a>                file_id, ordinal, content, start_line, end_line, start_byte, end_byte, token_count
-<a href=#385 id=385 data-nosnippet>385</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"</span>,
-<a href=#386 id=386 data-nosnippet>386</a>        )<span class="question-mark">?</span>;
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">for </span>(ordinal, chunk) <span class="kw">in </span>file.chunks.iter().enumerate() {
-<a href=#388 id=388 data-nosnippet>388</a>            chunks.execute(<span class="macro">params!</span>[
-<a href=#389 id=389 data-nosnippet>389</a>                file_id,
-<a href=#390 id=390 data-nosnippet>390</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
-<a href=#391 id=391 data-nosnippet>391</a>                <span class="kw-2">&amp;</span>chunk.content,
-<a href=#392 id=392 data-nosnippet>392</a>                usize_to_i64(chunk.start_line)<span class="question-mark">?</span>,
-<a href=#393 id=393 data-nosnippet>393</a>                usize_to_i64(chunk.end_line)<span class="question-mark">?</span>,
-<a href=#394 id=394 data-nosnippet>394</a>                usize_to_i64(chunk.start_byte)<span class="question-mark">?</span>,
-<a href=#395 id=395 data-nosnippet>395</a>                usize_to_i64(chunk.end_byte)<span class="question-mark">?</span>,
-<a href=#396 id=396 data-nosnippet>396</a>                usize_to_i64(chunk.token_count)<span class="question-mark">?</span>,
-<a href=#397 id=397 data-nosnippet>397</a>            ])<span class="question-mark">?</span>;
-<a href=#398 id=398 data-nosnippet>398</a>        }
-<a href=#399 id=399 data-nosnippet>399</a>        drop(chunks);
-<a href=#400 id=400 data-nosnippet>400</a>
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span><span class="kw-2">mut </span>symbols = tx.prepare_cached(
-<a href=#402 id=402 data-nosnippet>402</a>            <span class="string">"INSERT INTO stage_symbols(
-<a href=#403 id=403 data-nosnippet>403</a>                file_id, ordinal, name, kind, parent, signature,
-<a href=#404 id=404 data-nosnippet>404</a>                start_line, end_line, start_byte, end_byte
-<a href=#405 id=405 data-nosnippet>405</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"</span>,
-<a href=#406 id=406 data-nosnippet>406</a>        )<span class="question-mark">?</span>;
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">for </span>(ordinal, symbol) <span class="kw">in </span>file.symbols.iter().enumerate() {
-<a href=#408 id=408 data-nosnippet>408</a>            symbols.execute(<span class="macro">params!</span>[
-<a href=#409 id=409 data-nosnippet>409</a>                file_id,
-<a href=#410 id=410 data-nosnippet>410</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
-<a href=#411 id=411 data-nosnippet>411</a>                <span class="kw-2">&amp;</span>symbol.name,
-<a href=#412 id=412 data-nosnippet>412</a>                <span class="kw-2">&amp;</span>symbol.kind,
-<a href=#413 id=413 data-nosnippet>413</a>                symbol.parent.as_deref(),
-<a href=#414 id=414 data-nosnippet>414</a>                symbol.signature.as_deref(),
-<a href=#415 id=415 data-nosnippet>415</a>                usize_to_i64(symbol.start_line)<span class="question-mark">?</span>,
-<a href=#416 id=416 data-nosnippet>416</a>                usize_to_i64(symbol.end_line)<span class="question-mark">?</span>,
-<a href=#417 id=417 data-nosnippet>417</a>                usize_to_i64(symbol.start_byte)<span class="question-mark">?</span>,
-<a href=#418 id=418 data-nosnippet>418</a>                usize_to_i64(symbol.end_byte)<span class="question-mark">?</span>,
-<a href=#419 id=419 data-nosnippet>419</a>            ])<span class="question-mark">?</span>;
-<a href=#420 id=420 data-nosnippet>420</a>        }
-<a href=#421 id=421 data-nosnippet>421</a>        drop(symbols);
-<a href=#422 id=422 data-nosnippet>422</a>
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span><span class="kw-2">mut </span>references = tx.prepare_cached(
-<a href=#424 id=424 data-nosnippet>424</a>            <span class="string">"INSERT INTO stage_references(
-<a href=#425 id=425 data-nosnippet>425</a>                file_id, ordinal, name, kind, role, enclosing_symbol,
-<a href=#426 id=426 data-nosnippet>426</a>                start_line, end_line, start_byte, end_byte
-<a href=#427 id=427 data-nosnippet>427</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"</span>,
-<a href=#428 id=428 data-nosnippet>428</a>        )<span class="question-mark">?</span>;
-<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">for </span>(ordinal, reference) <span class="kw">in </span>file.references.iter().enumerate() {
-<a href=#430 id=430 data-nosnippet>430</a>            references.execute(<span class="macro">params!</span>[
-<a href=#431 id=431 data-nosnippet>431</a>                file_id,
-<a href=#432 id=432 data-nosnippet>432</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
-<a href=#433 id=433 data-nosnippet>433</a>                <span class="kw-2">&amp;</span>reference.name,
-<a href=#434 id=434 data-nosnippet>434</a>                <span class="kw-2">&amp;</span>reference.kind,
-<a href=#435 id=435 data-nosnippet>435</a>                role_to_str(reference.role),
-<a href=#436 id=436 data-nosnippet>436</a>                reference.enclosing_symbol.as_deref(),
-<a href=#437 id=437 data-nosnippet>437</a>                usize_to_i64(reference.start_line)<span class="question-mark">?</span>,
-<a href=#438 id=438 data-nosnippet>438</a>                usize_to_i64(reference.end_line)<span class="question-mark">?</span>,
-<a href=#439 id=439 data-nosnippet>439</a>                usize_to_i64(reference.start_byte)<span class="question-mark">?</span>,
-<a href=#440 id=440 data-nosnippet>440</a>                usize_to_i64(reference.end_byte)<span class="question-mark">?</span>,
-<a href=#441 id=441 data-nosnippet>441</a>            ])<span class="question-mark">?</span>;
-<a href=#442 id=442 data-nosnippet>442</a>        }
-<a href=#443 id=443 data-nosnippet>443</a>        drop(references);
-<a href=#444 id=444 data-nosnippet>444</a>
-<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span><span class="kw-2">mut </span>imports = tx.prepare_cached(
-<a href=#446 id=446 data-nosnippet>446</a>            <span class="string">"INSERT INTO stage_imports(
-<a href=#447 id=447 data-nosnippet>447</a>                file_id, ordinal, raw_target, resolved_path, line
-<a href=#448 id=448 data-nosnippet>448</a>             ) VALUES (?1, ?2, ?3, ?4, ?5)"</span>,
-<a href=#449 id=449 data-nosnippet>449</a>        )<span class="question-mark">?</span>;
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidates = tx.prepare_cached(
-<a href=#451 id=451 data-nosnippet>451</a>            <span class="string">"INSERT INTO stage_import_candidates(import_id, candidate_path, priority)
-<a href=#452 id=452 data-nosnippet>452</a>             VALUES (?1, ?2, ?3)"</span>,
-<a href=#453 id=453 data-nosnippet>453</a>        )<span class="question-mark">?</span>;
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="kw">for </span>(ordinal, import) <span class="kw">in </span>file.imports.iter().enumerate() {
-<a href=#455 id=455 data-nosnippet>455</a>            imports.execute(<span class="macro">params!</span>[
-<a href=#456 id=456 data-nosnippet>456</a>                file_id,
-<a href=#457 id=457 data-nosnippet>457</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
-<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw-2">&amp;</span>import.raw_target,
-<a href=#459 id=459 data-nosnippet>459</a>                import.resolved_path.as_deref(),
-<a href=#460 id=460 data-nosnippet>460</a>                usize_to_i64(import.line)<span class="question-mark">?</span>,
-<a href=#461 id=461 data-nosnippet>461</a>            ])<span class="question-mark">?</span>;
-<a href=#462 id=462 data-nosnippet>462</a>            <span class="kw">let </span>import_id = tx.last_insert_rowid();
-<a href=#463 id=463 data-nosnippet>463</a>            <span class="kw">for </span>(priority, candidate_path) <span class="kw">in </span>import.candidate_paths.iter().enumerate() {
-<a href=#464 id=464 data-nosnippet>464</a>                candidates.execute(<span class="macro">params!</span>[import_id, candidate_path, usize_to_i64(priority)<span class="question-mark">?</span>,])<span class="question-mark">?</span>;
-<a href=#465 id=465 data-nosnippet>465</a>            }
-<a href=#466 id=466 data-nosnippet>466</a>        }
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="prelude-val">Ok</span>(())
-<a href=#468 id=468 data-nosnippet>468</a>    }
-<a href=#469 id=469 data-nosnippet>469</a>
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">fn </span>read_stage_file(connection: <span class="kw-2">&amp;</span>Connection, row: <span class="kw-2">&amp;</span>StageFileRow) -&gt; <span class="prelude-ty">Result</span>&lt;IndexedFile&gt; {
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>chunks = {
-<a href=#472 id=472 data-nosnippet>472</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
-<a href=#473 id=473 data-nosnippet>473</a>                <span class="string">"SELECT content, start_line, end_line, start_byte, end_byte, token_count
-<a href=#474 id=474 data-nosnippet>474</a>                 FROM stage_chunks WHERE file_id = ?1 ORDER BY ordinal"</span>,
-<a href=#475 id=475 data-nosnippet>475</a>            )<span class="question-mark">?</span>;
-<a href=#476 id=476 data-nosnippet>476</a>            statement
-<a href=#477 id=477 data-nosnippet>477</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
-<a href=#478 id=478 data-nosnippet>478</a>                    <span class="prelude-val">Ok</span>(ChunkInput {
-<a href=#479 id=479 data-nosnippet>479</a>                        content: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#480 id=480 data-nosnippet>480</a>                        start_line: i64_to_usize(row.get(<span class="number">1</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#481 id=481 data-nosnippet>481</a>                        end_line: i64_to_usize(row.get(<span class="number">2</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#482 id=482 data-nosnippet>482</a>                        start_byte: i64_to_usize(row.get(<span class="number">3</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#483 id=483 data-nosnippet>483</a>                        end_byte: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#484 id=484 data-nosnippet>484</a>                        token_count: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#485 id=485 data-nosnippet>485</a>                    })
-<a href=#486 id=486 data-nosnippet>486</a>                })<span class="question-mark">?
-<a href=#487 id=487 data-nosnippet>487</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
-<a href=#488 id=488 data-nosnippet>488</a>        </span>};
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>symbols = {
-<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
-<a href=#491 id=491 data-nosnippet>491</a>                <span class="string">"SELECT name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-<a href=#492 id=492 data-nosnippet>492</a>                 FROM stage_symbols WHERE file_id = ?1 ORDER BY ordinal"</span>,
-<a href=#493 id=493 data-nosnippet>493</a>            )<span class="question-mark">?</span>;
-<a href=#494 id=494 data-nosnippet>494</a>            statement
-<a href=#495 id=495 data-nosnippet>495</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
-<a href=#496 id=496 data-nosnippet>496</a>                    <span class="prelude-val">Ok</span>(SymbolInput {
-<a href=#497 id=497 data-nosnippet>497</a>                        name: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#498 id=498 data-nosnippet>498</a>                        kind: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#499 id=499 data-nosnippet>499</a>                        parent: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#500 id=500 data-nosnippet>500</a>                        signature: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-<a href=#501 id=501 data-nosnippet>501</a>                        start_line: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#502 id=502 data-nosnippet>502</a>                        end_line: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#503 id=503 data-nosnippet>503</a>                        start_byte: i64_to_usize(row.get(<span class="number">6</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#504 id=504 data-nosnippet>504</a>                        end_byte: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#505 id=505 data-nosnippet>505</a>                    })
-<a href=#506 id=506 data-nosnippet>506</a>                })<span class="question-mark">?
-<a href=#507 id=507 data-nosnippet>507</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
-<a href=#508 id=508 data-nosnippet>508</a>        </span>};
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span>references = {
-<a href=#510 id=510 data-nosnippet>510</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
-<a href=#511 id=511 data-nosnippet>511</a>                <span class="string">"SELECT name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte
-<a href=#512 id=512 data-nosnippet>512</a>                 FROM stage_references WHERE file_id = ?1 ORDER BY ordinal"</span>,
-<a href=#513 id=513 data-nosnippet>513</a>            )<span class="question-mark">?</span>;
-<a href=#514 id=514 data-nosnippet>514</a>            statement
-<a href=#515 id=515 data-nosnippet>515</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
-<a href=#516 id=516 data-nosnippet>516</a>                    <span class="prelude-val">Ok</span>(ReferenceInput {
-<a href=#517 id=517 data-nosnippet>517</a>                        name: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#518 id=518 data-nosnippet>518</a>                        kind: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#519 id=519 data-nosnippet>519</a>                        role: role_from_str(<span class="kw-2">&amp;</span>row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">2</span>)<span class="question-mark">?</span>),
-<a href=#520 id=520 data-nosnippet>520</a>                        enclosing_symbol: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-<a href=#521 id=521 data-nosnippet>521</a>                        start_line: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#522 id=522 data-nosnippet>522</a>                        end_line: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#523 id=523 data-nosnippet>523</a>                        start_byte: i64_to_usize(row.get(<span class="number">6</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#524 id=524 data-nosnippet>524</a>                        end_byte: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#525 id=525 data-nosnippet>525</a>                    })
-<a href=#526 id=526 data-nosnippet>526</a>                })<span class="question-mark">?
-<a href=#527 id=527 data-nosnippet>527</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
-<a href=#528 id=528 data-nosnippet>528</a>        </span>};
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">let </span>imports = {
-<a href=#530 id=530 data-nosnippet>530</a>            <span class="kw">let </span>import_rows = {
-<a href=#531 id=531 data-nosnippet>531</a>                <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
-<a href=#532 id=532 data-nosnippet>532</a>                    <span class="string">"SELECT id, raw_target, resolved_path, line
-<a href=#533 id=533 data-nosnippet>533</a>                     FROM stage_imports WHERE file_id = ?1 ORDER BY ordinal"</span>,
-<a href=#534 id=534 data-nosnippet>534</a>                )<span class="question-mark">?</span>;
-<a href=#535 id=535 data-nosnippet>535</a>                statement
-<a href=#536 id=536 data-nosnippet>536</a>                    .query_map(<span class="macro">params!</span>[row.id], |row| {
-<a href=#537 id=537 data-nosnippet>537</a>                        <span class="prelude-val">Ok</span>((
-<a href=#538 id=538 data-nosnippet>538</a>                            row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#539 id=539 data-nosnippet>539</a>                            ImportInput {
-<a href=#540 id=540 data-nosnippet>540</a>                                raw_target: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#541 id=541 data-nosnippet>541</a>                                resolved_path: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#542 id=542 data-nosnippet>542</a>                                candidate_paths: Vec::new(),
-<a href=#543 id=543 data-nosnippet>543</a>                                line: i64_to_usize(row.get(<span class="number">3</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#544 id=544 data-nosnippet>544</a>                            },
-<a href=#545 id=545 data-nosnippet>545</a>                        ))
-<a href=#546 id=546 data-nosnippet>546</a>                    })<span class="question-mark">?
-<a href=#547 id=547 data-nosnippet>547</a>                    </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
-<a href=#548 id=548 data-nosnippet>548</a>            </span>};
-<a href=#549 id=549 data-nosnippet>549</a>            import_rows
-<a href=#550 id=550 data-nosnippet>550</a>                .into_iter()
-<a href=#551 id=551 data-nosnippet>551</a>                .map(|(id, <span class="kw-2">mut </span>import)| {
-<a href=#552 id=552 data-nosnippet>552</a>                    <span class="kw">let </span><span class="kw-2">mut </span>candidates = connection.prepare(
-<a href=#553 id=553 data-nosnippet>553</a>                        <span class="string">"SELECT candidate_path FROM stage_import_candidates
-<a href=#554 id=554 data-nosnippet>554</a>                         WHERE import_id = ?1 ORDER BY priority"</span>,
-<a href=#555 id=555 data-nosnippet>555</a>                    )<span class="question-mark">?</span>;
-<a href=#556 id=556 data-nosnippet>556</a>                    import.candidate_paths = candidates
-<a href=#557 id=557 data-nosnippet>557</a>                        .query_map(<span class="macro">params!</span>[id], |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>))<span class="question-mark">?
-<a href=#558 id=558 data-nosnippet>558</a>                        </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#559 id=559 data-nosnippet>559</a>                    <span class="prelude-val">Ok</span>(import)
-<a href=#560 id=560 data-nosnippet>560</a>                })
-<a href=#561 id=561 data-nosnippet>561</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?
-<a href=#562 id=562 data-nosnippet>562</a>        </span>};
-<a href=#563 id=563 data-nosnippet>563</a>
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="prelude-val">Ok</span>(IndexedFile {
-<a href=#565 id=565 data-nosnippet>565</a>            path: row.path.clone(),
-<a href=#566 id=566 data-nosnippet>566</a>            language: row.language.clone(),
-<a href=#567 id=567 data-nosnippet>567</a>            structurally_complete: row.structurally_complete,
-<a href=#568 id=568 data-nosnippet>568</a>            size_bytes: i64_to_u64(row.size_bytes)<span class="question-mark">?</span>,
-<a href=#569 id=569 data-nosnippet>569</a>            modified_ns: row.modified_ns.map(i64_to_u128).transpose()<span class="question-mark">?</span>,
-<a href=#570 id=570 data-nosnippet>570</a>            content_hash: row.content_hash.clone(),
-<a href=#571 id=571 data-nosnippet>571</a>            chunks,
-<a href=#572 id=572 data-nosnippet>572</a>            symbols,
-<a href=#573 id=573 data-nosnippet>573</a>            references,
-<a href=#574 id=574 data-nosnippet>574</a>            imports,
-<a href=#575 id=575 data-nosnippet>575</a>        })
-<a href=#576 id=576 data-nosnippet>576</a>    }
-<a href=#577 id=577 data-nosnippet>577</a>}
-<a href=#578 id=578 data-nosnippet>578</a>
-<a href=#579 id=579 data-nosnippet>579</a><span class="kw">struct </span>StageFileRow {
-<a href=#580 id=580 data-nosnippet>580</a>    id: i64,
-<a href=#581 id=581 data-nosnippet>581</a>    path: String,
-<a href=#582 id=582 data-nosnippet>582</a>    language: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#583 id=583 data-nosnippet>583</a>    structurally_complete: bool,
-<a href=#584 id=584 data-nosnippet>584</a>    size_bytes: i64,
-<a href=#585 id=585 data-nosnippet>585</a>    modified_ns: <span class="prelude-ty">Option</span>&lt;i64&gt;,
-<a href=#586 id=586 data-nosnippet>586</a>    content_hash: String,
-<a href=#587 id=587 data-nosnippet>587</a>    source_token_count: i64,
-<a href=#588 id=588 data-nosnippet>588</a>    source_tokenizer: String,
-<a href=#589 id=589 data-nosnippet>589</a>}
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a><span class="kw">impl </span>Drop <span class="kw">for </span>PreparedReconciliation {
-<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#593 id=593 data-nosnippet>593</a>        <span class="comment">// Close SQLite before TempDir removes the directory. This is required
-<a href=#594 id=594 data-nosnippet>594</a>        // for Windows and also makes cleanup of any journal sidecars explicit.
-<a href=#595 id=595 data-nosnippet>595</a>        </span><span class="self">self</span>.connection.take();
-<a href=#596 id=596 data-nosnippet>596</a>    }
-<a href=#597 id=597 data-nosnippet>597</a>}
-<a href=#598 id=598 data-nosnippet>598</a>
-<a href=#599 id=599 data-nosnippet>599</a><span class="attr">#[cfg(test)]
-<a href=#600 id=600 data-nosnippet>600</a></span><span class="kw">mod </span>tests {
-<a href=#601 id=601 data-nosnippet>601</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#602 id=602 data-nosnippet>602</a>    <span class="kw">use </span><span class="kw">crate</span>::model::ReferenceRole;
-<a href=#603 id=603 data-nosnippet>603</a>
-<a href=#604 id=604 data-nosnippet>604</a>    <span class="attr">#[test]
-<a href=#605 id=605 data-nosnippet>605</a>    </span><span class="kw">fn </span>normalized_stage_roundtrip_preserves_derived_rows_and_cleans_up() {
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository root"</span>);
-<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>database = root.path().join(<span class="string">"index.sqlite"</span>);
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw">let </span>storage = Storage::open(<span class="kw-2">&amp;</span>database).expect(<span class="string">"storage"</span>);
-<a href=#609 id=609 data-nosnippet>609</a>        storage
-<a href=#610 id=610 data-nosnippet>610</a>            .full_reconcile(
-<a href=#611 id=611 data-nosnippet>611</a>                <span class="string">"config"</span>,
-<a href=#612 id=612 data-nosnippet>612</a>                <span class="macro">vec!</span>[<span class="kw">crate</span>::storage::tests::sample_file(<span class="string">"old.rs"</span>, <span class="string">"old\n"</span>)],
-<a href=#613 id=613 data-nosnippet>613</a>            )
-<a href=#614 id=614 data-nosnippet>614</a>            .expect(<span class="string">"initial generation"</span>);
-<a href=#615 id=615 data-nosnippet>615</a>
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">let </span>baseline = storage.meta().expect(<span class="string">"baseline"</span>);
-<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">let </span><span class="kw-2">mut </span>file = <span class="kw">crate</span>::storage::tests::sample_file(<span class="string">"src/lib.rs"</span>, <span class="string">"fn answer() {}\n"</span>);
-<a href=#618 id=618 data-nosnippet>618</a>        file.symbols.push(SymbolInput {
-<a href=#619 id=619 data-nosnippet>619</a>            name: <span class="string">"answer"</span>.into(),
-<a href=#620 id=620 data-nosnippet>620</a>            kind: <span class="string">"function"</span>.into(),
-<a href=#621 id=621 data-nosnippet>621</a>            parent: <span class="prelude-val">None</span>,
-<a href=#622 id=622 data-nosnippet>622</a>            signature: <span class="prelude-val">Some</span>(<span class="string">"fn answer()"</span>.into()),
-<a href=#623 id=623 data-nosnippet>623</a>            start_line: <span class="number">1</span>,
-<a href=#624 id=624 data-nosnippet>624</a>            end_line: <span class="number">1</span>,
-<a href=#625 id=625 data-nosnippet>625</a>            start_byte: <span class="number">0</span>,
-<a href=#626 id=626 data-nosnippet>626</a>            end_byte: <span class="number">14</span>,
-<a href=#627 id=627 data-nosnippet>627</a>        });
-<a href=#628 id=628 data-nosnippet>628</a>        file.references.push(ReferenceInput {
-<a href=#629 id=629 data-nosnippet>629</a>            name: <span class="string">"answer"</span>.into(),
-<a href=#630 id=630 data-nosnippet>630</a>            kind: <span class="string">"call"</span>.into(),
-<a href=#631 id=631 data-nosnippet>631</a>            role: ReferenceRole::Reference,
-<a href=#632 id=632 data-nosnippet>632</a>            enclosing_symbol: <span class="prelude-val">Some</span>(<span class="string">"main"</span>.into()),
-<a href=#633 id=633 data-nosnippet>633</a>            start_line: <span class="number">2</span>,
-<a href=#634 id=634 data-nosnippet>634</a>            end_line: <span class="number">2</span>,
-<a href=#635 id=635 data-nosnippet>635</a>            start_byte: <span class="number">0</span>,
-<a href=#636 id=636 data-nosnippet>636</a>            end_byte: <span class="number">6</span>,
-<a href=#637 id=637 data-nosnippet>637</a>        });
-<a href=#638 id=638 data-nosnippet>638</a>        file.imports.push(ImportInput {
-<a href=#639 id=639 data-nosnippet>639</a>            raw_target: <span class="string">"crate::util"</span>.into(),
-<a href=#640 id=640 data-nosnippet>640</a>            resolved_path: <span class="prelude-val">Some</span>(<span class="string">"src/util.rs"</span>.into()),
-<a href=#641 id=641 data-nosnippet>641</a>            candidate_paths: <span class="macro">vec!</span>[<span class="string">"src/util.rs"</span>.into(), <span class="string">"src/util/mod.rs"</span>.into()],
-<a href=#642 id=642 data-nosnippet>642</a>            line: <span class="number">1</span>,
-<a href=#643 id=643 data-nosnippet>643</a>        });
-<a href=#644 id=644 data-nosnippet>644</a>
-<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">let </span><span class="kw-2">mut </span>stage = PreparedReconciliation::new(
-<a href=#646 id=646 data-nosnippet>646</a>            <span class="kw-2">&amp;</span>storage,
-<a href=#647 id=647 data-nosnippet>647</a>            <span class="string">"fixture-tokenizer"</span>,
-<a href=#648 id=648 data-nosnippet>648</a>            <span class="kw-2">&amp;</span>baseline,
-<a href=#649 id=649 data-nosnippet>649</a>            <span class="string">"config"</span>,
-<a href=#650 id=650 data-nosnippet>650</a>            <span class="bool-val">false</span>,
-<a href=#651 id=651 data-nosnippet>651</a>            <span class="bool-val">true</span>,
-<a href=#652 id=652 data-nosnippet>652</a>        )
-<a href=#653 id=653 data-nosnippet>653</a>        .expect(<span class="string">"stage"</span>);
-<a href=#654 id=654 data-nosnippet>654</a>        stage.stage_removal(<span class="string">"old.rs"</span>.into());
-<a href=#655 id=655 data-nosnippet>655</a>        stage.stage_indexed(file, <span class="number">7</span>);
-<a href=#656 id=656 data-nosnippet>656</a>        stage.flush().expect(<span class="string">"stage batch"</span>);
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="kw">let </span>stage_path = stage.path.clone();
-<a href=#658 id=658 data-nosnippet>658</a>        <span class="macro">assert!</span>(
-<a href=#659 id=659 data-nosnippet>659</a>            stage_path.exists(),
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="string">"stage database should exist before publish"
-<a href=#661 id=661 data-nosnippet>661</a>        </span>);
-<a href=#662 id=662 data-nosnippet>662</a>        <span class="macro">assert_eq!</span>(stage.diagnostics().database_bytes, <span class="number">0</span>);
-<a href=#663 id=663 data-nosnippet>663</a>        stage.finish().expect(<span class="string">"finish stage"</span>);
-<a href=#664 id=664 data-nosnippet>664</a>        <span class="macro">assert!</span>(stage.diagnostics().database_bytes &gt; <span class="number">0</span>);
-<a href=#665 id=665 data-nosnippet>665</a>
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>(generation, ()) = storage
-<a href=#667 id=667 data-nosnippet>667</a>            .publish_reconciliation_at(<span class="kw-2">&amp;</span>baseline, <span class="string">"config"</span>, <span class="bool-val">false</span>, |writer| stage.apply(writer))
-<a href=#668 id=668 data-nosnippet>668</a>            .expect(<span class="string">"publish staged rows"</span>);
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="macro">assert_eq!</span>(generation, <span class="number">2</span>);
-<a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>connection = storage
-<a href=#672 id=672 data-nosnippet>672</a>            .writer
-<a href=#673 id=673 data-nosnippet>673</a>            .lock()
-<a href=#674 id=674 data-nosnippet>674</a>            .unwrap_or_else(|poisoned| poisoned.into_inner());
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">for </span>(table, expected) <span class="kw">in </span>[
-<a href=#676 id=676 data-nosnippet>676</a>            (<span class="string">"files"</span>, <span class="number">1</span>),
-<a href=#677 id=677 data-nosnippet>677</a>            (<span class="string">"chunks"</span>, <span class="number">1</span>),
-<a href=#678 id=678 data-nosnippet>678</a>            (<span class="string">"symbols"</span>, <span class="number">1</span>),
-<a href=#679 id=679 data-nosnippet>679</a>            (<span class="string">"symbol_refs"</span>, <span class="number">1</span>),
-<a href=#680 id=680 data-nosnippet>680</a>            (<span class="string">"imports"</span>, <span class="number">1</span>),
-<a href=#681 id=681 data-nosnippet>681</a>            (<span class="string">"import_candidates"</span>, <span class="number">2</span>),
-<a href=#682 id=682 data-nosnippet>682</a>        ] {
-<a href=#683 id=683 data-nosnippet>683</a>            <span class="kw">let </span>count: i64 = connection
-<a href=#684 id=684 data-nosnippet>684</a>                .query_row(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"SELECT COUNT(*) FROM {table}"</span>), [], |row| {
-<a href=#685 id=685 data-nosnippet>685</a>                    row.get(<span class="number">0</span>)
-<a href=#686 id=686 data-nosnippet>686</a>                })
-<a href=#687 id=687 data-nosnippet>687</a>                .expect(<span class="string">"count published rows"</span>);
-<a href=#688 id=688 data-nosnippet>688</a>            <span class="macro">assert_eq!</span>(count, expected, <span class="string">"published {table} rows"</span>);
-<a href=#689 id=689 data-nosnippet>689</a>        }
-<a href=#690 id=690 data-nosnippet>690</a>        <span class="macro">assert!</span>(
-<a href=#691 id=691 data-nosnippet>691</a>            connection
-<a href=#692 id=692 data-nosnippet>692</a>                .query_row(
-<a href=#693 id=693 data-nosnippet>693</a>                    <span class="string">"SELECT path FROM files WHERE path = 'src/lib.rs'"</span>,
-<a href=#694 id=694 data-nosnippet>694</a>                    [],
-<a href=#695 id=695 data-nosnippet>695</a>                    |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>),
-<a href=#696 id=696 data-nosnippet>696</a>                )
-<a href=#697 id=697 data-nosnippet>697</a>                .is_ok()
-<a href=#698 id=698 data-nosnippet>698</a>        );
-<a href=#699 id=699 data-nosnippet>699</a>        drop(connection);
-<a href=#700 id=700 data-nosnippet>700</a>        drop(stage);
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="macro">assert!</span>(
-<a href=#702 id=702 data-nosnippet>702</a>            !stage_path.exists(),
-<a href=#703 id=703 data-nosnippet>703</a>            <span class="string">"stage database and its directory should be removed after publication"
-<a href=#704 id=704 data-nosnippet>704</a>        </span>);
-<a href=#705 id=705 data-nosnippet>705</a>    }
-<a href=#706 id=706 data-nosnippet>706</a>}
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
+<a href=#312 id=312 data-nosnippet>312</a>                <span class="string">"reconciliation stage metadata does not match its owner"</span>.into(),
+<a href=#313 id=313 data-nosnippet>313</a>            ));
+<a href=#314 id=314 data-nosnippet>314</a>        }
+<a href=#315 id=315 data-nosnippet>315</a>
+<a href=#316 id=316 data-nosnippet>316</a>        {
+<a href=#317 id=317 data-nosnippet>317</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement =
+<a href=#318 id=318 data-nosnippet>318</a>                connection.prepare(<span class="string">"SELECT path FROM stage_removals ORDER BY ordinal"</span>)<span class="question-mark">?</span>;
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">let </span><span class="kw-2">mut </span>rows = statement.query([])<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next()<span class="question-mark">? </span>{
+<a href=#321 id=321 data-nosnippet>321</a>                <span class="kw">let </span>path = row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>)<span class="question-mark">?</span>;
+<a href=#322 id=322 data-nosnippet>322</a>                writer.delete(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+<a href=#323 id=323 data-nosnippet>323</a>            }
+<a href=#324 id=324 data-nosnippet>324</a>        }
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
+<a href=#327 id=327 data-nosnippet>327</a>            <span class="string">"SELECT id, path, language, structurally_complete, size_bytes,
+<a href=#328 id=328 data-nosnippet>328</a>                    modified_ns, content_hash, source_token_count, source_tokenizer
+<a href=#329 id=329 data-nosnippet>329</a>             FROM stage_files ORDER BY ordinal"</span>,
+<a href=#330 id=330 data-nosnippet>330</a>        )<span class="question-mark">?</span>;
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span><span class="kw-2">mut </span>rows = statement.query([])<span class="question-mark">?</span>;
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(row) = rows.next()<span class="question-mark">? </span>{
+<a href=#333 id=333 data-nosnippet>333</a>            <span class="kw">let </span>row = StageFileRow {
+<a href=#334 id=334 data-nosnippet>334</a>                id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#335 id=335 data-nosnippet>335</a>                path: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#336 id=336 data-nosnippet>336</a>                language: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#337 id=337 data-nosnippet>337</a>                structurally_complete: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+<a href=#338 id=338 data-nosnippet>338</a>                size_bytes: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
+<a href=#339 id=339 data-nosnippet>339</a>                modified_ns: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+<a href=#340 id=340 data-nosnippet>340</a>                content_hash: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
+<a href=#341 id=341 data-nosnippet>341</a>                source_token_count: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
+<a href=#342 id=342 data-nosnippet>342</a>                source_tokenizer: row.get(<span class="number">8</span>)<span class="question-mark">?</span>,
+<a href=#343 id=343 data-nosnippet>343</a>            };
+<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">let </span>file = <span class="self">Self</span>::read_stage_file(<span class="kw-2">&amp;</span>connection, <span class="kw-2">&amp;</span>row)<span class="question-mark">?</span>;
+<a href=#345 id=345 data-nosnippet>345</a>            writer.replace_with_source_tokens(
+<a href=#346 id=346 data-nosnippet>346</a>                file,
+<a href=#347 id=347 data-nosnippet>347</a>                <span class="kw-2">&amp;</span>row.source_tokenizer,
+<a href=#348 id=348 data-nosnippet>348</a>                i64_to_usize(row.source_token_count)<span class="question-mark">?</span>,
+<a href=#349 id=349 data-nosnippet>349</a>            )<span class="question-mark">?</span>;
+<a href=#350 id=350 data-nosnippet>350</a>        }
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="prelude-val">Ok</span>(())
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">fn </span>stage_meta(connection: <span class="kw-2">&amp;</span>Connection, key: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="prelude-val">Ok</span>(connection.query_row(
+<a href=#356 id=356 data-nosnippet>356</a>            <span class="string">"SELECT value FROM stage_meta WHERE key = ?1"</span>,
+<a href=#357 id=357 data-nosnippet>357</a>            <span class="macro">params!</span>[key],
+<a href=#358 id=358 data-nosnippet>358</a>            |row| row.get(<span class="number">0</span>),
+<a href=#359 id=359 data-nosnippet>359</a>        )<span class="question-mark">?</span>)
+<a href=#360 id=360 data-nosnippet>360</a>    }
+<a href=#361 id=361 data-nosnippet>361</a>
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="kw">fn </span>insert_stage_file(
+<a href=#363 id=363 data-nosnippet>363</a>        tx: <span class="kw-2">&amp;</span>Transaction,
+<a href=#364 id=364 data-nosnippet>364</a>        file: <span class="kw-2">&amp;</span>IndexedFile,
+<a href=#365 id=365 data-nosnippet>365</a>        source_token_count: usize,
+<a href=#366 id=366 data-nosnippet>366</a>        tokenizer: <span class="kw-2">&amp;</span>str,
+<a href=#367 id=367 data-nosnippet>367</a>        ordinal: i64,
+<a href=#368 id=368 data-nosnippet>368</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#369 id=369 data-nosnippet>369</a>        tx.execute(
+<a href=#370 id=370 data-nosnippet>370</a>            <span class="string">"INSERT INTO stage_files(
+<a href=#371 id=371 data-nosnippet>371</a>                ordinal, path, language, structurally_complete, size_bytes,
+<a href=#372 id=372 data-nosnippet>372</a>                modified_ns, content_hash, source_token_count, source_tokenizer
+<a href=#373 id=373 data-nosnippet>373</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"</span>,
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="macro">params!</span>[
+<a href=#375 id=375 data-nosnippet>375</a>                ordinal,
+<a href=#376 id=376 data-nosnippet>376</a>                <span class="kw-2">&amp;</span>file.path,
+<a href=#377 id=377 data-nosnippet>377</a>                file.language.as_deref(),
+<a href=#378 id=378 data-nosnippet>378</a>                file.structurally_complete,
+<a href=#379 id=379 data-nosnippet>379</a>                u64_to_i64(file.size_bytes)<span class="question-mark">?</span>,
+<a href=#380 id=380 data-nosnippet>380</a>                file.modified_ns.map(u128_to_i64).transpose()<span class="question-mark">?</span>,
+<a href=#381 id=381 data-nosnippet>381</a>                <span class="kw-2">&amp;</span>file.content_hash,
+<a href=#382 id=382 data-nosnippet>382</a>                usize_to_i64(source_token_count)<span class="question-mark">?</span>,
+<a href=#383 id=383 data-nosnippet>383</a>                tokenizer,
+<a href=#384 id=384 data-nosnippet>384</a>            ],
+<a href=#385 id=385 data-nosnippet>385</a>        )<span class="question-mark">?</span>;
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>file_id = tx.last_insert_rowid();
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span><span class="kw-2">mut </span>chunks = tx.prepare_cached(
+<a href=#389 id=389 data-nosnippet>389</a>            <span class="string">"INSERT INTO stage_chunks(
+<a href=#390 id=390 data-nosnippet>390</a>                file_id, ordinal, content, start_line, end_line, start_byte, end_byte, token_count
+<a href=#391 id=391 data-nosnippet>391</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"</span>,
+<a href=#392 id=392 data-nosnippet>392</a>        )<span class="question-mark">?</span>;
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">for </span>(ordinal, chunk) <span class="kw">in </span>file.chunks.iter().enumerate() {
+<a href=#394 id=394 data-nosnippet>394</a>            chunks.execute(<span class="macro">params!</span>[
+<a href=#395 id=395 data-nosnippet>395</a>                file_id,
+<a href=#396 id=396 data-nosnippet>396</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
+<a href=#397 id=397 data-nosnippet>397</a>                <span class="kw-2">&amp;</span>chunk.content,
+<a href=#398 id=398 data-nosnippet>398</a>                usize_to_i64(chunk.start_line)<span class="question-mark">?</span>,
+<a href=#399 id=399 data-nosnippet>399</a>                usize_to_i64(chunk.end_line)<span class="question-mark">?</span>,
+<a href=#400 id=400 data-nosnippet>400</a>                usize_to_i64(chunk.start_byte)<span class="question-mark">?</span>,
+<a href=#401 id=401 data-nosnippet>401</a>                usize_to_i64(chunk.end_byte)<span class="question-mark">?</span>,
+<a href=#402 id=402 data-nosnippet>402</a>                usize_to_i64(chunk.token_count)<span class="question-mark">?</span>,
+<a href=#403 id=403 data-nosnippet>403</a>            ])<span class="question-mark">?</span>;
+<a href=#404 id=404 data-nosnippet>404</a>        }
+<a href=#405 id=405 data-nosnippet>405</a>        drop(chunks);
+<a href=#406 id=406 data-nosnippet>406</a>
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span><span class="kw-2">mut </span>symbols = tx.prepare_cached(
+<a href=#408 id=408 data-nosnippet>408</a>            <span class="string">"INSERT INTO stage_symbols(
+<a href=#409 id=409 data-nosnippet>409</a>                file_id, ordinal, name, kind, parent, signature,
+<a href=#410 id=410 data-nosnippet>410</a>                start_line, end_line, start_byte, end_byte
+<a href=#411 id=411 data-nosnippet>411</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"</span>,
+<a href=#412 id=412 data-nosnippet>412</a>        )<span class="question-mark">?</span>;
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">for </span>(ordinal, symbol) <span class="kw">in </span>file.symbols.iter().enumerate() {
+<a href=#414 id=414 data-nosnippet>414</a>            symbols.execute(<span class="macro">params!</span>[
+<a href=#415 id=415 data-nosnippet>415</a>                file_id,
+<a href=#416 id=416 data-nosnippet>416</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="kw-2">&amp;</span>symbol.name,
+<a href=#418 id=418 data-nosnippet>418</a>                <span class="kw-2">&amp;</span>symbol.kind,
+<a href=#419 id=419 data-nosnippet>419</a>                symbol.parent.as_deref(),
+<a href=#420 id=420 data-nosnippet>420</a>                symbol.signature.as_deref(),
+<a href=#421 id=421 data-nosnippet>421</a>                usize_to_i64(symbol.start_line)<span class="question-mark">?</span>,
+<a href=#422 id=422 data-nosnippet>422</a>                usize_to_i64(symbol.end_line)<span class="question-mark">?</span>,
+<a href=#423 id=423 data-nosnippet>423</a>                usize_to_i64(symbol.start_byte)<span class="question-mark">?</span>,
+<a href=#424 id=424 data-nosnippet>424</a>                usize_to_i64(symbol.end_byte)<span class="question-mark">?</span>,
+<a href=#425 id=425 data-nosnippet>425</a>            ])<span class="question-mark">?</span>;
+<a href=#426 id=426 data-nosnippet>426</a>        }
+<a href=#427 id=427 data-nosnippet>427</a>        drop(symbols);
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span><span class="kw-2">mut </span>references = tx.prepare_cached(
+<a href=#430 id=430 data-nosnippet>430</a>            <span class="string">"INSERT INTO stage_references(
+<a href=#431 id=431 data-nosnippet>431</a>                file_id, ordinal, name, kind, role, enclosing_symbol,
+<a href=#432 id=432 data-nosnippet>432</a>                start_line, end_line, start_byte, end_byte
+<a href=#433 id=433 data-nosnippet>433</a>             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)"</span>,
+<a href=#434 id=434 data-nosnippet>434</a>        )<span class="question-mark">?</span>;
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">for </span>(ordinal, reference) <span class="kw">in </span>file.references.iter().enumerate() {
+<a href=#436 id=436 data-nosnippet>436</a>            references.execute(<span class="macro">params!</span>[
+<a href=#437 id=437 data-nosnippet>437</a>                file_id,
+<a href=#438 id=438 data-nosnippet>438</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
+<a href=#439 id=439 data-nosnippet>439</a>                <span class="kw-2">&amp;</span>reference.name,
+<a href=#440 id=440 data-nosnippet>440</a>                <span class="kw-2">&amp;</span>reference.kind,
+<a href=#441 id=441 data-nosnippet>441</a>                role_to_str(reference.role),
+<a href=#442 id=442 data-nosnippet>442</a>                reference.enclosing_symbol.as_deref(),
+<a href=#443 id=443 data-nosnippet>443</a>                usize_to_i64(reference.start_line)<span class="question-mark">?</span>,
+<a href=#444 id=444 data-nosnippet>444</a>                usize_to_i64(reference.end_line)<span class="question-mark">?</span>,
+<a href=#445 id=445 data-nosnippet>445</a>                usize_to_i64(reference.start_byte)<span class="question-mark">?</span>,
+<a href=#446 id=446 data-nosnippet>446</a>                usize_to_i64(reference.end_byte)<span class="question-mark">?</span>,
+<a href=#447 id=447 data-nosnippet>447</a>            ])<span class="question-mark">?</span>;
+<a href=#448 id=448 data-nosnippet>448</a>        }
+<a href=#449 id=449 data-nosnippet>449</a>        drop(references);
+<a href=#450 id=450 data-nosnippet>450</a>
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span><span class="kw-2">mut </span>imports = tx.prepare_cached(
+<a href=#452 id=452 data-nosnippet>452</a>            <span class="string">"INSERT INTO stage_imports(
+<a href=#453 id=453 data-nosnippet>453</a>                file_id, ordinal, raw_target, resolved_path, line
+<a href=#454 id=454 data-nosnippet>454</a>             ) VALUES (?1, ?2, ?3, ?4, ?5)"</span>,
+<a href=#455 id=455 data-nosnippet>455</a>        )<span class="question-mark">?</span>;
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span><span class="kw-2">mut </span>candidates = tx.prepare_cached(
+<a href=#457 id=457 data-nosnippet>457</a>            <span class="string">"INSERT INTO stage_import_candidates(import_id, candidate_path, priority)
+<a href=#458 id=458 data-nosnippet>458</a>             VALUES (?1, ?2, ?3)"</span>,
+<a href=#459 id=459 data-nosnippet>459</a>        )<span class="question-mark">?</span>;
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">for </span>(ordinal, import) <span class="kw">in </span>file.imports.iter().enumerate() {
+<a href=#461 id=461 data-nosnippet>461</a>            imports.execute(<span class="macro">params!</span>[
+<a href=#462 id=462 data-nosnippet>462</a>                file_id,
+<a href=#463 id=463 data-nosnippet>463</a>                usize_to_i64(ordinal)<span class="question-mark">?</span>,
+<a href=#464 id=464 data-nosnippet>464</a>                <span class="kw-2">&amp;</span>import.raw_target,
+<a href=#465 id=465 data-nosnippet>465</a>                import.resolved_path.as_deref(),
+<a href=#466 id=466 data-nosnippet>466</a>                usize_to_i64(import.line)<span class="question-mark">?</span>,
+<a href=#467 id=467 data-nosnippet>467</a>            ])<span class="question-mark">?</span>;
+<a href=#468 id=468 data-nosnippet>468</a>            <span class="kw">let </span>import_id = tx.last_insert_rowid();
+<a href=#469 id=469 data-nosnippet>469</a>            <span class="kw">for </span>(priority, candidate_path) <span class="kw">in </span>import.candidate_paths.iter().enumerate() {
+<a href=#470 id=470 data-nosnippet>470</a>                candidates.execute(<span class="macro">params!</span>[import_id, candidate_path, usize_to_i64(priority)<span class="question-mark">?</span>,])<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>            }
+<a href=#472 id=472 data-nosnippet>472</a>        }
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="prelude-val">Ok</span>(())
+<a href=#474 id=474 data-nosnippet>474</a>    }
+<a href=#475 id=475 data-nosnippet>475</a>
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">fn </span>read_stage_file(connection: <span class="kw-2">&amp;</span>Connection, row: <span class="kw-2">&amp;</span>StageFileRow) -&gt; <span class="prelude-ty">Result</span>&lt;IndexedFile&gt; {
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>chunks = {
+<a href=#478 id=478 data-nosnippet>478</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
+<a href=#479 id=479 data-nosnippet>479</a>                <span class="string">"SELECT content, start_line, end_line, start_byte, end_byte, token_count
+<a href=#480 id=480 data-nosnippet>480</a>                 FROM stage_chunks WHERE file_id = ?1 ORDER BY ordinal"</span>,
+<a href=#481 id=481 data-nosnippet>481</a>            )<span class="question-mark">?</span>;
+<a href=#482 id=482 data-nosnippet>482</a>            statement
+<a href=#483 id=483 data-nosnippet>483</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
+<a href=#484 id=484 data-nosnippet>484</a>                    <span class="prelude-val">Ok</span>(ChunkInput {
+<a href=#485 id=485 data-nosnippet>485</a>                        content: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#486 id=486 data-nosnippet>486</a>                        start_line: i64_to_usize(row.get(<span class="number">1</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#487 id=487 data-nosnippet>487</a>                        end_line: i64_to_usize(row.get(<span class="number">2</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#488 id=488 data-nosnippet>488</a>                        start_byte: i64_to_usize(row.get(<span class="number">3</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#489 id=489 data-nosnippet>489</a>                        end_byte: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#490 id=490 data-nosnippet>490</a>                        token_count: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#491 id=491 data-nosnippet>491</a>                    })
+<a href=#492 id=492 data-nosnippet>492</a>                })<span class="question-mark">?
+<a href=#493 id=493 data-nosnippet>493</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
+<a href=#494 id=494 data-nosnippet>494</a>        </span>};
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>symbols = {
+<a href=#496 id=496 data-nosnippet>496</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
+<a href=#497 id=497 data-nosnippet>497</a>                <span class="string">"SELECT name, kind, parent, signature, start_line, end_line, start_byte, end_byte
+<a href=#498 id=498 data-nosnippet>498</a>                 FROM stage_symbols WHERE file_id = ?1 ORDER BY ordinal"</span>,
+<a href=#499 id=499 data-nosnippet>499</a>            )<span class="question-mark">?</span>;
+<a href=#500 id=500 data-nosnippet>500</a>            statement
+<a href=#501 id=501 data-nosnippet>501</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
+<a href=#502 id=502 data-nosnippet>502</a>                    <span class="prelude-val">Ok</span>(SymbolInput {
+<a href=#503 id=503 data-nosnippet>503</a>                        name: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#504 id=504 data-nosnippet>504</a>                        kind: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#505 id=505 data-nosnippet>505</a>                        parent: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#506 id=506 data-nosnippet>506</a>                        signature: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+<a href=#507 id=507 data-nosnippet>507</a>                        start_line: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#508 id=508 data-nosnippet>508</a>                        end_line: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#509 id=509 data-nosnippet>509</a>                        start_byte: i64_to_usize(row.get(<span class="number">6</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#510 id=510 data-nosnippet>510</a>                        end_byte: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#511 id=511 data-nosnippet>511</a>                    })
+<a href=#512 id=512 data-nosnippet>512</a>                })<span class="question-mark">?
+<a href=#513 id=513 data-nosnippet>513</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
+<a href=#514 id=514 data-nosnippet>514</a>        </span>};
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">let </span>references = {
+<a href=#516 id=516 data-nosnippet>516</a>            <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
+<a href=#517 id=517 data-nosnippet>517</a>                <span class="string">"SELECT name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte
+<a href=#518 id=518 data-nosnippet>518</a>                 FROM stage_references WHERE file_id = ?1 ORDER BY ordinal"</span>,
+<a href=#519 id=519 data-nosnippet>519</a>            )<span class="question-mark">?</span>;
+<a href=#520 id=520 data-nosnippet>520</a>            statement
+<a href=#521 id=521 data-nosnippet>521</a>                .query_map(<span class="macro">params!</span>[row.id], |row| {
+<a href=#522 id=522 data-nosnippet>522</a>                    <span class="prelude-val">Ok</span>(ReferenceInput {
+<a href=#523 id=523 data-nosnippet>523</a>                        name: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#524 id=524 data-nosnippet>524</a>                        kind: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#525 id=525 data-nosnippet>525</a>                        role: role_from_str(<span class="kw-2">&amp;</span>row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">2</span>)<span class="question-mark">?</span>),
+<a href=#526 id=526 data-nosnippet>526</a>                        enclosing_symbol: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+<a href=#527 id=527 data-nosnippet>527</a>                        start_line: i64_to_usize(row.get(<span class="number">4</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#528 id=528 data-nosnippet>528</a>                        end_line: i64_to_usize(row.get(<span class="number">5</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#529 id=529 data-nosnippet>529</a>                        start_byte: i64_to_usize(row.get(<span class="number">6</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#530 id=530 data-nosnippet>530</a>                        end_byte: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#531 id=531 data-nosnippet>531</a>                    })
+<a href=#532 id=532 data-nosnippet>532</a>                })<span class="question-mark">?
+<a href=#533 id=533 data-nosnippet>533</a>                </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
+<a href=#534 id=534 data-nosnippet>534</a>        </span>};
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span>imports = {
+<a href=#536 id=536 data-nosnippet>536</a>            <span class="kw">let </span>import_rows = {
+<a href=#537 id=537 data-nosnippet>537</a>                <span class="kw">let </span><span class="kw-2">mut </span>statement = connection.prepare(
+<a href=#538 id=538 data-nosnippet>538</a>                    <span class="string">"SELECT id, raw_target, resolved_path, line
+<a href=#539 id=539 data-nosnippet>539</a>                     FROM stage_imports WHERE file_id = ?1 ORDER BY ordinal"</span>,
+<a href=#540 id=540 data-nosnippet>540</a>                )<span class="question-mark">?</span>;
+<a href=#541 id=541 data-nosnippet>541</a>                statement
+<a href=#542 id=542 data-nosnippet>542</a>                    .query_map(<span class="macro">params!</span>[row.id], |row| {
+<a href=#543 id=543 data-nosnippet>543</a>                        <span class="prelude-val">Ok</span>((
+<a href=#544 id=544 data-nosnippet>544</a>                            row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#545 id=545 data-nosnippet>545</a>                            ImportInput {
+<a href=#546 id=546 data-nosnippet>546</a>                                raw_target: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#547 id=547 data-nosnippet>547</a>                                resolved_path: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#548 id=548 data-nosnippet>548</a>                                candidate_paths: Vec::new(),
+<a href=#549 id=549 data-nosnippet>549</a>                                line: i64_to_usize(row.get(<span class="number">3</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#550 id=550 data-nosnippet>550</a>                            },
+<a href=#551 id=551 data-nosnippet>551</a>                        ))
+<a href=#552 id=552 data-nosnippet>552</a>                    })<span class="question-mark">?
+<a href=#553 id=553 data-nosnippet>553</a>                    </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?
+<a href=#554 id=554 data-nosnippet>554</a>            </span>};
+<a href=#555 id=555 data-nosnippet>555</a>            import_rows
+<a href=#556 id=556 data-nosnippet>556</a>                .into_iter()
+<a href=#557 id=557 data-nosnippet>557</a>                .map(|(id, <span class="kw-2">mut </span>import)| {
+<a href=#558 id=558 data-nosnippet>558</a>                    <span class="kw">let </span><span class="kw-2">mut </span>candidates = connection.prepare(
+<a href=#559 id=559 data-nosnippet>559</a>                        <span class="string">"SELECT candidate_path FROM stage_import_candidates
+<a href=#560 id=560 data-nosnippet>560</a>                         WHERE import_id = ?1 ORDER BY priority"</span>,
+<a href=#561 id=561 data-nosnippet>561</a>                    )<span class="question-mark">?</span>;
+<a href=#562 id=562 data-nosnippet>562</a>                    import.candidate_paths = candidates
+<a href=#563 id=563 data-nosnippet>563</a>                        .query_map(<span class="macro">params!</span>[id], |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>))<span class="question-mark">?
+<a href=#564 id=564 data-nosnippet>564</a>                        </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#565 id=565 data-nosnippet>565</a>                    <span class="prelude-val">Ok</span>(import)
+<a href=#566 id=566 data-nosnippet>566</a>                })
+<a href=#567 id=567 data-nosnippet>567</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?
+<a href=#568 id=568 data-nosnippet>568</a>        </span>};
+<a href=#569 id=569 data-nosnippet>569</a>
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="prelude-val">Ok</span>(IndexedFile {
+<a href=#571 id=571 data-nosnippet>571</a>            path: row.path.clone(),
+<a href=#572 id=572 data-nosnippet>572</a>            language: row.language.clone(),
+<a href=#573 id=573 data-nosnippet>573</a>            structurally_complete: row.structurally_complete,
+<a href=#574 id=574 data-nosnippet>574</a>            size_bytes: i64_to_u64(row.size_bytes)<span class="question-mark">?</span>,
+<a href=#575 id=575 data-nosnippet>575</a>            modified_ns: row.modified_ns.map(i64_to_u128).transpose()<span class="question-mark">?</span>,
+<a href=#576 id=576 data-nosnippet>576</a>            content_hash: row.content_hash.clone(),
+<a href=#577 id=577 data-nosnippet>577</a>            chunks,
+<a href=#578 id=578 data-nosnippet>578</a>            symbols,
+<a href=#579 id=579 data-nosnippet>579</a>            references,
+<a href=#580 id=580 data-nosnippet>580</a>            imports,
+<a href=#581 id=581 data-nosnippet>581</a>        })
+<a href=#582 id=582 data-nosnippet>582</a>    }
+<a href=#583 id=583 data-nosnippet>583</a>}
+<a href=#584 id=584 data-nosnippet>584</a>
+<a href=#585 id=585 data-nosnippet>585</a><span class="kw">struct </span>StageFileRow {
+<a href=#586 id=586 data-nosnippet>586</a>    id: i64,
+<a href=#587 id=587 data-nosnippet>587</a>    path: String,
+<a href=#588 id=588 data-nosnippet>588</a>    language: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#589 id=589 data-nosnippet>589</a>    structurally_complete: bool,
+<a href=#590 id=590 data-nosnippet>590</a>    size_bytes: i64,
+<a href=#591 id=591 data-nosnippet>591</a>    modified_ns: <span class="prelude-ty">Option</span>&lt;i64&gt;,
+<a href=#592 id=592 data-nosnippet>592</a>    content_hash: String,
+<a href=#593 id=593 data-nosnippet>593</a>    source_token_count: i64,
+<a href=#594 id=594 data-nosnippet>594</a>    source_tokenizer: String,
+<a href=#595 id=595 data-nosnippet>595</a>}
+<a href=#596 id=596 data-nosnippet>596</a>
+<a href=#597 id=597 data-nosnippet>597</a><span class="kw">impl </span>Drop <span class="kw">for </span>PreparedReconciliation {
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#599 id=599 data-nosnippet>599</a>        <span class="comment">// Close SQLite before TempDir removes the directory. This is required
+<a href=#600 id=600 data-nosnippet>600</a>        // for Windows and also makes cleanup of any journal sidecars explicit.
+<a href=#601 id=601 data-nosnippet>601</a>        </span><span class="self">self</span>.connection.take();
+<a href=#602 id=602 data-nosnippet>602</a>    }
+<a href=#603 id=603 data-nosnippet>603</a>}
+<a href=#604 id=604 data-nosnippet>604</a>
+<a href=#605 id=605 data-nosnippet>605</a><span class="attr">#[cfg(test)]
+<a href=#606 id=606 data-nosnippet>606</a></span><span class="kw">mod </span>tests {
+<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#608 id=608 data-nosnippet>608</a>    <span class="kw">use </span><span class="kw">crate</span>::model::ReferenceRole;
+<a href=#609 id=609 data-nosnippet>609</a>
+<a href=#610 id=610 data-nosnippet>610</a>    <span class="attr">#[test]
+<a href=#611 id=611 data-nosnippet>611</a>    </span><span class="kw">fn </span>failed_flush_retains_the_pending_batch_for_retry() {
+<a href=#612 id=612 data-nosnippet>612</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository root"</span>);
+<a href=#613 id=613 data-nosnippet>613</a>        <span class="kw">let </span>storage = Storage::open(root.path().join(<span class="string">"index.sqlite"</span>)).expect(<span class="string">"storage"</span>);
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">let </span>baseline = storage.meta().expect(<span class="string">"baseline"</span>);
+<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">let </span><span class="kw-2">mut </span>stage = PreparedReconciliation::new(
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw-2">&amp;</span>storage,
+<a href=#617 id=617 data-nosnippet>617</a>            <span class="string">"fixture-tokenizer"</span>,
+<a href=#618 id=618 data-nosnippet>618</a>            <span class="kw-2">&amp;</span>baseline,
+<a href=#619 id=619 data-nosnippet>619</a>            <span class="string">"config"</span>,
+<a href=#620 id=620 data-nosnippet>620</a>            <span class="bool-val">false</span>,
+<a href=#621 id=621 data-nosnippet>621</a>            <span class="bool-val">false</span>,
+<a href=#622 id=622 data-nosnippet>622</a>        )
+<a href=#623 id=623 data-nosnippet>623</a>        .expect(<span class="string">"stage"</span>);
+<a href=#624 id=624 data-nosnippet>624</a>        stage.stage_removal(<span class="string">"old.rs"</span>.into());
+<a href=#625 id=625 data-nosnippet>625</a>        stage
+<a href=#626 id=626 data-nosnippet>626</a>            .connection
+<a href=#627 id=627 data-nosnippet>627</a>            .as_ref()
+<a href=#628 id=628 data-nosnippet>628</a>            .expect(<span class="string">"open stage connection"</span>)
+<a href=#629 id=629 data-nosnippet>629</a>            .execute_batch(<span class="string">"DROP TABLE stage_removals"</span>)
+<a href=#630 id=630 data-nosnippet>630</a>            .expect(<span class="string">"break stage fixture"</span>);
+<a href=#631 id=631 data-nosnippet>631</a>
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="macro">assert!</span>(stage.flush().is_err());
+<a href=#633 id=633 data-nosnippet>633</a>
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="macro">assert_eq!</span>(stage.removals, <span class="macro">vec!</span>[<span class="string">"old.rs"</span>]);
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert!</span>(stage.replacements.is_empty());
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert_eq!</span>(stage.next_ordinal, <span class="number">0</span>);
+<a href=#637 id=637 data-nosnippet>637</a>    }
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>    <span class="attr">#[test]
+<a href=#640 id=640 data-nosnippet>640</a>    </span><span class="kw">fn </span>normalized_stage_roundtrip_preserves_derived_rows_and_cleans_up() {
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository root"</span>);
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="kw">let </span>database = root.path().join(<span class="string">"index.sqlite"</span>);
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">let </span>storage = Storage::open(<span class="kw-2">&amp;</span>database).expect(<span class="string">"storage"</span>);
+<a href=#644 id=644 data-nosnippet>644</a>        storage
+<a href=#645 id=645 data-nosnippet>645</a>            .full_reconcile(
+<a href=#646 id=646 data-nosnippet>646</a>                <span class="string">"config"</span>,
+<a href=#647 id=647 data-nosnippet>647</a>                <span class="macro">vec!</span>[<span class="kw">crate</span>::storage::tests::sample_file(<span class="string">"old.rs"</span>, <span class="string">"old\n"</span>)],
+<a href=#648 id=648 data-nosnippet>648</a>            )
+<a href=#649 id=649 data-nosnippet>649</a>            .expect(<span class="string">"initial generation"</span>);
+<a href=#650 id=650 data-nosnippet>650</a>
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>baseline = storage.meta().expect(<span class="string">"baseline"</span>);
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span><span class="kw-2">mut </span>file = <span class="kw">crate</span>::storage::tests::sample_file(<span class="string">"src/lib.rs"</span>, <span class="string">"fn answer() {}\n"</span>);
+<a href=#653 id=653 data-nosnippet>653</a>        file.symbols.push(SymbolInput {
+<a href=#654 id=654 data-nosnippet>654</a>            name: <span class="string">"answer"</span>.into(),
+<a href=#655 id=655 data-nosnippet>655</a>            kind: <span class="string">"function"</span>.into(),
+<a href=#656 id=656 data-nosnippet>656</a>            parent: <span class="prelude-val">None</span>,
+<a href=#657 id=657 data-nosnippet>657</a>            signature: <span class="prelude-val">Some</span>(<span class="string">"fn answer()"</span>.into()),
+<a href=#658 id=658 data-nosnippet>658</a>            start_line: <span class="number">1</span>,
+<a href=#659 id=659 data-nosnippet>659</a>            end_line: <span class="number">1</span>,
+<a href=#660 id=660 data-nosnippet>660</a>            start_byte: <span class="number">0</span>,
+<a href=#661 id=661 data-nosnippet>661</a>            end_byte: <span class="number">14</span>,
+<a href=#662 id=662 data-nosnippet>662</a>        });
+<a href=#663 id=663 data-nosnippet>663</a>        file.references.push(ReferenceInput {
+<a href=#664 id=664 data-nosnippet>664</a>            name: <span class="string">"answer"</span>.into(),
+<a href=#665 id=665 data-nosnippet>665</a>            kind: <span class="string">"call"</span>.into(),
+<a href=#666 id=666 data-nosnippet>666</a>            role: ReferenceRole::Reference,
+<a href=#667 id=667 data-nosnippet>667</a>            enclosing_symbol: <span class="prelude-val">Some</span>(<span class="string">"main"</span>.into()),
+<a href=#668 id=668 data-nosnippet>668</a>            start_line: <span class="number">2</span>,
+<a href=#669 id=669 data-nosnippet>669</a>            end_line: <span class="number">2</span>,
+<a href=#670 id=670 data-nosnippet>670</a>            start_byte: <span class="number">0</span>,
+<a href=#671 id=671 data-nosnippet>671</a>            end_byte: <span class="number">6</span>,
+<a href=#672 id=672 data-nosnippet>672</a>        });
+<a href=#673 id=673 data-nosnippet>673</a>        file.imports.push(ImportInput {
+<a href=#674 id=674 data-nosnippet>674</a>            raw_target: <span class="string">"crate::util"</span>.into(),
+<a href=#675 id=675 data-nosnippet>675</a>            resolved_path: <span class="prelude-val">Some</span>(<span class="string">"src/util.rs"</span>.into()),
+<a href=#676 id=676 data-nosnippet>676</a>            candidate_paths: <span class="macro">vec!</span>[<span class="string">"src/util.rs"</span>.into(), <span class="string">"src/util/mod.rs"</span>.into()],
+<a href=#677 id=677 data-nosnippet>677</a>            line: <span class="number">1</span>,
+<a href=#678 id=678 data-nosnippet>678</a>        });
+<a href=#679 id=679 data-nosnippet>679</a>
+<a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span><span class="kw-2">mut </span>stage = PreparedReconciliation::new(
+<a href=#681 id=681 data-nosnippet>681</a>            <span class="kw-2">&amp;</span>storage,
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="string">"fixture-tokenizer"</span>,
+<a href=#683 id=683 data-nosnippet>683</a>            <span class="kw-2">&amp;</span>baseline,
+<a href=#684 id=684 data-nosnippet>684</a>            <span class="string">"config"</span>,
+<a href=#685 id=685 data-nosnippet>685</a>            <span class="bool-val">false</span>,
+<a href=#686 id=686 data-nosnippet>686</a>            <span class="bool-val">true</span>,
+<a href=#687 id=687 data-nosnippet>687</a>        )
+<a href=#688 id=688 data-nosnippet>688</a>        .expect(<span class="string">"stage"</span>);
+<a href=#689 id=689 data-nosnippet>689</a>        stage.stage_removal(<span class="string">"old.rs"</span>.into());
+<a href=#690 id=690 data-nosnippet>690</a>        stage.stage_indexed(file, <span class="number">7</span>);
+<a href=#691 id=691 data-nosnippet>691</a>        stage.flush().expect(<span class="string">"stage batch"</span>);
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="kw">let </span>stage_path = stage.path.clone();
+<a href=#693 id=693 data-nosnippet>693</a>        <span class="macro">assert!</span>(
+<a href=#694 id=694 data-nosnippet>694</a>            stage_path.exists(),
+<a href=#695 id=695 data-nosnippet>695</a>            <span class="string">"stage database should exist before publish"
+<a href=#696 id=696 data-nosnippet>696</a>        </span>);
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="macro">assert_eq!</span>(stage.diagnostics().database_bytes, <span class="number">0</span>);
+<a href=#698 id=698 data-nosnippet>698</a>        stage.finish().expect(<span class="string">"finish stage"</span>);
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="macro">assert!</span>(stage.diagnostics().database_bytes &gt; <span class="number">0</span>);
+<a href=#700 id=700 data-nosnippet>700</a>
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>(generation, ()) = storage
+<a href=#702 id=702 data-nosnippet>702</a>            .publish_reconciliation_at(<span class="kw-2">&amp;</span>baseline, <span class="string">"config"</span>, <span class="bool-val">false</span>, |writer| stage.apply(writer))
+<a href=#703 id=703 data-nosnippet>703</a>            .expect(<span class="string">"publish staged rows"</span>);
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="macro">assert_eq!</span>(generation, <span class="number">2</span>);
+<a href=#705 id=705 data-nosnippet>705</a>
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>connection = storage
+<a href=#707 id=707 data-nosnippet>707</a>            .writer
+<a href=#708 id=708 data-nosnippet>708</a>            .lock()
+<a href=#709 id=709 data-nosnippet>709</a>            .unwrap_or_else(|poisoned| poisoned.into_inner());
+<a href=#710 id=710 data-nosnippet>710</a>        <span class="kw">for </span>(table, expected) <span class="kw">in </span>[
+<a href=#711 id=711 data-nosnippet>711</a>            (<span class="string">"files"</span>, <span class="number">1</span>),
+<a href=#712 id=712 data-nosnippet>712</a>            (<span class="string">"chunks"</span>, <span class="number">1</span>),
+<a href=#713 id=713 data-nosnippet>713</a>            (<span class="string">"symbols"</span>, <span class="number">1</span>),
+<a href=#714 id=714 data-nosnippet>714</a>            (<span class="string">"symbol_refs"</span>, <span class="number">1</span>),
+<a href=#715 id=715 data-nosnippet>715</a>            (<span class="string">"imports"</span>, <span class="number">1</span>),
+<a href=#716 id=716 data-nosnippet>716</a>            (<span class="string">"import_candidates"</span>, <span class="number">2</span>),
+<a href=#717 id=717 data-nosnippet>717</a>        ] {
+<a href=#718 id=718 data-nosnippet>718</a>            <span class="kw">let </span>count: i64 = connection
+<a href=#719 id=719 data-nosnippet>719</a>                .query_row(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"SELECT COUNT(*) FROM {table}"</span>), [], |row| {
+<a href=#720 id=720 data-nosnippet>720</a>                    row.get(<span class="number">0</span>)
+<a href=#721 id=721 data-nosnippet>721</a>                })
+<a href=#722 id=722 data-nosnippet>722</a>                .expect(<span class="string">"count published rows"</span>);
+<a href=#723 id=723 data-nosnippet>723</a>            <span class="macro">assert_eq!</span>(count, expected, <span class="string">"published {table} rows"</span>);
+<a href=#724 id=724 data-nosnippet>724</a>        }
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="macro">assert!</span>(
+<a href=#726 id=726 data-nosnippet>726</a>            connection
+<a href=#727 id=727 data-nosnippet>727</a>                .query_row(
+<a href=#728 id=728 data-nosnippet>728</a>                    <span class="string">"SELECT path FROM files WHERE path = 'src/lib.rs'"</span>,
+<a href=#729 id=729 data-nosnippet>729</a>                    [],
+<a href=#730 id=730 data-nosnippet>730</a>                    |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>),
+<a href=#731 id=731 data-nosnippet>731</a>                )
+<a href=#732 id=732 data-nosnippet>732</a>                .is_ok()
+<a href=#733 id=733 data-nosnippet>733</a>        );
+<a href=#734 id=734 data-nosnippet>734</a>        drop(connection);
+<a href=#735 id=735 data-nosnippet>735</a>        drop(stage);
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="macro">assert!</span>(
+<a href=#737 id=737 data-nosnippet>737</a>            !stage_path.exists(),
+<a href=#738 id=738 data-nosnippet>738</a>            <span class="string">"stage database and its directory should be removed after publication"
+<a href=#739 id=739 data-nosnippet>739</a>        </span>);
+<a href=#740 id=740 data-nosnippet>740</a>    }
+<a href=#741 id=741 data-nosnippet>741</a>}
 </code></pre></div></section></main></body></html>

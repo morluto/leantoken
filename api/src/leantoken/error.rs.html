@@ -554,30 +554,30 @@
 <a href=#554 id=554 data-nosnippet>554</a>            <span class="self">Self</span>::UnknownQueryReceipt(<span class="kw">_</span>) =&gt; <span class="string">"unknown_query_receipt"</span>,
 <a href=#555 id=555 data-nosnippet>555</a>            <span class="self">Self</span>::QueryReceiptMismatch =&gt; <span class="string">"query_receipt_mismatch"</span>,
 <a href=#556 id=556 data-nosnippet>556</a>            <span class="self">Self</span>::StaleQueryReceipt { .. } =&gt; <span class="string">"stale_query_receipt"</span>,
-<a href=#557 id=557 data-nosnippet>557</a>            <span class="self">Self</span>::Cancelled =&gt; <span class="string">"request_cancelled"</span>,
-<a href=#558 id=558 data-nosnippet>558</a>            <span class="self">Self</span>::PathOutsideRoot(<span class="kw">_</span>) =&gt; <span class="string">"path_outside_root"</span>,
-<a href=#559 id=559 data-nosnippet>559</a>            <span class="self">Self</span>::UnsupportedPathEncoding(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_path_encoding"</span>,
-<a href=#560 id=560 data-nosnippet>560</a>            <span class="self">Self</span>::UnsupportedLanguage(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_language"</span>,
-<a href=#561 id=561 data-nosnippet>561</a>            <span class="self">Self</span>::InvalidRequest(<span class="kw">_</span>) =&gt; <span class="string">"invalid_request"</span>,
-<a href=#562 id=562 data-nosnippet>562</a>            <span class="self">Self</span>::Regex(<span class="kw">_</span>) =&gt; <span class="string">"invalid_regex"</span>,
-<a href=#563 id=563 data-nosnippet>563</a>            <span class="self">Self</span>::Glob(<span class="kw">_</span>) =&gt; <span class="string">"invalid_glob"</span>,
-<a href=#564 id=564 data-nosnippet>564</a>            <span class="self">Self</span>::RootNotFound(<span class="kw">_</span>)
-<a href=#565 id=565 data-nosnippet>565</a>            | <span class="self">Self</span>::UnsafeRepositoryRoot(<span class="kw">_</span>)
-<a href=#566 id=566 data-nosnippet>566</a>            | <span class="self">Self</span>::RepositoryMismatch { .. }
-<a href=#567 id=567 data-nosnippet>567</a>            | <span class="self">Self</span>::IndexScopeMismatch { .. }
-<a href=#568 id=568 data-nosnippet>568</a>            | <span class="self">Self</span>::InvalidConfiguration(<span class="kw">_</span>) =&gt; <span class="string">"repository_configuration"</span>,
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="self">Self</span>::IndexLimitExceeded { .. } =&gt; <span class="string">"repository_index_limit"</span>,
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="self">Self</span>::RepositoryTraversal(<span class="kw">_</span>) =&gt; <span class="string">"repository_traversal"</span>,
-<a href=#571 id=571 data-nosnippet>571</a>            <span class="self">Self</span>::RuntimeCapabilityUnavailable { .. } =&gt; <span class="string">"runtime_unavailable"</span>,
-<a href=#572 id=572 data-nosnippet>572</a>            <span class="self">Self</span>::StaleReconciliation { .. } | <span class="self">Self</span>::RetryableConflict(<span class="kw">_</span>) =&gt; <span class="string">"retryable_conflict"</span>,
-<a href=#573 id=573 data-nosnippet>573</a>            <span class="self">Self</span>::SerializationFailure(<span class="kw">_</span>) =&gt; <span class="string">"serialization_failure"</span>,
-<a href=#574 id=574 data-nosnippet>574</a>            <span class="self">Self</span>::ResponseAccountingInvariant(<span class="kw">_</span>) =&gt; <span class="string">"response_accounting_invariant"</span>,
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="self">Self</span>::CachePruneFailure(<span class="kw">_</span>) =&gt; <span class="string">"cache_prune_failure"</span>,
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="self">Self</span>::SetupFailure(<span class="kw">_</span>) =&gt; <span class="string">"setup_failure"</span>,
-<a href=#577 id=577 data-nosnippet>577</a>            <span class="self">Self</span>::OperationFailure(<span class="kw">_</span>) =&gt; <span class="string">"operation_failure"</span>,
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="self">Self</span>::ShutdownTimeout { .. } =&gt; <span class="string">"shutdown_timeout"</span>,
-<a href=#579 id=579 data-nosnippet>579</a>            <span class="self">Self</span>::RepositoryIdentityMismatch { .. }
-<a href=#580 id=580 data-nosnippet>580</a>            | <span class="self">Self</span>::RetrievalOverloaded
+<a href=#557 id=557 data-nosnippet>557</a>            <span class="self">Self</span>::RepositoryIdentityMismatch { .. } =&gt; <span class="string">"repository_identity_mismatch"</span>,
+<a href=#558 id=558 data-nosnippet>558</a>            <span class="self">Self</span>::Cancelled =&gt; <span class="string">"request_cancelled"</span>,
+<a href=#559 id=559 data-nosnippet>559</a>            <span class="self">Self</span>::PathOutsideRoot(<span class="kw">_</span>) =&gt; <span class="string">"path_outside_root"</span>,
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="self">Self</span>::UnsupportedPathEncoding(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_path_encoding"</span>,
+<a href=#561 id=561 data-nosnippet>561</a>            <span class="self">Self</span>::UnsupportedLanguage(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_language"</span>,
+<a href=#562 id=562 data-nosnippet>562</a>            <span class="self">Self</span>::InvalidRequest(<span class="kw">_</span>) =&gt; <span class="string">"invalid_request"</span>,
+<a href=#563 id=563 data-nosnippet>563</a>            <span class="self">Self</span>::Regex(<span class="kw">_</span>) =&gt; <span class="string">"invalid_regex"</span>,
+<a href=#564 id=564 data-nosnippet>564</a>            <span class="self">Self</span>::Glob(<span class="kw">_</span>) =&gt; <span class="string">"invalid_glob"</span>,
+<a href=#565 id=565 data-nosnippet>565</a>            <span class="self">Self</span>::RootNotFound(<span class="kw">_</span>)
+<a href=#566 id=566 data-nosnippet>566</a>            | <span class="self">Self</span>::UnsafeRepositoryRoot(<span class="kw">_</span>)
+<a href=#567 id=567 data-nosnippet>567</a>            | <span class="self">Self</span>::RepositoryMismatch { .. }
+<a href=#568 id=568 data-nosnippet>568</a>            | <span class="self">Self</span>::IndexScopeMismatch { .. }
+<a href=#569 id=569 data-nosnippet>569</a>            | <span class="self">Self</span>::InvalidConfiguration(<span class="kw">_</span>) =&gt; <span class="string">"repository_configuration"</span>,
+<a href=#570 id=570 data-nosnippet>570</a>            <span class="self">Self</span>::IndexLimitExceeded { .. } =&gt; <span class="string">"repository_index_limit"</span>,
+<a href=#571 id=571 data-nosnippet>571</a>            <span class="self">Self</span>::RepositoryTraversal(<span class="kw">_</span>) =&gt; <span class="string">"repository_traversal"</span>,
+<a href=#572 id=572 data-nosnippet>572</a>            <span class="self">Self</span>::RuntimeCapabilityUnavailable { .. } =&gt; <span class="string">"runtime_unavailable"</span>,
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="self">Self</span>::StaleReconciliation { .. } | <span class="self">Self</span>::RetryableConflict(<span class="kw">_</span>) =&gt; <span class="string">"retryable_conflict"</span>,
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="self">Self</span>::SerializationFailure(<span class="kw">_</span>) =&gt; <span class="string">"serialization_failure"</span>,
+<a href=#575 id=575 data-nosnippet>575</a>            <span class="self">Self</span>::ResponseAccountingInvariant(<span class="kw">_</span>) =&gt; <span class="string">"response_accounting_invariant"</span>,
+<a href=#576 id=576 data-nosnippet>576</a>            <span class="self">Self</span>::CachePruneFailure(<span class="kw">_</span>) =&gt; <span class="string">"cache_prune_failure"</span>,
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="self">Self</span>::SetupFailure(<span class="kw">_</span>) =&gt; <span class="string">"setup_failure"</span>,
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="self">Self</span>::OperationFailure(<span class="kw">_</span>) =&gt; <span class="string">"operation_failure"</span>,
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="self">Self</span>::ShutdownTimeout { .. } =&gt; <span class="string">"shutdown_timeout"</span>,
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="self">Self</span>::RetrievalOverloaded
 <a href=#581 id=581 data-nosnippet>581</a>            | <span class="self">Self</span>::RetrievalQueueTimeout
 <a href=#582 id=582 data-nosnippet>582</a>            | <span class="self">Self</span>::ReconciliationFailed(<span class="kw">_</span>)
 <a href=#583 id=583 data-nosnippet>583</a>            | <span class="self">Self</span>::McpRuntimeStopped
@@ -690,5 +690,17 @@
 <a href=#690 id=690 data-nosnippet>690</a>            <span class="string">"shutdown_timeout"
 <a href=#691 id=691 data-nosnippet>691</a>        </span>);
 <a href=#692 id=692 data-nosnippet>692</a>    }
-<a href=#693 id=693 data-nosnippet>693</a>}
+<a href=#693 id=693 data-nosnippet>693</a>
+<a href=#694 id=694 data-nosnippet>694</a>    <span class="attr">#[test]
+<a href=#695 id=695 data-nosnippet>695</a>    </span><span class="kw">fn </span>repository_identity_mismatch_has_a_public_client_category() {
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="macro">assert_eq!</span>(
+<a href=#697 id=697 data-nosnippet>697</a>            Error::RepositoryIdentityMismatch {
+<a href=#698 id=698 data-nosnippet>698</a>                expected: <span class="string">"expected"</span>.into(),
+<a href=#699 id=699 data-nosnippet>699</a>                actual: <span class="string">"actual"</span>.into(),
+<a href=#700 id=700 data-nosnippet>700</a>            }
+<a href=#701 id=701 data-nosnippet>701</a>            .public_category(),
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="string">"repository_identity_mismatch"
+<a href=#703 id=703 data-nosnippet>703</a>        </span>);
+<a href=#704 id=704 data-nosnippet>704</a>    }
+<a href=#705 id=705 data-nosnippet>705</a>}
 </code></pre></div></section></main></body></html>

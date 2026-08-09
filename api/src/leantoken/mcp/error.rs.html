@@ -290,7 +290,7 @@
 <a href=#290 id=290 data-nosnippet>290</a>            <span class="macro">tracing::error!</span>(%cause, <span class="string">"MCP tool failed"</span>);
 <a href=#291 id=291 data-nosnippet>291</a>            ErrorData::internal_error(
 <a href=#292 id=292 data-nosnippet>292</a>                <span class="string">"repository retrieval failed"</span>,
-<a href=#293 id=293 data-nosnippet>293</a>                mcp_error_data(<span class="string">"repository_retrieval"</span>),
+<a href=#293 id=293 data-nosnippet>293</a>                mcp_error_data(cause.public_category()),
 <a href=#294 id=294 data-nosnippet>294</a>            )
 <a href=#295 id=295 data-nosnippet>295</a>        }
 <a href=#296 id=296 data-nosnippet>296</a>    }
