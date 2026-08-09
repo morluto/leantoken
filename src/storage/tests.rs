@@ -667,6 +667,41 @@ pub(crate) fn streamed_cancellation_rolls_back_every_insert_and_generation() {
 }
 
 #[test]
+pub(crate) fn exhausted_repository_generation_fails_before_publication() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    storage
+        .full_reconcile("config", vec![sample_file("old.rs", "fn old() {}\n")])
+        .expect("initial generation");
+    {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .execute(
+                "UPDATE meta SET repository_generation = ?1 WHERE id = 1",
+                [i64::MAX],
+            )
+            .expect("set exhausted generation");
+    }
+    let baseline = storage.meta().expect("exhausted baseline");
+
+    let error = storage
+        .publish_reconciliation_at(&baseline, "config", false, |writer| {
+            writer.replace(sample_file("new.rs", "fn new() {}\n"))
+        })
+        .expect_err("generation exhaustion must fail");
+
+    assert!(matches!(
+        error,
+        Error::OperationFailure(message) if message == "repository generation exhausted"
+    ));
+    assert!(storage.find_file("old.rs").expect("old lookup").is_some());
+    assert!(storage.find_file("new.rs").expect("new lookup").is_none());
+}
+
+#[test]
 pub(crate) fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");

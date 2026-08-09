@@ -141,7 +141,6 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         }
 
         let status = &record[..2];
-        let path = String::from_utf8_lossy(&record[3..]).into_owned();
 
         // Ignore ignored files; keep modified, added, deleted, and untracked.
         if status == b"!!" {
@@ -153,6 +152,10 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         } else {
             modified = true;
         }
+
+        let Ok(path) = std::str::from_utf8(&record[3..]) else {
+            return (HashSet::new(), false, modified, untracked);
+        };
 
         let Some(path) = path.strip_prefix(prefix) else {
             continue;

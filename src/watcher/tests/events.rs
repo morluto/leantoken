@@ -1,11 +1,10 @@
 use super::*;
+use notify::event::RenameMode;
 
 #[test]
 fn paired_rename_event_coalesces_both_paths() {
     let root = tempfile::tempdir().unwrap();
     let mut pending = BTreeSet::new();
-    let mut rename_from = HashMap::new();
-    let mut rename_to = HashMap::new();
     let mut reconcile = false;
     let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
         .add_path(root.path().join("a.txt"))
@@ -16,8 +15,6 @@ fn paired_rename_event_coalesces_both_paths() {
         root.path(),
         &DiscoveryPolicy::default(),
         &mut pending,
-        &mut rename_from,
-        &mut rename_to,
         &mut reconcile,
     );
 
@@ -114,16 +111,12 @@ fn rename_shapes_with_missing_endpoints_fail_closed_to_reconciliation() {
             "{platform} rename must be admitted even when an endpoint is missing"
         );
         let mut pending = BTreeSet::new();
-        let mut rename_from = HashMap::new();
-        let mut rename_to = HashMap::new();
         let mut reconcile = false;
         process_raw_event(
             Ok(event),
             root.path(),
             &DiscoveryPolicy::default(),
             &mut pending,
-            &mut rename_from,
-            &mut rename_to,
             &mut reconcile,
         );
         assert!(reconcile, "{platform} rename must request reconciliation");
@@ -140,8 +133,6 @@ fn generated_directory_rename_cannot_bypass_process_reconciliation() {
     let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
         .add_path(root.path().join("node_modules/pkg/new.js"));
     let mut pending = BTreeSet::new();
-    let mut rename_from = HashMap::new();
-    let mut rename_to = HashMap::new();
     let mut reconcile = false;
 
     process_raw_event(
@@ -149,15 +140,11 @@ fn generated_directory_rename_cannot_bypass_process_reconciliation() {
         root.path(),
         &DiscoveryPolicy::default(),
         &mut pending,
-        &mut rename_from,
-        &mut rename_to,
         &mut reconcile,
     );
 
     assert!(reconcile);
     assert!(pending.is_empty());
-    assert!(rename_from.is_empty());
-    assert!(rename_to.is_empty());
 }
 
 #[test]
@@ -201,8 +188,6 @@ fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
     ));
 
     let mut pending = BTreeSet::new();
-    let mut rename_from = HashMap::new();
-    let mut rename_to = HashMap::new();
     let mut reconcile = false;
     process_raw_event(
         Ok(
@@ -213,8 +198,6 @@ fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
         root.path(),
         &policy,
         &mut pending,
-        &mut rename_from,
-        &mut rename_to,
         &mut reconcile,
     );
     assert!(
@@ -280,19 +263,10 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
     })
     .unwrap();
     let mut pending = BTreeSet::from(["changed.txt".to_string()]);
-    let mut rename_from = HashMap::new();
-    let mut rename_to = HashMap::new();
     let mut reconcile = false;
     let counters = WatcherCounters::default();
 
-    assert!(flush(
-        &mut pending,
-        &mut rename_from,
-        &mut rename_to,
-        &mut reconcile,
-        &tx,
-        &counters,
-    ));
+    assert!(flush(&mut pending, &mut reconcile, &tx, &counters,));
     assert!(pending.is_empty());
     assert!(reconcile);
 
@@ -300,14 +274,7 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
         rx.try_recv(),
         Ok(WatcherMessage::Changed { paths }) if paths == ["occupied.txt"]
     ));
-    assert!(flush(
-        &mut pending,
-        &mut rename_from,
-        &mut rename_to,
-        &mut reconcile,
-        &tx,
-        &counters,
-    ));
+    assert!(flush(&mut pending, &mut reconcile, &tx, &counters,));
     assert!(!reconcile);
     assert_eq!(
         counters
@@ -324,30 +291,15 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
 #[test]
 fn retained_path_state_overflow_becomes_one_sticky_reconciliation() {
     let mut pending = BTreeSet::from(["a.rs".to_string(), "b.rs".to_string(), "c.rs".to_string()]);
-    let mut rename_from = HashMap::from([(1, "old.rs".to_string())]);
-    let mut rename_to = HashMap::new();
     let mut reconcile = false;
+    pending.insert("old.rs".into());
 
-    bound_pending_state(
-        &mut pending,
-        &mut rename_from,
-        &mut rename_to,
-        &mut reconcile,
-        3,
-    );
+    bound_pending_state(&mut pending, &mut reconcile, 3);
 
     assert!(reconcile);
     assert!(pending.is_empty());
-    assert!(rename_from.is_empty());
-    assert!(rename_to.is_empty());
 
     pending.insert("later.rs".into());
-    bound_pending_state(
-        &mut pending,
-        &mut rename_from,
-        &mut rename_to,
-        &mut reconcile,
-        3,
-    );
+    bound_pending_state(&mut pending, &mut reconcile, 3);
     assert!(pending.is_empty());
 }

@@ -216,26 +216,32 @@ impl PreparedReconciliation {
         let tx = connection.transaction()?;
         let mut removals = std::mem::take(&mut self.removals);
         removals.sort();
-        let replacements = std::mem::take(&mut self.replacements);
-
-        for path in removals {
-            tx.execute(
-                "INSERT OR IGNORE INTO stage_removals(path, ordinal) VALUES (?1, ?2)",
-                params![path, self.next_ordinal],
-            )?;
-            self.next_ordinal = self.next_ordinal.saturating_add(1);
+        let mut replacements = std::mem::take(&mut self.replacements);
+        let next_ordinal = self.next_ordinal;
+        let result = (|| {
+            let mut ordinal = next_ordinal;
+            for path in &removals {
+                tx.execute(
+                    "INSERT OR IGNORE INTO stage_removals(path, ordinal) VALUES (?1, ?2)",
+                    params![path, ordinal],
+                )?;
+                ordinal = ordinal.saturating_add(1);
+            }
+            for (file, source_token_count) in &replacements {
+                Self::insert_stage_file(&tx, file, *source_token_count, &self.tokenizer, ordinal)?;
+                ordinal = ordinal.saturating_add(1);
+            }
+            tx.commit()?;
+            Ok(ordinal)
+        })();
+        match result {
+            Ok(ordinal) => self.next_ordinal = ordinal,
+            Err(error) => {
+                self.removals.append(&mut removals);
+                self.replacements.append(&mut replacements);
+                return Err(error);
+            }
         }
-        for (file, source_token_count) in replacements {
-            Self::insert_stage_file(
-                &tx,
-                &file,
-                source_token_count,
-                &self.tokenizer,
-                self.next_ordinal,
-            )?;
-            self.next_ordinal = self.next_ordinal.saturating_add(1);
-        }
-        tx.commit()?;
 
         self.diagnostics.write_ms += started.elapsed().as_secs_f64() * 1_000.0;
         let write_after = self.profile.then(process_write_bytes).flatten();
@@ -600,6 +606,35 @@ impl Drop for PreparedReconciliation {
 mod tests {
     use super::*;
     use crate::model::ReferenceRole;
+
+    #[test]
+    fn failed_flush_retains_the_pending_batch_for_retry() {
+        let root = tempfile::tempdir().expect("repository root");
+        let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+        let baseline = storage.meta().expect("baseline");
+        let mut stage = PreparedReconciliation::new(
+            &storage,
+            "fixture-tokenizer",
+            &baseline,
+            "config",
+            false,
+            false,
+        )
+        .expect("stage");
+        stage.stage_removal("old.rs".into());
+        stage
+            .connection
+            .as_ref()
+            .expect("open stage connection")
+            .execute_batch("DROP TABLE stage_removals")
+            .expect("break stage fixture");
+
+        assert!(stage.flush().is_err());
+
+        assert_eq!(stage.removals, vec!["old.rs"]);
+        assert!(stage.replacements.is_empty());
+        assert_eq!(stage.next_ordinal, 0);
+    }
 
     #[test]
     fn normalized_stage_roundtrip_preserves_derived_rows_and_cleans_up() {

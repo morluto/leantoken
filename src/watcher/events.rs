@@ -5,8 +5,6 @@ pub(super) fn process_raw_event(
     root: &Path,
     policy: &DiscoveryPolicy,
     pending: &mut BTreeSet<String>,
-    rename_from: &mut HashMap<usize, String>,
-    rename_to: &mut HashMap<usize, String>,
     reconcile: &mut bool,
 ) {
     let event = match raw {
@@ -56,42 +54,22 @@ pub(super) fn process_raw_event(
         }
     }
 
-    if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) {
-        handle_rename(
-            &event,
-            inside,
-            outside,
-            pending,
-            rename_from,
-            rename_to,
-            reconcile,
-        );
-    } else {
-        if outside && inside.is_empty() {
-            return;
-        }
-        for rel in inside {
-            pending.insert(rel);
-        }
+    if outside && inside.is_empty() {
+        return;
+    }
+    for rel in inside {
+        pending.insert(rel);
     }
 }
 
 pub(super) fn bound_pending_state(
     pending: &mut BTreeSet<String>,
-    rename_from: &mut HashMap<usize, String>,
-    rename_to: &mut HashMap<usize, String>,
     reconcile: &mut bool,
     limit: usize,
 ) {
-    let retained = pending
-        .len()
-        .saturating_add(rename_from.len())
-        .saturating_add(rename_to.len());
-    if *reconcile || retained > limit {
+    if *reconcile || pending.len() > limit {
         *reconcile = true;
         pending.clear();
-        rename_from.clear();
-        rename_to.clear();
     }
 }
 
@@ -109,76 +87,5 @@ pub(super) fn raw_event_is_relevant(
             )
         }),
         Ok(_) | Err(_) => true,
-    }
-}
-
-pub(super) fn handle_rename(
-    event: &Event,
-    inside: Vec<String>,
-    outside: bool,
-    pending: &mut BTreeSet<String>,
-    rename_from: &mut HashMap<usize, String>,
-    rename_to: &mut HashMap<usize, String>,
-    reconcile: &mut bool,
-) {
-    if outside {
-        *reconcile = true;
-        return;
-    }
-    if inside.is_empty() {
-        return;
-    }
-    if inside.len() == 2 {
-        pending.insert(inside[0].clone());
-        pending.insert(inside[1].clone());
-        if let Some(cookie) = event.tracker() {
-            rename_from.remove(&cookie);
-            rename_to.remove(&cookie);
-        }
-        return;
-    }
-    if inside.len() > 2 {
-        *reconcile = true;
-        return;
-    }
-
-    let rel = inside.into_iter().next().unwrap();
-    let Some(cookie) = event.tracker() else {
-        *reconcile = true;
-        return;
-    };
-
-    let mode = match event.kind {
-        EventKind::Modify(ModifyKind::Name(mode)) => mode,
-        _ => {
-            *reconcile = true;
-            return;
-        }
-    };
-
-    match mode {
-        RenameMode::From => {
-            if let Some(to) = rename_to.remove(&cookie) {
-                pending.insert(rel);
-                pending.insert(to);
-                rename_from.remove(&cookie);
-            } else {
-                rename_from.insert(cookie, rel);
-            }
-        }
-        RenameMode::To => {
-            if let Some(from) = rename_from.remove(&cookie) {
-                pending.insert(from);
-                pending.insert(rel);
-                rename_to.remove(&cookie);
-            } else {
-                rename_to.insert(cookie, rel);
-            }
-        }
-        _ => {
-            *reconcile = true;
-            rename_from.remove(&cookie);
-            rename_to.remove(&cookie);
-        }
     }
 }

@@ -24,8 +24,8 @@ impl RepositoryWatcher {
     /// Start watching a canonical repository root.
     ///
     /// `capacity` bounds both the public message queue and the internal raw
-    /// event queue. It also derives the bound for retained paths and incomplete
-    /// rename cookies. Queue or retained-state overflow degrades to
+    /// event queue. It also derives the bound for retained paths. Queue or
+    /// retained-state overflow degrades to
     /// [`WatcherMessage::ReconcileRequired`].
     pub async fn start(
         root: impl AsRef<Path>,
@@ -179,8 +179,6 @@ impl RepositoryWatcher {
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
             let mut pending = BTreeSet::<String>::new();
-            let mut rename_from = HashMap::<usize, String>::new();
-            let mut rename_to = HashMap::<usize, String>::new();
             let mut reconcile = false;
             let poll_started_at = Instant::now()
                 + if watch_enabled {
@@ -199,8 +197,6 @@ impl RepositoryWatcher {
                 if overflowed.swap(false, Ordering::Acquire) {
                     reconcile = true;
                     pending.clear();
-                    rename_from.clear();
-                    rename_to.clear();
                 }
                 if reconcile {
                     sleep.as_mut().reset(Instant::now());
@@ -216,14 +212,10 @@ impl RepositoryWatcher {
                                 &watched_root,
                                 &policy,
                                 &mut pending,
-                                &mut rename_from,
-                                &mut rename_to,
                                 &mut reconcile,
                             );
                             bound_pending_state(
                                 &mut pending,
-                                &mut rename_from,
-                                &mut rename_to,
                                 &mut reconcile,
                                 raw_capacity,
                             );
@@ -249,8 +241,6 @@ impl RepositoryWatcher {
                     _ = sleep.as_mut() => {
                         if !flush(
                             &mut pending,
-                            &mut rename_from,
-                            &mut rename_to,
                             &mut reconcile,
                             &tx,
                             &task_counters,
@@ -269,14 +259,7 @@ impl RepositoryWatcher {
                 }
             }
 
-            let _ = flush(
-                &mut pending,
-                &mut rename_from,
-                &mut rename_to,
-                &mut reconcile,
-                &tx,
-                &task_counters,
-            );
+            let _ = flush(&mut pending, &mut reconcile, &tx, &task_counters);
             drop(watcher);
         });
 

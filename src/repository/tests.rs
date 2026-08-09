@@ -100,10 +100,57 @@ fn diff_name_parser_stops_after_collecting_max_paths() {
     let first = b"first.rs\0";
     let mut input = Cursor::new([first.as_slice(), b"second.rs\0"].concat());
 
-    let changed = parse_diff_names(&mut input, 1, "");
+    let changed = parse_diff_names(&mut input, 1, "").expect("valid paths");
 
     assert_eq!(changed, vec!["first.rs".to_string()]);
     assert_eq!(input.position(), first.len() as u64);
+}
+
+#[test]
+fn git_status_with_non_utf8_path_marks_the_signal_unavailable() {
+    let input = Cursor::new(b"?? \x80.rs\0".to_vec());
+
+    let (changed, available, modified, untracked) = parse_git_status_observation(input, 10, "");
+
+    assert!(changed.is_empty());
+    assert!(!available);
+    assert!(!modified);
+    assert!(untracked);
+}
+
+#[test]
+fn diff_name_parser_rejects_non_utf8_paths_without_lossy_aliases() {
+    let error =
+        parse_diff_names(Cursor::new(b"\x80.rs\0"), 10, "").expect_err("non-UTF-8 path must fail");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "git diff path",
+            reason: "must be valid UTF-8",
+        }
+    ));
+}
+
+#[test]
+fn revision_resolution_preserves_the_callers_field_for_empty_output() {
+    let directory = tempfile::tempdir().expect("directory");
+    let error = resolve_revision_sha_for_field(
+        directory.path(),
+        Path::new("true"),
+        "HEAD",
+        Duration::from_secs(1),
+        "head revision",
+    )
+    .expect_err("successful command without output must fail");
+
+    assert!(matches!(
+        error,
+        Error::InvalidInput {
+            field: "head revision",
+            reason: "resolved to an empty SHA",
+        }
+    ));
 }
 
 #[test]

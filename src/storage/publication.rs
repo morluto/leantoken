@@ -180,7 +180,9 @@ impl Storage {
                 tx.execute("DELETE FROM path_entries", [])?;
             }
 
-            let next_generation = current_generation.saturating_add(1);
+            let next_generation = current_generation
+                .checked_add(1)
+                .ok_or_else(|| Error::OperationFailure("repository generation exhausted".into()))?;
             let mut writer = ReconciliationWriter {
                 transaction: &tx,
                 generation: next_generation,
