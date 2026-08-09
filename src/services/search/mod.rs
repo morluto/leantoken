@@ -262,9 +262,10 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve(true);
         self.observe_service_result(operation, self.validate_call_options(options))?;
+        let output_shape = SearchOutputShape::Compact;
+        let request = self
+            .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
-            &request,
-            false,
             consistency,
             options.initial_reconciliation_deadline(),
             &cancellation,
@@ -281,7 +282,7 @@ impl Services {
                         RegexPlanning::Enabled,
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
-                            output_shape: SearchOutputShape::Compact,
+                            output_shape,
                             response_options: ServiceCallOptions::new(),
                             record_savings: false,
                         },

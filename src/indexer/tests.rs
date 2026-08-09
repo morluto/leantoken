@@ -128,6 +128,75 @@ fn initial_reconcile_reports_completed_aggregate_progress() {
 }
 
 #[test]
+fn profiled_noop_attributes_backlogged_wal_writes_to_checkpoint_without_publishing() {
+    let root = tempfile::tempdir().expect("root");
+    for index in 0..32 {
+        fs::write(
+            root.path().join(format!("file_{index:02}.rs")),
+            format!(
+                "pub fn item_{index:02}() -> usize {{ {index} }}\n{}\n",
+                "// checkpoint attribution padding".repeat(128)
+            ),
+        )
+        .expect("write source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let storage = Storage::open(&config.database_path).expect("storage");
+    {
+        let writer = storage.writer.lock().expect("writer");
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for backlog fixture");
+    }
+    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
+    let initial = indexer.reconcile(false).expect("initial reconcile");
+    assert_eq!(initial.repository_generation, 1);
+
+    let profiled = indexer
+        .reconcile_profiled(false)
+        .expect("profiled no-op reconciliation");
+    assert_eq!(profiled.response.files_indexed, 0);
+    assert_eq!(profiled.response.files_unchanged, 32);
+    assert_eq!(profiled.response.repository_generation, 1);
+    assert_eq!(profiled.diagnostics.generation_before, 1);
+    assert_eq!(profiled.diagnostics.generation_after, 1);
+    assert!(!profiled.diagnostics.generation_published);
+    assert_eq!(
+        profiled.diagnostics.publication_detail.stage_database_bytes, 0,
+        "an empty reconciliation must not materialize a stage database"
+    );
+
+    #[cfg(target_os = "linux")]
+    {
+        let publication = &profiled.diagnostics.publication_detail;
+        let checkpoint = publication
+            .checkpoint_write_bytes
+            .expect("Linux checkpoint write bytes");
+        let generation_publish = publication
+            .relational_write_bytes
+            .unwrap_or(0)
+            .saturating_add(publication.commit_write_bytes.unwrap_or(0));
+        assert!(checkpoint > 0, "the fixture must leave a WAL backlog");
+        assert!(
+            checkpoint > generation_publish,
+            "checkpoint={checkpoint} generation_publish={generation_publish}"
+        );
+        assert!(
+            profiled
+                .diagnostics
+                .process_write_bytes
+                .expect("process writes")
+                >= checkpoint
+        );
+        assert_eq!(
+            profiled.diagnostics.storage_phase_write_bytes,
+            publication.measured_write_bytes()
+        );
+    }
+}
+
+#[test]
 fn cancelled_initial_reconcile_reports_cancelled_terminal_progress() {
     let root = tempfile::tempdir().expect("root");
     fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");

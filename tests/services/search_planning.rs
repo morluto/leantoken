@@ -220,11 +220,11 @@ async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_vari
     assert_eq!(optimized.response.occurrences_total, Some(10));
     assert_eq!(optimized.response.occurrences_returned, 10);
     assert_eq!(
-        optimized.phases.regex_candidate_strategy,
+        optimized.phases.regex_planning.strategy(),
         leantoken::RegexCandidateStrategy::Trigram
     );
     assert_eq!(
-        optimized.phases.regex_plan_source,
+        optimized.phases.regex_planning.source(),
         Some(leantoken::RegexPlanSource::LiteralIdentifier)
     );
     assert!(optimized.phases.regex_chunks_verified >= 10);
@@ -251,7 +251,7 @@ async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_vari
         .expect("case-sensitive planned exhaustive literal");
     assert_eq!(case_sensitive.response.occurrences_total, Some(8));
     assert_eq!(
-        case_sensitive.phases.regex_plan_source,
+        case_sensitive.phases.regex_planning.source(),
         Some(leantoken::RegexPlanSource::LiteralIdentifier)
     );
 }
@@ -291,11 +291,11 @@ async fn exhaustive_identifier_with_over_bound_case_variants_keeps_full_scan() {
         .expect("bounded full-scan fallback");
     assert_eq!(response.response.occurrences_total, Some(1));
     assert_eq!(
-        response.phases.regex_candidate_strategy,
+        response.phases.regex_planning.strategy(),
         leantoken::RegexCandidateStrategy::FullScan
     );
     assert_eq!(
-        response.phases.regex_plan_fallback_reason,
+        response.phases.regex_planning.fallback_reason(),
         Some(leantoken::RegexPlanFallbackReason::CaseInsensitiveUnicode)
     );
 }

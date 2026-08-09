@@ -745,6 +745,23 @@ replaces the prior counters and identity. Terminal guard updates are accepted
 only for their matching attempt, preventing cancellation, failure, takeover, or
 stale guard destruction from making an older attempt current.
 
+Profiled reconciliation also records Linux process write bytes for the complete
+attempt, a non-overlapping subtotal for stage/relational/FTS/commit/checkpoint
+phases, and the remaining unattributed bytes. Generation-before/after and an
+explicit publication flag prevent a checkpoint of pre-existing WAL pages from
+being labeled a generation publish. Retrieval telemetry is outside this
+indexing interval and must be measured separately with an
+`indexed_generation` control. These counters are process-wide observations and
+are diagnostic evidence, not transaction state.
+
+The normalized stage database is created lazily on the first replacement or
+removal. A no-change reconciliation therefore materializes no temporary schema
+or journal, but it still enters the ordinary baseline-verifying publication
+transaction. The optimization does not skip stale-plan detection, the writer
+lock, atomic generation publication, freshness reconciliation, or subsequent
+request snapshot pinning. Once initialized, the stage retains the existing
+bounded-batch and cleanup behavior.
+
 This snapshot is intentionally not persisted or shared through another
 sidecar. A same-process MCP leader can include full details in `index_building`
 and status responses. A follower reports `detail_available: false`, the
