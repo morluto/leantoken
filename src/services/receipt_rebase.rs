@@ -144,7 +144,7 @@ impl Services {
             &classification.carried,
         )?;
         response.meta.receipt_id = Some(receipt_id);
-        self.finalize_response(&mut response)?;
+        self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings_classified(
             TokenAccountingOperation::ReceiptRebase,
             None,
