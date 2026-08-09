@@ -1595,6 +1595,48 @@ fn runtime_prune_preserves_partial_results_when_a_config_snapshot_changes() {
     assert!(runtime_root.join("1.0.0").exists());
 }
 
+#[test]
+fn runtime_prune_recovers_a_committed_setup_journal() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    let runtime = runtime_root.join("1.0.0");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(
+        runtime.join(runtime_executable_name(cfg!(windows))),
+        "runtime",
+    )
+    .unwrap();
+    let journal = SetupTransactionJournal {
+        schema_version: 1,
+        state: SetupTransactionState::Committed,
+        entries: Vec::new(),
+    };
+    fs::write(
+        transaction_path(&runtime_root),
+        serde_json::to_string(&journal).unwrap(),
+    )
+    .unwrap();
+
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {},
+        || {},
+    )
+    .unwrap();
+
+    assert_eq!(report.results[0].action, "removed");
+    assert!(!transaction_path(&runtime_root).exists());
+    assert!(!runtime.exists());
+}
+
 #[cfg(unix)]
 #[test]
 fn runtime_prune_stops_when_the_runtime_root_path_is_replaced() {
@@ -2452,7 +2494,7 @@ fn recovery_journal_uses_its_separate_aggregate_read_bound() {
 }
 
 #[test]
-fn interrupted_setup_journal_restores_applied_and_unapplied_entries() {
+fn legacy_interrupted_setup_journal_restores_applied_and_unapplied_entries() {
     let temp = tempfile::tempdir().unwrap();
     let runtime_root = temp.path().join("runtime");
     fs::create_dir_all(&runtime_root).unwrap();
@@ -2462,6 +2504,7 @@ fn interrupted_setup_journal_restores_applied_and_unapplied_entries() {
     fs::write(&untouched, "old-two").unwrap();
     let journal = SetupTransactionJournal {
         schema_version: 1,
+        state: SetupTransactionState::Pending,
         entries: vec![
             SetupTransactionEntry {
                 path: applied.clone(),
@@ -2477,6 +2520,34 @@ fn interrupted_setup_journal_restores_applied_and_unapplied_entries() {
             },
         ],
     };
+    let mut serialized = serde_json::to_value(&journal).unwrap();
+    serialized.as_object_mut().unwrap().remove("state");
+    fs::write(transaction_path(&runtime_root), serialized.to_string()).unwrap();
+
+    recover_interrupted_transaction(&runtime_root).unwrap();
+
+    assert_eq!(fs::read_to_string(applied).unwrap(), "old-one");
+    assert_eq!(fs::read_to_string(untouched).unwrap(), "old-two");
+    assert!(!transaction_path(&runtime_root).exists());
+}
+
+#[test]
+fn committed_setup_journal_never_restores_applied_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtime");
+    fs::create_dir_all(&runtime_root).unwrap();
+    let path = temp.path().join("applied.json");
+    fs::write(&path, "new").unwrap();
+    let journal = SetupTransactionJournal {
+        schema_version: 1,
+        state: SetupTransactionState::Committed,
+        entries: vec![SetupTransactionEntry {
+            path: path.clone(),
+            original: Some("old".into()),
+            updated_hash: Some(content_hash("new")),
+            updated_exists: true,
+        }],
+    };
     fs::write(
         transaction_path(&runtime_root),
         serde_json::to_string(&journal).unwrap(),
@@ -2485,7 +2556,6 @@ fn interrupted_setup_journal_restores_applied_and_unapplied_entries() {
 
     recover_interrupted_transaction(&runtime_root).unwrap();
 
-    assert_eq!(fs::read_to_string(applied).unwrap(), "old-one");
-    assert_eq!(fs::read_to_string(untouched).unwrap(), "old-two");
+    assert_eq!(fs::read_to_string(path).unwrap(), "new");
     assert!(!transaction_path(&runtime_root).exists());
 }

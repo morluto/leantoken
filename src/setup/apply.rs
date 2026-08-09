@@ -54,7 +54,13 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
     if let Some(transaction) = transaction
         && let Err(error) = transaction.commit()
     {
-        return failed_outcome(plan, error.to_string());
+        let rollback = rollback_setup(
+            runtime_installation.as_mut(),
+            &applied,
+            &applied_discovery,
+            Some(transaction),
+        );
+        return failed_outcome(plan, rollback_message(error, rollback));
     }
     SetupApplyOutcome {
         results: plan
@@ -174,6 +180,12 @@ pub(super) fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
 }
 
 pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
+    if read_optional(&edit.public.path)? != edit.original {
+        return Err(Error::SetupFailure(format!(
+            "discovery skill changed after preflight: {}",
+            edit.public.path.display()
+        )));
+    }
     match edit.public.action {
         ClientPlanAction::Create | ClientPlanAction::Update => write_if_changed(
             &edit.public.path,
