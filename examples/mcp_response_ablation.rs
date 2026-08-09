@@ -1570,6 +1570,20 @@ mod tests {
     }
 
     #[test]
+    fn checked_report_matches_manifest_commitment() {
+        let root = PathBuf::from(env!("LEANTOKEN_REPOSITORY_ROOT"));
+        let manifest: Manifest = read_json(&root.join("benchmarks/mcp_response_ablation.json"))
+            .expect("frozen manifest");
+        validate_manifest(&manifest).expect("valid manifest");
+
+        let report = fs::read(root.join(&manifest.checked_report.path)).expect("checked report");
+        assert_eq!(
+            blake3::hash(&report).to_hex().as_str(),
+            manifest.checked_report.blake3
+        );
+    }
+
+    #[test]
     fn short_reason_candidate_preserves_a_decodable_string_but_not_readability() {
         let value = json!({"fragments": [
             {"reason": "symbol; text; reference"},
