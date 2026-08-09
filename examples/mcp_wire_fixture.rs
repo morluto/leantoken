@@ -261,3 +261,56 @@ fn synthetic_trace() -> Result<Trace, Box<dyn Error>> {
     trace.seal_content_hash()?;
     Ok(trace)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_preserves_the_synthetic_mcp_exchange_contract() {
+        let trace = synthetic_trace().expect("trace");
+        trace.validate_version().expect("valid sealed trace");
+        assert_eq!(
+            trace.trace_content_blake3.as_deref(),
+            Some(trace.content_blake3().expect("content hash").as_str())
+        );
+
+        let catalog = trace
+            .events
+            .iter()
+            .filter_map(|event| event.raw_json.as_deref())
+            .map(|raw| serde_json::from_str::<serde_json::Value>(raw).expect("wire message"))
+            .find(|message| message["result"]["tools"].is_array())
+            .expect("tool catalog response");
+        assert!(
+            catalog["result"]["tools"]
+                .as_array()
+                .is_some_and(|tools| !tools.is_empty())
+        );
+
+        let result = trace
+            .events
+            .iter()
+            .find(|event| event.result_id.as_deref() == Some("context-result-1"))
+            .expect("context result event");
+        assert_eq!(result.tool_name.as_deref(), Some("context"));
+        assert_eq!(result.call_id.as_deref(), Some("2"));
+        assert_eq!(result.visible_through_turn, Some(3));
+        assert_eq!(result.ranges.len(), 1);
+
+        let result_message: serde_json::Value =
+            serde_json::from_str(result.raw_json.as_deref().expect("result wire message"))
+                .expect("tool result");
+        assert!(
+            result_message["result"]["content"]
+                .as_array()
+                .is_some_and(|content| !content.is_empty())
+        );
+        assert!(result_message["result"].get("structuredContent").is_some());
+        assert!(trace.events.iter().any(|event| {
+            event.direction == Direction::Handoff
+                && event.result_id == result.result_id
+                && event.call_id == result.call_id
+        }));
+    }
+}

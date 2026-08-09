@@ -4278,6 +4278,16 @@ mod tests {
     }
 
     #[test]
+    fn sealed_holdout_manifest_meets_its_blind_holdout_contract() {
+        let manifest: Manifest = serde_json::from_str(include_str!("../benchmarks/holdout.json"))
+            .expect("holdout manifest");
+
+        validate_manifest(&manifest).expect("valid sealed holdout");
+        assert_eq!(manifest.schema_version, 3);
+        assert_eq!(manifest.dataset_kind, "blind_holdout");
+    }
+
+    #[test]
     fn candidate_runtime_verification_is_not_applicable_to_validation_sets() {
         let manifest: Manifest =
             serde_json::from_str(include_str!("../benchmarks/validation.json"))
