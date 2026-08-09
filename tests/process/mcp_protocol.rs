@@ -105,8 +105,11 @@ pub(super) fn mcp_approved_repository_contexts_are_isolated() {
     }));
     let rejected = process.response(Duration::from_secs(10));
     assert_eq!(rejected["id"], 1203);
-    assert_eq!(rejected["error"]["code"], -32602);
-    assert_eq!(rejected["error"]["data"]["category"], "invalid_input");
+    assert_eq!(rejected["result"]["isError"], true);
+    assert_eq!(
+        rejected["result"]["structuredContent"]["category"],
+        "invalid_input"
+    );
     process.stop();
 }
 
@@ -120,15 +123,13 @@ pub(super) fn mcp_survives_malformed_and_invalid_messages() {
     process.send_initialized();
 
     // Oversized terminated and initially unterminated frames are discarded
-    // without closing the transport. rmcp intentionally ignores unparsable input, but a well-formed value
-    // with the wrong JSON-RPC shape receives Invalid Request. Neither may
-    // close the stdio transport or poison the next tool call.
+    // without closing the transport. RMCP's codec ignores unparsable input;
+    // structurally invalid JSON-RPC receives Invalid Request. None may close
+    // the stdio transport or poison the next tool call.
     process.send_raw(&vec![b'x'; 4 * 1024 * 1024 + 1]);
     process.send_raw_line("");
     process.send_raw_line("{not json");
     process.send_raw_line(r#"{"foo":"bar"}"#);
-    // Keep this independent from host load: the process may still be finishing
-    // watcher/index work while rmcp drains the malformed input.
     let invalid = process.message(Duration::from_secs(10));
     assert_eq!(invalid["error"]["code"], -32600);
 

@@ -54,7 +54,7 @@ r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.35.0", default-features = false }
 regex = "1.12.2"
 regex-syntax = "0.8.11"
-rmcp = { version = "=3.1.0", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "=3.1.2", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "cache"] }
 rusqlite_migration = "2.6.0"
 schemars = "1.2.1"
@@ -67,7 +67,7 @@ tiktoken-rs = "0.12.0"
 tempfile = "3.23.0"
 toml_edit = "0.25.12"
 tokio = { version = "1.49.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-util = { version = "0.7.17", features = ["rt"] }
+tokio-util = { version = "0.7.17", features = ["codec", "rt"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "registry"] }
 tree-sitter = "0.26.11"
@@ -89,7 +89,7 @@ wait-timeout = "0.2.1"
 [dev-dependencies]
 assert_cmd = "2.1.1"
 insta = { version = "1.43.2", features = ["json"] }
-rmcp = { version = "=3.1.0", default-features = false, features = ["client", "transport-async-rw"] }
+rmcp = { version = "=3.1.2", default-features = false, features = ["client", "transport-async-rw"] }
 tokio = { version = "1.49.0", features = ["test-util"] }
 
 [profile.release]

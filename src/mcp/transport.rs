@@ -1,15 +1,25 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use rmcp::{
     ErrorData, RoleServer,
-    model::{ClientNotification, ClientRequest, GetExtensions, JsonRpcMessage, ServerResult},
+    model::{
+        ClientNotification, ClientRequest, GetExtensions, JsonRpcMessage, ProtocolVersion,
+        ServerResult,
+    },
     service::{RxJsonRpcMessage, TxJsonRpcMessage},
-    transport::Transport,
+    transport::{
+        Transport,
+        async_rw::{JsonRpcMessageCodec, JsonRpcMessageCodecError},
+    },
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio_util::{
+    bytes::BytesMut,
+    codec::{Decoder, Encoder},
+};
 
 use super::{McpResultMode, RequestAdmission, RetryableToolResponse, retryable_tool_result};
 
@@ -37,16 +47,13 @@ impl Drop for DispatchedToolCall {
 pub(super) struct BoundedStdioTransport {
     reader: tokio::io::BufReader<tokio::io::Stdin>,
     writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
-    frame_state: FrameReadState,
+    decoder: JsonRpcMessageCodec<RxJsonRpcMessage<RoleServer>>,
+    read_buffer: BytesMut,
     request_dispatch: RequestAdmission,
     dispatched_calls:
         Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
     result_mode: McpResultMode,
-}
-
-enum FrameReadState {
-    Collecting(Vec<u8>),
-    DiscardingOversized,
+    negotiated_protocol: Arc<RwLock<Option<ProtocolVersion>>>,
 }
 
 impl BoundedStdioTransport {
@@ -54,29 +61,19 @@ impl BoundedStdioTransport {
         Self {
             reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
             writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
-            frame_state: FrameReadState::Collecting(Vec::new()),
+            decoder: JsonRpcMessageCodec::new_with_max_length(MAX_MCP_STDIO_FRAME_BYTES),
+            read_buffer: BytesMut::new(),
             request_dispatch,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
             result_mode,
+            negotiated_protocol: Arc::new(RwLock::new(None)),
         }
     }
 
-    fn take_frame(&mut self) -> Vec<u8> {
-        match std::mem::replace(
-            &mut self.frame_state,
-            FrameReadState::Collecting(Vec::new()),
-        ) {
-            FrameReadState::Collecting(frame) => frame,
-            FrameReadState::DiscardingOversized => {
-                unreachable!("discard mode never materializes a frame")
-            }
-        }
-    }
-
-    fn retain_frame_buffer(&mut self, mut frame: Vec<u8>) {
-        frame.clear();
-        if frame.capacity() <= RETAINED_MCP_FRAME_CAPACITY {
-            self.frame_state = FrameReadState::Collecting(frame);
+    fn release_oversized_read_buffer(&mut self) {
+        if self.read_buffer.is_empty() && self.read_buffer.capacity() > RETAINED_MCP_FRAME_CAPACITY
+        {
+            self.read_buffer = BytesMut::new();
         }
     }
 
@@ -84,9 +81,10 @@ impl BoundedStdioTransport {
         writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
         item: TxJsonRpcMessage<RoleServer>,
     ) -> std::io::Result<()> {
-        let mut bytes = serde_json::to_vec(&item)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        bytes.push(b'\n');
+        let mut bytes = BytesMut::new();
+        JsonRpcMessageCodec::default()
+            .encode(item, &mut bytes)
+            .map_err(std::io::Error::from)?;
         let mut writer = writer.lock().await;
         writer.write_all(&bytes).await?;
         writer.flush().await
@@ -162,7 +160,17 @@ impl BoundedStdioTransport {
             ),
             self.result_mode,
         );
-        TxJsonRpcMessage::<RoleServer>::response(ServerResult::CallToolResult(result), id)
+        let mut result = ServerResult::CallToolResult(result);
+        let modern_protocol = self
+            .negotiated_protocol
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28);
+        if !modern_protocol {
+            result.strip_result_type_for_legacy_peer();
+        }
+        TxJsonRpcMessage::<RoleServer>::response(result, id)
     }
 }
 
@@ -176,6 +184,15 @@ impl Transport<RoleServer> for BoundedStdioTransport {
         let writer = Arc::clone(&self.writer);
         let dispatched_calls = Arc::clone(&self.dispatched_calls);
         let response_id = Self::response_id(&item);
+        if let JsonRpcMessage::Response(response) = &item
+            && let ServerResult::InitializeResult(result) = &response.result
+        {
+            *self
+                .negotiated_protocol
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                Some(result.protocol_version.clone());
+        }
         async move {
             let result = Self::write_message(writer, item).await;
             if let Some(id) = response_id {
@@ -187,67 +204,9 @@ impl Transport<RoleServer> for BoundedStdioTransport {
 
     async fn receive(&mut self) -> Option<RxJsonRpcMessage<RoleServer>> {
         loop {
-            let available = match self.reader.fill_buf().await {
-                Ok([]) => return None,
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    tracing::warn!(%error, "MCP stdio read failed");
-                    return None;
-                }
-            };
-            let newline = available.iter().position(|byte| *byte == b'\n');
-
-            if matches!(self.frame_state, FrameReadState::DiscardingOversized) {
-                let consumed = newline.map_or(available.len(), |position| position + 1);
-                self.reader.consume(consumed);
-                if newline.is_some() {
-                    self.frame_state = FrameReadState::Collecting(Vec::new());
-                }
-                continue;
-            }
-
-            let payload_bytes = newline.unwrap_or(available.len());
-            let frame_len = match &self.frame_state {
-                FrameReadState::Collecting(frame) => frame.len(),
-                FrameReadState::DiscardingOversized => unreachable!("handled above"),
-            };
-            if frame_len.saturating_add(payload_bytes) > MAX_MCP_STDIO_FRAME_BYTES {
-                let consumed = newline.map_or(available.len(), |position| position + 1);
-                self.reader.consume(consumed);
-                self.frame_state = if newline.is_none() {
-                    FrameReadState::DiscardingOversized
-                } else {
-                    FrameReadState::Collecting(Vec::new())
-                };
-                tracing::warn!(
-                    limit = MAX_MCP_STDIO_FRAME_BYTES,
-                    "discarded oversized MCP stdio frame"
-                );
-                continue;
-            }
-
-            let FrameReadState::Collecting(frame) = &mut self.frame_state else {
-                unreachable!("discard mode is handled before buffering")
-            };
-            frame.extend_from_slice(&available[..payload_bytes]);
-            self.reader
-                .consume(newline.map_or(payload_bytes, |position| position + 1));
-            if newline.is_none() {
-                continue;
-            }
-            let mut frame = self.take_frame();
-            if frame.last() == Some(&b'\r') {
-                frame.pop();
-            }
-            if frame.is_empty() {
-                self.retain_frame_buffer(frame);
-                continue;
-            }
-
-            let parsed = serde_json::from_slice(&frame);
-            self.retain_frame_buffer(frame);
-            match parsed {
-                Ok(mut message) => match self.admit_message(&mut message) {
+            let buffered_before = self.read_buffer.len();
+            match self.decoder.decode(&mut self.read_buffer) {
+                Ok(Some(mut message)) => match self.admit_message(&mut message) {
                     Ok(()) => return Some(message),
                     Err(id) => {
                         let response = self.overloaded_response(id);
@@ -259,12 +218,20 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                         }
                     }
                 },
-                Err(error) => match error.classify() {
+                Err(JsonRpcMessageCodecError::MaxLineLengthExceeded) => {
+                    tracing::warn!(
+                        limit = MAX_MCP_STDIO_FRAME_BYTES,
+                        "discarded oversized MCP stdio frame"
+                    );
+                    continue;
+                }
+                Err(JsonRpcMessageCodecError::Serde(error)) => match error.classify() {
                     serde_json::error::Category::Syntax | serde_json::error::Category::Eof => {
-                        tracing::debug!("ignored unparsable MCP stdio frame");
+                        tracing::debug!(%error, "ignored unparsable MCP stdio frame");
+                        continue;
                     }
                     serde_json::error::Category::Data | serde_json::error::Category::Io => {
-                        tracing::debug!("rejected invalid MCP stdio message shape");
+                        tracing::debug!(%error, "rejected invalid MCP stdio message shape");
                         let response = TxJsonRpcMessage::<RoleServer>::error(
                             ErrorData::invalid_request("Invalid request", None),
                             None,
@@ -275,9 +242,33 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                         {
                             return None;
                         }
+                        continue;
                     }
                 },
+                Err(JsonRpcMessageCodecError::Io(error)) => {
+                    tracing::warn!(%error, "MCP stdio decode failed");
+                    return None;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "MCP stdio decode failed");
+                    return None;
+                }
+                Ok(None) if self.read_buffer.len() < buffered_before => continue,
+                Ok(None) => {}
             }
+
+            self.release_oversized_read_buffer();
+            let available = match self.reader.fill_buf().await {
+                Ok([]) => return None,
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    tracing::warn!(%error, "MCP stdio read failed");
+                    return None;
+                }
+            };
+            let consumed = available.len();
+            self.read_buffer.extend_from_slice(available);
+            self.reader.consume(consumed);
         }
     }
 

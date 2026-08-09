@@ -279,18 +279,21 @@ async fn repository_identity_is_checked_before_tool_admission() {
             },
         )
         .await
-        .expect_err("identity mismatch must win over overload");
+        .expect("identity mismatch must be returned before overload");
 
     assert_eq!(
-        error.data,
+        error.structured_content,
         Some(serde_json::json!({
             "category": "repository_identity_mismatch",
             "expected_repository_id": "not-this-repository",
             "actual_repository_id": server.services(&server.services.get())
                 .expect("ready services")
                 .repository_id(),
+            "message": "repository identity does not match this server",
+            "status": "error",
         }))
     );
+    assert_eq!(error.is_error, Some(true));
     assert!(!called.load(Ordering::SeqCst));
     drop(permits);
 }
@@ -411,10 +414,37 @@ fn result_modes_emit_only_the_selected_representations() {
     assert!(text.structured_content.is_none());
     assert!(structured.content.is_empty());
     assert!(structured.structured_content.is_some());
+    for result in [&dual, &text, &structured] {
+        assert_eq!(result.result_type, Some(rmcp::model::ResultType::COMPLETE));
+        assert_eq!(result.is_error, Some(false));
+    }
 }
 
 #[test]
-fn structured_receipt_results_preserve_materialized_evidence_and_resource_handoff() {
+fn semantic_failures_use_native_model_visible_tool_errors() {
+    let result = into_tool_error(crate::Error::InputTooLong {
+        field: "search query",
+        max_bytes: 64,
+    })
+    .expect("semantic failure should be a tool result");
+    assert_eq!(result.result_type, Some(rmcp::model::ResultType::COMPLETE));
+    assert_eq!(result.is_error, Some(true));
+    assert!(!result.content.is_empty());
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value["category"].as_str()),
+        Some("input_too_long")
+    );
+
+    let internal = into_tool_error(crate::Error::OperationFailure("failed".into()))
+        .expect_err("internal failures remain protocol errors");
+    assert_eq!(internal.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+}
+
+#[test]
+fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff() {
     let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
@@ -440,23 +470,11 @@ fn structured_receipt_results_preserve_materialized_evidence_and_resource_handof
     assert_eq!(structured["receipt_resource"]["uri"], uri);
     assert_eq!(structured["fragments"][0]["path"], "lib.rs");
     assert_eq!(structured["fragments"][0]["content"], "fn ready() {}");
-    assert!(result.content.iter().any(|content| {
-        content
-            .as_text()
-            .is_some_and(|text| text.text.contains("read_mcp_resource") && text.text.contains(&uri))
-    }));
-    assert!(result.content.iter().any(
-        |content| matches!(content, ContentBlock::ResourceLink(resource) if resource.uri == uri)
-    ));
+    assert!(result.content.is_empty());
     assert!(
         structured["meta"]["total_response_tokens"]
             .as_u64()
             .is_some_and(|tokens| tokens > 0)
-    );
-    assert!(
-        structured["meta"]["total_response_tokens"]
-            .as_u64()
-            .is_some_and(|tokens| { tokens <= RECEIPT_RESOURCE_RESPONSE_RESERVE_TOKENS as u64 })
     );
 
     let without_receipt = tool_result(
@@ -502,6 +520,65 @@ fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
             .and_then(serde_json::Value::as_u64)
             .is_some_and(|tokens| tokens > 1)
     );
+    assert!(error.data.as_ref().is_some_and(|data| {
+        data.pointer("/breakdown/mandatory_response_tokens")
+            == data.get("minimum_required_response_tokens")
+    }));
+}
+
+#[test]
+fn response_accounting_matches_the_selected_model_visible_result() {
+    for mode in [
+        McpResultMode::Structured,
+        McpResultMode::Text,
+        McpResultMode::Dual,
+    ] {
+        let result = tool_result(
+            serde_json::json!({
+                "meta": {
+                    "source_tokens": 3,
+                    "protocol_tokens": 0,
+                    "path_and_metadata_tokens": 0,
+                    "total_response_tokens": 0,
+                    "tokenizer": "cl100k_base"
+                },
+                "fragments": [{"path": "lib.rs", "content": "fn ready() {}"}]
+            }),
+            mode,
+        )
+        .expect("accounted result");
+        let structured = result.structured_content.clone().unwrap_or_else(|| {
+            let text = result
+                .content
+                .first()
+                .and_then(ContentBlock::as_text)
+                .expect("text result");
+            serde_json::from_str(&text.text).expect("JSON text result")
+        });
+        let reported = structured["meta"]["total_response_tokens"]
+            .as_u64()
+            .expect("reported total") as usize;
+        let accounted = [
+            "source_tokens",
+            "protocol_tokens",
+            "path_and_metadata_tokens",
+        ]
+        .into_iter()
+        .map(|field| {
+            structured["meta"][field]
+                .as_u64()
+                .expect("accounting field") as usize
+        })
+        .sum::<usize>();
+        assert_eq!(accounted, reported);
+        let tokenizer = crate::tokens::Tokenizer::Cl100kBase;
+        assert_eq!(
+            reported,
+            tokenizer.count(&serde_json::to_string(&result).expect("wire result"))
+        );
+        assert!(tool_result_with_limit(structured.clone(), mode, Some(reported - 1)).is_err());
+        assert!(tool_result_with_limit(structured, mode, Some(reported)).is_ok());
+    }
 }
 
 #[tokio::test]
@@ -905,6 +982,8 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
         }))
     );
 
+    assert_path_retrieval_limit_error_mapping();
+
     let response_budget = into_mcp_error(crate::Error::ResponseBudgetExceeded {
         provided_max_response_tokens: 40,
         minimum_required_response_tokens: 73,
@@ -1041,6 +1120,30 @@ fn mcp_error_mapping_separates_invalid_input_from_internal_failures() {
             rmcp::model::ErrorCode::INTERNAL_ERROR
         );
     }
+}
+
+fn assert_path_retrieval_limit_error_mapping() {
+    let path_limit = into_mcp_error(crate::Error::RetrievalPathLimitExceeded {
+        kind: crate::RetrievalLimitKind::RegexChunksPerFile,
+        path: "generated/large.rs".into(),
+        observed: 264,
+        limit: 256,
+    });
+    assert_eq!(path_limit.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(
+        path_limit.message,
+        "retrieval regex_chunks_per_file limit exceeded for generated/large.rs: observed 264, limit 256; exclude or narrow paths that include unusually large files"
+    );
+    assert_eq!(
+        path_limit.data,
+        Some(serde_json::json!({
+            "category": "request_limit_exceeded",
+            "reason": "regex_chunks_per_file",
+            "blocking_path": "generated/large.rs",
+            "requested": 264,
+            "limit": 256,
+        }))
+    );
 }
 
 fn assert_search_option_error_mapping() {
@@ -1599,6 +1702,38 @@ fn tool_descriptions_route_native_discovery_workflows() {
         descriptions["search"]
             .contains("projection=occurrences also requires all_occurrences=true")
     );
+}
+
+#[test]
+fn history_description_routes_symbol_commit_history() {
+    let history = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "history")
+        .expect("history tool");
+    let description = history.description.expect("history description");
+    assert!(description.contains("symbol_log is the commit-history operation"));
+    assert!(description.contains("path-wide or repository-wide commit history"));
+}
+
+#[test]
+fn server_instructions_keep_shared_routing_compact() {
+    assert!(
+        MCP_INSTRUCTIONS.len() <= 800,
+        "shared MCP instructions must stay compact; got {} bytes",
+        MCP_INSTRUCTIONS.len()
+    );
+    let first_window = &MCP_INSTRUCTIONS[..MCP_INSTRUCTIONS
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= 512)
+        .last()
+        .unwrap_or(MCP_INSTRUCTIONS.len())];
+    assert!(first_window.contains("call leantoken.context once"));
+    assert!(first_window.contains("For a known scope"));
+    assert!(first_window.contains("Use native tools for edits, builds, tests"));
+    assert!(!MCP_INSTRUCTIONS.contains("leantoken.search over"));
+    assert!(!MCP_INSTRUCTIONS.contains("leantoken.files over"));
 }
 
 #[test]

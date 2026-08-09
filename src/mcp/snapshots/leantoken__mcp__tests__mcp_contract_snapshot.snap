@@ -790,7 +790,7 @@ expression: mcp_contract()
       "name": "files"
     },
     {
-      "description": "Preferred over native git show, diff, or log -L for parsed symbol history. Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}.",
+      "description": "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}.",
       "inputSchema": {
         "$defs": {
           "HistoryMcpOperation": {
@@ -1154,7 +1154,7 @@ expression: mcp_contract()
           },
           "operation": {
             "$ref": "#/$defs/HistoryMcpOperation",
-            "description": "Git-backed symbol history operation."
+            "description": "Git-backed symbol operation: `read_symbol`, `diff_symbol`, `diff_symbols`, or\n`symbol_log`. Use `symbol_log` to list commits that touched a symbol."
           },
           "repository_context": {
             "default": null,

@@ -60,18 +60,29 @@ impl LeanTokenMcp {
         validate: impl Fn(McpLimitPolicy) -> crate::Result<()>,
     ) -> Result<RetrievalPreparation, ErrorData> {
         let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let mcp_services = self
-            .contexts
-            .resolve(repository_context)
-            .map_err(into_mcp_error)?;
+        let mcp_services = match self.contexts.resolve(repository_context) {
+            Ok(services) => services,
+            Err(error) => {
+                return into_tool_error(error).map(RetrievalPreparation::Unavailable);
+            }
+        };
         let state = mcp_services.get();
-        validate(state.limits()).map_err(into_mcp_error)?;
-        let state = mcp_services
+        if let Err(error) = validate(state.limits()) {
+            return into_tool_error(error).map(RetrievalPreparation::Unavailable);
+        }
+        let state = match mcp_services
             .wait_for_services(state, cancellation.clone(), deadline)
             .await
-            .map_err(into_mcp_error)?;
+        {
+            Ok(state) => state,
+            Err(error) => {
+                return into_tool_error(error).map(RetrievalPreparation::Unavailable);
+            }
+        };
         let limits = state.limits();
-        validate(limits).map_err(into_mcp_error)?;
+        if let Err(error) = validate(limits) {
+            return into_tool_error(error).map(RetrievalPreparation::Unavailable);
+        }
         let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(RetrievalPreparation::Unavailable(result)),
@@ -188,7 +199,7 @@ impl LeanTokenMcp {
                 "index_runtime_stopped",
                 "repository index is unavailable; check server logs and retry",
             )),
-            Err(error) => Err(into_mcp_error(error)),
+            Err(error) => into_tool_error(error),
         }
     }
 
@@ -219,9 +230,9 @@ impl LeanTokenMcp {
         F: FnOnce(Arc<Services>) -> Fut,
         Fut: Future<Output = crate::Result<T>>,
     {
-        services
-            .validate_repository_id(expected_repository_id.as_deref())
-            .map_err(into_mcp_error)?;
+        if let Err(error) = services.validate_repository_id(expected_repository_id.as_deref()) {
+            return into_tool_error(error);
+        }
         let _admission = match self.request_admission.try_admit() {
             Ok(permit) => permit,
             Err(error) => return self.service_result::<T>(Err(error)),
@@ -236,7 +247,13 @@ impl LeanTokenMcp {
             })
             .then(|| progress_services.index_progress_for_retry());
         match result {
-            Ok(value) => self.result_with_limit(value, max_response_tokens),
+            Ok(value) => match self.result_with_limit(value, max_response_tokens) {
+                Ok(result) => Ok(result),
+                Err(error) => visible_mcp_error(error),
+            },
+            // This centralizes retryable-state projection and converts every
+            // remaining semantic failure with `into_tool_error`; internal
+            // failures still emerge as protocol errors from that conversion.
             Err(error) => self.service_result_with_progress::<T>(Err(error), index_progress),
         }
     }

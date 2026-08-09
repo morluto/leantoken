@@ -65,7 +65,7 @@ pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
         initialize["result"]["instructions"]
             .as_str()
             .is_some_and(|instructions| {
-                instructions.contains("call leantoken.savings directly")
+                instructions.contains("Use savings for token statistics")
                     && instructions.contains("call leantoken.context once")
                     && instructions.contains("plan_only=false")
             })

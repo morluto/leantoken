@@ -1,6 +1,6 @@
 use rmcp::{
     ErrorData,
-    model::{CallToolResult, ContentBlock},
+    model::{CallToolResult, ErrorCode},
 };
 
 pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
@@ -315,12 +315,34 @@ pub(super) fn mcp_error_data(category: &'static str) -> Option<serde_json::Value
     Some(serde_json::json!({ "category": category }))
 }
 
+/// Return semantic tool failures through the MCP tool-result channel so hosts
+/// expose the recovery data to the model. Protocol and infrastructure failures
+/// remain JSON-RPC errors.
+pub(super) fn into_tool_error(error: crate::Error) -> Result<CallToolResult, ErrorData> {
+    visible_mcp_error(into_mcp_error(error))
+}
+
+pub(super) fn visible_mcp_error(error: ErrorData) -> Result<CallToolResult, ErrorData> {
+    if error.code != ErrorCode::INVALID_PARAMS {
+        return Err(error);
+    }
+    let mut value = match error.data {
+        Some(serde_json::Value::Object(fields)) => serde_json::Value::Object(fields),
+        Some(details) => serde_json::json!({"details": details}),
+        None => serde_json::json!({}),
+    };
+    let fields = value
+        .as_object_mut()
+        .expect("tool error envelope is always an object");
+    fields.insert("status".into(), serde_json::json!("error"));
+    fields.insert("message".into(), serde_json::json!(error.message));
+    Ok(CallToolResult::structured_error(value))
+}
+
 pub(super) fn tool_unavailable(reason: &'static str, message: &'static str) -> CallToolResult {
-    let mut result = CallToolResult::error(vec![ContentBlock::text(message)]);
-    result.structured_content = Some(serde_json::json!({
+    CallToolResult::structured_error(serde_json::json!({
         "status": "unavailable",
         "reason": reason,
         "message": message,
-    }));
-    result
+    }))
 }

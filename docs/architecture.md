@@ -45,22 +45,29 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Structured is the
-  default; dual and text remain troubleshooting overrides. Protocol errors cross an explicit allowlist: clients
-  receive fixed safe messages and stable category data, while path-bearing and
-  infrastructure details remain in stderr diagnostics.
+  default; dual and text remain troubleshooting overrides. Successful and
+  tool-error results start from RMCP constructors so `resultType`, `isError`,
+  and legacy-version adaptation remain SDK-owned. Semantic failures from a
+  valid tool call use structured tool-error results that hosts expose to the
+  model. Unroutable protocol and internal failures cross an explicit allowlist:
+  clients receive fixed safe messages while path-bearing and infrastructure
+  details remain in stderr diagnostics.
 
 The MCP adapter also exposes persisted retrieval receipts as non-enumerable,
-read-only resources. Producers return the opaque
-`leantoken://receipt/v1/{receipt_id}` URI; `resources/list` stays empty and one
-narrow template advertises the URI shape. Resource reads use storage snapshots
+read-only resources. Producers return the opaque receipt identity and URI in a
+structured `receipt_resource` field without adding a repeated text instruction
+or `ResourceLink` content block. `resources/list` stays empty and one narrow
+template advertises the URI shape. Resource reads use storage snapshots
 only: they do not reconcile, refresh, prune, touch access order, or extend the
 24-hour receipt lifetime. The response contains at most 2,048 source-free
 evidence identities and remains subject to the existing per-receipt evidence
-byte limit. Receipt links and resource fields remain adapter-owned rather than
-entering service or CLI response types.
+byte limit. Receipt references and resource fields remain adapter-owned rather
+than entering service or CLI response types.
 
-LeanToken does not implement JSON-RPC framing or MCP dispatch. Those remain in
-the official Rust MCP SDK.
+The bounded stdio adapter feeds bytes through RMCP's JSON-RPC codec and leaves
+MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
+input bound and pre-dispatch tool-call admission that the stock unbounded stdio
+reader does not provide.
 
 ## Storage
 
@@ -829,8 +836,10 @@ These limits cap context fan-out, regex work, and file-list memory. A regex
 request returns a typed retrieval-limit reason instead of silently returning
 incomplete results when a scan boundary is reached. The stable reason identifies
 the governing file, per-file chunk, candidate, scoped-row, retained-chunk, or
-occurrence bound and includes only safe aggregate counts; it never includes an
-offending path or source text. Tree and glob pages use the indexed
+occurrence bound and includes only safe aggregate counts. A per-file chunk
+failure additionally returns the repository-relative `blocking_path`, which is
+needed to narrow or exclude the file; no source text or host path is exposed.
+Tree and glob pages use the indexed
 `path_entries` projection with a path keyset cursor; glob filters file rows with
 SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
 bounded globset scan). Find still scans indexed files with a lean path-only
@@ -1031,13 +1040,14 @@ response accounting. The MCP initialize version hashes the deterministic
 runtime tool catalog; computing that fingerprint adds no storage or retrieval
 fan-out.
 
-Every retrieval operation accepts an optional serialized service-response
-ceiling through `ServiceCallOptions`, MCP `max_response_tokens`, or CLI
-`--max-response-tokens`. This boundary counts the final compact service DTO,
-including paths, diagnostics, receipts, metadata, and the accounting fields
-themselves. It does not count MCP `CallToolResult` duplication, JSON-RPC
-framing, or human CLI rendering. `token_budget`/`--budget` remains the
-independent source-content ceiling.
+Every retrieval operation accepts an optional total-response ceiling. Direct
+`ServiceCallOptions` and CLI `--max-response-tokens` count the final compact
+service DTO. MCP `max_response_tokens` additionally counts the complete
+server-produced `CallToolResult` in the selected structured, text, or dual
+mode, including paths, diagnostics, receipt metadata, representation wrappers,
+and the accounting fields themselves. JSON-RPC/provider framing and human CLI
+rendering remain outside these boundaries. `token_budget`/`--budget` remains
+the independent source-content ceiling.
 
 Context response profiles are presentation projections owned by `Services` and
 passed through `ServiceCallOptions`; they are not retrieval modes. `compact`,
@@ -1167,7 +1177,9 @@ until the corresponding response write finishes, covering both handler work
 and a response waiting on rmcp's bounded sink. A request-extension guard
 releases the permit if the handler unwinds before producing a response. Excess
 calls receive the same fail-fast retryable capacity response before rmcp can
-create another task. Initialization and `tools/list` bypass this dispatch gate.
+create another task. That transport-originated result uses RMCP's native
+legacy-result adaptation with the negotiated protocol version. Initialization
+and `tools/list` bypass this dispatch gate.
 
 Successful-result projection is static for explicit `dual`, `text`, and
 `structured` modes. Structured is the global default; the bounded transport
@@ -1214,11 +1226,12 @@ return their permit after serialization state is materialized. Excess reads
 fail before waiting for a pooled connection or allocating a bounded receipt
 response.
 
-MCP requests with `max_response_tokens` reserve 128 tokens before service
-execution for the adapter-owned receipt reference. The adapter recalculates the
-decorated structured result and enforces the caller's original ceiling as a
-final backstop. This keeps receipt persistence behind the same fail-before-write
-budget decision as other response metadata.
+MCP requests with `max_response_tokens` reserve the exact adapter-owned
+structured receipt-reference shape before service execution. The adapter then
+recalculates accounting over the selected complete `CallToolResult` and enforces
+the caller's original ceiling as a final backstop. This keeps receipt
+persistence behind the same fail-before-write service decision while bounding
+the adapter's model-visible presentation.
 
 ## Live read vs index
 
@@ -1477,11 +1490,12 @@ is marked inexact. Protocol-cost benchmarks serialize the actual tool catalog,
 JSON-RPC requests and responses, result wrappers, and repeated-context handoff
 instead of adding a guessed fixed overhead.
 
-MCP retrieval tools carry concise routing cues in their individual descriptions
-as well as shared initialization instructions. This preserves a standalone
-preference signal when a host ranks tools without using those instructions. A
-catalog test caps aggregate description text at 5,000 bytes so the redundant
-signal remains bounded in recurring prompt cost.
+Shared MCP workflow, retry, consistency, and repository-context policy is stated
+once in compact initialization instructions whose first 512 bytes contain the
+primary routing decision. Individual tool descriptions retain only the local
+capability, native-tool boundary, invocation cues, and examples needed for
+selection when a host omits server instructions. A catalog test caps aggregate
+description text at 5,000 bytes.
 
 ## Path and data safety
 

@@ -230,7 +230,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Preferred over native git show, diff, or log -L for parsed symbol history. Read, diff, batch-diff, or trace parsed symbols across immutable Git revisions. Use parent.name for qualified symbols; diff_symbols shares one range and returns bounded cursor-paged outcomes. For immutable context, pass BASE..HEAD as context.base_revision with strict_changed_paths. Example: {\"operation\":{\"kind\":\"diff_symbols\",\"targets\":[{\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\"}],\"base_revision\":\"main~1\",\"head_revision\":\"main\"}}."
+        description = "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}."
     )]
     async fn leantoken_history(
         &self,
@@ -249,7 +249,10 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (call, options, expected_repository_id) = req.into_parts().map_err(into_mcp_error)?;
+        let (call, options, expected_repository_id) = match req.into_parts() {
+            Ok(parts) => parts,
+            Err(error) => return into_tool_error(error),
+        };
         self.run_prepared(
             "history",
             prepared,
@@ -437,10 +440,10 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mcp_services = self
-            .contexts
-            .resolve(req.repository_context.as_deref())
-            .map_err(into_mcp_error)?;
+        let mcp_services = match self.contexts.resolve(req.repository_context.as_deref()) {
+            Ok(services) => services,
+            Err(error) => return into_tool_error(error),
+        };
         let state = mcp_services.get();
         let services = match self.services(&state) {
             Ok(services) => services,
