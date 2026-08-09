@@ -342,7 +342,7 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
         let terms = task_terms(clause)
             .into_iter()
             .chain(technical_atoms(clause))
-            .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(&term).into_iter()))
+            .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(&term)))
             .map(|term| term.to_ascii_lowercase())
             .collect::<HashSet<_>>();
         for query in queries.iter_mut().filter(|query| {
@@ -364,7 +364,7 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
 }
 
 fn task_clauses(task: &str) -> Vec<&str> {
-    task.split(|character| matches!(character, '\n' | ';'))
+    task.split(['\n', ';'])
         .flat_map(|part| part.split(". "))
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
