@@ -350,7 +350,7 @@ pub(crate) fn resolve_revision_sha_for_field(
     let sha = String::from_utf8_lossy(&output).trim().to_owned();
     if sha.is_empty() {
         return Err(Error::InvalidInput {
-            field: "base revision",
+            field,
             reason: "resolved to an empty SHA",
         });
     }
@@ -391,12 +391,16 @@ pub(crate) fn diff_name_only(
     ) else {
         return Ok(Vec::new());
     };
-    Ok(parse_diff_names(output.as_slice(), max, prefix))
+    parse_diff_names(output.as_slice(), max, prefix)
 }
 
-pub(crate) fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &str) -> Vec<String> {
+pub(crate) fn parse_diff_names<R: BufRead>(
+    mut reader: R,
+    max: usize,
+    prefix: &str,
+) -> Result<Vec<String>> {
     if max == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut changed = Vec::new();
     let mut record = Vec::new();
@@ -413,7 +417,10 @@ pub(crate) fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &s
         if record.is_empty() {
             continue;
         }
-        let path = String::from_utf8_lossy(&record);
+        let path = std::str::from_utf8(&record).map_err(|_| Error::InvalidInput {
+            field: "git diff path",
+            reason: "must be valid UTF-8",
+        })?;
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
@@ -422,6 +429,6 @@ pub(crate) fn parse_diff_names<R: BufRead>(mut reader: R, max: usize, prefix: &s
             break;
         }
     }
-    changed
+    Ok(changed)
 }
 use super::*;

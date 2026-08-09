@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use notify::event::{CreateKind, Event, EventKind, ModifyKind, RemoveKind, RenameMode};
+use notify::event::{CreateKind, Event, EventKind, ModifyKind, RemoveKind};
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::{
     sync::{mpsc, mpsc::error::TrySendError, oneshot},

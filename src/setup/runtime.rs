@@ -475,6 +475,9 @@ pub(super) fn prune_runtimes_at(
         .then(|| acquire_setup_lock(&runtime_root))
         .transpose()?;
     let runtime_root_handle = setup_lock.as_ref().map(SetupLock::runtime_root);
+    if !request.dry_run {
+        recover_interrupted_transaction(&runtime_root)?;
+    }
     after_lock();
     if transaction_path(&runtime_root).exists() {
         return Err(Error::SetupFailure(format!(

@@ -200,7 +200,6 @@ pub(super) fn select_search_page(
     let mut charged_occurrence_groups = HashSet::new();
     for candidate in hits.iter().skip(offset).take(limit).cloned() {
         check_cancelled(cancellation)?;
-        consumed += 1;
         let group_key = match output_shape {
             SearchOutputShape::OccurrenceGroups {
                 coordinates_only: false,
@@ -228,8 +227,20 @@ pub(super) fn select_search_page(
             } => tokenizer.count(&candidate.hit.excerpt),
         };
         if emitted_tokens.saturating_add(count) > token_limit {
-            continue;
+            if selected.is_empty() {
+                // An empty page still makes cursor progress.  The documented
+                // contract permits a token budget to filter every candidate
+                // on a page; only preserve an unconsumed candidate when a
+                // preceding selected hit has exhausted this page's budget.
+                consumed += 1;
+                continue;
+            }
+            // Keep the first hit that cannot fit on this page at the cursor
+            // boundary. A fresh page has its own source-token allowance; if
+            // we consumed this hit here, pagination could skip it forever.
+            break;
         }
+        consumed += 1;
         emitted_tokens += count;
         if let Some(key) = group_key {
             charged_occurrence_groups.insert(key);

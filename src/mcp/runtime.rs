@@ -151,7 +151,7 @@ impl LeanTokenMcp {
             Err(error)
                 if matches!(
                     error.reconciliation_cause(),
-                    crate::Error::RetryableConflict(_)
+                    crate::Error::StaleReconciliation { .. } | crate::Error::RetryableConflict(_)
                 ) =>
             {
                 Ok(self.retryable_result(RetryableToolResponse::new(

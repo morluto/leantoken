@@ -122,10 +122,11 @@ impl McpContextRegistry {
             .contexts
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !contexts.contains_key(&name) && contexts.len() >= MAX_REPOSITORY_CONTEXTS {
+        let approved_contexts = contexts.len().saturating_sub(1);
+        if !contexts.contains_key(&name) && approved_contexts >= MAX_REPOSITORY_CONTEXTS {
             return Err(crate::Error::RequestLimitExceeded {
                 field: "repository_contexts",
-                requested: contexts.len().saturating_add(1),
+                requested: approved_contexts.saturating_add(1),
                 limit: MAX_REPOSITORY_CONTEXTS,
             });
         }

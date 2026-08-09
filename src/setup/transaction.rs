@@ -13,13 +13,23 @@ pub(super) struct ResolvedSetupPlan {
     pub(super) transaction_root: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SetupTransactionJournal {
     pub(super) schema_version: u32,
+    #[serde(default)]
+    pub(super) state: SetupTransactionState,
     pub(super) entries: Vec<SetupTransactionEntry>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SetupTransactionState {
+    #[default]
+    Pending,
+    Committed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SetupTransactionEntry {
     pub(super) path: PathBuf,
     pub(super) original: Option<String>,
@@ -29,6 +39,7 @@ pub(super) struct SetupTransactionEntry {
 
 pub(super) struct SetupTransaction {
     path: PathBuf,
+    journal: SetupTransactionJournal,
 }
 
 pub(super) struct SetupLock {
@@ -56,9 +67,19 @@ impl SetupLock {
 }
 
 impl SetupTransaction {
-    pub(super) fn commit(self) -> Result<()> {
-        fs::remove_file(&self.path)?;
-        sync_parent_directory(&self.path)?;
+    pub(super) fn commit(&self) -> Result<()> {
+        let mut committed = self.journal.clone();
+        committed.state = SetupTransactionState::Committed;
+        replace_journal(&self.path, &committed)?;
+        if let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::debug!(path = %self.path.display(), %error, "setup transaction cleanup will retry after a durable commit");
+            return Ok(());
+        }
+        if let Err(error) = sync_parent_directory(&self.path) {
+            tracing::debug!(path = %self.path.display(), %error, "setup transaction cleanup directory sync will retry after a durable commit");
+        }
         Ok(())
     }
 }
@@ -88,6 +109,10 @@ pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()>
             path.display()
         )));
     }
+    if journal.state == SetupTransactionState::Committed {
+        remove_journal(&path)?;
+        return Ok(());
+    }
     for entry in &journal.entries {
         let current = read_optional(&entry.path)?;
         let still_original = current == entry.original;
@@ -106,8 +131,7 @@ pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()>
         }
         restore_path(&entry.path, entry.original.as_deref())?;
     }
-    fs::remove_file(&path)?;
-    sync_parent_directory(&path)?;
+    remove_journal(&path)?;
     Ok(())
 }
 
@@ -153,14 +177,10 @@ pub(super) fn begin_setup_transaction(
     }
     let journal = SetupTransactionJournal {
         schema_version: 1,
+        state: SetupTransactionState::Pending,
         entries,
     };
-    let serialized = serde_json::to_string(&journal)?;
-    if serialized.len() as u64 > MAX_SETUP_JOURNAL_BYTES {
-        return Err(Error::SetupFailure(format!(
-            "setup recovery journal exceeds the {MAX_SETUP_JOURNAL_BYTES}-byte aggregate limit"
-        )));
-    }
+    let serialized = serialize_journal(&journal)?;
     let mut temporary = NamedTempFile::new_in(&plan.transaction_root)?;
     temporary.write_all(serialized.as_bytes())?;
     temporary.as_file_mut().sync_all()?;
@@ -172,7 +192,42 @@ pub(super) fn begin_setup_transaction(
         ))
     })?;
     sync_parent_directory(&path)?;
-    Ok(Some(SetupTransaction { path }))
+    Ok(Some(SetupTransaction { path, journal }))
+}
+
+fn serialize_journal(journal: &SetupTransactionJournal) -> Result<String> {
+    let serialized = serde_json::to_string(journal)?;
+    if serialized.len() as u64 > MAX_SETUP_JOURNAL_BYTES {
+        return Err(Error::SetupFailure(format!(
+            "setup recovery journal exceeds the {MAX_SETUP_JOURNAL_BYTES}-byte aggregate limit"
+        )));
+    }
+    Ok(serialized)
+}
+
+fn replace_journal(path: &Path, journal: &SetupTransactionJournal) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        Error::SetupFailure(format!(
+            "setup transaction path has no parent: {}",
+            path.display()
+        ))
+    })?;
+    let serialized = serialize_journal(journal)?;
+    let mut temporary = NamedTempFile::new_in(parent)?;
+    temporary.write_all(serialized.as_bytes())?;
+    temporary.as_file_mut().sync_all()?;
+    temporary
+        .persist(path)
+        .map_err(|error| Error::Io(error.error))?;
+    sync_parent_directory(path)
+}
+
+fn remove_journal(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => sync_parent_directory(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(super) fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {

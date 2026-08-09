@@ -852,9 +852,7 @@ mod tests {
             ("tests/benchmark_contract.rs", "contract"),
             ("examples/context_utilization.rs", "examples"),
             ("Cargo.lock", "dependency-audit"),
-            ("npm/package.json", "npm"),
-            ("package.json", "npm"),
-            ("package-lock.json", "npm"),
+            ("npm/leantoken.cjs", "npm"),
             ("dist-workspace.toml", "release-plan"),
         ];
         for (path, lane) in cases {
@@ -865,6 +863,10 @@ mod tests {
                     .iter()
                     .any(|decision| decision.lane == lane),
                 "{path} did not select {lane}: {plan:?}"
+            );
+            assert!(
+                plan.fallback_reason.is_none(),
+                "{path} unexpectedly selected the conservative fallback: {plan:?}"
             );
         }
     }

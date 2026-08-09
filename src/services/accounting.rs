@@ -5,6 +5,8 @@ use crate::{Error, Result};
 
 use super::{RetrievalResponse, ServiceCallOptions};
 
+const MAX_ACCOUNTING_PASSES: usize = 32;
+
 /// Owns serialized response sizing and caller-ceiling enforcement.
 ///
 /// Keeping this stateful boundary separate from operation orchestration makes
@@ -28,7 +30,6 @@ impl ResponseAccountant {
             meta.total_response_tokens = 0;
             meta.source_tokens
         };
-        const MAX_ACCOUNTING_PASSES: usize = 32;
         for _ in 0..MAX_ACCOUNTING_PASSES {
             let accounting = response_token_accounting(&*response, source_tokens, &self.tokenizer)?;
             let meta = response.meta_mut();
@@ -80,7 +81,7 @@ impl ResponseAccountant {
             meta.path_and_metadata_tokens = 0;
             meta.total_response_tokens = 0;
         }
-        for _ in 0..32 {
+        for _ in 0..MAX_ACCOUNTING_PASSES {
             let mut value = serde_json::to_value(&*response)?;
             if let Some(object) = value.as_object_mut() {
                 object.insert(

@@ -45,6 +45,25 @@ fn repository_context_registry_defaults_and_fails_closed() {
     assert!(registry.resolve(Some("docs")).is_ok());
 }
 
+#[test]
+fn repository_context_registry_allows_the_configured_approved_context_limit() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    for index in 0..MAX_REPOSITORY_CONTEXTS {
+        registry
+            .register(format!("context-{index}"), McpServices::starting_default())
+            .expect("configured approved context capacity");
+    }
+
+    assert!(matches!(
+        registry.register("one-too-many".into(), McpServices::starting_default()),
+        Err(crate::Error::RequestLimitExceeded {
+            field: "repository_contexts",
+            requested,
+            limit: MAX_REPOSITORY_CONTEXTS,
+        }) if requested == MAX_REPOSITORY_CONTEXTS + 1
+    ));
+}
+
 #[tokio::test]
 async fn prepared_retrieval_selects_the_approved_context() {
     let primary_root = tempfile::tempdir().expect("primary repository");
@@ -540,6 +559,14 @@ async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
 fn retryable_conflicts_are_successful_structured_results() {
     let (server, _state) = LeanTokenMcp::pending();
     for error in [
+        crate::Error::StaleReconciliation {
+            expected: 12,
+            actual: 13,
+        },
+        crate::Error::ReconciliationFailed(Arc::new(crate::Error::StaleReconciliation {
+            expected: 12,
+            actual: 13,
+        })),
         crate::Error::RetryableConflict(crate::error::RetryableOperation::Retrieval),
         crate::Error::ReconciliationFailed(Arc::new(crate::Error::RetryableConflict(
             crate::error::RetryableOperation::Retrieval,
@@ -1152,6 +1179,41 @@ fn mcp_error_mapping_never_serializes_internal_or_input_paths() {
                 .and_then(|data| data["category"].as_str())
                 .is_some(),
             "public error has no stable category: {wire}"
+        );
+    }
+}
+
+#[test]
+fn mcp_fallback_errors_preserve_their_public_category() {
+    let cases = [
+        (
+            crate::Error::DoctorFailure {
+                stage: "catalog",
+                message: "tools/list returned no result".into(),
+            },
+            "doctor_failure",
+        ),
+        (
+            crate::Error::StaleReconciliation {
+                expected: 12,
+                actual: 13,
+            },
+            "retryable_conflict",
+        ),
+        (
+            crate::Error::Io(std::io::Error::other("private descriptor")),
+            "internal_error",
+        ),
+    ];
+
+    for (error, category) in cases {
+        let response = into_mcp_error(error);
+        assert_eq!(
+            response
+                .data
+                .as_ref()
+                .and_then(|data| data["category"].as_str()),
+            Some(category)
         );
     }
 }

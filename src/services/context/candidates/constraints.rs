@@ -120,7 +120,9 @@ impl Services {
             .filter(|(_, matched)| **matched == 0)
             .map(|(pattern, _)| pattern.clone())
             .collect();
-        let minimum_focus_fragments = request.minimum_fragments_per_focus_path.unwrap_or(1);
+        let minimum_focus_fragments = request
+            .minimum_fragments_per_focus_path
+            .unwrap_or(usize::from(request.strict_focus_paths));
         if !request.focus_paths.is_empty() {
             coverage.focus_path_coverage = request
                 .focus_paths

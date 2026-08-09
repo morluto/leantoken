@@ -290,7 +290,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             tracing::error!(%cause, "MCP tool failed");
             ErrorData::internal_error(
                 "repository retrieval failed",
-                mcp_error_data("repository_retrieval"),
+                mcp_error_data(cause.public_category()),
             )
         }
     }
