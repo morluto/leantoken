@@ -71,10 +71,14 @@ impl BoundedStdioTransport {
     }
 
     fn release_oversized_read_buffer(&mut self) {
-        if self.read_buffer.is_empty() && self.read_buffer.capacity() > RETAINED_MCP_FRAME_CAPACITY
+        if self.read_buffer.capacity() <= RETAINED_MCP_FRAME_CAPACITY
+            || self.read_buffer.len() > RETAINED_MCP_FRAME_CAPACITY
         {
-            self.read_buffer = BytesMut::new();
+            return;
         }
+        let mut compact = BytesMut::with_capacity(self.read_buffer.len());
+        compact.extend_from_slice(&self.read_buffer);
+        self.read_buffer = compact;
     }
 
     async fn write_message(
@@ -253,7 +257,10 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                     tracing::warn!(%error, "MCP stdio decode failed");
                     return None;
                 }
-                Ok(None) if self.read_buffer.len() < buffered_before => continue,
+                Ok(None) if self.read_buffer.len() < buffered_before => {
+                    self.release_oversized_read_buffer();
+                    continue;
+                }
                 Ok(None) => {}
             }
 
