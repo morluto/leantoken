@@ -274,48 +274,43 @@
 <a href=#274 id=274 data-nosnippet>274</a>    read_bounded_file(root.open(path)<span class="question-mark">?</span>.into_std(), max_bytes)
 <a href=#275 id=275 data-nosnippet>275</a>}
 <a href=#276 id=276 data-nosnippet>276</a>
-<a href=#277 id=277 data-nosnippet>277</a><span class="attr">#[cfg(test)]
-<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_bounded_path(path: <span class="kw-2">&amp;</span>Path, max_bytes: u64) -&gt; std::io::Result&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
-<a href=#279 id=279 data-nosnippet>279</a>    read_bounded_file(fs::File::open(path)<span class="question-mark">?</span>, max_bytes)
-<a href=#280 id=280 data-nosnippet>280</a>}
-<a href=#281 id=281 data-nosnippet>281</a>
-<a href=#282 id=282 data-nosnippet>282</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_bounded_file(
-<a href=#283 id=283 data-nosnippet>283</a>    file: fs::File,
-<a href=#284 id=284 data-nosnippet>284</a>    max_bytes: u64,
-<a href=#285 id=285 data-nosnippet>285</a>) -&gt; std::io::Result&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">let </span><span class="kw-2">mut </span>bytes =
-<a href=#287 id=287 data-nosnippet>287</a>        Vec::with_capacity(usize::try_from(max_bytes.min(<span class="number">64 </span>* <span class="number">1024</span>)).unwrap_or(<span class="number">64 </span>* <span class="number">1024</span>));
-<a href=#288 id=288 data-nosnippet>288</a>    file.take(max_bytes.saturating_add(<span class="number">1</span>))
-<a href=#289 id=289 data-nosnippet>289</a>        .read_to_end(<span class="kw-2">&amp;mut </span>bytes)<span class="question-mark">?</span>;
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">if </span>u64::try_from(bytes.len()).unwrap_or(u64::MAX) &gt; max_bytes {
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
-<a href=#292 id=292 data-nosnippet>292</a>    } <span class="kw">else </span>{
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes))
-<a href=#294 id=294 data-nosnippet>294</a>    }
-<a href=#295 id=295 data-nosnippet>295</a>}
-<a href=#296 id=296 data-nosnippet>296</a>
-<a href=#297 id=297 data-nosnippet>297</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>push_warning(warnings: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;, warning: String) {
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">const </span>MAX_WARNINGS: usize = <span class="number">100</span>;
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">if </span>warnings.len() &lt; MAX_WARNINGS {
-<a href=#300 id=300 data-nosnippet>300</a>        warnings.push(warning);
-<a href=#301 id=301 data-nosnippet>301</a>    }
-<a href=#302 id=302 data-nosnippet>302</a>}
-<a href=#303 id=303 data-nosnippet>303</a>
-<a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// Return whether the on-disk file still matches the indexed content hash.
-<a href=#305 id=305 data-nosnippet>305</a>///
-<a href=#306 id=306 data-nosnippet>306</a>/// Size is checked by the caller before this bounded read. The content hash is
-<a href=#307 id=307 data-nosnippet>307</a>/// authoritative both when mtime is stable and when metadata churned without a
-<a href=#308 id=308 data-nosnippet>308</a>/// repository-content change.
-<a href=#309 id=309 data-nosnippet>309</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>content_unchanged(
-<a href=#310 id=310 data-nosnippet>310</a>    root: <span class="kw-2">&amp;</span>Dir,
-<a href=#311 id=311 data-nosnippet>311</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#312 id=312 data-nosnippet>312</a>    expected_hash: <span class="kw-2">&amp;</span>str,
-<a href=#313 id=313 data-nosnippet>313</a>    max_file_bytes: u64,
-<a href=#314 id=314 data-nosnippet>314</a>) -&gt; bool {
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">match </span>read_bounded(root, path, max_file_bytes) {
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; hash_bytes(<span class="kw-2">&amp;</span>bytes) == expected_hash,
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>,
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
-<a href=#319 id=319 data-nosnippet>319</a>    }
-<a href=#320 id=320 data-nosnippet>320</a>}
+<a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>read_bounded_file(
+<a href=#278 id=278 data-nosnippet>278</a>    file: fs::File,
+<a href=#279 id=279 data-nosnippet>279</a>    max_bytes: u64,
+<a href=#280 id=280 data-nosnippet>280</a>) -&gt; std::io::Result&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span><span class="kw-2">mut </span>bytes =
+<a href=#282 id=282 data-nosnippet>282</a>        Vec::with_capacity(usize::try_from(max_bytes.min(<span class="number">64 </span>* <span class="number">1024</span>)).unwrap_or(<span class="number">64 </span>* <span class="number">1024</span>));
+<a href=#283 id=283 data-nosnippet>283</a>    file.take(max_bytes.saturating_add(<span class="number">1</span>))
+<a href=#284 id=284 data-nosnippet>284</a>        .read_to_end(<span class="kw-2">&amp;mut </span>bytes)<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">if </span>u64::try_from(bytes.len()).unwrap_or(u64::MAX) &gt; max_bytes {
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+<a href=#287 id=287 data-nosnippet>287</a>    } <span class="kw">else </span>{
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes))
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>}
+<a href=#291 id=291 data-nosnippet>291</a>
+<a href=#292 id=292 data-nosnippet>292</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>push_warning(warnings: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;, warning: String) {
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">const </span>MAX_WARNINGS: usize = <span class="number">100</span>;
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">if </span>warnings.len() &lt; MAX_WARNINGS {
+<a href=#295 id=295 data-nosnippet>295</a>        warnings.push(warning);
+<a href=#296 id=296 data-nosnippet>296</a>    }
+<a href=#297 id=297 data-nosnippet>297</a>}
+<a href=#298 id=298 data-nosnippet>298</a>
+<a href=#299 id=299 data-nosnippet>299</a><span class="doccomment">/// Return whether the on-disk file still matches the indexed content hash.
+<a href=#300 id=300 data-nosnippet>300</a>///
+<a href=#301 id=301 data-nosnippet>301</a>/// Size is checked by the caller before this bounded read. The content hash is
+<a href=#302 id=302 data-nosnippet>302</a>/// authoritative both when mtime is stable and when metadata churned without a
+<a href=#303 id=303 data-nosnippet>303</a>/// repository-content change.
+<a href=#304 id=304 data-nosnippet>304</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>content_unchanged(
+<a href=#305 id=305 data-nosnippet>305</a>    root: <span class="kw-2">&amp;</span>Dir,
+<a href=#306 id=306 data-nosnippet>306</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#307 id=307 data-nosnippet>307</a>    expected_hash: <span class="kw-2">&amp;</span>str,
+<a href=#308 id=308 data-nosnippet>308</a>    max_file_bytes: u64,
+<a href=#309 id=309 data-nosnippet>309</a>) -&gt; bool {
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">match </span>read_bounded(root, path, max_file_bytes) {
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; hash_bytes(<span class="kw-2">&amp;</span>bytes) == expected_hash,
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
+<a href=#314 id=314 data-nosnippet>314</a>    }
+<a href=#315 id=315 data-nosnippet>315</a>}
 </code></pre></div></section></main></body></html>

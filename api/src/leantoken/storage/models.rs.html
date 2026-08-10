@@ -319,7 +319,7 @@
 <a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ReconciliationWriter&lt;<span class="lifetime">'transaction</span>, <span class="lifetime">'connection</span>&gt; {
 <a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) transaction: <span class="kw-2">&amp;</span><span class="lifetime">'transaction </span>Transaction&lt;<span class="lifetime">'connection</span>&gt;,
 <a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) generation: i64,
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) rebuild: bool,
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) mode: IndexingMode,
 <a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) replacements: usize,
 <a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) deletions: HashSet&lt;String&gt;,
 <a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) projection_refreshes: usize,

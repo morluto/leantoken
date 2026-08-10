@@ -425,7 +425,7 @@
 <a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">let </span>max_response_tokens = options
 <a href=#426 id=426 data-nosnippet>426</a>                .max_response_tokens()
 <a href=#427 id=427 data-nosnippet>427</a>                .expect(<span class="string">"fitting only runs with a response limit"</span>);
-<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
+<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">let </span>budget = ResponseBudget::new(max_response_tokens);
 <a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">let </span>keep = budget.largest_fitting_prefix(entries.len(), |keep| {
 <a href=#430 id=430 data-nosnippet>430</a>                <span class="kw">let </span><span class="kw-2">mut </span>candidate = original.clone();
 <a href=#431 id=431 data-nosnippet>431</a>                <span class="kw">let </span><span class="kw-2">mut </span>value = entries.clone();

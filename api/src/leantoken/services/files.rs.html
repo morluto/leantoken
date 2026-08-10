@@ -799,7 +799,7 @@
 <a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>max_response_tokens = options
 <a href=#800 id=800 data-nosnippet>800</a>            .max_response_tokens()
 <a href=#801 id=801 data-nosnippet>801</a>            .expect(<span class="string">"fitting only runs with a response limit"</span>);
-<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>budget = ResponseBudget::new(max_response_tokens);
 <a href=#803 id=803 data-nosnippet>803</a>        <span class="kw">let </span>keep = budget.largest_fitting_prefix(original.entries.len(), |keep| {
 <a href=#804 id=804 data-nosnippet>804</a>            <span class="kw">let </span><span class="kw-2">mut </span>candidate = original.clone();
 <a href=#805 id=805 data-nosnippet>805</a>            candidate.entries.truncate(keep);
@@ -850,7 +850,7 @@
 <a href=#850 id=850 data-nosnippet>850</a>        <span class="kw">let </span>max_response_tokens = options
 <a href=#851 id=851 data-nosnippet>851</a>            .max_response_tokens()
 <a href=#852 id=852 data-nosnippet>852</a>            .expect(<span class="string">"fitting only runs with a response limit"</span>);
-<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw">let </span>budget = ResponseBudget::new(<span class="kw-2">&amp;</span><span class="self">self</span>.config.tokenizer, max_response_tokens);
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw">let </span>budget = ResponseBudget::new(max_response_tokens);
 <a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">let </span>keep = budget.largest_fitting_prefix(original.paths.len(), |keep| {
 <a href=#855 id=855 data-nosnippet>855</a>            <span class="kw">let </span><span class="kw-2">mut </span>candidate = original.clone();
 <a href=#856 id=856 data-nosnippet>856</a>            candidate.paths.truncate(keep);

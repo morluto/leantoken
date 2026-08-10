@@ -84,7 +84,7 @@
 <a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>services = Services::open(config)<span class="question-mark">?</span>;
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>index_started = Instant::now();
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>indexed = services.index(<span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>indexed = services.index(leantoken::IndexingMode::Reconcile).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>index_elapsed = index_started.elapsed();
 <a href=#89 id=89 data-nosnippet>89</a>
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>regex_request = SearchRequest {

@@ -320,7 +320,7 @@
 <a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">let </span>indexer = Indexer::new(Arc::clone(<span class="kw-2">&amp;</span>config), storage.clone())<span class="question-mark">?</span>;
 <a href=#321 id=321 data-nosnippet>321</a>
 <a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">let </span>start = Instant::now();
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span>initial_profile = indexer.reconcile_profiled_report(<span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span>initial_profile = indexer.reconcile_profiled_report(leantoken::IndexingMode::Reconcile)<span class="question-mark">?</span>;
 <a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">let </span>initial_index = IndexSample {
 <a href=#325 id=325 data-nosnippet>325</a>        elapsed_ms: milliseconds(start.elapsed()),
 <a href=#326 id=326 data-nosnippet>326</a>        response: initial_profile.report,
@@ -332,7 +332,7 @@
 <a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">let </span><span class="kw-2">mut </span>full_noop_diagnostics = Vec::with_capacity(args.iterations);
 <a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">for _ in </span><span class="number">0</span>..args.iterations {
 <a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>start = Instant::now();
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>profiled = indexer.reconcile_profiled(<span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>profiled = indexer.reconcile_profiled(leantoken::IndexingMode::Reconcile)<span class="question-mark">?</span>;
 <a href=#336 id=336 data-nosnippet>336</a>        full_noop_durations.push(start.elapsed());
 <a href=#337 id=337 data-nosnippet>337</a>        require_index_counts(<span class="kw-2">&amp;</span>profiled.response, discovered.len(), <span class="number">0</span>, <span class="string">"full no-op"</span>)<span class="question-mark">?</span>;
 <a href=#338 id=338 data-nosnippet>338</a>        full_noop_diagnostics.push(profiled.diagnostics);
@@ -346,7 +346,7 @@
 <a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">let </span>full_changed = measure_changed_indexing(
 <a href=#347 id=347 data-nosnippet>347</a>        args.iterations,
 <a href=#348 id=348 data-nosnippet>348</a>        <span class="kw-2">&amp;</span>mutation_files[<span class="number">0</span>].absolute_path,
-<a href=#349 id=349 data-nosnippet>349</a>        || indexer.reconcile(<span class="bool-val">false</span>),
+<a href=#349 id=349 data-nosnippet>349</a>        || indexer.reconcile(leantoken::IndexingMode::Reconcile),
 <a href=#350 id=350 data-nosnippet>350</a>        discovered.len(),
 <a href=#351 id=351 data-nosnippet>351</a>        <span class="string">"full changed"</span>,
 <a href=#352 id=352 data-nosnippet>352</a>    )<span class="question-mark">?</span>;
@@ -390,7 +390,7 @@
 <a href=#390 id=390 data-nosnippet>390</a>        || indexer.reconcile_paths(std::slice::from_ref(<span class="kw-2">&amp;</span>delete_relative)),
 <a href=#391 id=391 data-nosnippet>391</a>        || {
 <a href=#392 id=392 data-nosnippet>392</a>            fs::write(<span class="kw-2">&amp;</span>delete_path, <span class="kw-2">&amp;</span>delete_content)<span class="question-mark">?</span>;
-<a href=#393 id=393 data-nosnippet>393</a>            indexer.reconcile(<span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#393 id=393 data-nosnippet>393</a>            indexer.reconcile(leantoken::IndexingMode::Reconcile)<span class="question-mark">?</span>;
 <a href=#394 id=394 data-nosnippet>394</a>            <span class="prelude-val">Ok</span>(())
 <a href=#395 id=395 data-nosnippet>395</a>        },
 <a href=#396 id=396 data-nosnippet>396</a>        MinimumIndexCounts {
@@ -420,7 +420,7 @@
 <a href=#420 id=420 data-nosnippet>420</a>        || indexer.reconcile_paths(<span class="kw-2">&amp;</span>rename_paths),
 <a href=#421 id=421 data-nosnippet>421</a>        || {
 <a href=#422 id=422 data-nosnippet>422</a>            fs::rename(<span class="kw-2">&amp;</span>rename_destination, <span class="kw-2">&amp;</span>rename_path)<span class="question-mark">?</span>;
-<a href=#423 id=423 data-nosnippet>423</a>            indexer.reconcile(<span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#423 id=423 data-nosnippet>423</a>            indexer.reconcile(leantoken::IndexingMode::Reconcile)<span class="question-mark">?</span>;
 <a href=#424 id=424 data-nosnippet>424</a>            <span class="prelude-val">Ok</span>(())
 <a href=#425 id=425 data-nosnippet>425</a>        },
 <a href=#426 id=426 data-nosnippet>426</a>        MinimumIndexCounts {

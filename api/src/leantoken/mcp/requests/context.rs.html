@@ -157,62 +157,66 @@
 <a href=#157 id=157 data-nosnippet>157</a>        <span class="prelude-ty">Option</span>&lt;String&gt;,
 <a href=#158 id=158 data-nosnippet>158</a>        <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt;,
 <a href=#159 id=159 data-nosnippet>159</a>    ) {
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>options = service_call_options_with_receipt(<span class="self">self</span>.max_response_tokens, !<span class="self">self</span>.plan_only);
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>options = <span class="self">self</span>.response_profile.map_or(options, |profile| {
-<a href=#162 id=162 data-nosnippet>162</a>            options.with_context_response_profile(profile)
-<a href=#163 id=163 data-nosnippet>163</a>        });
-<a href=#164 id=164 data-nosnippet>164</a>        (
-<a href=#165 id=165 data-nosnippet>165</a>            ContextRequest {
-<a href=#166 id=166 data-nosnippet>166</a>                task: <span class="self">self</span>.task.into_string(),
-<a href=#167 id=167 data-nosnippet>167</a>                token_budget: <span class="self">self</span>.token_budget.unwrap_or(default_token_budget),
-<a href=#168 id=168 data-nosnippet>168</a>                include_paths: <span class="self">self</span>.include_paths,
-<a href=#169 id=169 data-nosnippet>169</a>                must_include_paths: <span class="self">self</span>.must_include_paths,
-<a href=#170 id=170 data-nosnippet>170</a>                must_include_symbols: <span class="self">self</span>.must_include_symbols,
-<a href=#171 id=171 data-nosnippet>171</a>                required_evidence: <span class="self">self</span>.required_evidence,
-<a href=#172 id=172 data-nosnippet>172</a>                max_fragments: <span class="self">self</span>.max_fragments,
-<a href=#173 id=173 data-nosnippet>173</a>                plan_only: <span class="self">self</span>.plan_only,
-<a href=#174 id=174 data-nosnippet>174</a>                focus_paths: <span class="self">self</span>.focus_paths,
-<a href=#175 id=175 data-nosnippet>175</a>                strict_focus_paths: <span class="self">self</span>.strict_focus_paths,
-<a href=#176 id=176 data-nosnippet>176</a>                minimum_fragments_per_focus_path: <span class="self">self</span>.minimum_fragments_per_focus_path,
-<a href=#177 id=177 data-nosnippet>177</a>                focus_symbols: <span class="self">self</span>.focus_symbols,
-<a href=#178 id=178 data-nosnippet>178</a>                exclude_paths: <span class="self">self</span>.exclude_paths,
-<a href=#179 id=179 data-nosnippet>179</a>                known_hashes: <span class="self">self</span>.known_hashes,
-<a href=#180 id=180 data-nosnippet>180</a>                receipt_id: <span class="self">self</span>.receipt_id,
-<a href=#181 id=181 data-nosnippet>181</a>                prior_repository_generation: <span class="self">self</span>.prior_repository_generation,
-<a href=#182 id=182 data-nosnippet>182</a>                base_revision: <span class="self">self</span>.base_revision.map(NonEmptyText::into_string),
-<a href=#183 id=183 data-nosnippet>183</a>                changed_paths: <span class="self">self</span>.changed_paths,
-<a href=#184 id=184 data-nosnippet>184</a>                strict_changed_paths: <span class="self">self</span>.strict_changed_paths,
-<a href=#185 id=185 data-nosnippet>185</a>                explain_diagnostics: <span class="bool-val">false</span>,
-<a href=#186 id=186 data-nosnippet>186</a>            },
-<a href=#187 id=187 data-nosnippet>187</a>            <span class="self">self</span>.workflow,
-<a href=#188 id=188 data-nosnippet>188</a>            <span class="self">self</span>.workflow_evidence,
-<a href=#189 id=189 data-nosnippet>189</a>            <span class="self">self</span>.consistency,
-<a href=#190 id=190 data-nosnippet>190</a>            options,
-<a href=#191 id=191 data-nosnippet>191</a>            <span class="self">self</span>.expected_repository_id,
-<a href=#192 id=192 data-nosnippet>192</a>            <span class="self">self</span>.handoff,
-<a href=#193 id=193 data-nosnippet>193</a>        )
-<a href=#194 id=194 data-nosnippet>194</a>    }
-<a href=#195 id=195 data-nosnippet>195</a>}
-<a href=#196 id=196 data-nosnippet>196</a>
-<a href=#197 id=197 data-nosnippet>197</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">const fn </span>default_context_fragment_option() -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="prelude-val">Some</span>(DEFAULT_CONTEXT_FRAGMENTS)
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>options = <span class="kw">if </span><span class="self">self</span>.plan_only {
+<a href=#161 id=161 data-nosnippet>161</a>            service_call_options(<span class="self">self</span>.max_response_tokens)
+<a href=#162 id=162 data-nosnippet>162</a>        } <span class="kw">else </span>{
+<a href=#163 id=163 data-nosnippet>163</a>            service_call_options_with_receipt(<span class="self">self</span>.max_response_tokens)
+<a href=#164 id=164 data-nosnippet>164</a>        };
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>options = <span class="self">self</span>.response_profile.map_or(options, |profile| {
+<a href=#166 id=166 data-nosnippet>166</a>            options.with_context_response_profile(profile)
+<a href=#167 id=167 data-nosnippet>167</a>        });
+<a href=#168 id=168 data-nosnippet>168</a>        (
+<a href=#169 id=169 data-nosnippet>169</a>            ContextRequest {
+<a href=#170 id=170 data-nosnippet>170</a>                task: <span class="self">self</span>.task.into_string(),
+<a href=#171 id=171 data-nosnippet>171</a>                token_budget: <span class="self">self</span>.token_budget.unwrap_or(default_token_budget),
+<a href=#172 id=172 data-nosnippet>172</a>                include_paths: <span class="self">self</span>.include_paths,
+<a href=#173 id=173 data-nosnippet>173</a>                must_include_paths: <span class="self">self</span>.must_include_paths,
+<a href=#174 id=174 data-nosnippet>174</a>                must_include_symbols: <span class="self">self</span>.must_include_symbols,
+<a href=#175 id=175 data-nosnippet>175</a>                required_evidence: <span class="self">self</span>.required_evidence,
+<a href=#176 id=176 data-nosnippet>176</a>                max_fragments: <span class="self">self</span>.max_fragments,
+<a href=#177 id=177 data-nosnippet>177</a>                plan_only: <span class="self">self</span>.plan_only,
+<a href=#178 id=178 data-nosnippet>178</a>                focus_paths: <span class="self">self</span>.focus_paths,
+<a href=#179 id=179 data-nosnippet>179</a>                strict_focus_paths: <span class="self">self</span>.strict_focus_paths,
+<a href=#180 id=180 data-nosnippet>180</a>                minimum_fragments_per_focus_path: <span class="self">self</span>.minimum_fragments_per_focus_path,
+<a href=#181 id=181 data-nosnippet>181</a>                focus_symbols: <span class="self">self</span>.focus_symbols,
+<a href=#182 id=182 data-nosnippet>182</a>                exclude_paths: <span class="self">self</span>.exclude_paths,
+<a href=#183 id=183 data-nosnippet>183</a>                known_hashes: <span class="self">self</span>.known_hashes,
+<a href=#184 id=184 data-nosnippet>184</a>                receipt_id: <span class="self">self</span>.receipt_id,
+<a href=#185 id=185 data-nosnippet>185</a>                prior_repository_generation: <span class="self">self</span>.prior_repository_generation,
+<a href=#186 id=186 data-nosnippet>186</a>                base_revision: <span class="self">self</span>.base_revision.map(NonEmptyText::into_string),
+<a href=#187 id=187 data-nosnippet>187</a>                changed_paths: <span class="self">self</span>.changed_paths,
+<a href=#188 id=188 data-nosnippet>188</a>                strict_changed_paths: <span class="self">self</span>.strict_changed_paths,
+<a href=#189 id=189 data-nosnippet>189</a>                explain_diagnostics: <span class="bool-val">false</span>,
+<a href=#190 id=190 data-nosnippet>190</a>            },
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="self">self</span>.workflow,
+<a href=#192 id=192 data-nosnippet>192</a>            <span class="self">self</span>.workflow_evidence,
+<a href=#193 id=193 data-nosnippet>193</a>            <span class="self">self</span>.consistency,
+<a href=#194 id=194 data-nosnippet>194</a>            options,
+<a href=#195 id=195 data-nosnippet>195</a>            <span class="self">self</span>.expected_repository_id,
+<a href=#196 id=196 data-nosnippet>196</a>            <span class="self">self</span>.handoff,
+<a href=#197 id=197 data-nosnippet>197</a>        )
+<a href=#198 id=198 data-nosnippet>198</a>    }
 <a href=#199 id=199 data-nosnippet>199</a>}
 <a href=#200 id=200 data-nosnippet>200</a>
-<a href=#201 id=201 data-nosnippet>201</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>context_fragment_limit_schema(<span class="kw">_</span>: <span class="kw-2">&amp;mut </span>SchemaGenerator) -&gt; Schema {
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="macro">schemars::json_schema!</span>({
-<a href=#203 id=203 data-nosnippet>203</a>        <span class="string">"type"</span>: [<span class="string">"integer"</span>, <span class="string">"null"</span>],
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="string">"minimum"</span>: <span class="number">1</span>,
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="string">"maximum"</span>: MAX_RESULTS,
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="string">"default"</span>: DEFAULT_CONTEXT_FRAGMENTS
-<a href=#207 id=207 data-nosnippet>207</a>    })
-<a href=#208 id=208 data-nosnippet>208</a>}
-<a href=#209 id=209 data-nosnippet>209</a>
-<a href=#210 id=210 data-nosnippet>210</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>context_focus_fragment_limit_schema(<span class="kw">_</span>: <span class="kw-2">&amp;mut </span>SchemaGenerator) -&gt; Schema {
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="macro">schemars::json_schema!</span>({
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="string">"type"</span>: [<span class="string">"integer"</span>, <span class="string">"null"</span>],
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="string">"minimum"</span>: <span class="number">1</span>,
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="string">"maximum"</span>: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="string">"default"</span>: null
-<a href=#216 id=216 data-nosnippet>216</a>    })
-<a href=#217 id=217 data-nosnippet>217</a>}
+<a href=#201 id=201 data-nosnippet>201</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">const fn </span>default_context_fragment_option() -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="prelude-val">Some</span>(DEFAULT_CONTEXT_FRAGMENTS)
+<a href=#203 id=203 data-nosnippet>203</a>}
+<a href=#204 id=204 data-nosnippet>204</a>
+<a href=#205 id=205 data-nosnippet>205</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>context_fragment_limit_schema(<span class="kw">_</span>: <span class="kw-2">&amp;mut </span>SchemaGenerator) -&gt; Schema {
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="macro">schemars::json_schema!</span>({
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="string">"type"</span>: [<span class="string">"integer"</span>, <span class="string">"null"</span>],
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="string">"minimum"</span>: <span class="number">1</span>,
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="string">"maximum"</span>: MAX_RESULTS,
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="string">"default"</span>: DEFAULT_CONTEXT_FRAGMENTS
+<a href=#211 id=211 data-nosnippet>211</a>    })
+<a href=#212 id=212 data-nosnippet>212</a>}
+<a href=#213 id=213 data-nosnippet>213</a>
+<a href=#214 id=214 data-nosnippet>214</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">fn </span>context_focus_fragment_limit_schema(<span class="kw">_</span>: <span class="kw-2">&amp;mut </span>SchemaGenerator) -&gt; Schema {
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="macro">schemars::json_schema!</span>({
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="string">"type"</span>: [<span class="string">"integer"</span>, <span class="string">"null"</span>],
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="string">"minimum"</span>: <span class="number">1</span>,
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="string">"maximum"</span>: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="string">"default"</span>: null
+<a href=#220 id=220 data-nosnippet>220</a>    })
+<a href=#221 id=221 data-nosnippet>221</a>}
 </code></pre></div></section></main></body></html>

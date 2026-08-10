@@ -330,7 +330,7 @@
 <a href=#330 id=330 data-nosnippet>330</a>        <span class="prelude-val">Some</span>(temporary.path().join(<span class="string">"cache/index.sqlite"</span>)),
 <a href=#331 id=331 data-nosnippet>331</a>    )<span class="question-mark">?</span>;
 <a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">let </span>services = Services::open(config)<span class="question-mark">?</span>;
-<a href=#333 id=333 data-nosnippet>333</a>    services.index(<span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>    services.index(leantoken::IndexingMode::Reconcile).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#334 id=334 data-nosnippet>334</a>    <span class="prelude-val">Ok</span>((temporary, services))
 <a href=#335 id=335 data-nosnippet>335</a>}
 <a href=#336 id=336 data-nosnippet>336</a>

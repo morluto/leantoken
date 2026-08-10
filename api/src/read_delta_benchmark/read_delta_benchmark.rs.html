@@ -152,13 +152,13 @@
 <a href=#152 id=152 data-nosnippet>152</a>        root.path(),
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="prelude-val">Some</span>(root.path().join(<span class="string">"index.sqlite"</span>)),
 <a href=#154 id=154 data-nosnippet>154</a>    )<span class="question-mark">?</span>)<span class="question-mark">?</span>;
-<a href=#155 id=155 data-nosnippet>155</a>    services.index(<span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#155 id=155 data-nosnippet>155</a>    services.index(leantoken::IndexingMode::Rebuild).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">let </span>first = services
 <a href=#157 id=157 data-nosnippet>157</a>        .read(request(case.target, <span class="prelude-val">None</span>, case.capture_base))
 <a href=#158 id=158 data-nosnippet>158</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#159 id=159 data-nosnippet>159</a>    fs::write(root.path().join(<span class="string">"fixture.rs"</span>), <span class="kw-2">&amp;</span>case.changed)<span class="question-mark">?</span>;
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">if </span>case.reindex_after_edit {
-<a href=#161 id=161 data-nosnippet>161</a>        services.index(<span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#161 id=161 data-nosnippet>161</a>        services.index(leantoken::IndexingMode::Reconcile).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#162 id=162 data-nosnippet>162</a>    }
 <a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>base_hash = first.content_hash;
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>changed = services

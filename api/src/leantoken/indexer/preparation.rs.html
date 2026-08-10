@@ -61,7 +61,7 @@
 <a href=#61 id=61 data-nosnippet>61</a>            metrics.max_batch_files = metrics.max_batch_files.max(end - start);
 <a href=#62 id=62 data-nosnippet>62</a>            metrics.max_batch_source_bytes = metrics.max_batch_source_bytes.max(batch_source_bytes);
 <a href=#63 id=63 data-nosnippet>63</a>            <span class="kw">let </span>preparation_started = Instant::now();
-<a href=#64 id=64 data-nosnippet>64</a>            <span class="kw">let </span>batch = <span class="kw">if </span>profiling == StorageProfiling::Collect {
+<a href=#64 id=64 data-nosnippet>64</a>            <span class="kw">let </span>batch = <span class="kw">if </span>profiling.is_collecting() {
 <a href=#65 id=65 data-nosnippet>65</a>                <span class="kw">let </span>profiled = pool.install(|| {
 <a href=#66 id=66 data-nosnippet>66</a>                    candidates[start..end]
 <a href=#67 id=67 data-nosnippet>67</a>                        .par_iter()
@@ -121,100 +121,102 @@
 <a href=#121 id=121 data-nosnippet>121</a>                })<span class="question-mark">?
 <a href=#122 id=122 data-nosnippet>122</a>            </span>};
 <a href=#123 id=123 data-nosnippet>123</a>            metrics.preparation += preparation_started.elapsed();
-<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">let </span>write_before = (profiling == StorageProfiling::Collect)
-<a href=#125 id=125 data-nosnippet>125</a>                .then(process_write_bytes)
-<a href=#126 id=126 data-nosnippet>126</a>                .flatten();
-<a href=#127 id=127 data-nosnippet>127</a>            <span class="kw">let </span>insertion_started = Instant::now();
-<a href=#128 id=128 data-nosnippet>128</a>            consume(batch)<span class="question-mark">?</span>;
-<a href=#129 id=129 data-nosnippet>129</a>            metrics.insertion += insertion_started.elapsed();
-<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">let </span>write_after = (profiling == StorageProfiling::Collect)
-<a href=#131 id=131 data-nosnippet>131</a>                .then(process_write_bytes)
-<a href=#132 id=132 data-nosnippet>132</a>                .flatten();
-<a href=#133 id=133 data-nosnippet>133</a>            <span class="kw">let </span>batch_write_bytes = write_before
-<a href=#134 id=134 data-nosnippet>134</a>                .zip(write_after)
-<a href=#135 id=135 data-nosnippet>135</a>                .map(|(before, after)| after.saturating_sub(before));
-<a href=#136 id=136 data-nosnippet>136</a>            metrics.insertion_write_bytes = <span class="kw">match </span>(metrics.insertion_write_bytes, batch_write_bytes)
-<a href=#137 id=137 data-nosnippet>137</a>            {
-<a href=#138 id=138 data-nosnippet>138</a>                (<span class="prelude-val">Some</span>(total), <span class="prelude-val">Some</span>(current)) =&gt; <span class="prelude-val">Some</span>(total.saturating_add(current)),
-<a href=#139 id=139 data-nosnippet>139</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(current)) <span class="kw">if </span>metrics.batches == <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(current),
-<a href=#140 id=140 data-nosnippet>140</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#141 id=141 data-nosnippet>141</a>            };
-<a href=#142 id=142 data-nosnippet>142</a>            start = end;
-<a href=#143 id=143 data-nosnippet>143</a>        }
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="prelude-val">Ok</span>(metrics)
-<a href=#145 id=145 data-nosnippet>145</a>    }
-<a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>plan_relocations(
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#149 id=149 data-nosnippet>149</a>        existing: <span class="kw-2">&amp;</span>HashMap&lt;String, <span class="kw">crate</span>::storage::FileRecord&gt;,
-<a href=#150 id=150 data-nosnippet>150</a>        candidates: <span class="kw-2">&amp;</span>HashMap&lt;String, DiscoveredFile&gt;,
-<a href=#151 id=151 data-nosnippet>151</a>        change_set: <span class="kw-2">&amp;</span>ChangeSet,
-<a href=#152 id=152 data-nosnippet>152</a>        cancellation: <span class="kw-2">&amp;</span>CancellationToken,
-<a href=#153 id=153 data-nosnippet>153</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;RelocationPlan&gt;&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">if </span>change_set.created.is_empty() || change_set.deleted.is_empty() {
-<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
-<a href=#156 id=156 data-nosnippet>156</a>        }
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span><span class="kw-2">mut </span>old_by_key = HashMap::&lt;RelocationKey, Vec&lt;String&gt;&gt;::new();
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">for </span>path <span class="kw">in </span><span class="kw-2">&amp;</span>change_set.deleted {
-<a href=#160 id=160 data-nosnippet>160</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(record) = existing.get(path) <span class="kw">else </span>{
-<a href=#162 id=162 data-nosnippet>162</a>                <span class="kw">continue</span>;
-<a href=#163 id=163 data-nosnippet>163</a>            };
-<a href=#164 id=164 data-nosnippet>164</a>            old_by_key
-<a href=#165 id=165 data-nosnippet>165</a>                .entry(RelocationKey {
-<a href=#166 id=166 data-nosnippet>166</a>                    content_hash: record.content_hash.clone(),
-<a href=#167 id=167 data-nosnippet>167</a>                    size_bytes: record.size_bytes,
-<a href=#168 id=168 data-nosnippet>168</a>                    language: record.language.clone(),
-<a href=#169 id=169 data-nosnippet>169</a>                })
-<a href=#170 id=170 data-nosnippet>170</a>                .or_default()
-<a href=#171 id=171 data-nosnippet>171</a>                .push(path.clone());
-<a href=#172 id=172 data-nosnippet>172</a>        }
-<a href=#173 id=173 data-nosnippet>173</a>
-<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span><span class="kw-2">mut </span>new_by_key = HashMap::&lt;RelocationKey, Vec&lt;DiscoveredFile&gt;&gt;::new();
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">for </span>path <span class="kw">in </span><span class="kw-2">&amp;</span>change_set.created {
-<a href=#176 id=176 data-nosnippet>176</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
-<a href=#177 id=177 data-nosnippet>177</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(file) = candidates.get(path) <span class="kw">else </span>{
-<a href=#178 id=178 data-nosnippet>178</a>                <span class="kw">continue</span>;
-<a href=#179 id=179 data-nosnippet>179</a>            };
-<a href=#180 id=180 data-nosnippet>180</a>            <span class="kw">let </span>bytes = <span class="kw">match </span>read_bounded(
-<a href=#181 id=181 data-nosnippet>181</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.repository_root,
-<a href=#182 id=182 data-nosnippet>182</a>                <span class="kw-2">&amp;</span>file.relative_path,
-<a href=#183 id=183 data-nosnippet>183</a>                <span class="self">self</span>.config.max_file_bytes,
-<a href=#184 id=184 data-nosnippet>184</a>            ) {
-<a href=#185 id=185 data-nosnippet>185</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; bytes,
-<a href=#186 id=186 data-nosnippet>186</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) | <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">continue</span>,
-<a href=#187 id=187 data-nosnippet>187</a>            };
-<a href=#188 id=188 data-nosnippet>188</a>            new_by_key
-<a href=#189 id=189 data-nosnippet>189</a>                .entry(RelocationKey {
-<a href=#190 id=190 data-nosnippet>190</a>                    content_hash: hash_bytes(<span class="kw-2">&amp;</span>bytes),
-<a href=#191 id=191 data-nosnippet>191</a>                    size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-<a href=#192 id=192 data-nosnippet>192</a>                    language: parser::language_by_path(<span class="kw-2">&amp;</span>file.relative_path),
-<a href=#193 id=193 data-nosnippet>193</a>                })
-<a href=#194 id=194 data-nosnippet>194</a>                .or_default()
-<a href=#195 id=195 data-nosnippet>195</a>                .push(file.clone());
-<a href=#196 id=196 data-nosnippet>196</a>        }
-<a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span><span class="kw-2">mut </span>relocations = Vec::new();
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">for </span>(key, old_paths) <span class="kw">in </span>old_by_key {
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(new_files) = new_by_key.get(<span class="kw-2">&amp;</span>key) <span class="kw">else </span>{
-<a href=#201 id=201 data-nosnippet>201</a>                <span class="kw">continue</span>;
-<a href=#202 id=202 data-nosnippet>202</a>            };
-<a href=#203 id=203 data-nosnippet>203</a>            <span class="kw">if </span>old_paths.len() != <span class="number">1 </span>|| new_files.len() != <span class="number">1 </span>{
-<a href=#204 id=204 data-nosnippet>204</a>                <span class="kw">continue</span>;
-<a href=#205 id=205 data-nosnippet>205</a>            }
-<a href=#206 id=206 data-nosnippet>206</a>            relocations.push(RelocationPlan {
-<a href=#207 id=207 data-nosnippet>207</a>                old_path: old_paths[<span class="number">0</span>].clone(),
-<a href=#208 id=208 data-nosnippet>208</a>                new_file: new_files[<span class="number">0</span>].clone(),
-<a href=#209 id=209 data-nosnippet>209</a>                expected_hash: key.content_hash,
-<a href=#210 id=210 data-nosnippet>210</a>            });
-<a href=#211 id=211 data-nosnippet>211</a>        }
-<a href=#212 id=212 data-nosnippet>212</a>        relocations.sort_unstable_by(|left, right| {
-<a href=#213 id=213 data-nosnippet>213</a>            left.new_file
-<a href=#214 id=214 data-nosnippet>214</a>                .relative_path
-<a href=#215 id=215 data-nosnippet>215</a>                .cmp(<span class="kw-2">&amp;</span>right.new_file.relative_path)
-<a href=#216 id=216 data-nosnippet>216</a>        });
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="prelude-val">Ok</span>(relocations)
-<a href=#218 id=218 data-nosnippet>218</a>    }
-<a href=#219 id=219 data-nosnippet>219</a>}
+<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">let </span>write_before = profiling
+<a href=#125 id=125 data-nosnippet>125</a>                .is_collecting()
+<a href=#126 id=126 data-nosnippet>126</a>                .then(process_write_bytes)
+<a href=#127 id=127 data-nosnippet>127</a>                .flatten();
+<a href=#128 id=128 data-nosnippet>128</a>            <span class="kw">let </span>insertion_started = Instant::now();
+<a href=#129 id=129 data-nosnippet>129</a>            consume(batch)<span class="question-mark">?</span>;
+<a href=#130 id=130 data-nosnippet>130</a>            metrics.insertion += insertion_started.elapsed();
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw">let </span>write_after = profiling
+<a href=#132 id=132 data-nosnippet>132</a>                .is_collecting()
+<a href=#133 id=133 data-nosnippet>133</a>                .then(process_write_bytes)
+<a href=#134 id=134 data-nosnippet>134</a>                .flatten();
+<a href=#135 id=135 data-nosnippet>135</a>            <span class="kw">let </span>batch_write_bytes = write_before
+<a href=#136 id=136 data-nosnippet>136</a>                .zip(write_after)
+<a href=#137 id=137 data-nosnippet>137</a>                .map(|(before, after)| after.saturating_sub(before));
+<a href=#138 id=138 data-nosnippet>138</a>            metrics.insertion_write_bytes = <span class="kw">match </span>(metrics.insertion_write_bytes, batch_write_bytes)
+<a href=#139 id=139 data-nosnippet>139</a>            {
+<a href=#140 id=140 data-nosnippet>140</a>                (<span class="prelude-val">Some</span>(total), <span class="prelude-val">Some</span>(current)) =&gt; <span class="prelude-val">Some</span>(total.saturating_add(current)),
+<a href=#141 id=141 data-nosnippet>141</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(current)) <span class="kw">if </span>metrics.batches == <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(current),
+<a href=#142 id=142 data-nosnippet>142</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#143 id=143 data-nosnippet>143</a>            };
+<a href=#144 id=144 data-nosnippet>144</a>            start = end;
+<a href=#145 id=145 data-nosnippet>145</a>        }
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="prelude-val">Ok</span>(metrics)
+<a href=#147 id=147 data-nosnippet>147</a>    }
+<a href=#148 id=148 data-nosnippet>148</a>
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>plan_relocations(
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#151 id=151 data-nosnippet>151</a>        existing: <span class="kw-2">&amp;</span>HashMap&lt;String, <span class="kw">crate</span>::storage::FileRecord&gt;,
+<a href=#152 id=152 data-nosnippet>152</a>        candidates: <span class="kw-2">&amp;</span>HashMap&lt;String, DiscoveredFile&gt;,
+<a href=#153 id=153 data-nosnippet>153</a>        change_set: <span class="kw-2">&amp;</span>ChangeSet,
+<a href=#154 id=154 data-nosnippet>154</a>        cancellation: <span class="kw-2">&amp;</span>CancellationToken,
+<a href=#155 id=155 data-nosnippet>155</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;RelocationPlan&gt;&gt; {
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">if </span>change_set.created.is_empty() || change_set.deleted.is_empty() {
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+<a href=#158 id=158 data-nosnippet>158</a>        }
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span><span class="kw-2">mut </span>old_by_key = HashMap::&lt;RelocationKey, Vec&lt;String&gt;&gt;::new();
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">for </span>path <span class="kw">in </span><span class="kw-2">&amp;</span>change_set.deleted {
+<a href=#162 id=162 data-nosnippet>162</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(record) = existing.get(path) <span class="kw">else </span>{
+<a href=#164 id=164 data-nosnippet>164</a>                <span class="kw">continue</span>;
+<a href=#165 id=165 data-nosnippet>165</a>            };
+<a href=#166 id=166 data-nosnippet>166</a>            old_by_key
+<a href=#167 id=167 data-nosnippet>167</a>                .entry(RelocationKey {
+<a href=#168 id=168 data-nosnippet>168</a>                    content_hash: record.content_hash.clone(),
+<a href=#169 id=169 data-nosnippet>169</a>                    size_bytes: record.size_bytes,
+<a href=#170 id=170 data-nosnippet>170</a>                    language: record.language.clone(),
+<a href=#171 id=171 data-nosnippet>171</a>                })
+<a href=#172 id=172 data-nosnippet>172</a>                .or_default()
+<a href=#173 id=173 data-nosnippet>173</a>                .push(path.clone());
+<a href=#174 id=174 data-nosnippet>174</a>        }
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span><span class="kw-2">mut </span>new_by_key = HashMap::&lt;RelocationKey, Vec&lt;DiscoveredFile&gt;&gt;::new();
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">for </span>path <span class="kw">in </span><span class="kw-2">&amp;</span>change_set.created {
+<a href=#178 id=178 data-nosnippet>178</a>            check_cancelled(cancellation)<span class="question-mark">?</span>;
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(file) = candidates.get(path) <span class="kw">else </span>{
+<a href=#180 id=180 data-nosnippet>180</a>                <span class="kw">continue</span>;
+<a href=#181 id=181 data-nosnippet>181</a>            };
+<a href=#182 id=182 data-nosnippet>182</a>            <span class="kw">let </span>bytes = <span class="kw">match </span>read_bounded(
+<a href=#183 id=183 data-nosnippet>183</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.repository_root,
+<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw-2">&amp;</span>file.relative_path,
+<a href=#185 id=185 data-nosnippet>185</a>                <span class="self">self</span>.config.max_file_bytes,
+<a href=#186 id=186 data-nosnippet>186</a>            ) {
+<a href=#187 id=187 data-nosnippet>187</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(bytes)) =&gt; bytes,
+<a href=#188 id=188 data-nosnippet>188</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) | <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">continue</span>,
+<a href=#189 id=189 data-nosnippet>189</a>            };
+<a href=#190 id=190 data-nosnippet>190</a>            new_by_key
+<a href=#191 id=191 data-nosnippet>191</a>                .entry(RelocationKey {
+<a href=#192 id=192 data-nosnippet>192</a>                    content_hash: hash_bytes(<span class="kw-2">&amp;</span>bytes),
+<a href=#193 id=193 data-nosnippet>193</a>                    size_bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+<a href=#194 id=194 data-nosnippet>194</a>                    language: parser::language_by_path(<span class="kw-2">&amp;</span>file.relative_path),
+<a href=#195 id=195 data-nosnippet>195</a>                })
+<a href=#196 id=196 data-nosnippet>196</a>                .or_default()
+<a href=#197 id=197 data-nosnippet>197</a>                .push(file.clone());
+<a href=#198 id=198 data-nosnippet>198</a>        }
+<a href=#199 id=199 data-nosnippet>199</a>
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span><span class="kw-2">mut </span>relocations = Vec::new();
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">for </span>(key, old_paths) <span class="kw">in </span>old_by_key {
+<a href=#202 id=202 data-nosnippet>202</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(new_files) = new_by_key.get(<span class="kw-2">&amp;</span>key) <span class="kw">else </span>{
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="kw">continue</span>;
+<a href=#204 id=204 data-nosnippet>204</a>            };
+<a href=#205 id=205 data-nosnippet>205</a>            <span class="kw">if </span>old_paths.len() != <span class="number">1 </span>|| new_files.len() != <span class="number">1 </span>{
+<a href=#206 id=206 data-nosnippet>206</a>                <span class="kw">continue</span>;
+<a href=#207 id=207 data-nosnippet>207</a>            }
+<a href=#208 id=208 data-nosnippet>208</a>            relocations.push(RelocationPlan {
+<a href=#209 id=209 data-nosnippet>209</a>                old_path: old_paths[<span class="number">0</span>].clone(),
+<a href=#210 id=210 data-nosnippet>210</a>                new_file: new_files[<span class="number">0</span>].clone(),
+<a href=#211 id=211 data-nosnippet>211</a>                expected_hash: key.content_hash,
+<a href=#212 id=212 data-nosnippet>212</a>            });
+<a href=#213 id=213 data-nosnippet>213</a>        }
+<a href=#214 id=214 data-nosnippet>214</a>        relocations.sort_unstable_by(|left, right| {
+<a href=#215 id=215 data-nosnippet>215</a>            left.new_file
+<a href=#216 id=216 data-nosnippet>216</a>                .relative_path
+<a href=#217 id=217 data-nosnippet>217</a>                .cmp(<span class="kw-2">&amp;</span>right.new_file.relative_path)
+<a href=#218 id=218 data-nosnippet>218</a>        });
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="prelude-val">Ok</span>(relocations)
+<a href=#220 id=220 data-nosnippet>220</a>    }
+<a href=#221 id=221 data-nosnippet>221</a>}
 </code></pre></div></section></main></body></html>

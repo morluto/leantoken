@@ -126,10 +126,10 @@
 <a href=#126 id=126 data-nosnippet>126</a>                            )
 <a href=#127 id=127 data-nosnippet>127</a>                            .<span class="kw">await
 <a href=#128 id=128 data-nosnippet>128</a>                            </span>.and_then(serialized_response),
-<a href=#129 id=129 data-nosnippet>129</a>                        SearchMcpOutput::Occurrences { coordinates_only } =&gt; services
+<a href=#129 id=129 data-nosnippet>129</a>                        SearchMcpOutput::Occurrences(output) =&gt; services
 <a href=#130 id=130 data-nosnippet>130</a>                            .search_occurrences_with_options_consistency_cancellable(
 <a href=#131 id=131 data-nosnippet>131</a>                                request,
-<a href=#132 id=132 data-nosnippet>132</a>                                coordinates_only,
+<a href=#132 id=132 data-nosnippet>132</a>                                output,
 <a href=#133 id=133 data-nosnippet>133</a>                                consistency,
 <a href=#134 id=134 data-nosnippet>134</a>                                options,
 <a href=#135 id=135 data-nosnippet>135</a>                                cancellation,

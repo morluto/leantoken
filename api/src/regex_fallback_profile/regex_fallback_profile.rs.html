@@ -87,7 +87,7 @@
 <a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>database = database_dir.path().join(<span class="string">"regex-fallback.sqlite"</span>);
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>config = Config::discover(repository.path(), <span class="prelude-val">Some</span>(database.clone()))<span class="question-mark">?</span>;
 <a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>services = Services::open(config)<span class="question-mark">?</span>;
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>index = services.index(<span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>index = services.index(leantoken::IndexingMode::Rebuild).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#91 id=91 data-nosnippet>91</a>    drop(services);
 <a href=#92 id=92 data-nosnippet>92</a>
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span>workloads = [

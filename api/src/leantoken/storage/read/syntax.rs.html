@@ -317,157 +317,136 @@
 <a href=#317 id=317 data-nosnippet>317</a>            .optional()<span class="question-mark">?</span>)
 <a href=#318 id=318 data-nosnippet>318</a>    }
 <a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="attr">#[cfg(test)]
-<a href=#321 id=321 data-nosnippet>321</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>find_enclosing_symbol(
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#323 id=323 data-nosnippet>323</a>        file_id: i64,
-<a href=#324 id=324 data-nosnippet>324</a>        line: usize,
-<a href=#325 id=325 data-nosnippet>325</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SymbolRecord&gt;&gt; {
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>line = usize_to_i64(line)<span class="question-mark">?</span>;
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="prelude-val">Ok</span>(<span class="self">self
-<a href=#328 id=328 data-nosnippet>328</a>            </span>.conn
-<a href=#329 id=329 data-nosnippet>329</a>            .query_row(
-<a href=#330 id=330 data-nosnippet>330</a>                <span class="string">"SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-<a href=#331 id=331 data-nosnippet>331</a>                     FROM symbols
-<a href=#332 id=332 data-nosnippet>332</a>                     WHERE file_id = ?1 AND start_line &lt;= ?2 AND end_line &gt;= ?2
-<a href=#333 id=333 data-nosnippet>333</a>                     ORDER BY (end_line - start_line), start_byte
-<a href=#334 id=334 data-nosnippet>334</a>                     LIMIT 1"</span>,
-<a href=#335 id=335 data-nosnippet>335</a>                <span class="macro">params!</span>[file_id, line],
-<a href=#336 id=336 data-nosnippet>336</a>                Storage::map_symbol,
-<a href=#337 id=337 data-nosnippet>337</a>            )
-<a href=#338 id=338 data-nosnippet>338</a>            .optional()<span class="question-mark">?</span>)
-<a href=#339 id=339 data-nosnippet>339</a>    }
-<a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a>    <span class="doccomment">/// Find the narrowest enclosing symbol for every requested file/line pair.
-<a href=#342 id=342 data-nosnippet>342</a>    ///
-<a href=#343 id=343 data-nosnippet>343</a>    /// Results preserve input order and cardinality; `None` marks a location with
-<a href=#344 id=344 data-nosnippet>344</a>    /// no enclosing declaration. Duplicate locations share one storage lookup.
-<a href=#345 id=345 data-nosnippet>345</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>find_enclosing_symbols_batch(
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#347 id=347 data-nosnippet>347</a>        locations: <span class="kw-2">&amp;</span>[(i64, usize)],
-<a href=#348 id=348 data-nosnippet>348</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SymbolRecord&gt;&gt;&gt; {
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">if </span>locations.is_empty() {
-<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
-<a href=#351 id=351 data-nosnippet>351</a>        }
-<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span><span class="kw-2">mut </span>unique_indices = HashMap::new();
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span><span class="kw-2">mut </span>unique_locations = Vec::new();
-<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span>location_mapping = locations
-<a href=#355 id=355 data-nosnippet>355</a>            .iter()
-<a href=#356 id=356 data-nosnippet>356</a>            .map(|location| {
-<a href=#357 id=357 data-nosnippet>357</a>                <span class="kw-2">*</span>unique_indices.entry(<span class="kw-2">*</span>location).or_insert_with(|| {
-<a href=#358 id=358 data-nosnippet>358</a>                    <span class="kw">let </span>unique_index = unique_locations.len();
-<a href=#359 id=359 data-nosnippet>359</a>                    unique_locations.push(<span class="kw-2">*</span>location);
-<a href=#360 id=360 data-nosnippet>360</a>                    unique_index
-<a href=#361 id=361 data-nosnippet>361</a>                })
-<a href=#362 id=362 data-nosnippet>362</a>            })
-<a href=#363 id=363 data-nosnippet>363</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">let </span>input = unique_locations
-<a href=#365 id=365 data-nosnippet>365</a>            .iter()
-<a href=#366 id=366 data-nosnippet>366</a>            .map(|(file_id, line)| <span class="macro">serde_json::json!</span>({ <span class="string">"file_id"</span>: file_id, <span class="string">"line"</span>: line }))
-<a href=#367 id=367 data-nosnippet>367</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span>input = serde_json::to_string(<span class="kw-2">&amp;</span>input)<span class="question-mark">?</span>;
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
-<a href=#370 id=370 data-nosnippet>370</a>            <span class="string">"WITH requested AS (
-<a href=#371 id=371 data-nosnippet>371</a>                 SELECT CAST(key AS INTEGER) AS request_index,
-<a href=#372 id=372 data-nosnippet>372</a>                        CAST(value -&gt;&gt; 'file_id' AS INTEGER) AS file_id,
-<a href=#373 id=373 data-nosnippet>373</a>                        CAST(value -&gt;&gt; 'line' AS INTEGER) AS line
-<a href=#374 id=374 data-nosnippet>374</a>                 FROM json_each(?1)
-<a href=#375 id=375 data-nosnippet>375</a>             )
-<a href=#376 id=376 data-nosnippet>376</a>             SELECT requested.request_index,
-<a href=#377 id=377 data-nosnippet>377</a>                    symbols.id, symbols.file_id, symbols.name, symbols.kind,
-<a href=#378 id=378 data-nosnippet>378</a>                    symbols.parent, symbols.signature,
-<a href=#379 id=379 data-nosnippet>379</a>                    symbols.start_line, symbols.end_line,
-<a href=#380 id=380 data-nosnippet>380</a>                    symbols.start_byte, symbols.end_byte
-<a href=#381 id=381 data-nosnippet>381</a>             FROM requested
-<a href=#382 id=382 data-nosnippet>382</a>             JOIN symbols ON symbols.id = (
-<a href=#383 id=383 data-nosnippet>383</a>                 SELECT enclosing.id
-<a href=#384 id=384 data-nosnippet>384</a>                 FROM symbols AS enclosing
-<a href=#385 id=385 data-nosnippet>385</a>                 WHERE enclosing.file_id = requested.file_id
-<a href=#386 id=386 data-nosnippet>386</a>                   AND enclosing.start_line &lt;= requested.line
-<a href=#387 id=387 data-nosnippet>387</a>                   AND enclosing.end_line &gt;= requested.line
-<a href=#388 id=388 data-nosnippet>388</a>                 ORDER BY (enclosing.end_line - enclosing.start_line), enclosing.start_byte
-<a href=#389 id=389 data-nosnippet>389</a>                 LIMIT 1
-<a href=#390 id=390 data-nosnippet>390</a>             )
-<a href=#391 id=391 data-nosnippet>391</a>             ORDER BY requested.request_index"</span>,
-<a href=#392 id=392 data-nosnippet>392</a>        )<span class="question-mark">?</span>;
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[input], |row| {
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">let </span>request_index = i64_to_usize(row.get(<span class="number">0</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="kw">let </span>symbol = SymbolRecord {
-<a href=#396 id=396 data-nosnippet>396</a>                id: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#397 id=397 data-nosnippet>397</a>                file_id: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#398 id=398 data-nosnippet>398</a>                name: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-<a href=#399 id=399 data-nosnippet>399</a>                kind: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
-<a href=#400 id=400 data-nosnippet>400</a>                parent: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-<a href=#401 id=401 data-nosnippet>401</a>                signature: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
-<a href=#402 id=402 data-nosnippet>402</a>                start_line: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#403 id=403 data-nosnippet>403</a>                end_line: i64_to_usize(row.get(<span class="number">8</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#404 id=404 data-nosnippet>404</a>                start_byte: i64_to_usize(row.get(<span class="number">9</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#405 id=405 data-nosnippet>405</a>                end_byte: i64_to_usize(row.get(<span class="number">10</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
-<a href=#406 id=406 data-nosnippet>406</a>            };
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="prelude-val">Ok</span>((request_index, symbol))
-<a href=#408 id=408 data-nosnippet>408</a>        })<span class="question-mark">?</span>;
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span><span class="kw-2">mut </span>symbols = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; unique_locations.len()];
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#411 id=411 data-nosnippet>411</a>            <span class="kw">let </span>(request_index, symbol) = row<span class="question-mark">?</span>;
-<a href=#412 id=412 data-nosnippet>412</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(slot) = symbols.get_mut(request_index) {
-<a href=#413 id=413 data-nosnippet>413</a>                <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(symbol);
-<a href=#414 id=414 data-nosnippet>414</a>            }
-<a href=#415 id=415 data-nosnippet>415</a>        }
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="prelude-val">Ok</span>(location_mapping
-<a href=#417 id=417 data-nosnippet>417</a>            .into_iter()
-<a href=#418 id=418 data-nosnippet>418</a>            .map(|unique_index| symbols[unique_index].clone())
-<a href=#419 id=419 data-nosnippet>419</a>            .collect())
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="doccomment">/// Find the narrowest enclosing symbol for every requested file/line pair.
+<a href=#321 id=321 data-nosnippet>321</a>    ///
+<a href=#322 id=322 data-nosnippet>322</a>    /// Results preserve input order and cardinality; `None` marks a location with
+<a href=#323 id=323 data-nosnippet>323</a>    /// no enclosing declaration. Duplicate locations share one storage lookup.
+<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>find_enclosing_symbols_batch(
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#326 id=326 data-nosnippet>326</a>        locations: <span class="kw-2">&amp;</span>[(i64, usize)],
+<a href=#327 id=327 data-nosnippet>327</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;SymbolRecord&gt;&gt;&gt; {
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">if </span>locations.is_empty() {
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(Vec::new());
+<a href=#330 id=330 data-nosnippet>330</a>        }
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span><span class="kw-2">mut </span>unique_indices = HashMap::new();
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span><span class="kw-2">mut </span>unique_locations = Vec::new();
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>location_mapping = locations
+<a href=#334 id=334 data-nosnippet>334</a>            .iter()
+<a href=#335 id=335 data-nosnippet>335</a>            .map(|location| {
+<a href=#336 id=336 data-nosnippet>336</a>                <span class="kw-2">*</span>unique_indices.entry(<span class="kw-2">*</span>location).or_insert_with(|| {
+<a href=#337 id=337 data-nosnippet>337</a>                    <span class="kw">let </span>unique_index = unique_locations.len();
+<a href=#338 id=338 data-nosnippet>338</a>                    unique_locations.push(<span class="kw-2">*</span>location);
+<a href=#339 id=339 data-nosnippet>339</a>                    unique_index
+<a href=#340 id=340 data-nosnippet>340</a>                })
+<a href=#341 id=341 data-nosnippet>341</a>            })
+<a href=#342 id=342 data-nosnippet>342</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>input = unique_locations
+<a href=#344 id=344 data-nosnippet>344</a>            .iter()
+<a href=#345 id=345 data-nosnippet>345</a>            .map(|(file_id, line)| <span class="macro">serde_json::json!</span>({ <span class="string">"file_id"</span>: file_id, <span class="string">"line"</span>: line }))
+<a href=#346 id=346 data-nosnippet>346</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>input = serde_json::to_string(<span class="kw-2">&amp;</span>input)<span class="question-mark">?</span>;
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="string">"WITH requested AS (
+<a href=#350 id=350 data-nosnippet>350</a>                 SELECT CAST(key AS INTEGER) AS request_index,
+<a href=#351 id=351 data-nosnippet>351</a>                        CAST(value -&gt;&gt; 'file_id' AS INTEGER) AS file_id,
+<a href=#352 id=352 data-nosnippet>352</a>                        CAST(value -&gt;&gt; 'line' AS INTEGER) AS line
+<a href=#353 id=353 data-nosnippet>353</a>                 FROM json_each(?1)
+<a href=#354 id=354 data-nosnippet>354</a>             )
+<a href=#355 id=355 data-nosnippet>355</a>             SELECT requested.request_index,
+<a href=#356 id=356 data-nosnippet>356</a>                    symbols.id, symbols.file_id, symbols.name, symbols.kind,
+<a href=#357 id=357 data-nosnippet>357</a>                    symbols.parent, symbols.signature,
+<a href=#358 id=358 data-nosnippet>358</a>                    symbols.start_line, symbols.end_line,
+<a href=#359 id=359 data-nosnippet>359</a>                    symbols.start_byte, symbols.end_byte
+<a href=#360 id=360 data-nosnippet>360</a>             FROM requested
+<a href=#361 id=361 data-nosnippet>361</a>             JOIN symbols ON symbols.id = (
+<a href=#362 id=362 data-nosnippet>362</a>                 SELECT enclosing.id
+<a href=#363 id=363 data-nosnippet>363</a>                 FROM symbols AS enclosing
+<a href=#364 id=364 data-nosnippet>364</a>                 WHERE enclosing.file_id = requested.file_id
+<a href=#365 id=365 data-nosnippet>365</a>                   AND enclosing.start_line &lt;= requested.line
+<a href=#366 id=366 data-nosnippet>366</a>                   AND enclosing.end_line &gt;= requested.line
+<a href=#367 id=367 data-nosnippet>367</a>                 ORDER BY (enclosing.end_line - enclosing.start_line), enclosing.start_byte
+<a href=#368 id=368 data-nosnippet>368</a>                 LIMIT 1
+<a href=#369 id=369 data-nosnippet>369</a>             )
+<a href=#370 id=370 data-nosnippet>370</a>             ORDER BY requested.request_index"</span>,
+<a href=#371 id=371 data-nosnippet>371</a>        )<span class="question-mark">?</span>;
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[input], |row| {
+<a href=#373 id=373 data-nosnippet>373</a>            <span class="kw">let </span>request_index = i64_to_usize(row.get(<span class="number">0</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="kw">let </span>symbol = SymbolRecord {
+<a href=#375 id=375 data-nosnippet>375</a>                id: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#376 id=376 data-nosnippet>376</a>                file_id: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#377 id=377 data-nosnippet>377</a>                name: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+<a href=#378 id=378 data-nosnippet>378</a>                kind: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
+<a href=#379 id=379 data-nosnippet>379</a>                parent: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+<a href=#380 id=380 data-nosnippet>380</a>                signature: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
+<a href=#381 id=381 data-nosnippet>381</a>                start_line: i64_to_usize(row.get(<span class="number">7</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#382 id=382 data-nosnippet>382</a>                end_line: i64_to_usize(row.get(<span class="number">8</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#383 id=383 data-nosnippet>383</a>                start_byte: i64_to_usize(row.get(<span class="number">9</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#384 id=384 data-nosnippet>384</a>                end_byte: i64_to_usize(row.get(<span class="number">10</span>)<span class="question-mark">?</span>)<span class="question-mark">?</span>,
+<a href=#385 id=385 data-nosnippet>385</a>            };
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="prelude-val">Ok</span>((request_index, symbol))
+<a href=#387 id=387 data-nosnippet>387</a>        })<span class="question-mark">?</span>;
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span><span class="kw-2">mut </span>symbols = <span class="macro">vec!</span>[<span class="prelude-val">None</span>; unique_locations.len()];
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#390 id=390 data-nosnippet>390</a>            <span class="kw">let </span>(request_index, symbol) = row<span class="question-mark">?</span>;
+<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(slot) = symbols.get_mut(request_index) {
+<a href=#392 id=392 data-nosnippet>392</a>                <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(symbol);
+<a href=#393 id=393 data-nosnippet>393</a>            }
+<a href=#394 id=394 data-nosnippet>394</a>        }
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="prelude-val">Ok</span>(location_mapping
+<a href=#396 id=396 data-nosnippet>396</a>            .into_iter()
+<a href=#397 id=397 data-nosnippet>397</a>            .map(|unique_index| symbols[unique_index].clone())
+<a href=#398 id=398 data-nosnippet>398</a>            .collect())
+<a href=#399 id=399 data-nosnippet>399</a>    }
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="kw">pub fn </span>get_references_for_file(
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#403 id=403 data-nosnippet>403</a>        file_id: i64,
+<a href=#404 id=404 data-nosnippet>404</a>        max_results: usize,
+<a href=#405 id=405 data-nosnippet>405</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ReferenceRecord&gt;&gt; {
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>limit = bounded_limit(max_results);
+<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
+<a href=#408 id=408 data-nosnippet>408</a>            <span class="string">"SELECT id, file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte FROM symbol_refs WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2"</span>,
+<a href=#409 id=409 data-nosnippet>409</a>        )<span class="question-mark">?</span>;
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[file_id, limit], Storage::map_reference)<span class="question-mark">?</span>;
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="prelude-val">Ok</span>(rows.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
+<a href=#412 id=412 data-nosnippet>412</a>    }
+<a href=#413 id=413 data-nosnippet>413</a>
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="kw">pub fn </span>get_imports_for_file(
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#416 id=416 data-nosnippet>416</a>        file_id: i64,
+<a href=#417 id=417 data-nosnippet>417</a>        max_results: usize,
+<a href=#418 id=418 data-nosnippet>418</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImportRecord&gt;&gt; {
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="self">self</span>.get_imports_for_file_page(file_id, max_results, <span class="number">0</span>)
 <a href=#420 id=420 data-nosnippet>420</a>    }
 <a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">pub fn </span>get_references_for_file(
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_imports_for_file_page(
 <a href=#423 id=423 data-nosnippet>423</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#424 id=424 data-nosnippet>424</a>        file_id: i64,
 <a href=#425 id=425 data-nosnippet>425</a>        max_results: usize,
-<a href=#426 id=426 data-nosnippet>426</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ReferenceRecord&gt;&gt; {
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>limit = bounded_limit(max_results);
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="string">"SELECT id, file_id, name, kind, role, enclosing_symbol, start_line, end_line, start_byte, end_byte FROM symbol_refs WHERE file_id = ?1 ORDER BY start_byte LIMIT ?2"</span>,
-<a href=#430 id=430 data-nosnippet>430</a>        )<span class="question-mark">?</span>;
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[file_id, limit], Storage::map_reference)<span class="question-mark">?</span>;
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="prelude-val">Ok</span>(rows.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
-<a href=#433 id=433 data-nosnippet>433</a>    }
-<a href=#434 id=434 data-nosnippet>434</a>
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">pub fn </span>get_imports_for_file(
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#437 id=437 data-nosnippet>437</a>        file_id: i64,
-<a href=#438 id=438 data-nosnippet>438</a>        max_results: usize,
-<a href=#439 id=439 data-nosnippet>439</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImportRecord&gt;&gt; {
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="self">self</span>.get_imports_for_file_page(file_id, max_results, <span class="number">0</span>)
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_imports_for_file_page(
-<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#445 id=445 data-nosnippet>445</a>        file_id: i64,
-<a href=#446 id=446 data-nosnippet>446</a>        max_results: usize,
-<a href=#447 id=447 data-nosnippet>447</a>        offset: usize,
-<a href=#448 id=448 data-nosnippet>448</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImportRecord&gt;&gt; {
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">let </span>limit = bounded_limit(max_results);
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">let </span>offset = i64::try_from(offset).unwrap_or(i64::MAX);
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="string">"SELECT id, file_id, raw_target, resolved_path, line
-<a href=#453 id=453 data-nosnippet>453</a>                 FROM imports
-<a href=#454 id=454 data-nosnippet>454</a>                 WHERE file_id = ?1
-<a href=#455 id=455 data-nosnippet>455</a>                 ORDER BY line, id
-<a href=#456 id=456 data-nosnippet>456</a>                 LIMIT ?2 OFFSET ?3"</span>,
-<a href=#457 id=457 data-nosnippet>457</a>        )<span class="question-mark">?</span>;
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[file_id, limit, offset], Storage::map_import)<span class="question-mark">?</span>;
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="prelude-val">Ok</span>(rows.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
-<a href=#460 id=460 data-nosnippet>460</a>    }
-<a href=#461 id=461 data-nosnippet>461</a>
-<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>count_imports_for_file(<span class="kw-2">&amp;</span><span class="self">self</span>, file_id: i64) -&gt; <span class="prelude-ty">Result</span>&lt;usize&gt; {
-<a href=#463 id=463 data-nosnippet>463</a>        <span class="self">self</span>.conn
-<a href=#464 id=464 data-nosnippet>464</a>            .query_row(
-<a href=#465 id=465 data-nosnippet>465</a>                <span class="string">"SELECT COUNT(*) FROM imports WHERE file_id = ?1"</span>,
-<a href=#466 id=466 data-nosnippet>466</a>                <span class="macro">params!</span>[file_id],
-<a href=#467 id=467 data-nosnippet>467</a>                |row| i64_to_usize(row.get(<span class="number">0</span>)<span class="question-mark">?</span>),
-<a href=#468 id=468 data-nosnippet>468</a>            )
-<a href=#469 id=469 data-nosnippet>469</a>            .map_err(Into::into)
-<a href=#470 id=470 data-nosnippet>470</a>    }
-<a href=#471 id=471 data-nosnippet>471</a>}
-<a href=#472 id=472 data-nosnippet>472</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#426 id=426 data-nosnippet>426</a>        offset: usize,
+<a href=#427 id=427 data-nosnippet>427</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;ImportRecord&gt;&gt; {
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">let </span>limit = bounded_limit(max_results);
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span>offset = i64::try_from(offset).unwrap_or(i64::MAX);
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">let </span><span class="kw-2">mut </span>stmt = <span class="self">self</span>.conn.prepare_cached(
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="string">"SELECT id, file_id, raw_target, resolved_path, line
+<a href=#432 id=432 data-nosnippet>432</a>                 FROM imports
+<a href=#433 id=433 data-nosnippet>433</a>                 WHERE file_id = ?1
+<a href=#434 id=434 data-nosnippet>434</a>                 ORDER BY line, id
+<a href=#435 id=435 data-nosnippet>435</a>                 LIMIT ?2 OFFSET ?3"</span>,
+<a href=#436 id=436 data-nosnippet>436</a>        )<span class="question-mark">?</span>;
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>rows = stmt.query_map(<span class="macro">params!</span>[file_id, limit, offset], Storage::map_import)<span class="question-mark">?</span>;
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="prelude-val">Ok</span>(rows.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
+<a href=#439 id=439 data-nosnippet>439</a>    }
+<a href=#440 id=440 data-nosnippet>440</a>
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>count_imports_for_file(<span class="kw-2">&amp;</span><span class="self">self</span>, file_id: i64) -&gt; <span class="prelude-ty">Result</span>&lt;usize&gt; {
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="self">self</span>.conn
+<a href=#443 id=443 data-nosnippet>443</a>            .query_row(
+<a href=#444 id=444 data-nosnippet>444</a>                <span class="string">"SELECT COUNT(*) FROM imports WHERE file_id = ?1"</span>,
+<a href=#445 id=445 data-nosnippet>445</a>                <span class="macro">params!</span>[file_id],
+<a href=#446 id=446 data-nosnippet>446</a>                |row| i64_to_usize(row.get(<span class="number">0</span>)<span class="question-mark">?</span>),
+<a href=#447 id=447 data-nosnippet>447</a>            )
+<a href=#448 id=448 data-nosnippet>448</a>            .map_err(Into::into)
+<a href=#449 id=449 data-nosnippet>449</a>    }
+<a href=#450 id=450 data-nosnippet>450</a>}
+<a href=#451 id=451 data-nosnippet>451</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

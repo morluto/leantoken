@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>    }
 <a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span>tokenizer = config.tokenizer;
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span>services = Services::open(config)<span class="question-mark">?</span>;
-<a href=#153 id=153 data-nosnippet>153</a>    services.index(<span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#153 id=153 data-nosnippet>153</a>    services.index(leantoken::IndexingMode::Rebuild).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#154 id=154 data-nosnippet>154</a>
 <a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">let </span>files_request = FilesRequest {
 <a href=#156 id=156 data-nosnippet>156</a>        operation: FileOperation::Tree,
