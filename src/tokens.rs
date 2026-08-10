@@ -49,38 +49,14 @@ pub(crate) struct ResponseTokenAccounting {
     pub(crate) total_response_tokens: usize,
 }
 
-/// Exact serialized-response counter and monotonic prefix fitting primitive.
-pub(crate) struct ResponseBudget<'a> {
-    #[cfg(test)]
-    tokenizer: &'a Tokenizer,
-    #[cfg(not(test))]
-    _tokenizer: std::marker::PhantomData<&'a Tokenizer>,
+/// Monotonic prefix fitting primitive for exact serialized-response counts.
+pub(crate) struct ResponseBudget {
     max_tokens: usize,
 }
 
-impl<'a> ResponseBudget<'a> {
-    pub(crate) const fn new(_tokenizer: &'a Tokenizer, max_tokens: usize) -> Self {
-        Self {
-            #[cfg(test)]
-            tokenizer: _tokenizer,
-            #[cfg(not(test))]
-            _tokenizer: std::marker::PhantomData,
-            max_tokens,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn serialized_tokens<T: Serialize>(
-        &self,
-        response: &T,
-    ) -> serde_json::Result<usize> {
-        serde_json::to_string(response).map(|payload| self.tokenizer.count(&payload))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fits<T: Serialize>(&self, response: &T) -> serde_json::Result<bool> {
-        self.serialized_tokens(response)
-            .map(|tokens| tokens <= self.max_tokens)
+impl ResponseBudget {
+    pub(crate) const fn new(max_tokens: usize) -> Self {
+        Self { max_tokens }
     }
 
     /// Find the largest prefix accepted by a monotonic serialized-size callback.
@@ -459,8 +435,7 @@ mod tests {
 
     #[test]
     fn response_budget_finds_the_largest_monotonic_prefix() {
-        let tokenizer = Tokenizer::Cl100kBase;
-        let budget = ResponseBudget::new(&tokenizer, 34);
+        let budget = ResponseBudget::new(34);
         assert_eq!(
             budget
                 .largest_fitting_prefix(8, |prefix| Ok(prefix * 10 + 5))
@@ -468,16 +443,11 @@ mod tests {
             Some(2)
         );
         assert_eq!(
-            ResponseBudget::new(&tokenizer, 4)
+            ResponseBudget::new(4)
                 .largest_fitting_prefix(8, |prefix| Ok(prefix * 10 + 5))
                 .expect("empty prefix does not fit"),
             None
         );
-        let response = json!({"message": "bounded"});
-        let exact = budget
-            .serialized_tokens(&response)
-            .expect("serialized token count");
-        assert_eq!(budget.fits(&response).expect("fit check"), exact <= 34);
     }
 
     #[test]

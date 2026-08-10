@@ -1254,7 +1254,7 @@ impl Services {
             let max_response_tokens = options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit");
-            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let budget = ResponseBudget::new(max_response_tokens);
             let keep = budget.largest_fitting_prefix(original.commits.len(), |keep| {
                 let mut candidate = original.clone();
                 candidate.commits.truncate(keep);
@@ -1297,7 +1297,7 @@ impl Services {
         let max_response_tokens = options.max_response_tokens().ok_or_else(|| {
             Error::InvalidConfiguration("fitting requires a response token limit".into())
         })?;
-        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let budget = ResponseBudget::new(max_response_tokens);
         let mut skeleton = original.clone();
         for result in &mut skeleton.results {
             if result.diff.take().is_some() {
@@ -1411,7 +1411,7 @@ impl Services {
         let max_response_tokens = options.max_response_tokens().ok_or_else(|| {
             Error::InvalidConfiguration("fitting requires a response token limit".into())
         })?;
-        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let budget = ResponseBudget::new(max_response_tokens);
         let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
             let candidate =
                 self.history_text_prefix_candidate(response, text, boundaries, keep, is_diff);

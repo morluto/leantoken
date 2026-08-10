@@ -416,7 +416,7 @@ impl Services {
         let max_response_tokens = options
             .max_response_tokens()
             .expect("fitting only runs with a response limit");
-        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let budget = ResponseBudget::new(max_response_tokens);
         let additional_tokens = max_tokens.saturating_sub(minimum_progress_tokens);
         let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);

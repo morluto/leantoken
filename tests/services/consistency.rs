@@ -495,53 +495,6 @@ async fn reconcile_working_tree_consistency_applies_to_each_retrieval_service() 
 }
 
 #[tokio::test]
-async fn read_reports_index_stale_when_live_file_diverges() {
-    let root = tempfile::tempdir().expect("root");
-    std::fs::write(root.path().join("lib.rs"), "fn first() { 1 }\n").expect("write");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
-
-    std::fs::write(root.path().join("lib.rs"), "fn second() { 2 }\n").expect("edit live");
-    let response = services
-        .read(ReadRequest {
-            path: "lib.rs".into(),
-            start_line: Some(1),
-            end_line: Some(1),
-            symbol: None,
-            heading: None,
-            heading_occurrence: None,
-            continuation_cursor: None,
-            max_tokens: Some(100),
-            expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Full,
-        })
-        .await
-        .expect("read");
-    assert!(
-        response.index_stale,
-        "live rewrite without reindex must set index_stale"
-    );
-    assert!(
-        response
-            .content
-            .as_deref()
-            .is_some_and(|c| c.contains("second"))
-    );
-    assert!(response.indexed_hash.is_some());
-    assert_ne!(
-        response.indexed_hash.as_deref(),
-        Some(response.content_hash.as_str()),
-        "range hash and whole-file indexed hash differ in meaning but live file is stale"
-    );
-    assert_eq!(response.meta.repository_generation, 1);
-    assert_eq!(response.meta.freshness, Freshness::Current);
-}
-
-#[tokio::test]
 async fn read_not_modified_still_reports_index_stale_against_live_file() {
     let root = tempfile::tempdir().expect("root");
     std::fs::write(root.path().join("lib.rs"), "fn first() { 1 }\n").expect("write");

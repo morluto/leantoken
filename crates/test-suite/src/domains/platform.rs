@@ -1,14 +1,7 @@
-use leantoken::repository::{normalize_relative, slash_path};
 use leantoken::watcher::RepositoryWatcher;
 use leantoken_test_support::Sandbox;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
-
-#[test]
-fn platform_paths_have_stable_repository_keys() {
-    assert_eq!(normalize_relative(r".\src\lib.rs").unwrap(), "src/lib.rs");
-    assert_eq!(slash_path(std::path::Path::new("src/lib.rs")), "src/lib.rs");
-}
 
 #[tokio::test]
 async fn watcher_reports_file_change() {
@@ -67,14 +60,22 @@ use leantoken::tokens::Tokenizer;
 use leantoken::{Config, DiscoveryLimits, Error, IndexScope, services::Services};
 
 #[test]
-fn config_discovers_existing_root() {
+fn config_discovery_produces_canonical_usable_defaults() {
     let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let config = Config::discover(root.repo(), None).expect("discover");
-    assert!(config.root.exists());
+    let config =
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("discover");
     assert_eq!(
         config.root,
         root.repo().canonicalize().expect("canonicalize")
     );
+    assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
+    assert!(config.default_results <= config.max_results);
+    assert!(config.default_read_tokens <= config.max_output_tokens);
+    assert!(config.default_context_tokens <= config.max_output_tokens);
+    assert!(config.max_index_workers <= 4);
+    assert_eq!(config.tokenizer, Tokenizer::default());
+    assert!(config.tokenizer.is_exact());
+    drop(Services::open(config).expect("default configuration should open"));
 }
 
 #[test]
@@ -228,24 +229,6 @@ fn config_rejects_the_current_home_directory_by_default() {
         error,
         leantoken::Error::UnsafeRepositoryRoot(path) if path == home
     ));
-}
-
-#[test]
-fn config_defaults_bound_output_and_timing() {
-    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let config = Config::discover(root.repo(), None).expect("discover");
-    assert_eq!(config.discovery_limits(), DiscoveryLimits::default());
-    assert!(config.max_results > 0);
-    assert!(config.max_output_tokens > 0);
-    assert!(config.default_context_tokens > 0);
-    assert!(config.context_lines > 0);
-    assert!(config.chunk_lines > 0);
-    assert!(config.chunk_bytes > 0);
-    assert!(config.max_index_workers > 0);
-    assert!(config.max_index_workers <= 4);
-    assert!(config.watcher_debounce >= Duration::ZERO);
-    assert_eq!(config.tokenizer, Tokenizer::default());
-    assert!(config.tokenizer.is_exact());
 }
 
 #[test]

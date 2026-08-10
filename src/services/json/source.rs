@@ -79,17 +79,9 @@ fn hash_json_value<H: Hasher>(value: &Value, state: &mut H) {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct JsonMeasurementCounters {
-    pub(super) serializations: usize,
-    pub(super) tokenizer_counts: usize,
-    pub(super) cache_hits: usize,
-}
-
 #[derive(Debug, Default)]
 pub(super) struct JsonMeasurementCache {
-    measurements: HashMap<JsonMeasurementCacheKey, (String, usize)>,
-    counters: JsonMeasurementCounters,
+    measurements: HashMap<JsonMeasurementCacheKey, usize>,
 }
 
 impl JsonMeasurementCache {
@@ -104,22 +96,14 @@ impl JsonMeasurementCache {
                 JsonMeasurementCacheKey::KeysPrefix(length, value.clone())
             }
         };
-        if let Some((_, tokens)) = self.measurements.get(&cache_key) {
-            self.counters.cache_hits = self.counters.cache_hits.saturating_add(1);
+        if let Some(tokens) = self.measurements.get(&cache_key) {
             return Ok(*tokens);
         }
         let serialized = serde_json::to_string(value)
             .map_err(|error| Error::SerializationFailure(error.to_string()))?;
-        self.counters.serializations = self.counters.serializations.saturating_add(1);
         let tokens = services.config.tokenizer.count(&serialized);
-        self.counters.tokenizer_counts = self.counters.tokenizer_counts.saturating_add(1);
-        self.measurements.insert(cache_key, (serialized, tokens));
+        self.measurements.insert(cache_key, tokens);
         Ok(tokens)
-    }
-
-    #[cfg(test)]
-    pub(super) fn counters(&self) -> &JsonMeasurementCounters {
-        &self.counters
     }
 }
 

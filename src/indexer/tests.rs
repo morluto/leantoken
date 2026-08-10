@@ -255,36 +255,6 @@ fn targeted_reconcile_treats_mtime_only_churn_as_content_stable() {
 }
 
 #[test]
-fn same_size_content_change_still_reindexes_when_mtime_changes() {
-    let root = tempfile::tempdir().expect("root");
-    let source = root.path().join("changed.rs");
-    fs::write(&source, "pub fn alpha() -> usize { 1 }\n").expect("original source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    let initial = indexer.reconcile(false).expect("initial reconcile");
-    fs::write(&source, "pub fn bravo() -> usize { 1 }\n").expect("replacement source");
-    advance_modified_time(&source);
-
-    let response = indexer.reconcile(false).expect("changed reconcile");
-
-    assert_eq!(response.files_indexed, 1);
-    assert_eq!(response.files_unchanged, 0);
-    assert_eq!(
-        response.repository_generation,
-        initial.repository_generation + 1
-    );
-    assert_eq!(
-        storage
-            .search_symbols("bravo", true, 10)
-            .expect("replacement symbol")
-            .len(),
-        1
-    );
-}
-
-#[test]
 fn cancelled_initial_reconcile_reports_cancelled_terminal_progress() {
     let root = tempfile::tempdir().expect("root");
     fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");

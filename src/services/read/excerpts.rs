@@ -85,51 +85,6 @@ impl Services {
         Ok(excerpts)
     }
 
-    #[cfg(test)]
-    pub(in crate::services) fn adaptive_context_excerpt(
-        &self,
-        session: &IndexReadSnapshot,
-        file_id: i64,
-        declaration_start: usize,
-        declaration_end: usize,
-        matched_line: usize,
-        token_budget: usize,
-    ) -> Result<Option<StoredExcerpt>> {
-        let Some(full) =
-            self.stored_excerpt(session, file_id, declaration_start, declaration_end, 0, 0)?
-        else {
-            return Ok(None);
-        };
-        let full_tokens = self.config.tokenizer.count(&full.content).max(1);
-        if full_tokens <= token_budget {
-            return Ok(Some(full));
-        }
-
-        let declaration_lines = declaration_end
-            .saturating_sub(declaration_start)
-            .saturating_add(1);
-        let proportional_lines = declaration_lines
-            .saturating_mul(token_budget)
-            .saturating_div(full_tokens)
-            .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
-            .min(declaration_lines);
-        let before = proportional_lines / 3;
-        let mut start = matched_line.saturating_sub(before).max(declaration_start);
-        let mut end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
-        if end.saturating_sub(start).saturating_add(1) < proportional_lines {
-            start = end
-                .saturating_add(1)
-                .saturating_sub(proportional_lines)
-                .max(declaration_start);
-        }
-        end = start
-            .saturating_add(proportional_lines.saturating_sub(1))
-            .min(declaration_end);
-        self.stored_excerpt(session, file_id, start, end, 0, 0)
-    }
-
     pub(in crate::services) fn adaptive_context_excerpts(
         &self,
         session: &IndexReadSnapshot,

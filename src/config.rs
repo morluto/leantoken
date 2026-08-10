@@ -776,11 +776,6 @@ fn is_managed_cache_hash(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[cfg(test)]
-fn default_database_path(root: &Path) -> PathBuf {
-    default_database_path_for_scope(root, &IndexScope::default())
-}
-
 fn default_database_path_for_scope(root: &Path, scope: &IndexScope) -> PathBuf {
     if let Some(cache_root) = managed_cache_root() {
         return cache_root
@@ -881,7 +876,7 @@ mod tests {
     #[test]
     fn default_database_path_uses_the_index_content_identity() {
         let root = Path::new("/tmp/repository");
-        let database = default_database_path(root);
+        let database = default_database_path_for_scope(root, &IndexScope::default());
 
         if managed_cache_root().is_some() {
             assert_eq!(

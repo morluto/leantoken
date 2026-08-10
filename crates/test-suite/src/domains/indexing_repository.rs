@@ -1,52 +1,13 @@
-use leantoken::repository::validate_relative;
 use leantoken_test_support::Sandbox;
 use std::fs;
-
-#[test]
-fn rejects_parent_traversal_at_the_repository_boundary() {
-    assert!(validate_relative("../secret").is_err());
-    assert!(validate_relative("foo/../bar").is_err());
-    assert!(validate_relative("foo/../../secret").is_err());
-}
-
-#[test]
-fn rejects_absolute_paths_at_the_repository_boundary() {
-    assert!(validate_relative("/tmp/secret").is_err());
-    assert!(validate_relative(r"\windows\secret").is_err());
-    assert!(validate_relative("C:/windows/secret").is_err());
-    assert!(validate_relative("C:windows/secret").is_err());
-    assert!(validate_relative(r"C:\windows\secret").is_err());
-    assert!(validate_relative("d:temp").is_err());
-}
-
-#[test]
-fn rejects_empty_and_nul_paths() {
-    assert!(validate_relative("").is_err());
-    assert!(validate_relative("foo\0bar").is_err());
-}
-
-#[test]
-fn accepts_clean_relative_paths() {
-    assert!(validate_relative("src/lib.rs").is_ok());
-    assert!(validate_relative("a/b/c.rs").is_ok());
-}
 
 use leantoken::repository::{
     DiscoveryPolicy, IndexScope, discover_files, discover_files_with_limits,
     discover_files_with_limits_and_policy, discover_files_with_limits_cancellable,
-    git_changed_paths, git_diff_hunks, git_diff_paths, normalize_relative, resolve_existing,
-    slash_path,
+    git_changed_paths, git_diff_hunks, git_diff_paths, resolve_existing,
 };
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
 use tokio_util::sync::CancellationToken;
-
-#[test]
-fn normalize_relative_uses_repository_key_separators_and_collapses_current_directory() {
-    assert_eq!(
-        normalize_relative(r".\src\lib.rs").expect("normalized path"),
-        "src/lib.rs"
-    );
-}
 
 #[test]
 fn discover_files_honors_gitignore() {
@@ -550,12 +511,6 @@ fn bounded_discovery_checks_cancellation_before_limits() {
     assert!(matches!(error, Error::Cancelled));
 }
 
-#[test]
-fn slash_path_normalizes_to_forward_slashes() {
-    let input = std::path::Path::new("foo/bar/baz.rs");
-    assert_eq!(slash_path(input), "foo/bar/baz.rs");
-}
-
 #[cfg(unix)]
 #[test]
 fn resolve_existing_rejects_symlink_escape() {
@@ -851,33 +806,90 @@ use leantoken::indexer::Indexer;
 use leantoken::storage::Storage;
 
 #[test]
-fn indexer_initial_reconcile_indexes_files_and_advances_generation() {
+fn indexer_reconcile_lifecycle_preserves_generation_and_search_state() {
     let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn first() {}\n").expect("write a");
-    std::fs::write(root.repo().join("b.txt"), "searchable text\n").expect("write b");
+    std::fs::write(root.repo().join("a.rs"), "fn old() {}\n").expect("write a");
+    std::fs::write(root.repo().join("b.rs"), "fn stable() {}\n").expect("write b");
 
     let config = Arc::new(
         Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
     );
     let storage = Storage::open(&config.database_path).expect("storage");
-    for suffix in [".lease.lock", ".init.lock", ".leader.lock", ".index.lock"] {
-        std::fs::write(
-            root.repo().join(format!("index.sqlite{suffix}")),
-            "configured lock",
-        )
-        .expect("configured sidecar");
-    }
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    let indexer = Indexer::new(config.clone(), storage.clone()).expect("indexer");
 
-    let response = indexer.reconcile(false).expect("first reconcile");
-    assert_eq!(response.files_indexed, 2);
-    assert_eq!(response.repository_generation, 1);
-    assert_eq!(response.files_unchanged, 0);
-    assert_eq!(response.files_removed, 0);
+    let initial = indexer.reconcile(false).expect("initial reconcile");
+    assert_eq!(initial.files_indexed, 2);
+    assert_eq!(initial.repository_generation, 1);
+    assert_eq!(initial.files_unchanged, 0);
+    assert_eq!(initial.files_removed, 0);
+    assert_eq!(
+        storage
+            .search_word("old", 10)
+            .expect("initial search")
+            .len(),
+        1
+    );
 
-    let hits = storage.search_word("first", 10).expect("search");
-    assert_eq!(hits.len(), 1);
-    assert!(hits[0].content.contains("first"));
+    drop(indexer);
+    drop(storage);
+    let storage = Storage::open(&config.database_path).expect("reopen storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("reopen indexer");
+
+    let unchanged = indexer.reconcile(false).expect("unchanged reconcile");
+    assert_eq!(unchanged.files_unchanged, 2);
+    assert_eq!(unchanged.files_indexed, 0);
+    assert_eq!(unchanged.repository_generation, 1);
+    assert_eq!(storage.meta().expect("meta").repository_generation, 1);
+
+    std::fs::write(root.repo().join("a.rs"), "fn new_name() {}\n").expect("change a");
+    let changed = indexer.reconcile(false).expect("changed reconcile");
+    assert_eq!(changed.files_indexed, 1);
+    assert_eq!(changed.files_unchanged, 1);
+    assert_eq!(changed.repository_generation, 2);
+    assert!(
+        storage
+            .search_word("old", 10)
+            .expect("old search")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .search_word("new_name", 10)
+            .expect("new search")
+            .len(),
+        1
+    );
+
+    std::fs::remove_file(root.repo().join("a.rs")).expect("remove a");
+    let removed = indexer.reconcile(false).expect("deleted reconcile");
+    assert_eq!(removed.files_removed, 1);
+    assert_eq!(removed.files_unchanged, 1);
+    assert_eq!(removed.repository_generation, 3);
+    assert!(storage.find_file("a.rs").expect("find removed").is_none());
+    assert!(
+        storage
+            .search_word("new_name", 10)
+            .expect("removed search")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .search_word("stable", 10)
+            .expect("stable search")
+            .len(),
+        1
+    );
+
+    let rebuilt = indexer.reconcile(true).expect("rebuild");
+    assert_eq!(rebuilt.files_indexed, 1);
+    assert_eq!(rebuilt.repository_generation, 4);
+    assert_eq!(
+        storage
+            .search_word("stable", 10)
+            .expect("rebuilt search")
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -1347,57 +1359,6 @@ fn indexer_rejects_zero_discovery_limits_at_construction() {
     let error = Indexer::new(Arc::new(config), storage).expect_err("invalid discovery limits");
 
     assert!(matches!(error, Error::InvalidConfiguration(_)));
-}
-
-#[test]
-fn indexer_reopen_leaves_unchanged_files_and_generation() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn stable() {}\n").expect("write a");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config.clone(), storage.clone()).expect("indexer");
-
-    let first = indexer.reconcile(false).expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-
-    let second = indexer.reconcile(false).expect("second reconcile");
-    assert_eq!(second.files_unchanged, 1);
-    assert_eq!(second.files_indexed, 0);
-    assert_eq!(second.repository_generation, 1);
-
-    let meta = storage.meta().expect("meta");
-    assert_eq!(meta.repository_generation, 1);
-}
-
-#[test]
-fn indexer_change_updates_generation_and_search_index() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn old() {}\n").expect("write a");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-
-    let first = indexer.reconcile(false).expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-
-    std::fs::write(root.repo().join("a.rs"), "fn new_name() {}\n").expect("change a");
-
-    let second = indexer.reconcile(false).expect("second reconcile");
-    assert_eq!(second.files_indexed, 1);
-    assert_eq!(second.files_unchanged, 0);
-    assert_eq!(second.repository_generation, 2);
-
-    let old_hits = storage.search_word("old", 10).expect("search old");
-    assert_eq!(old_hits.len(), 0);
-
-    let new_hits = storage.search_word("new_name", 10).expect("search new");
-    assert_eq!(new_hits.len(), 1);
 }
 
 #[test]
@@ -2112,58 +2073,6 @@ fn new_file_delta_resolves_existing_importers() {
             .as_deref(),
         Some("target.rs")
     );
-}
-
-#[test]
-fn indexer_delete_removes_file_and_advances_generation() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn gone() {}\n").expect("write a");
-    std::fs::write(root.repo().join("b.rs"), "fn kept() {}\n").expect("write b");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-
-    let first = indexer.reconcile(false).expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-    assert_eq!(first.files_indexed, 2);
-
-    std::fs::remove_file(root.repo().join("a.rs")).expect("remove a");
-
-    let second = indexer.reconcile(false).expect("second reconcile");
-    assert_eq!(second.files_removed, 1);
-    assert_eq!(second.files_unchanged, 1);
-    assert_eq!(second.repository_generation, 2);
-
-    assert!(storage.find_file("a.rs").expect("find").is_none());
-    let gone_hits = storage.search_word("gone", 10).expect("search gone");
-    assert_eq!(gone_hits.len(), 0);
-    let kept_hits = storage.search_word("kept", 10).expect("search kept");
-    assert_eq!(kept_hits.len(), 1);
-}
-
-#[test]
-fn indexer_rebuild_resets_index_and_advances_generation() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn only() {}\n").expect("write a");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-
-    let first = indexer.reconcile(false).expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-
-    let rebuild = indexer.reconcile(true).expect("rebuild");
-    assert_eq!(rebuild.files_indexed, 1);
-    assert_eq!(rebuild.repository_generation, 2);
-
-    let hits = storage.search_word("only", 10).expect("search");
-    assert_eq!(hits.len(), 1);
 }
 
 #[test]

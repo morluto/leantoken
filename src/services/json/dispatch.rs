@@ -229,8 +229,7 @@ impl Services {
             }
             JsonProjection::Schema => {
                 let page = project_schema_page(self, &value, limits.max_items, limits.max_tokens)?;
-                let (value, total, returned, remaining, reason, tokens, _counters) =
-                    page.into_parts();
+                let (value, total, returned, remaining, reason, tokens) = page.into_parts();
                 let completeness = (remaining > 0).then_some((total, returned, remaining, reason));
                 (
                     query_response(
@@ -355,7 +354,7 @@ impl Services {
                         limits.max_items.saturating_sub(returned_items).max(1),
                         limits.max_tokens.saturating_sub(projected_tokens).max(1),
                     )?;
-                    let (projected, _total, returned, remaining, reason, tokens, _counters) =
+                    let (projected, _total, returned, remaining, reason, tokens) =
                         page.into_parts();
                     returned_items = returned_items.saturating_add(returned);
                     remaining_items = remaining_items.saturating_add(remaining);
@@ -425,7 +424,7 @@ impl Services {
             let max_response_tokens = options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit");
-            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let budget = ResponseBudget::new(max_response_tokens);
             let keep = budget.largest_fitting_prefix(entries.len(), |keep| {
                 let mut candidate = original.clone();
                 let mut value = entries.clone();

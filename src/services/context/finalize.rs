@@ -209,7 +209,7 @@ impl Services {
                 .omission_summary
                 .budget_or_result_limit
                 .saturating_add(selected);
-            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let budget = ResponseBudget::new(max_response_tokens);
             let keep = budget.largest_fitting_prefix(selected, |keep| {
                 let mut candidate = response.clone();
                 Self::trim_context_selection(&mut candidate, keep);

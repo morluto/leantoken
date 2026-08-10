@@ -226,7 +226,47 @@ pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
             topology.max_matrix_entries
         ));
     }
+    check_tracked_path_ownership(root, &topology)?;
     ensure_acyclic(&topology)?;
+    Ok(())
+}
+
+fn check_tracked_path_ownership(root: &Path, topology: &Topology) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z"])
+        .output()
+        .map_err(|error| format!("could not enumerate tracked files: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "could not enumerate tracked files: git exited with {}",
+            output.status
+        ));
+    }
+
+    for bytes in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(bytes)
+            .map_err(|_| "tracked paths must be valid UTF-8 for CI ownership".to_owned())?;
+        if !topology
+            .known_paths
+            .iter()
+            .any(|pattern| path_matches(path, pattern))
+        {
+            return Err(format!("tracked path `{path}` is absent from known_paths"));
+        }
+        if !topology
+            .lanes
+            .iter()
+            .any(|lane| lane.paths.iter().any(|pattern| path_matches(path, pattern)))
+        {
+            return Err(format!("tracked path `{path}` has no explicit lane owner"));
+        }
+    }
     Ok(())
 }
 
@@ -867,6 +907,53 @@ mod tests {
             assert!(
                 plan.fallback_reason.is_none(),
                 "{path} unexpectedly selected the conservative fallback: {plan:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_only_and_quality_paths_do_not_overselect_expensive_lanes() {
+        for path in [
+            "crates/test-suite/src/domains/retrieval.rs",
+            "crates/test-support/src/sandbox.rs",
+        ] {
+            let plan = build_plan(&workspace_root(), input(Event::PullRequest, &[path]))
+                .expect("test-only crate plan");
+            assert!(
+                plan.fallback_reason.is_none(),
+                "unexpected fallback for {path}"
+            );
+            assert!(
+                plan.selected_lanes
+                    .iter()
+                    .any(|lane| lane.lane == "product-linux")
+            );
+            assert!(
+                plan.selected_lanes
+                    .iter()
+                    .any(|lane| lane.lane == "coverage")
+            );
+            assert!(
+                plan.selected_lanes
+                    .iter()
+                    .all(|lane| lane.lane != "contract" && lane.lane != "examples")
+            );
+        }
+
+        for path in [
+            "scripts/test_validate_agents_md.py",
+            "ci/test-topology.json",
+        ] {
+            let plan = build_plan(&workspace_root(), input(Event::PullRequest, &[path]))
+                .expect("quality-only plan");
+            assert!(
+                plan.fallback_reason.is_none(),
+                "unexpected fallback for {path}"
+            );
+            assert!(
+                plan.selected_lanes
+                    .iter()
+                    .all(|lane| { matches!(lane.lane.as_str(), "quality" | "secret-scan") })
             );
         }
     }

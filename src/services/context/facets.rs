@@ -74,8 +74,6 @@ impl ContextQuery {
 
 #[derive(Debug, Clone)]
 pub(super) struct FacetPlan {
-    #[cfg(test)]
-    pub(super) facets: Vec<TaskFacet>,
     pub(super) queries: Vec<ContextQuery>,
 }
 
@@ -92,8 +90,6 @@ struct QuerySpec<'a> {
 pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
     if limit == 0 {
         return FacetPlan {
-            #[cfg(test)]
-            facets: Vec::new(),
             queries: Vec::new(),
         };
     }
@@ -220,11 +216,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         wants_tests,
     );
     annotate_task_roles(task, &mut queries);
-    FacetPlan {
-        #[cfg(test)]
-        facets,
-        queries,
-    }
+    FacetPlan { queries }
 }
 
 pub(super) fn plan_with_workflow_evidence(
@@ -306,11 +298,7 @@ pub(super) fn plan_with_workflow_evidence(
     for query in plan(task, limit).queries {
         push_workflow_query(&mut queries, &mut seen, query, limit);
     }
-    FacetPlan {
-        #[cfg(test)]
-        facets: Vec::new(),
-        queries,
-    }
+    FacetPlan { queries }
 }
 
 fn push_workflow_query(
@@ -1095,53 +1083,11 @@ mod tests {
 
     fn exact_atoms(task: &str) -> Vec<String> {
         plan(task, 64)
-            .facets
+            .queries
             .into_iter()
-            .filter(|facet| facet.kind == FacetKind::ExactAtom)
-            .map(|facet| facet.original)
+            .filter(|query| query.exact_variant && query.has_facet(FacetKind::ExactAtom))
+            .map(|query| query.value)
             .collect()
-    }
-
-    #[test]
-    fn extracts_required_technical_atoms_without_stripping_exact_forms() {
-        let task = "Fix Rack::Deflater, _.cloneDeep, res.send, #[serde(untagged)], \
-            _pytest.monkeypatch.notset, renameTable, WithRequiredStructEnabled, \
-            src/services/context.rs, snake_case, kebab-case, camelCase, PascalCase, \
-            ERR_INVALID_CONFIG, and Result<Option<T>,Error>.";
-        let atoms = exact_atoms(task);
-        for expected in [
-            "Rack::Deflater",
-            "_.cloneDeep",
-            "res.send",
-            "#[serde(untagged)]",
-            "_pytest.monkeypatch.notset",
-            "renameTable",
-            "WithRequiredStructEnabled",
-            "src/services/context.rs",
-            "snake_case",
-            "kebab-case",
-            "camelCase",
-            "PascalCase",
-            "ERR_INVALID_CONFIG",
-            "Result<Option<T>,Error>",
-        ] {
-            assert!(
-                atoms.iter().any(|atom| atom == expected),
-                "missing {expected}: {atoms:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn exact_atom_is_the_first_variant_even_when_not_scheduled_as_a_query() {
-        let plan = plan("Fix CONFIG and #[serde(untagged)].", 12);
-        for facet in plan
-            .facets
-            .iter()
-            .filter(|facet| facet.kind == FacetKind::ExactAtom)
-        {
-            assert_eq!(facet.variants.first(), Some(&facet.original));
-        }
     }
 
     #[test]
@@ -1152,28 +1098,6 @@ mod tests {
         assert!(atoms.iter().any(|atom| atom == "res.send"));
         assert!(atoms.iter().any(|atom| atom == "Rack::Deflater"));
         assert!(atoms.iter().any(|atom| atom == "Result<Option<T>,Error>"));
-    }
-
-    #[test]
-    fn quoted_error_text_and_annotations_create_bounded_facets() {
-        let plan = plan(
-            "Handle @retry and report \"Failed to lookup view\" without changing behavior.",
-            12,
-        );
-        assert!(
-            plan.facets.iter().any(|facet| {
-                facet.kind == FacetKind::Configuration && facet.original == "@retry"
-            })
-        );
-        assert!(plan.facets.iter().any(|facet| {
-            facet.kind == FacetKind::Behavior && facet.original == "Failed to lookup view"
-        }));
-        assert!(plan.queries.len() <= 12);
-        assert!(
-            plan.facets
-                .iter()
-                .all(|facet| facet.variants.len() <= MAX_FACET_VARIANTS)
-        );
     }
 
     #[test]
@@ -1238,46 +1162,12 @@ mod tests {
             "Fix render.AsciiJSON for non-BMP JSON with UTF-16 while preserving BMP and ASCII behavior",
             10,
         );
-        let facet = plan
-            .facets
-            .iter()
-            .find(|facet| facet.kind == FacetKind::Symbol && facet.original == "render.AsciiJSON")
-            .expect("qualified symbol facet");
-
-        assert_eq!(
-            facet.variants.first().map(String::as_str),
-            Some("render.AsciiJSON")
-        );
-        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
         assert!(plan.queries.iter().any(|query| {
             query.value == "render.AsciiJSON"
                 && query.exact_variant
                 && query.has_facet(FacetKind::ExactAtom)
+                && query.has_facet(FacetKind::Symbol)
         }));
-    }
-
-    #[test]
-    fn kebab_case_error_atoms_retain_a_bounded_phrase_variant() {
-        let plan = plan(
-            "Report the failed-to-lookup-view error through the callback",
-            8,
-        );
-        let facet = plan
-            .facets
-            .iter()
-            .find(|facet| {
-                facet.kind == FacetKind::Symbol && facet.original == "failed-to-lookup-view"
-            })
-            .expect("kebab-case facet");
-
-        assert!(
-            facet
-                .variants
-                .iter()
-                .any(|value| value == "failed to lookup view")
-        );
-        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
-        assert!(plan.queries.len() <= 8);
     }
 
     #[test]
