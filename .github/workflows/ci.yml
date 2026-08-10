@@ -49,6 +49,7 @@ jobs:
       release: ${{ steps.filter.outputs.release }}
       quality: ${{ steps.filter.outputs.quality }}
       rust_quality: ${{ steps.filter.outputs.rust_quality }}
+      topology: ${{ steps.filter.outputs.topology }}
       product: ${{ steps.filter.outputs.product }}
       contract: ${{ steps.filter.outputs.contract }}
       examples: ${{ steps.filter.outputs.examples }}
