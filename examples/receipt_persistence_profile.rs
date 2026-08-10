@@ -88,7 +88,7 @@ async fn main() -> AnyResult<()> {
     let config = Config::discover(&repository, Some(database.clone()))?;
     let services = Services::open(config)?;
     if !args.skip_index {
-        services.index(false).await?;
+        services.index(leantoken::IndexingMode::Reconcile).await?;
     }
     let database_bytes_after_index = file_bytes(&database);
     let wal_bytes_after_index = file_bytes(&wal_path(&database));

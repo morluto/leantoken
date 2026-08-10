@@ -32,15 +32,6 @@ impl CacheManager {
         Ok((entries, ignored))
     }
 
-    #[cfg(test)]
-    pub(super) fn inspect_cache(&self, id: &str, probe_active: bool) -> Result<InspectedCache> {
-        let identity = parse_managed_cache_id(id).ok_or_else(|| Error::InvalidInput {
-            field: "cache id",
-            reason: "must be a managed cache identity",
-        })?;
-        self.inspect_managed_cache(id, identity, probe_active)
-    }
-
     pub(super) fn inspect_managed_cache(
         &self,
         id: &str,

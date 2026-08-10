@@ -1,5 +1,10 @@
 use super::*;
 
+enum VisibilityObservation {
+    Stable,
+    Changed { observed_deletions: HashSet<String> },
+}
+
 impl Indexer {
     /// Reconcile watcher-reported paths without walking the full repository.
     ///
@@ -81,11 +86,11 @@ impl Indexer {
         )
     }
 
-    pub(super) fn observe_visibility_delta(
+    fn observe_visibility_delta(
         &self,
         paths: &[String],
         existing: &HashMap<String, crate::storage::FileRecord>,
-    ) -> (bool, HashSet<String>) {
+    ) -> VisibilityObservation {
         let mut visibility_delta = false;
         let mut observed_deletions = HashSet::new();
         for requested in paths {
@@ -128,10 +133,11 @@ impl Indexer {
                 Err(_) => {}
             }
         }
-        if !visibility_delta {
-            observed_deletions.clear();
+        if visibility_delta {
+            VisibilityObservation::Changed { observed_deletions }
+        } else {
+            VisibilityObservation::Stable
         }
-        (visibility_delta, observed_deletions)
     }
 
     #[cfg(test)]
@@ -163,7 +169,7 @@ impl Indexer {
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
         if baseline.config_hash != config_hash {
-            return self.reconcile_cancellable_report(true, cancellation);
+            return self.reconcile_cancellable_report(IndexingMode::Rebuild, cancellation);
         }
 
         let existing = self.existing_files(cancellation)?;
@@ -183,20 +189,23 @@ impl Indexer {
         check_cancelled(cancellation)?;
 
         // Preserve targeted deletion evidence from the observation that triggers discovery.
-        let (visibility_delta, visibility_observed_deletions) =
-            self.observe_visibility_delta(&paths, &existing);
-        let discovered = visibility_delta
-            .then(|| {
-                discover_files_with_limits_policy_and_filter(
-                    &self.config.root,
-                    self.config.discovery_limits(),
-                    self.config.discovery_policy(),
-                    cancellation,
-                    |path| !self.config.is_database_artifact_path(path),
-                )
-                .map(|discovery| discovery.files)
-            })
-            .transpose()?;
+        let (discovered, visibility_observed_deletions) =
+            match self.observe_visibility_delta(&paths, &existing) {
+                VisibilityObservation::Stable => (None, HashSet::new()),
+                VisibilityObservation::Changed { observed_deletions } => (
+                    Some(
+                        discover_files_with_limits_policy_and_filter(
+                            &self.config.root,
+                            self.config.discovery_limits(),
+                            self.config.discovery_policy(),
+                            cancellation,
+                            |path| !self.config.is_database_artifact_path(path),
+                        )
+                        .map(|discovery| discovery.files)?,
+                    ),
+                    observed_deletions,
+                ),
+            };
         let discovered_by_path = discovered.as_ref().map(|files| {
             files
                 .iter()
@@ -287,13 +296,11 @@ impl Indexer {
             cancellation,
         )?);
 
-        let change_set = ChangeSet::classify(&existing, &candidates, &deletions, visibility_delta);
+        let change_set = ChangeSet::classify(&existing, &candidates, &deletions);
         debug_assert_eq!(
             change_set.modified.len() + change_set.created.len(),
             candidates.len()
         );
-        debug_assert_eq!(change_set.visibility_recomputed, visibility_delta);
-
         for deletion in &change_set.deleted {
             repository_paths.remove(deletion);
         }
@@ -367,8 +374,8 @@ impl Indexer {
             self.config.tokenizer.name(),
             &baseline,
             &config_hash,
-            false,
-            false,
+            IndexingMode::Reconcile,
+            StorageProfiling::Omit,
         )?;
         let preparation = self.prepare_candidate_batches(
             &candidates,
@@ -438,28 +445,31 @@ impl Indexer {
         // projection refresh remain inside the transaction because they
         // require live table state.  staged.apply performs only fast
         // DELETE + INSERT operations for the prepared files.
-        let (generation, _preparation) =
-            self.storage
-                .publish_reconciliation_at(&baseline, &config_hash, false, |writer| {
-                    for path in &deletions {
-                        if relocation_old_paths.contains(path) {
-                            continue;
-                        }
-                        writer.delete(path)?;
+        let (generation, _preparation) = self.storage.publish_reconciliation_at(
+            &baseline,
+            &config_hash,
+            IndexingMode::Reconcile,
+            |writer| {
+                for path in &deletions {
+                    if relocation_old_paths.contains(path) {
+                        continue;
                     }
-                    for relocation in &relocations {
-                        writer.relocate(
-                            &relocation.old_path,
-                            &relocation.new_file.relative_path,
-                            relocation.new_file.size_bytes,
-                            relocation.new_file.modified_ns,
-                            &relocation.expected_hash,
-                        )?;
-                    }
-                    writer.refresh_import_projections(&import_projections)?;
-                    staged.apply(writer)?;
-                    Ok(preparation)
-                })?;
+                    writer.delete(path)?;
+                }
+                for relocation in &relocations {
+                    writer.relocate(
+                        &relocation.old_path,
+                        &relocation.new_file.relative_path,
+                        relocation.new_file.size_bytes,
+                        relocation.new_file.modified_ns,
+                        &relocation.expected_hash,
+                    )?;
+                }
+                writer.refresh_import_projections(&import_projections)?;
+                staged.apply(writer)?;
+                Ok(preparation)
+            },
+        )?;
         after_publication();
         let files_removed = deletions.len();
         let files_indexed = updated_paths.len();

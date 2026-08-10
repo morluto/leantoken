@@ -13,7 +13,7 @@ pub(super) struct CandidateSearchHit {
 
 pub(super) struct SearchResponseShape<'a> {
     pub(super) all: &'a [CandidateSearchHit],
-    pub(super) request: &'a SearchRequest,
+    pub(super) request: &'a SearchInput,
     pub(super) generation: u64,
     pub(super) total_candidates: usize,
     pub(super) offset: usize,
@@ -21,7 +21,8 @@ pub(super) struct SearchResponseShape<'a> {
     pub(super) has_more: bool,
 }
 
-pub(super) fn hit_has_kind(hit: &SearchHit, kind: &str) -> bool {
+pub(super) fn hit_has_kind(hit: &SearchHit, kind: SearchHitKind) -> bool {
+    let kind = kind.label();
     hit.match_kind == kind || hit.match_kinds.iter().any(|candidate| candidate == kind)
 }
 
@@ -50,29 +51,30 @@ pub(super) fn merge_search_hits(primary: &mut SearchHit, secondary: SearchHit) {
 
 pub(super) fn deduplicate_definition_channels(
     hits: Vec<CandidateSearchHit>,
-    prefer_structural: bool,
+    preference: DefinitionPreference,
 ) -> Vec<CandidateSearchHit> {
     let mut deduplicated: Vec<CandidateSearchHit> = Vec::with_capacity(hits.len());
     for mut candidate in hits {
-        let candidate_structural = hit_has_kind(&candidate.hit, "symbol");
-        let candidate_lexical =
-            hit_has_kind(&candidate.hit, "text") || hit_has_kind(&candidate.hit, "regex");
+        let candidate_structural = hit_has_kind(&candidate.hit, SearchHitKind::Symbol);
+        let candidate_lexical = hit_has_kind(&candidate.hit, SearchHitKind::Text)
+            || hit_has_kind(&candidate.hit, SearchHitKind::Regex);
         let duplicate = candidate.definition.as_ref().and_then(|identity| {
             deduplicated.iter().position(|existing| {
                 existing.definition.as_ref() == Some(identity)
                     && ((candidate_structural
-                        && (hit_has_kind(&existing.hit, "text")
-                            || hit_has_kind(&existing.hit, "regex")))
-                        || (candidate_lexical && hit_has_kind(&existing.hit, "symbol")))
+                        && (hit_has_kind(&existing.hit, SearchHitKind::Text)
+                            || hit_has_kind(&existing.hit, SearchHitKind::Regex)))
+                        || (candidate_lexical
+                            && hit_has_kind(&existing.hit, SearchHitKind::Symbol)))
             })
         });
         let Some(index) = duplicate else {
             deduplicated.push(candidate);
             continue;
         };
-        if prefer_structural
+        if preference.prefers_structural()
             && candidate_structural
-            && !hit_has_kind(&deduplicated[index].hit, "symbol")
+            && !hit_has_kind(&deduplicated[index].hit, SearchHitKind::Symbol)
         {
             std::mem::swap(&mut candidate, &mut deduplicated[index]);
         }
@@ -83,7 +85,7 @@ pub(super) fn deduplicate_definition_channels(
 
 pub(super) fn deduplicate_exact_hits(
     hits: Vec<CandidateSearchHit>,
-    prefer_structural: bool,
+    preference: DefinitionPreference,
 ) -> Vec<CandidateSearchHit> {
     let mut deduplicated: Vec<CandidateSearchHit> = Vec::with_capacity(hits.len());
     let mut positions = HashMap::new();
@@ -104,9 +106,9 @@ pub(super) fn deduplicate_exact_hits(
             deduplicated.push(candidate);
             continue;
         };
-        if prefer_structural
-            && hit_has_kind(&candidate.hit, "symbol")
-            && !hit_has_kind(&deduplicated[index].hit, "symbol")
+        if preference.prefers_structural()
+            && hit_has_kind(&candidate.hit, SearchHitKind::Symbol)
+            && !hit_has_kind(&deduplicated[index].hit, SearchHitKind::Symbol)
         {
             std::mem::swap(&mut candidate, &mut deduplicated[index]);
         }
@@ -134,7 +136,7 @@ pub(super) fn normalize_search_scores(hits: &mut [CandidateSearchHit]) {
 }
 
 pub(super) fn collect_filtered_hits<T>(
-    request: &SearchRequest,
+    request: &SearchInput,
     max_candidates: usize,
     cancellation: &CancellationToken,
     mut fetch_page: impl FnMut(usize, usize) -> Result<Vec<T>>,
@@ -166,7 +168,7 @@ pub(super) fn collect_filtered_hits<T>(
 }
 
 pub(super) fn filter_materialized_hits<T>(
-    request: &SearchRequest,
+    request: &SearchInput,
     max_candidates: usize,
     cancellation: &CancellationToken,
     hits: Vec<T>,
@@ -192,7 +194,7 @@ pub(super) fn chunk_search_hit(
     case_sensitive: bool,
     context: usize,
     compiled_matcher: Option<&regex::Regex>,
-    regex_match: bool,
+    kind: LexicalMatchKind,
 ) -> Result<Option<SearchHit>> {
     let byte_range = if let Some(regex) = compiled_matcher {
         regex
@@ -218,8 +220,8 @@ pub(super) fn chunk_search_hit(
         start,
         end,
         context,
-        regex_match,
-        false,
+        kind,
+        OccurrenceMetadata::Omit,
         &starts,
     )))
 }
@@ -236,7 +238,7 @@ pub(super) fn chunk_search_hits(
     case_sensitive: bool,
     context: usize,
     compiled_matcher: Option<&regex::Regex>,
-    regex_match: bool,
+    kind: LexicalMatchKind,
     occurrence_limit: OccurrenceMaterializationLimit,
 ) -> Result<Vec<SearchHit>> {
     let ranges: Box<dyn Iterator<Item = (usize, usize)> + '_> =
@@ -273,12 +275,18 @@ pub(super) fn chunk_search_hits(
             start,
             end,
             context,
-            regex_match,
-            true,
+            kind,
+            OccurrenceMetadata::Include,
             &starts,
         ));
     }
     Ok(hits)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::services) enum OccurrenceMetadata {
+    Omit,
+    Include,
 }
 
 pub(in crate::services) fn chunk_search_hit_for_range(
@@ -286,8 +294,8 @@ pub(in crate::services) fn chunk_search_hit_for_range(
     start: usize,
     end: usize,
     context: usize,
-    regex_match: bool,
-    include_occurrence: bool,
+    kind: LexicalMatchKind,
+    occurrence_metadata: OccurrenceMetadata,
     line_starts: &[usize],
 ) -> SearchHit {
     let text_len = hit.content.len();
@@ -309,34 +317,24 @@ pub(in crate::services) fn chunk_search_hit_for_range(
         end_line: hit.start_line + excerpt_end - 1,
         content_hash: hash(&excerpt),
         excerpt,
-        match_kind: if regex_match {
-            "regex".into()
-        } else {
-            "text".into()
-        },
-        match_kinds: vec![if regex_match {
-            "regex".into()
-        } else {
-            "text".into()
-        }],
+        match_kind: kind.label().into(),
+        match_kinds: vec![kind.label().into()],
         role: None,
         symbol: None,
         enclosing_symbol: None,
-        occurrence: include_occurrence.then_some(SearchOccurrence {
-            start_line: hit.start_line + local_start - 1,
-            end_line: hit.start_line + local_end - 1,
-            start_column: start.saturating_sub(line_starts[local_start.saturating_sub(1)]),
-            end_column: end.saturating_sub(line_starts[local_end.saturating_sub(1)]),
-            start_byte: hit.start_byte + start,
-            end_byte: hit.start_byte + end,
-        }),
+        occurrence: (occurrence_metadata == OccurrenceMetadata::Include).then_some(
+            SearchOccurrence {
+                start_line: hit.start_line + local_start - 1,
+                end_line: hit.start_line + local_end - 1,
+                start_column: start.saturating_sub(line_starts[local_start.saturating_sub(1)]),
+                end_column: end.saturating_sub(line_starts[local_end.saturating_sub(1)]),
+                start_byte: hit.start_byte + start,
+                end_byte: hit.start_byte + end,
+            },
+        ),
         score: 3.0 + (-hit.score).max(0.0) * 1_000_000.0,
         normalized_score: 0.0,
-        score_reasons: vec![if regex_match {
-            "regex match".into()
-        } else {
-            "text match".into()
-        }],
+        score_reasons: vec![kind.reason().into()],
     }
 }
 
@@ -407,8 +405,8 @@ impl Services {
             end_line: excerpt.end_line,
             content_hash: hash(&excerpt.content),
             excerpt: excerpt.content,
-            match_kind: "symbol".into(),
-            match_kinds: vec!["symbol".into()],
+            match_kind: SearchHitKind::Symbol.label().into(),
+            match_kinds: vec![SearchHitKind::Symbol.label().into()],
             role: Some(ReferenceRole::Definition),
             symbol: Some(hit.symbol.name),
             enclosing_symbol: hit.symbol.parent,
@@ -444,8 +442,8 @@ impl Services {
             end_line: excerpt.end_line,
             content_hash: hash(&excerpt.content),
             excerpt: excerpt.content,
-            match_kind: "reference".into(),
-            match_kinds: vec!["reference".into()],
+            match_kind: SearchHitKind::Reference.label().into(),
+            match_kinds: vec![SearchHitKind::Reference.label().into()],
             role: Some(hit.reference.role),
             symbol: Some(hit.reference.name),
             enclosing_symbol: hit.reference.enclosing_symbol,

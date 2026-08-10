@@ -1,4 +1,5 @@
 use super::coverage::{MAX_PARSER_COVERAGE_GROUPS, parser_coverage_summary, safe_extension_family};
+use super::read::AdaptiveExcerptRequest;
 use super::savings::signed_token_difference;
 use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
@@ -70,7 +71,10 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("initial index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("initial index");
     services.reconciliation.reset_diagnostics();
     (root, services)
 }
@@ -153,7 +157,7 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
     };
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
-        modern_protocol: true,
+        protocol: crate::tokens::McpProtocolShape::Modern,
     };
     let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
     let successful = services
@@ -893,13 +897,274 @@ async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
 }
 
 #[tokio::test]
+async fn index_search_read_and_hash_delta() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(
+        root.path().join("lib.rs"),
+        "pub fn handle_request() { helper(); }\nfn helper() {}\n",
+    )
+    .expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
+
+    let search = services
+        .search(SearchRequest {
+            query: "handle_request".into(),
+            mode: SearchMode::Auto,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(5),
+            max_tokens: Some(100),
+            context_lines: Some(1),
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        })
+        .await
+        .expect("search");
+    assert!(!search.hits.is_empty());
+    assert!(search.meta.source_tokens <= 100);
+
+    let first = services
+        .read(ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
+        })
+        .await
+        .expect("read");
+    let second = services
+        .read(ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: Some(first.content_hash),
+            delta: false,
+            receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
+        })
+        .await
+        .expect("read delta");
+    assert_eq!(second.status, ReadStatus::NotModified);
+    assert!(second.content.is_none());
+    assert_eq!(second.meta.source_tokens, 0);
+}
+
+#[tokio::test]
+async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations() {
+    let root = tempfile::tempdir().expect("root");
+    let mut source = String::from("fn large() {\n");
+    for index in 0..180 {
+        source.push_str(&format!("    let value_{index} = {index};\n"));
+    }
+    source.push_str("}\n\nfn small() { answer(); }\n");
+    fs::write(root.path().join("lib.rs"), source).expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    let file = services
+        .storage
+        .find_file("lib.rs")
+        .expect("find file")
+        .expect("indexed file");
+    let session = services.storage.begin_read().expect("read session");
+    let crate::symbol_identity::SymbolResolution::Unique(large) =
+        session.find_symbol(file.id, "large").expect("find symbol")
+    else {
+        panic!("large symbol must resolve uniquely");
+    };
+    let matched_line = 151;
+    let enclosing = session
+        .find_enclosing_symbols_batch(&[(file.id, matched_line)])
+        .expect("find enclosing symbol")
+        .into_iter()
+        .next()
+        .expect("one enclosing lookup")
+        .expect("enclosing symbol");
+    assert_eq!(enclosing.name, "large");
+
+    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+        .expect("read snapshot");
+    let bounded = services
+        .adaptive_context_excerpts(
+            &session,
+            &[AdaptiveExcerptRequest {
+                file_id: file.id,
+                declaration_start: large.start_line,
+                declaration_end: large.end_line,
+                matched_line,
+                token_budget: 60,
+            }],
+        )
+        .expect("bounded excerpt")
+        .into_iter()
+        .next()
+        .expect("one bounded request")
+        .expect("bounded declaration");
+    assert!(bounded.start_line <= matched_line);
+    assert!(bounded.end_line >= matched_line);
+    assert!(bounded.start_line > large.start_line);
+    assert!(bounded.end_line <= large.end_line);
+
+    let crate::symbol_identity::SymbolResolution::Unique(small) =
+        session.find_symbol(file.id, "small").expect("find symbol")
+    else {
+        panic!("small symbol must resolve uniquely");
+    };
+    let complete = services
+        .adaptive_context_excerpts(
+            &session,
+            &[AdaptiveExcerptRequest {
+                file_id: file.id,
+                declaration_start: small.start_line,
+                declaration_end: small.end_line,
+                matched_line: small.start_line,
+                token_budget: 1_000,
+            }],
+        )
+        .expect("complete excerpt")
+        .into_iter()
+        .next()
+        .expect("one complete request")
+        .expect("complete declaration");
+    assert_eq!(complete.start_line, small.start_line);
+    assert_eq!(complete.end_line, small.end_line);
+}
+
+#[tokio::test]
+async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page() {
+    let root = tempfile::tempdir().expect("root");
+    for name in ["a.rs", "b.rs", "c.rs"] {
+        fs::write(
+            root.path().join(name),
+            "const NEEDLE: &str = \"needle with an excerpt too large for one token\";\n",
+        )
+        .expect("source");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
+
+    let mut request = SearchRequest {
+        query: "needle".into(),
+        mode: SearchMode::Text,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(2),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: false,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let unbounded = services
+        .search(request.clone())
+        .await
+        .expect("unbounded search");
+    let one_hit_tokens = services
+        .config()
+        .tokenizer
+        .count(&unbounded.hits[0].excerpt);
+    request.max_tokens = Some(one_hit_tokens);
+
+    let first_page = services.search(request.clone()).await.expect("first page");
+    assert_eq!(
+        first_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a.rs"]
+    );
+    let second_cursor = first_page
+        .meta
+        .next_cursor
+        .expect("second candidate must remain on a later page");
+
+    let second_page = services
+        .search(SearchRequest {
+            cursor: Some(second_cursor),
+            ..request.clone()
+        })
+        .await
+        .expect("second page");
+    assert_eq!(
+        second_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["b.rs"]
+    );
+    let third_cursor = second_page
+        .meta
+        .next_cursor
+        .expect("third candidate must remain on a later page");
+
+    let final_page = services
+        .search(SearchRequest {
+            cursor: Some(third_cursor),
+            ..request
+        })
+        .await
+        .expect("final page");
+    assert_eq!(
+        final_page
+            .hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c.rs"]
+    );
+    assert!(final_page.meta.next_cursor.is_none());
+}
+
+#[tokio::test]
 async fn cancellable_service_stops_before_blocking_work() {
     let root = tempfile::tempdir().expect("root");
     fs::write(root.path().join("lib.rs"), "fn answer() -> u8 { 42 }\n").expect("source");
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let cancellation = CancellationToken::new();
     cancellation.cancel();

@@ -21,7 +21,10 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     std::fs::rename(root.path().join("src"), root.path().join("src.original"))
         .expect("move indexed directory");
@@ -67,7 +70,10 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     std::fs::rename(root.path().join("src"), root.path().join("src.original"))
         .expect("move indexed directory");
@@ -140,8 +146,14 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
             .expect("linked config"),
     )
     .expect("linked services");
-    base_services.index(false).await.expect("index base");
-    linked_services.index(false).await.expect("index linked");
+    base_services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index base");
+    linked_services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index linked");
 
     let base_id = base_services.repository_id();
     let linked_id = linked_services.repository_id();

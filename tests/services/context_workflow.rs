@@ -38,7 +38,10 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let response = services
         .context_with_workflow_consistency_cancellable(

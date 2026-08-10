@@ -26,7 +26,10 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let qualified = "Services.wait_for_initial_index_cancellable";
     let outline = services
@@ -274,7 +277,10 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let read = services
         .history(HistoryRequest {
@@ -382,7 +388,10 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let read = services
         .history(HistoryRequest {
@@ -752,7 +761,10 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let ordinary_target = |symbol: &str| DiffSymbolsTarget {
         path: "src/lib.rs".into(),
         symbol: symbol.into(),
@@ -979,7 +991,10 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let qualified = services
         .history(HistoryRequest {

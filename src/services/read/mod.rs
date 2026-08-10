@@ -32,9 +32,11 @@ use cursor::*;
 pub(super) use live::open_live_file;
 use live::*;
 use types::*;
-pub(super) use types::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
+pub(super) use types::{
+    AdaptiveExcerptRequest, NewReadTarget, StoredExcerpt, StoredExcerptRequest,
+};
 
-fn parse_read_request(mut request: ReadRequest) -> Result<ParsedReadRequest> {
+fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
     validate_relative(&request.path)?;
     // Bound caller-owned input before normalization so a large whitespace
@@ -67,12 +69,19 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ParsedReadRequest> {
         "continuation cursor",
         256,
     )?;
-    let target = parse_read_target(&request)?;
+    let mode = parse_read_mode(&request)?;
     request.path = normalize_relative(&request.path)?;
-    Ok(ParsedReadRequest { request, target })
+    Ok(ReadInput {
+        path: request.path,
+        mode,
+        max_tokens: request.max_tokens,
+        expected_hash: request.expected_hash,
+        receipt_id: request.receipt_id,
+        policy: request.policy,
+    })
 }
 
-fn parse_read_target(request: &ReadRequest) -> Result<ParsedReadTarget> {
+fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
     if request.heading_occurrence == Some(0) {
         return Err(Error::InvalidInput {
             field: "heading occurrence",
@@ -119,30 +128,37 @@ fn parse_read_target(request: &ReadRequest) -> Result<ParsedReadTarget> {
         });
     }
     if let Some(cursor) = &request.continuation_cursor {
-        return Ok(ParsedReadTarget::Continuation(decode_read_cursor(cursor)?));
+        return Ok(ReadMode::Direct(ReadTargetInput::Continuation(
+            decode_read_cursor(cursor)?,
+        )));
     }
-    if let Some(symbol) = &request.symbol {
-        return Ok(ParsedReadTarget::Symbol(symbol.clone()));
-    }
-    if let Some(name) = &request.heading {
+    let target = if let Some(symbol) = &request.symbol {
+        NewReadTarget::Symbol(symbol.clone())
+    } else if let Some(name) = &request.heading {
         let occurrence = std::num::NonZeroUsize::new(request.heading_occurrence.unwrap_or(1))
             .ok_or_else(|| Error::InvalidInput {
                 field: "heading occurrence",
                 reason: "must be one-based",
             })?;
-        return Ok(ParsedReadTarget::Heading {
+        NewReadTarget::Heading {
             name: name.clone(),
             occurrence,
-        });
-    }
-    let start = std::num::NonZeroUsize::new(request.start_line.unwrap_or(1))
-        .ok_or_else(invalid_line_range)?;
-    if request.end_line.is_some_and(|end| end < start.get()) {
-        return Err(invalid_line_range());
-    }
-    Ok(ParsedReadTarget::Lines {
-        start,
-        end: request.end_line,
+        }
+    } else {
+        let start = std::num::NonZeroUsize::new(request.start_line.unwrap_or(1))
+            .ok_or_else(invalid_line_range)?;
+        if request.end_line.is_some_and(|end| end < start.get()) {
+            return Err(invalid_line_range());
+        }
+        NewReadTarget::Lines {
+            start,
+            end: request.end_line,
+        }
+    };
+    Ok(if request.delta {
+        ReadMode::Delta(target)
+    } else {
+        ReadMode::Direct(ReadTargetInput::New(target))
     })
 }
 
@@ -218,12 +234,12 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(
                 operation,
-                self.token_limit(request.request.max_tokens, self.config.default_read_tokens),
+                self.token_limit(request.max_tokens, self.config.default_read_tokens),
             )?;
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
@@ -246,27 +262,26 @@ impl Services {
 
     fn read_sync(
         &self,
-        parsed: ParsedReadRequest,
+        request: ReadInput,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
-        let ParsedReadRequest { request, target } = parsed;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let materialized = self.consistent(|session| {
             let generation = session.generation();
             check_cancelled(cancellation)?;
-            self.read_at_generation_with_options(
-                session, &request, &target, generation, max_tokens, options,
-            )
+            self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
         })?;
         let mut response = materialized.response;
         let direct_response = response.clone();
-        if request.delta {
+        if let ReadMode::Delta(target) = &request.mode {
             let evaluation = self.read_deltas.evaluate(ReadDeltaInput {
                 repository_id: &response.meta.repository_id,
                 storage: &self.storage,
-                request: &request,
+                path: &request.path,
+                target,
+                expected_hash: request.expected_hash.as_deref(),
                 response: &response,
                 current_content: &materialized.current_content,
                 full_tokens: materialized.current_tokens,
@@ -303,7 +318,7 @@ impl Services {
                 returned_items,
                 options,
             )?;
-            if reserved > limit && request.delta {
+            if reserved > limit && request.mode.is_delta() {
                 response = direct_response;
                 returned_items = usize::from(!response.not_modified);
                 reserved = self.finalized_response_tokens_with_receipt_reserve(
@@ -384,14 +399,13 @@ impl Services {
     fn read_at_generation_with_options(
         &self,
         session: &IndexReadSnapshot,
-        request: &ReadRequest,
-        target: &ParsedReadTarget,
+        request: &ReadInput,
         generation: u64,
         max_tokens: usize,
         options: ServiceCallOptions,
     ) -> Result<MaterializedRead> {
         let (mut materialized, minimum_progress_tokens) =
-            self.read_at_generation(session, request, target, generation, max_tokens)?;
+            self.read_at_generation(session, request, generation, max_tokens)?;
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
             &materialized.response,
@@ -402,7 +416,7 @@ impl Services {
             return Ok(materialized);
         }
 
-        let budget_estimate = self.read_budget_estimate(session, request, target, generation)?;
+        let budget_estimate = self.read_budget_estimate(session, request, generation)?;
         self.apply_read_budget_guidance(&mut materialized, budget_estimate.as_ref(), max_tokens);
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
@@ -421,7 +435,7 @@ impl Services {
         let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
             let (mut candidate, _) =
-                self.read_at_generation(session, request, target, generation, candidate_limit)?;
+                self.read_at_generation(session, request, generation, candidate_limit)?;
             self.apply_read_budget_guidance(
                 &mut candidate,
                 budget_estimate.as_ref(),
@@ -437,7 +451,7 @@ impl Services {
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
             let (mut materialized, _) =
-                self.read_at_generation(session, request, target, generation, candidate_limit)?;
+                self.read_at_generation(session, request, generation, candidate_limit)?;
             self.apply_read_budget_guidance(
                 &mut materialized,
                 budget_estimate.as_ref(),
@@ -446,13 +460,8 @@ impl Services {
             return Ok(materialized);
         }
 
-        let (mut minimum, _) = self.read_at_generation(
-            session,
-            request,
-            target,
-            generation,
-            minimum_progress_tokens,
-        )?;
+        let (mut minimum, _) =
+            self.read_at_generation(session, request, generation, minimum_progress_tokens)?;
         self.apply_read_budget_guidance(
             &mut minimum,
             budget_estimate.as_ref(),
@@ -469,14 +478,13 @@ impl Services {
     fn read_budget_estimate(
         &self,
         session: &IndexReadSnapshot,
-        request: &ReadRequest,
-        target: &ParsedReadTarget,
+        request: &ReadInput,
         generation: u64,
     ) -> Result<Option<ReadBudgetEstimate>> {
         let Some(indexed) = session.find_file(&request.path)? else {
             return Ok(None);
         };
-        let target = resolve_read_target(session, indexed.id, request, target, generation)?;
+        let target = resolve_read_target(session, indexed.id, request, generation)?;
         let target_end_line = match target.target_end_line {
             Some(end_line) => end_line,
             None => match session
@@ -547,15 +555,14 @@ impl Services {
     fn read_at_generation(
         &self,
         session: &IndexReadSnapshot,
-        request: &ReadRequest,
-        target: &ParsedReadTarget,
+        request: &ReadInput,
         generation: u64,
         max_tokens: usize,
     ) -> Result<(MaterializedRead, usize)> {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request, target, generation)?;
+        let target = resolve_read_target(session, indexed.id, request, generation)?;
 
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
@@ -565,12 +572,12 @@ impl Services {
             target.page_start_byte,
             max_tokens,
             self.config.tokenizer,
-            target.cursor_full,
+            target.policy,
         )?;
         let snapshot = observation.snapshot;
         let range = observation.range;
         let live_bytes_read = snapshot.bytes_read;
-        let full = target.cursor_full;
+        let policy = target.policy;
         if let (Some(expected), Some(actual)) = (
             target.expected_full_hash.as_deref(),
             snapshot.content_hash.as_deref(),
@@ -640,7 +647,7 @@ impl Services {
         // concurrent modification occurred between the first pass and cursor
         // issuance. Bounded reads skip this check because they do not hash the
         // complete file.
-        if truncated && full {
+        if truncated && policy.is_full() {
             let after_read = stream_snapshot(&file)?;
             if after_read.content_hash != snapshot.content_hash
                 || after_read.end_line != snapshot.end_line
@@ -650,7 +657,7 @@ impl Services {
                 ));
             }
         }
-        let prefix_hash = (truncated && !full)
+        let prefix_hash = (truncated && !policy.is_full())
             .then(|| {
                 hash_live_range_prefix(
                     &file,
@@ -669,7 +676,7 @@ impl Services {
                 next_byte,
                 full_hash: snapshot.content_hash.clone(),
                 prefix_hash: prefix_hash.clone(),
-                full,
+                policy,
                 file_size: snapshot.file_size,
                 modified_ns: snapshot.modified_ns,
                 path_hash: read_path_hash(&request.path),
@@ -677,7 +684,7 @@ impl Services {
             .encode()
         });
         let content_hash = hash(content);
-        let (index_stale, indexed_hash, index_state) = if full {
+        let (index_stale, indexed_hash, index_state) = if policy.is_full() {
             let live_hash = snapshot.content_hash.as_deref().unwrap_or("");
             let stale = indexed.content_hash != live_hash;
             (

@@ -218,15 +218,15 @@ pub(crate) fn cold_publication_reports_ordered_bounded_phases() {
         .publish_reconciliation_at_with_progress(
             &baseline,
             "config",
-            false,
+            IndexingMode::Reconcile,
             |phase| {
                 phases.push(phase);
                 Ok(())
             },
             |writer| {
                 writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
-                let unpublished =
-                    Storage::read_only_status(&database, root.path()).expect("concurrent status");
+                let unpublished = Storage::read_only_status_scoped(&database, root.path(), None)
+                    .expect("concurrent status");
                 assert_eq!(unpublished.generation, 0);
                 assert_eq!(unpublished.counts.files, 0);
                 Ok(())
@@ -235,7 +235,8 @@ pub(crate) fn cold_publication_reports_ordered_bounded_phases() {
         .expect("cold publication");
 
     assert_eq!(generation, 1);
-    let published = Storage::read_only_status(&database, root.path()).expect("published status");
+    let published =
+        Storage::read_only_status_scoped(&database, root.path(), None).expect("published status");
     assert_eq!(published.generation, 1);
     assert_eq!(published.counts.files, 1);
     assert_eq!(
@@ -267,7 +268,7 @@ pub(crate) fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_sa
             .publish_reconciliation_at_with_progress(
                 &baseline,
                 "config",
-                false,
+                IndexingMode::Reconcile,
                 |phase| {
                     if phase == target {
                         Err(Error::Cancelled)
@@ -288,8 +289,8 @@ pub(crate) fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_sa
         drop(storage);
 
         let reopened = Storage::open(&database).expect("reopen cancelled cache");
-        let cancelled =
-            Storage::read_only_status(&database, root.path()).expect("cancelled status");
+        let cancelled = Storage::read_only_status_scoped(&database, root.path(), None)
+            .expect("cancelled status");
         assert_eq!(cancelled.generation, 0, "target phase: {target:?}");
         assert_eq!(cancelled.counts.files, 0, "target phase: {target:?}");
 
@@ -441,7 +442,8 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
     let database_hash_before =
         crate::text::hash_bytes(&fs::read(&database).expect("database before reopen"));
 
-    let reopened = Storage::open_for_repository(&database, &repository).expect("reopen storage");
+    let reopened =
+        Storage::open_for_repository_scoped(&database, &repository, None).expect("reopen storage");
 
     assert_eq!(
         crate::text::hash_bytes(&fs::read(&database).expect("database after reopen")),
@@ -583,10 +585,15 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 
     let blocked_baseline = storage.meta().expect("blocked checkpoint baseline");
     let (_, (), blocked_checkpoint) = storage
-        .publish_reconciliation_profiled_at(&blocked_baseline, "config", false, |writer| {
-            writer.replace(sample_file("while-pinned.rs", "still pinned\n"))?;
-            Ok(())
-        })
+        .publish_reconciliation_profiled_at(
+            &blocked_baseline,
+            "config",
+            IndexingMode::Reconcile,
+            |writer| {
+                writer.replace(sample_file("while-pinned.rs", "still pinned\n"))?;
+                Ok(())
+            },
+        )
         .expect("profiled reconciliation with pinned reader");
     assert!(blocked_checkpoint.post_commit_diagnostics_complete);
     assert!(blocked_checkpoint.checkpoint_attempted);
@@ -596,10 +603,15 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
     drop(reader);
     let checkpoint_baseline = storage.meta().expect("checkpoint baseline");
     let (_, (), completed_checkpoint) = storage
-        .publish_reconciliation_profiled_at(&checkpoint_baseline, "config", false, |writer| {
-            writer.replace(sample_file("checkpoint-trigger.rs", "latest\n"))?;
-            Ok(())
-        })
+        .publish_reconciliation_profiled_at(
+            &checkpoint_baseline,
+            "config",
+            IndexingMode::Reconcile,
+            |writer| {
+                writer.replace(sample_file("checkpoint-trigger.rs", "latest\n"))?;
+                Ok(())
+            },
+        )
         .expect("post-reader reconciliation");
 
     assert!(completed_checkpoint.post_commit_diagnostics_complete);
@@ -859,10 +871,15 @@ pub(crate) fn streamed_cancellation_rolls_back_every_insert_and_generation() {
     let baseline = storage.meta().expect("baseline");
 
     let error = storage
-        .publish_reconciliation_at(&baseline, "config", true, |writer| -> Result<()> {
-            writer.replace(sample_file("first.rs", "fn first() {}\n"))?;
-            Err(Error::Cancelled)
-        })
+        .publish_reconciliation_at(
+            &baseline,
+            "config",
+            IndexingMode::Rebuild,
+            |writer| -> Result<()> {
+                writer.replace(sample_file("first.rs", "fn first() {}\n"))?;
+                Err(Error::Cancelled)
+            },
+        )
         .expect_err("later batch failure");
 
     assert!(matches!(error, Error::Cancelled));
@@ -900,7 +917,7 @@ pub(crate) fn exhausted_repository_generation_fails_before_publication() {
     let baseline = storage.meta().expect("exhausted baseline");
 
     let error = storage
-        .publish_reconciliation_at(&baseline, "config", false, |writer| {
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Reconcile, |writer| {
             writer.replace(sample_file("new.rs", "fn new() {}\n"))
         })
         .expect_err("generation exhaustion must fail");
@@ -928,16 +945,21 @@ pub(crate) fn relocation_failure_rolls_back_path_and_preserves_content_rows() {
     let baseline = storage.meta().expect("baseline");
 
     let error = storage
-        .publish_reconciliation_at(&baseline, "config", false, |writer| -> Result<()> {
-            writer.relocate(
-                "old.rs",
-                "new.rs",
-                old.size_bytes,
-                old.modified_ns,
-                &old.content_hash,
-            )?;
-            Err(Error::Cancelled)
-        })
+        .publish_reconciliation_at(
+            &baseline,
+            "config",
+            IndexingMode::Reconcile,
+            |writer| -> Result<()> {
+                writer.relocate(
+                    "old.rs",
+                    "new.rs",
+                    old.size_bytes,
+                    old.modified_ns,
+                    &old.content_hash,
+                )?;
+                Err(Error::Cancelled)
+            },
+        )
         .expect_err("injected failure");
 
     assert!(matches!(error, Error::Cancelled));
@@ -969,7 +991,7 @@ pub(crate) fn later_streamed_storage_failure_rolls_back_earlier_files() {
     invalid.chunks[0].end_line = usize::MAX;
 
     storage
-        .publish_reconciliation_at(&baseline, "config", true, |writer| {
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("first.rs", "fn first() {}\n"))?;
             writer.replace(invalid)
         })
@@ -1003,11 +1025,15 @@ pub(crate) fn streamed_panic_rolls_back_and_leaves_storage_reusable() {
     let baseline = storage.meta().expect("baseline");
 
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ =
-            storage.publish_reconciliation_at(&baseline, "config", true, |writer| -> Result<()> {
+        let _ = storage.publish_reconciliation_at(
+            &baseline,
+            "config",
+            IndexingMode::Rebuild,
+            |writer| -> Result<()> {
                 writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
                 panic!("injected batch panic");
-            });
+            },
+        );
     }));
 
     assert!(panic.is_err());
@@ -1047,7 +1073,7 @@ pub(crate) fn bulk_rebuild_refreshes_both_chunk_search_indexes() {
     let baseline = storage.meta().expect("baseline");
 
     storage
-        .publish_reconciliation_at(&baseline, "config", true, |writer| {
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("new.rs", "fn replacement_marker() {}\n"))
         })
         .expect("replacement generation");
@@ -1090,7 +1116,7 @@ pub(crate) fn readers_see_old_generation_until_streamed_publication_commits() {
     let baseline = storage.meta().expect("baseline");
 
     let (generation, ()) = storage
-        .publish_reconciliation_at(&baseline, "config", true, |writer| {
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
             let reader = storage.begin_read()?;
             assert_eq!(reader.repository_generation()?, 1);
@@ -1119,7 +1145,7 @@ pub(crate) fn stale_streaming_baseline_fails_before_invoking_the_writer() {
     let mut invoked = false;
 
     let error = storage
-        .publish_reconciliation_at(&stale, "config", false, |_| {
+        .publish_reconciliation_at(&stale, "config", IndexingMode::Reconcile, |_| {
             invoked = true;
             Ok(())
         })
@@ -1300,7 +1326,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     ];
     let baseline = storage.meta().expect("baseline");
     storage
-        .publish_reconciliation_at(&baseline, "config", false, |writer| {
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Reconcile, |writer| {
             writer.replace_with_source_tokens(file, "cl100k_base", 2)
         })
         .expect("indexed file");

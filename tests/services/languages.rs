@@ -31,7 +31,10 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     for (path, symbol, marker) in [
         ("target.c", "c_target", "return value + 11"),
@@ -121,7 +124,10 @@ public sealed class Worker {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let outline = services
         .outline(OutlineRequest {
@@ -281,7 +287,10 @@ function helper() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     for (path, symbol, marker) in [
         ("clinic.js", "clinicMedicines", "boundary-anchor-patch"),
@@ -419,7 +428,10 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let outline = services
         .outline(OutlineRequest {
@@ -610,7 +622,10 @@ Setext
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let outline = services
         .outline(OutlineRequest {
@@ -760,7 +775,10 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let outline = services
         .outline(OutlineRequest {

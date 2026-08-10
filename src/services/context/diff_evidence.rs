@@ -1,10 +1,16 @@
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DiffEvidenceMode {
+    WorkingTree,
+    ImmutableRange,
+}
+
 pub(super) struct DiffEvidenceInput<'a> {
     pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) scope: &'a DiffScopeReceipt,
     pub(super) workflow: ContextWorkflow,
     pub(super) policy: &'a ContextPolicy,
-    pub(super) immutable_range: bool,
+    pub(super) mode: DiffEvidenceMode,
     pub(super) cancellation: &'a CancellationToken,
 }
 
@@ -19,19 +25,20 @@ impl Services {
             scope,
             workflow,
             policy,
-            immutable_range,
+            mode,
             cancellation,
         } = input;
         let mut changed_symbols = Vec::new();
         let mut relationships = BTreeSet::new();
         let mut gaps = Vec::new();
         let changed_hunks = if let Some(base_revision) = &scope.base_revision {
-            let head_revision = if immutable_range {
-                Some(scope.head_revision.as_deref().ok_or_else(|| {
-                    Error::OperationFailure("immutable diff scope has no head revision".into())
-                })?)
-            } else {
-                None
+            let head_revision = match mode {
+                DiffEvidenceMode::ImmutableRange => {
+                    Some(scope.head_revision.as_deref().ok_or_else(|| {
+                        Error::OperationFailure("immutable diff scope has no head revision".into())
+                    })?)
+                }
+                DiffEvidenceMode::WorkingTree => None,
             };
             let mut hunks = git_diff_hunks_scoped(
                 &self.config.root,
@@ -167,7 +174,7 @@ impl Services {
                 .iter()
                 .map(|path| (*path).clone())
                 .collect::<Vec<_>>();
-            let mut semantic = if immutable_range {
+            let mut semantic = if mode == DiffEvidenceMode::ImmutableRange {
                 let base_revision = scope.base_revision.as_deref().ok_or_else(|| {
                     Error::OperationFailure("immutable diff scope has no base revision".into())
                 })?;

@@ -2,24 +2,15 @@ pub(super) struct PreparedSearch {
     pub(super) regex: Option<regex::Regex>,
     pub(super) literal_regex: Option<regex::Regex>,
     pub(super) occurrence_literal_regex: Option<regex::Regex>,
-    pub(super) query_receipt: PreparedQueryReceipt,
     pub(super) limit: usize,
     pub(super) token_limit: usize,
     pub(super) context_lines: usize,
 }
 
 pub(super) struct ParsedSearchRequest {
-    pub(super) request: SearchRequest,
+    pub(super) request: SearchInput,
     pub(super) prepared: PreparedSearch,
-}
-
-pub(super) enum PreparedQueryReceipt {
-    None,
-    Record(ExactQueryPredicate),
-    Reuse {
-        receipt_id: String,
-        predicate: ExactQueryPredicate,
-    },
+    pub(super) output_shape: SearchOutputShape,
 }
 
 pub(super) struct LexicalSearchBatch {
@@ -42,44 +33,38 @@ impl Services {
         request: SearchRequest,
         output_shape: SearchOutputShape,
     ) -> Result<ParsedSearchRequest> {
-        let prepared = self.prepare_search(&request, output_shape)?;
-        Ok(ParsedSearchRequest { request, prepared })
+        validate_search_input(&request)?;
+        let kind = parse_search_kind(&request, output_shape)?;
+        let prepared = self.prepare_search(&request, &kind)?;
+        Ok(ParsedSearchRequest {
+            request: SearchInput::from_request(request, kind),
+            prepared,
+            output_shape,
+        })
     }
 
     pub(super) fn prepare_search(
         &self,
         request: &SearchRequest,
-        output_shape: SearchOutputShape,
+        kind: &SearchKind,
     ) -> Result<PreparedSearch> {
-        validate_search_input(request)?;
-        validate_search_output(request, output_shape)?;
-        let regex = matches!(request.mode, SearchMode::Regex)
+        let regex = kind
+            .is_regex()
             .then(|| compile_regex(request))
             .transpose()?;
-        let literal_regex = if matches!(request.mode, SearchMode::Regex) {
+        let literal_regex = if kind.is_regex() {
             None
         } else {
             compile_literal_regex(&request.query, request.case_sensitive)?
         };
-        let occurrence_literal_regex = (request.all_occurrences
-            && matches!(request.mode, SearchMode::Text))
-        .then(|| compile_occurrence_literal_regex(request))
-        .transpose()?;
-        let query_receipt = match &request.query_receipt {
-            None => PreparedQueryReceipt::None,
-            Some(QueryReceiptAction::Record) => {
-                PreparedQueryReceipt::Record(ExactQueryPredicate::from_request(request)?)
-            }
-            Some(QueryReceiptAction::Reuse { receipt_id }) => PreparedQueryReceipt::Reuse {
-                receipt_id: receipt_id.clone(),
-                predicate: ExactQueryPredicate::from_request(request)?,
-            },
-        };
+        let occurrence_literal_regex = kind
+            .is_exhaustive_text()
+            .then(|| compile_occurrence_literal_regex(&request.query, request.case_sensitive))
+            .transpose()?;
         Ok(PreparedSearch {
             regex,
             literal_regex,
             occurrence_literal_regex,
-            query_receipt,
             limit: self.result_limit(request.max_results)?,
             token_limit: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
             context_lines: self.context_line_limit(request.context_lines)?,
@@ -90,6 +75,7 @@ impl Services {
         &self,
         snapshot: SearchSnapshot<'_>,
         query: SearchQuery<'_>,
+        output_shape: SearchOutputShape,
         execution: SearchExecutionOptions,
         scan: SearchScan,
     ) -> Result<SearchSnapshotResult> {
@@ -99,10 +85,10 @@ impl Services {
             cancellation,
         } = snapshot;
         let SearchQuery { request, prepared } = query;
-        if let PreparedQueryReceipt::Reuse {
+        if let Some(PreparedQueryReceipt::Reuse {
             receipt_id,
             predicate,
-        } = &prepared.query_receipt
+        }) = request.kind.query_receipt()
         {
             return self.reuse_query_receipt(
                 session,
@@ -132,7 +118,7 @@ impl Services {
         let hits = order_search_hits(hits, request)?;
         let page = OrderedSearchPage { hits, offset };
         let (response, baseline_source_tokens, query_receipt) =
-            self.build_search_page(snapshot, query, execution, page)?;
+            self.build_search_page(snapshot, query, output_shape, execution, page)?;
         Ok(SearchSnapshotResult {
             response,
             baseline_source_tokens,
@@ -220,7 +206,7 @@ impl Services {
     pub(super) fn collect_structural_search_hits(
         &self,
         session: &IndexReadSnapshot,
-        request: &SearchRequest,
+        request: &SearchInput,
         prepared: &PreparedSearch,
         limit: usize,
         context_lines: usize,
@@ -228,7 +214,7 @@ impl Services {
     ) -> Result<Vec<CandidateSearchHit>> {
         let mut hits = Vec::new();
         if matches!(
-            request.mode,
+            request.kind.mode(),
             SearchMode::Auto | SearchMode::Identifier | SearchMode::Symbol
         ) {
             let max_candidates = limit.saturating_mul(4);
@@ -293,7 +279,7 @@ impl Services {
             }
         }
         if matches!(
-            request.mode,
+            request.kind.mode(),
             SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
         ) {
             let max_candidates = limit.saturating_mul(4);
@@ -382,7 +368,7 @@ impl Services {
         } = scan;
         let mut phases = SearchPhaseCounters::default();
         let mut primitive_keys = Vec::new();
-        let lexical = match request.mode {
+        let lexical = match request.kind.mode() {
             SearchMode::Regex => {
                 let scan = self.regex_hits(
                     session,
@@ -391,7 +377,7 @@ impl Services {
                         .regex
                         .as_ref()
                         .expect("regex mode compiles a pattern"),
-                    (!request.all_occurrences).then_some(prepared.limit.saturating_mul(20)),
+                    (!request.kind.is_exhaustive()).then_some(prepared.limit.saturating_mul(20)),
                     cancellation,
                     regex_planning,
                 )?;
@@ -415,7 +401,7 @@ impl Services {
                 }
                 scan.hits
             }
-            SearchMode::Text if request.all_occurrences => {
+            SearchMode::Text if request.kind.is_exhaustive() => {
                 let scan = self.regex_hits(
                     session,
                     request,
@@ -436,7 +422,8 @@ impl Services {
                 // Word FTS cannot match substrings shorter than three
                 // characters; reuse the literal regex lexical path so
                 // Identifier stays aligned with Text/Auto short queries.
-                let short_literal_regex = compile_occurrence_literal_regex(request)?;
+                let short_literal_regex =
+                    compile_occurrence_literal_regex(&request.query, request.case_sensitive)?;
                 let scan = self.regex_hits(
                     session,
                     request,
@@ -477,7 +464,7 @@ impl Services {
                     .map(crate::symbol_identity::case_fold_fts_query)
                     .unwrap_or_else(|| fts_quote(&request.query));
                 let fetch_page = |offset, page_limit| {
-                    if matches!(request.mode, SearchMode::Identifier) {
+                    if matches!(request.kind.mode(), SearchMode::Identifier) {
                         session.search_word_page(&indexed_query, page_limit, offset)
                     } else if folded.is_some() {
                         session.search_trigram_expression_page(&indexed_query, page_limit, offset)
@@ -507,7 +494,7 @@ impl Services {
     pub(super) fn hydrate_lexical_search_hits(
         &self,
         session: &IndexReadSnapshot,
-        request: &SearchRequest,
+        request: &SearchInput,
         prepared: &PreparedSearch,
         cancellation: &CancellationToken,
         lexical: Vec<ChunkHit>,
@@ -515,7 +502,7 @@ impl Services {
         let mut lexical_hits = Vec::new();
         for hit in lexical {
             check_cancelled(cancellation)?;
-            let chunk_hits = if request.all_occurrences {
+            let chunk_hits = if request.kind.is_exhaustive() {
                 chunk_search_hits(
                     &hit,
                     &request.query,
@@ -526,7 +513,7 @@ impl Services {
                         .as_ref()
                         .or(prepared.occurrence_literal_regex.as_ref())
                         .or(prepared.literal_regex.as_ref()),
-                    matches!(request.mode, SearchMode::Regex),
+                    request.kind.lexical_match_kind(),
                     OccurrenceMaterializationLimit {
                         existing_hits: lexical_hits.len(),
                         max_hits: MAX_EXHAUSTIVE_OCCURRENCES,
@@ -539,13 +526,14 @@ impl Services {
                     request.case_sensitive,
                     prepared.context_lines,
                     prepared.regex.as_ref().or(prepared.literal_regex.as_ref()),
-                    matches!(request.mode, SearchMode::Regex),
+                    request.kind.lexical_match_kind(),
                 )?
                 .into_iter()
                 .collect()
             };
             for search_hit in chunk_hits {
-                if request.all_occurrences && lexical_hits.len() == MAX_EXHAUSTIVE_OCCURRENCES {
+                if request.kind.is_exhaustive() && lexical_hits.len() == MAX_EXHAUSTIVE_OCCURRENCES
+                {
                     return Err(Error::RetrievalLimitExceeded {
                         kind: RetrievalLimitKind::ExhaustiveOccurrences,
                         observed: lexical_hits.len().saturating_add(1),
@@ -598,6 +586,7 @@ impl Services {
         &self,
         snapshot: SearchSnapshot<'_>,
         query: SearchQuery<'_>,
+        output_shape: SearchOutputShape,
         execution: SearchExecutionOptions,
         page: OrderedSearchPage,
     ) -> Result<(SearchResponse, Option<usize>, QueryReceiptExecution)> {
@@ -614,7 +603,7 @@ impl Services {
             offset,
             prepared.limit,
             prepared.token_limit,
-            execution.output_shape,
+            output_shape,
             &self.config.tokenizer,
             cancellation,
         )?;
@@ -646,7 +635,7 @@ impl Services {
             .collect::<Vec<_>>();
         let receipt = self.evaluate_receipt(
             matches!(
-                execution.output_shape,
+                output_shape,
                 SearchOutputShape::Full | SearchOutputShape::Compact
             )
             .then_some(request.receipt_id.as_deref())
@@ -665,11 +654,8 @@ impl Services {
                 .then_some(candidate)
             })
             .collect();
-        let emitted_tokens = selected_search_source_tokens(
-            &selected,
-            execution.output_shape,
-            &self.config.tokenizer,
-        );
+        let emitted_tokens =
+            selected_search_source_tokens(&selected, output_shape, &self.config.tokenizer);
         let paths = selected
             .iter()
             .map(|candidate| candidate.hit.path.clone())
@@ -688,7 +674,7 @@ impl Services {
             hits: selected,
             coverage,
             occurrences_returned,
-            occurrences_total: request.all_occurrences.then_some(total_candidates),
+            occurrences_total: request.kind.is_exhaustive().then_some(total_candidates),
             meta: self.meta(
                 generation,
                 emitted_tokens,
@@ -696,64 +682,64 @@ impl Services {
             ),
         };
         receipt.apply_meta(&mut response.meta);
-        let query_receipt = if let PreparedQueryReceipt::Record(predicate) = &prepared.query_receipt
-        {
-            let predicate_blake3 = predicate.digest()?;
-            if !has_more && occurrences_returned == total_candidates {
-                let path_filter =
-                    PathFilter::new(predicate.include_paths(), predicate.exclude_paths())?;
-                let partition = session.exact_query_partition(
-                    |path| path_filter.allows(path),
-                    || check_cancelled(cancellation),
-                )?;
-                let occurrences = hits
-                    .iter()
-                    .map(|candidate| {
-                        candidate
-                            .hit
-                            .occurrence
-                            .as_ref()
-                            .map(|occurrence| (candidate.hit.path.as_str(), occurrence))
-                            .ok_or_else(|| {
-                                Error::OperationFailure(
-                                    "exhaustive query result omitted exact coordinates".into(),
-                                )
-                            })
+        let query_receipt =
+            if let Some(PreparedQueryReceipt::Record(predicate)) = request.kind.query_receipt() {
+                let predicate_blake3 = predicate.digest()?;
+                if !has_more && occurrences_returned == total_candidates {
+                    let path_filter =
+                        PathFilter::new(predicate.include_paths(), predicate.exclude_paths())?;
+                    let partition = session.exact_query_partition(
+                        |path| path_filter.allows(path),
+                        || check_cancelled(cancellation),
+                    )?;
+                    let occurrences = hits
+                        .iter()
+                        .map(|candidate| {
+                            candidate
+                                .hit
+                                .occurrence
+                                .as_ref()
+                                .map(|occurrence| (candidate.hit.path.as_str(), occurrence))
+                                .ok_or_else(|| {
+                                    Error::OperationFailure(
+                                        "exhaustive query result omitted exact coordinates".into(),
+                                    )
+                                })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    QueryReceiptExecution::Pending(QueryReceiptRecord {
+                        repository_generation: generation,
+                        config_hash: session.meta()?.config_hash,
+                        predicate: predicate.clone(),
+                        predicate_blake3,
+                        partition,
+                        match_count: total_candidates,
+                        result_blake3: exhaustive_result_digest(occurrences),
                     })
-                    .collect::<Result<Vec<_>>>()?;
-                QueryReceiptExecution::Pending(QueryReceiptRecord {
-                    repository_generation: generation,
-                    config_hash: session.meta()?.config_hash,
-                    predicate: predicate.clone(),
-                    predicate_blake3,
-                    partition,
-                    match_count: total_candidates,
-                    result_blake3: exhaustive_result_digest(occurrences),
-                })
+                } else {
+                    QueryReceiptExecution::Outcome(QueryReceiptOutcome {
+                        status: QueryReceiptStatus::NotRecordedIncompleteResponse,
+                        receipt_id: None,
+                        complete: false,
+                        match_count: total_candidates,
+                        requested_predicate_blake3: predicate_blake3.clone(),
+                        covered_predicate_blake3: predicate_blake3,
+                        result_blake3: None,
+                        receipt_generation: generation,
+                        reused_across_generation: false,
+                        scope_relation: QueryReceiptScopeRelation::Exact,
+                    })
+                }
             } else {
-                QueryReceiptExecution::Outcome(QueryReceiptOutcome {
-                    status: QueryReceiptStatus::NotRecordedIncompleteResponse,
-                    receipt_id: None,
-                    complete: false,
-                    match_count: total_candidates,
-                    requested_predicate_blake3: predicate_blake3.clone(),
-                    covered_predicate_blake3: predicate_blake3,
-                    result_blake3: None,
-                    receipt_generation: generation,
-                    reused_across_generation: false,
-                    scope_relation: QueryReceiptScopeRelation::Exact,
-                })
-            }
-        } else {
-            QueryReceiptExecution::None
-        };
+                QueryReceiptExecution::None
+            };
         Ok((response, baseline_source_tokens, query_receipt))
     }
 }
 
 pub(super) fn order_search_hits(
     mut hits: Vec<CandidateSearchHit>,
-    request: &SearchRequest,
+    request: &SearchInput,
 ) -> Result<Vec<CandidateSearchHit>> {
     apply_focus(&mut hits, &request.focus_paths)?;
     hits.sort_by(|left, right| {
@@ -777,9 +763,13 @@ pub(super) fn order_search_hits(
                     )
             })
     });
-    hits = deduplicate_exact_hits(hits, request.prefer_structural);
-    if matches!(request.mode, SearchMode::Auto | SearchMode::Identifier) {
-        hits = deduplicate_definition_channels(hits, request.prefer_structural);
+    let preference = request.kind.definition_preference();
+    hits = deduplicate_exact_hits(hits, preference);
+    if matches!(
+        request.kind.mode(),
+        SearchMode::Auto | SearchMode::Identifier
+    ) {
+        hits = deduplicate_definition_channels(hits, preference);
     }
     normalize_search_scores(&mut hits);
     Ok(hits)
@@ -796,7 +786,7 @@ pub(super) struct SearchSnapshot<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchQuery<'a> {
-    pub request: &'a SearchRequest,
+    pub request: &'a SearchInput,
     pub prepared: &'a PreparedSearch,
 }
 

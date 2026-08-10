@@ -16,7 +16,7 @@ impl RegexCandidateExpr {
     }
 }
 
-pub(super) fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
+pub(super) fn regex_candidate_plan(request: &SearchInput) -> RegexPlanDecision {
     // SQLite's default trigram tokenizer folds ASCII only. Rust regexes use
     // Unicode simple case folding, so a case-insensitive ASCII literal can
     // also match non-ASCII code points (for example, Kelvin sign for `k`).
@@ -81,9 +81,8 @@ pub(super) fn regex_candidate_plan(request: &SearchRequest) -> RegexPlanDecision
 
 const MIN_LITERAL_IDENTIFIER_BYTES: usize = 12;
 
-pub(super) fn literal_identifier_candidate_plan(request: &SearchRequest) -> RegexPlanDecision {
-    let eligible = request.mode == SearchMode::Text
-        && request.all_occurrences
+pub(super) fn literal_identifier_candidate_plan(request: &SearchInput) -> RegexPlanDecision {
+    let eligible = request.kind.is_exhaustive_text()
         && request.query.len() >= MIN_LITERAL_IDENTIFIER_BYTES
         && request.query.is_ascii()
         && request
@@ -357,9 +356,12 @@ pub(super) fn compile_regex(request: &SearchRequest) -> Result<regex::Regex> {
         .build()?)
 }
 
-pub(super) fn compile_occurrence_literal_regex(request: &SearchRequest) -> Result<regex::Regex> {
-    Ok(regex::RegexBuilder::new(&regex::escape(&request.query))
-        .case_insensitive(!request.case_sensitive)
+pub(super) fn compile_occurrence_literal_regex(
+    query: &str,
+    case_sensitive: bool,
+) -> Result<regex::Regex> {
+    Ok(regex::RegexBuilder::new(&regex::escape(query))
+        .case_insensitive(!case_sensitive)
         .size_limit(1 << 20)
         .dfa_size_limit(1 << 20)
         .build()?)
@@ -412,20 +414,16 @@ impl Services {
             max_tokens,
             cancellation,
         } = scan;
-        let request = SearchRequest {
+        let request = SearchInput {
             query: query.to_owned(),
-            mode: SearchMode::Text,
+            kind: SearchKind::Text,
             include_paths: include_paths.to_vec(),
             exclude_paths: exclude_paths.to_vec(),
             focus_paths: Vec::new(),
             max_results: Some(max_candidates),
             max_tokens: Some(max_tokens),
-            context_lines: Some(2),
             case_sensitive: false,
-            all_occurrences: false,
-            prefer_structural: false,
             receipt_id: None,
-            query_receipt: None,
             cursor: None,
         };
         Ok(self
@@ -443,7 +441,7 @@ impl Services {
     pub(super) fn regex_hits(
         &self,
         session: &IndexReadSnapshot,
-        request: &SearchRequest,
+        request: &SearchInput,
         regex: &regex::Regex,
         max_candidates: Option<usize>,
         cancellation: &CancellationToken,
@@ -458,7 +456,7 @@ impl Services {
             !request.include_paths.is_empty() || !request.exclude_paths.is_empty();
         let file_count = session.file_count()?;
         let decision = if planning == RegexPlanning::Enabled {
-            if request.mode == SearchMode::Text && request.all_occurrences {
+            if request.kind.is_exhaustive_text() {
                 literal_identifier_candidate_plan(request)
             } else {
                 regex_candidate_plan(request)

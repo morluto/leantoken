@@ -1,6 +1,6 @@
 // Private request, cursor, and materialization state shared by read stages.
 #[derive(Debug, Clone)]
-pub(super) enum ParsedReadTarget {
+pub(in crate::services) enum NewReadTarget {
     Symbol(String),
     Heading {
         name: String,
@@ -10,12 +10,33 @@ pub(super) enum ParsedReadTarget {
         start: std::num::NonZeroUsize,
         end: Option<usize>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum ReadTargetInput {
+    New(NewReadTarget),
     Continuation(ReadCursor),
 }
 
-pub(super) struct ParsedReadRequest {
-    pub(super) request: ReadRequest,
-    pub(super) target: ParsedReadTarget,
+#[derive(Debug, Clone)]
+pub(super) enum ReadMode {
+    Direct(ReadTargetInput),
+    Delta(NewReadTarget),
+}
+
+impl ReadMode {
+    pub(super) const fn is_delta(&self) -> bool {
+        matches!(self, Self::Delta(_))
+    }
+}
+
+pub(super) struct ReadInput {
+    pub(super) path: String,
+    pub(super) mode: ReadMode,
+    pub(super) max_tokens: Option<usize>,
+    pub(super) expected_hash: Option<String>,
+    pub(super) receipt_id: Option<String>,
+    pub(super) policy: ReadPolicy,
 }
 
 #[derive(Clone)]
@@ -90,7 +111,7 @@ pub(super) struct ResolvedReadTarget {
     pub(super) expected_prefix_hash: Option<String>,
     pub(super) expected_file_size: Option<usize>,
     pub(super) expected_modified_ns: Option<u128>,
-    pub(super) cursor_full: bool,
+    pub(super) policy: ReadPolicy,
 }
 
 #[derive(Debug)]
@@ -141,7 +162,7 @@ pub(super) struct ReadCursor {
     /// Hash of the requested target prefix through `next_byte` for bounded
     /// cursors. Size and mtime alone can miss same-size, same-timestamp edits.
     pub(super) prefix_hash: Option<String>,
-    pub(super) full: bool,
+    pub(super) policy: ReadPolicy,
     pub(super) file_size: usize,
     pub(super) modified_ns: Option<u128>,
     pub(super) path_hash: String,

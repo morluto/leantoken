@@ -178,7 +178,7 @@ async fn run_profile(args: &Args) -> AnyResult<Report> {
     let config = Config::discover(&snapshot.root, Some(snapshot.database.clone()))?;
     let services = Services::open(config)?;
     let index_start = Instant::now();
-    services.index(true).await?;
+    services.index(leantoken::IndexingMode::Rebuild).await?;
     let initial_index_ms = index_start.elapsed().as_secs_f64() * 1_000.0;
 
     let targets = read_targets(&snapshot.root)?;

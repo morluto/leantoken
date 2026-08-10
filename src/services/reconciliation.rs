@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::coordination::IndexCoordination;
 use crate::indexer::Indexer;
-use crate::{Error, Result};
+use crate::{Error, IndexingMode, Result};
 
 use super::indexing::ActiveReconciliation;
 
@@ -304,7 +304,7 @@ impl ReconciliationCoordinator {
                 }
                 runner_coordinator.run_before_scan_hook();
                 let result = indexer
-                    .reconcile_cancellable_report(false, &cancellation)
+                    .reconcile_cancellable_report(IndexingMode::Reconcile, &cancellation)
                     .map(|_| ());
                 operation.release()?;
                 result

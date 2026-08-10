@@ -1,40 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-pub(super) fn edit_json_config(
-    operation: SetupOperation,
-    path: &Path,
-    section_name: &str,
-    shape: JsonEntryShape,
-    launcher: &McpLauncher,
-) -> Result<EditStatus> {
-    let resolution = resolve_json_edit(operation, path, section_name, shape, launcher)?;
-    let status = resolution.status();
-    let edit = PlannedClientEdit {
-        public: ClientSetupPlan {
-            client: SetupClient::Claude,
-            path: path.to_path_buf(),
-            action: ClientPlanAction::Update,
-            detected: false,
-        },
-        resolution,
-    };
-    apply_edit(&edit)?;
-    Ok(status)
-}
-
-#[cfg(test)]
-pub(super) fn resolve_json_edit(
-    operation: SetupOperation,
-    path: &Path,
-    section_name: &str,
-    shape: JsonEntryShape,
-    launcher: &McpLauncher,
-) -> Result<ResolvedEdit> {
-    let original = read_optional(path)?;
-    resolve_json_edit_from_source(operation, path, section_name, shape, launcher, original)
-}
-
 pub(super) fn resolve_json_edit_from_source(
     operation: SetupOperation,
     path: &Path,

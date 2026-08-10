@@ -21,14 +21,13 @@ pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Re
 pub(super) fn resolve_read_target(
     session: &IndexReadSnapshot,
     file_id: i64,
-    request: &ReadRequest,
-    target: &ParsedReadTarget,
+    request: &ReadInput,
     generation: u64,
 ) -> Result<ResolvedReadTarget> {
-    let (target_start_line, target_end_line) = match target {
-        ParsedReadTarget::Continuation(cursor) => {
+    let target = match &request.mode {
+        ReadMode::Direct(ReadTargetInput::Continuation(cursor)) => {
             validate_read_cursor(cursor, generation, &request.path)?;
-            if cursor.full != matches!(request.policy, ReadPolicy::Full) {
+            if cursor.policy != request.policy {
                 return Err(Error::StaleCursor);
             }
             return Ok(ResolvedReadTarget {
@@ -40,10 +39,13 @@ pub(super) fn resolve_read_target(
                 expected_prefix_hash: cursor.prefix_hash.clone(),
                 expected_file_size: Some(cursor.file_size),
                 expected_modified_ns: cursor.modified_ns,
-                cursor_full: cursor.full,
+                policy: cursor.policy,
             });
         }
-        ParsedReadTarget::Symbol(symbol_name) => {
+        ReadMode::Direct(ReadTargetInput::New(target)) | ReadMode::Delta(target) => target,
+    };
+    let (target_start_line, target_end_line) = match target {
+        NewReadTarget::Symbol(symbol_name) => {
             let symbol = match session.find_symbol(file_id, symbol_name)? {
                 crate::symbol_identity::SymbolResolution::Unique(symbol) => symbol,
                 crate::symbol_identity::SymbolResolution::NotFound => {
@@ -61,7 +63,7 @@ pub(super) fn resolve_read_target(
             };
             (symbol.start_line, Some(symbol.end_line))
         }
-        ParsedReadTarget::Heading { name, occurrence } => {
+        NewReadTarget::Heading { name, occurrence } => {
             let heading = session
                 .find_document_heading(file_id, name, occurrence.get())?
                 .ok_or_else(|| Error::HeadingNotFound {
@@ -71,7 +73,7 @@ pub(super) fn resolve_read_target(
                 })?;
             (heading.start_line, Some(heading.end_line))
         }
-        ParsedReadTarget::Lines { start, end } => (start.get(), *end),
+        NewReadTarget::Lines { start, end } => (start.get(), *end),
     };
 
     if target_start_line == 0
@@ -88,7 +90,7 @@ pub(super) fn resolve_read_target(
         expected_prefix_hash: None,
         expected_file_size: None,
         expected_modified_ns: None,
-        cursor_full: matches!(request.policy, ReadPolicy::Full),
+        policy: request.policy,
     })
 }
 
@@ -142,10 +144,9 @@ pub(super) fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
 
 /// Hash the live file and read a resolved range in one forward stream.
 ///
-/// When `full` is true the complete file is hashed and `content_hash` is
-/// populated. When `full` is false the stream stops as soon as the target
-/// range is satisfied or the token bound is reached, `content_hash` is `None`,
-/// and `bytes_read` reflects only the bytes consumed before early termination.
+/// Full-policy reads hash the complete file and populate `content_hash`.
+/// Bounded reads stop as soon as the target range is satisfied or the token
+/// bound is reached, leave `content_hash` empty, and report only consumed bytes.
 pub(super) fn observe_live_range(
     file: &File,
     target_start_line: usize,
@@ -153,7 +154,7 @@ pub(super) fn observe_live_range(
     page_start_byte: usize,
     max_tokens: usize,
     tokenizer: crate::tokens::Tokenizer,
-    full: bool,
+    policy: ReadPolicy,
 ) -> Result<LiveReadObservation> {
     let mut file = file.try_clone()?;
     let file_size = file.metadata()?.len().try_into().unwrap_or(usize::MAX);
@@ -209,7 +210,7 @@ pub(super) fn observe_live_range(
         }
         // For full reads, always consume the entire buffer so the complete file
         // is hashed. For bounded reads, consume only what the target scan used.
-        if full && consumed < buffer.len() {
+        if policy.is_full() && consumed < buffer.len() {
             consumed = buffer.len();
         }
         if consumed == 0 {
@@ -217,7 +218,7 @@ pub(super) fn observe_live_range(
         }
         let partial_buffer = consumed < buffer.len();
         let consumed_buffer = &buffer[..consumed];
-        if full {
+        if policy.is_full() {
             hasher.update(consumed_buffer);
         }
         bytes_seen = bytes_seen.saturating_add(consumed);
@@ -268,7 +269,7 @@ pub(super) fn observe_live_range(
         // Bounded reads stop as soon as the target is finished or the token
         // bound is reached. Full reads continue to EOF to hash the complete
         // file.
-        if !full && (target_finished || token_bound_reached) {
+        if !policy.is_full() && (target_finished || token_bound_reached) {
             break;
         }
     }
@@ -295,7 +296,7 @@ pub(super) fn observe_live_range(
     };
     Ok(LiveReadObservation {
         snapshot: LiveFileSnapshot {
-            content_hash: full.then(|| {
+            content_hash: policy.is_full().then(|| {
                 hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string()
             }),
             end_line,

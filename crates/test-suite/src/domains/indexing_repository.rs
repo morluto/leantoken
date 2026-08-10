@@ -817,7 +817,9 @@ fn indexer_reconcile_lifecycle_preserves_generation_and_search_state() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config.clone(), storage.clone()).expect("indexer");
 
-    let initial = indexer.reconcile(false).expect("initial reconcile");
+    let initial = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
     assert_eq!(initial.files_indexed, 2);
     assert_eq!(initial.repository_generation, 1);
     assert_eq!(initial.files_unchanged, 0);
@@ -835,14 +837,18 @@ fn indexer_reconcile_lifecycle_preserves_generation_and_search_state() {
     let storage = Storage::open(&config.database_path).expect("reopen storage");
     let indexer = Indexer::new(config, storage.clone()).expect("reopen indexer");
 
-    let unchanged = indexer.reconcile(false).expect("unchanged reconcile");
+    let unchanged = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("unchanged reconcile");
     assert_eq!(unchanged.files_unchanged, 2);
     assert_eq!(unchanged.files_indexed, 0);
     assert_eq!(unchanged.repository_generation, 1);
     assert_eq!(storage.meta().expect("meta").repository_generation, 1);
 
     std::fs::write(root.repo().join("a.rs"), "fn new_name() {}\n").expect("change a");
-    let changed = indexer.reconcile(false).expect("changed reconcile");
+    let changed = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("changed reconcile");
     assert_eq!(changed.files_indexed, 1);
     assert_eq!(changed.files_unchanged, 1);
     assert_eq!(changed.repository_generation, 2);
@@ -861,7 +867,9 @@ fn indexer_reconcile_lifecycle_preserves_generation_and_search_state() {
     );
 
     std::fs::remove_file(root.repo().join("a.rs")).expect("remove a");
-    let removed = indexer.reconcile(false).expect("deleted reconcile");
+    let removed = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("deleted reconcile");
     assert_eq!(removed.files_removed, 1);
     assert_eq!(removed.files_unchanged, 1);
     assert_eq!(removed.repository_generation, 3);
@@ -880,7 +888,9 @@ fn indexer_reconcile_lifecycle_preserves_generation_and_search_state() {
         1
     );
 
-    let rebuilt = indexer.reconcile(true).expect("rebuild");
+    let rebuilt = indexer
+        .reconcile(leantoken::IndexingMode::Rebuild)
+        .expect("rebuild");
     assert_eq!(rebuilt.files_indexed, 1);
     assert_eq!(rebuilt.repository_generation, 4);
     assert_eq!(
@@ -913,7 +923,9 @@ fn full_reconcile_excludes_only_recognized_zero_byte_stale_sidecars() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
-    let first = indexer.reconcile(false).expect("initial reconcile");
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     assert_eq!(first.files_indexed, 2);
     assert!(
@@ -938,7 +950,9 @@ fn full_reconcile_excludes_only_recognized_zero_byte_stale_sidecars() {
     }
 
     std::fs::write(&nonzero, []).expect("turn indexed file into a recognized sidecar");
-    let second = indexer.reconcile(false).expect("full sidecar cleanup");
+    let second = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("full sidecar cleanup");
     assert_eq!(second.files_removed, 1);
     assert!(
         storage
@@ -964,7 +978,9 @@ fn watcher_targeted_reconcile_adds_user_locks_and_removes_recognized_sidecars() 
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     let reported = "old/index.sqlite.index.lock";
     let sidecar = root.repo().join(reported);
@@ -1037,7 +1053,7 @@ fn full_reconcile_limit_error_preserves_the_committed_generation() {
     let storage = Storage::open(&database).expect("storage");
     Indexer::new(first_config, storage.clone())
         .expect("indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("initial reconcile");
     std::fs::write(root.repo().join("b.rs"), "fn new() {}\n").expect("b");
 
@@ -1045,7 +1061,7 @@ fn full_reconcile_limit_error_preserves_the_committed_generation() {
     limited.max_files = 1;
     let error = Indexer::new(Arc::new(limited), storage.clone())
         .expect("limited indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect_err("file limit");
 
     assert!(matches!(
@@ -1072,7 +1088,9 @@ fn targeted_reconcile_enforces_aggregate_bytes_before_publication() {
     let config = Arc::new(config);
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(root.repo().join("a.rs"), "aa").expect("grow a");
     let error = indexer
@@ -1110,7 +1128,9 @@ fn full_and_targeted_reconcile_exclude_metadata_oversized_file_from_files_seen()
     let full_storage = Storage::open(&full_config.database_path).expect("full storage");
     let full_indexer =
         Indexer::new(Arc::new(full_config), full_storage.clone()).expect("full indexer");
-    full_indexer.reconcile(false).expect("initial full index");
+    full_indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial full index");
     let mut targeted_config =
         Config::discover(root.repo(), Some(databases.root().join("targeted.sqlite")))
             .expect("targeted config");
@@ -1119,12 +1139,12 @@ fn full_and_targeted_reconcile_exclude_metadata_oversized_file_from_files_seen()
     let targeted_indexer = Indexer::new(Arc::new(targeted_config), targeted_storage.clone())
         .expect("targeted indexer");
     targeted_indexer
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("initial targeted index");
 
     std::fs::write(&path, vec![b'x'; 65]).expect("grow beyond admission limit");
     let full = full_indexer
-        .reconcile_report(false)
+        .reconcile_report(leantoken::IndexingMode::Reconcile)
         .expect("full reconcile");
     let targeted = targeted_indexer
         .reconcile_paths_report(&["oversized.rs".into()])
@@ -1169,7 +1189,9 @@ fn visibility_reconcile_excludes_discovery_oversized_file_from_files_seen() {
     config.max_file_bytes = 64;
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(&oversized, vec![b'x'; 65]).expect("grow beyond discovery limit");
     std::fs::write(root.repo().join(".gitignore"), "# visibility refresh\n")
@@ -1208,7 +1230,9 @@ fn visibility_reconcile_matches_full_files_seen_for_deleted_file() {
     );
     let full_storage = Storage::open(&full_config.database_path).expect("full storage");
     let full_indexer = Indexer::new(full_config, full_storage.clone()).expect("full indexer");
-    full_indexer.reconcile(false).expect("initial full index");
+    full_indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial full index");
 
     let visibility_config = Arc::new(
         Config::discover(
@@ -1222,13 +1246,15 @@ fn visibility_reconcile_matches_full_files_seen_for_deleted_file() {
     let visibility_indexer =
         Indexer::new(visibility_config, visibility_storage.clone()).expect("visibility indexer");
     visibility_indexer
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("initial visibility index");
 
     std::fs::remove_file(&removed).expect("remove source");
     std::fs::write(root.repo().join(".gitignore"), "# visibility refresh\n")
         .expect("change ignore");
-    let full = full_indexer.reconcile(false).expect("full reconcile");
+    let full = full_indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("full reconcile");
     let visibility = visibility_indexer
         .reconcile_paths(&[".gitignore".into()])
         .expect("visibility reconcile");
@@ -1256,7 +1282,9 @@ fn targeted_reconcile_existing_directory_does_not_count_unchanged_descendants() 
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     let response = indexer
         .reconcile_paths_report(&["src".into()])
@@ -1284,7 +1312,9 @@ fn targeted_reconcile_existing_directory_excludes_oversized_descendants_from_fil
     config.max_file_bytes = 64;
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(&source, vec![b'x'; 65]).expect("grow beyond discovery limit");
     let response = indexer
@@ -1320,14 +1350,14 @@ fn changing_discovery_limits_invalidates_the_index_configuration_hash() {
     let storage = Storage::open(&database).expect("storage");
     Indexer::new(first_config, storage.clone())
         .expect("indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("initial reconcile");
 
     let mut changed = Config::discover(root.repo(), Some(database)).expect("changed config");
     changed.max_files -= 1;
     let response = Indexer::new(Arc::new(changed), storage.clone())
         .expect("changed indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("configuration rebuild");
 
     assert_eq!(response.repository_generation, 2);
@@ -1362,6 +1392,65 @@ fn indexer_rejects_zero_discovery_limits_at_construction() {
 }
 
 #[test]
+fn indexer_reopen_leaves_unchanged_files_and_generation() {
+    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
+    std::fs::write(root.repo().join("a.rs"), "fn stable() {}\n").expect("write a");
+
+    let config = Arc::new(
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config.clone(), storage.clone()).expect("indexer");
+
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("first reconcile");
+    assert_eq!(first.repository_generation, 1);
+
+    let second = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("second reconcile");
+    assert_eq!(second.files_unchanged, 1);
+    assert_eq!(second.files_indexed, 0);
+    assert_eq!(second.repository_generation, 1);
+
+    let meta = storage.meta().expect("meta");
+    assert_eq!(meta.repository_generation, 1);
+}
+
+#[test]
+fn indexer_change_updates_generation_and_search_index() {
+    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
+    std::fs::write(root.repo().join("a.rs"), "fn old() {}\n").expect("write a");
+
+    let config = Arc::new(
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("first reconcile");
+    assert_eq!(first.repository_generation, 1);
+
+    std::fs::write(root.repo().join("a.rs"), "fn new_name() {}\n").expect("change a");
+
+    let second = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("second reconcile");
+    assert_eq!(second.files_indexed, 1);
+    assert_eq!(second.files_unchanged, 0);
+    assert_eq!(second.repository_generation, 2);
+
+    let old_hits = storage.search_word("old", 10).expect("search old");
+    assert_eq!(old_hits.len(), 0);
+
+    let new_hits = storage.search_word("new_name", 10).expect("search new");
+    assert_eq!(new_hits.len(), 1);
+}
+
+#[test]
 fn targeted_reconcile_updates_only_reported_existing_file() {
     let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
     std::fs::write(root.repo().join("a.rs"), "fn old() {}\n").expect("write a");
@@ -1371,7 +1460,9 @@ fn targeted_reconcile_updates_only_reported_existing_file() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
     let stable_generation = storage
         .find_file("b.rs")
         .expect("find stable")
@@ -1423,7 +1514,9 @@ fn targeted_reconcile_hashes_reported_files_even_when_metadata_is_unchanged() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(&path, "fn neo() {}\n").expect("same-size replacement");
     std::fs::File::options()
@@ -1450,7 +1543,9 @@ fn targeted_reconcile_deletes_existing_file() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::remove_file(root.repo().join("gone.rs")).expect("remove");
     let response = indexer
@@ -1476,7 +1571,9 @@ fn targeted_reconcile_clears_imports_resolved_to_deleted_file() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
     let consumer = storage
         .find_file("consumer.rs")
         .expect("find consumer")
@@ -1516,7 +1613,9 @@ fn targeted_reconcile_applies_deleted_directory_delta() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::remove_dir_all(root.repo().join("removed")).expect("remove directory");
     let response = indexer
@@ -1549,7 +1648,9 @@ fn targeted_directory_rename_preserves_content_rows_and_refreshes_import_paths()
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     let module = storage
         .find_file("src/moved/mod.rs")
@@ -1658,7 +1759,9 @@ fn targeted_rename_with_ambiguous_duplicate_content_uses_replacement_path() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
     let old_ids = ["old/first.rs", "old/second.rs"]
         .into_iter()
         .map(|path| {
@@ -1706,7 +1809,9 @@ fn targeted_reconcile_applies_new_file_and_ignore_deltas() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(root.repo().join("new.rs"), "fn new_file() {}\n").expect("new file");
     let added = indexer
@@ -1744,7 +1849,9 @@ fn targeted_reconcile_applies_leantokenignore_add_change_and_removal() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     std::fs::write(root.repo().join(".leantokenignore"), "first.rs\n").expect("add ignore");
     indexer
@@ -1817,7 +1924,7 @@ fn changing_generated_policy_invalidates_the_index_configuration_hash() {
     let storage = Storage::open(&database).expect("storage");
     Indexer::new(first_config, storage.clone())
         .expect("indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("initial reconcile");
     assert!(
         storage
@@ -1830,7 +1937,7 @@ fn changing_generated_policy_invalidates_the_index_configuration_hash() {
     changed.include_generated = true;
     let response = Indexer::new(Arc::new(changed), storage.clone())
         .expect("changed indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("configuration rebuild");
 
     assert_eq!(response.repository_generation, 2);
@@ -1862,7 +1969,9 @@ fn changing_index_scope_forces_a_complete_membership_rebuild() {
             .expect("scoped config"),
     );
     let first = Indexer::new(first_config, storage.clone()).expect("scoped indexer");
-    first.reconcile(false).expect("scoped reconcile");
+    first
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("scoped reconcile");
     assert!(
         storage
             .find_file("src/lib.rs")
@@ -1878,7 +1987,9 @@ fn changing_index_scope_forces_a_complete_membership_rebuild() {
 
     let full_config = Arc::new(Config::discover(root.repo(), Some(database)).expect("full config"));
     let full = Indexer::new(full_config, storage.clone()).expect("full indexer");
-    let rebuilt = full.reconcile(false).expect("scope rebuild");
+    let rebuilt = full
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("scope rebuild");
 
     assert_eq!(rebuilt.repository_generation, 2);
     assert!(
@@ -1906,7 +2017,7 @@ fn preparation_batch_size_does_not_change_the_logical_index() {
     let small_storage = Storage::open(&small.database_path).expect("small storage");
     Indexer::new(Arc::new(small), small_storage.clone())
         .expect("small indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("small index");
 
     let mut large =
@@ -1915,7 +2026,7 @@ fn preparation_batch_size_does_not_change_the_logical_index() {
     let large_storage = Storage::open(&large.database_path).expect("large storage");
     Indexer::new(Arc::new(large), large_storage.clone())
         .expect("large indexer")
-        .reconcile(false)
+        .reconcile(leantoken::IndexingMode::Reconcile)
         .expect("large index");
 
     let project = |storage: &Storage| {
@@ -1959,7 +2070,7 @@ fn profiled_reconcile_reports_bounded_batch_high_water_and_phases() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let profiled = Indexer::new(Arc::new(config), storage)
         .expect("indexer")
-        .reconcile_profiled(false)
+        .reconcile_profiled(leantoken::IndexingMode::Reconcile)
         .expect("profiled reconcile");
 
     assert_eq!(profiled.response.files_indexed, 3);
@@ -2029,7 +2140,9 @@ fn new_file_delta_resolves_existing_importers() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("initial reconcile");
     let consumer = storage
         .find_file("consumer.rs")
         .expect("find consumer")
@@ -2076,6 +2189,66 @@ fn new_file_delta_resolves_existing_importers() {
 }
 
 #[test]
+fn indexer_delete_removes_file_and_advances_generation() {
+    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
+    std::fs::write(root.repo().join("a.rs"), "fn gone() {}\n").expect("write a");
+    std::fs::write(root.repo().join("b.rs"), "fn kept() {}\n").expect("write b");
+
+    let config = Arc::new(
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("first reconcile");
+    assert_eq!(first.repository_generation, 1);
+    assert_eq!(first.files_indexed, 2);
+
+    std::fs::remove_file(root.repo().join("a.rs")).expect("remove a");
+
+    let second = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("second reconcile");
+    assert_eq!(second.files_removed, 1);
+    assert_eq!(second.files_unchanged, 1);
+    assert_eq!(second.repository_generation, 2);
+
+    assert!(storage.find_file("a.rs").expect("find").is_none());
+    let gone_hits = storage.search_word("gone", 10).expect("search gone");
+    assert_eq!(gone_hits.len(), 0);
+    let kept_hits = storage.search_word("kept", 10).expect("search kept");
+    assert_eq!(kept_hits.len(), 1);
+}
+
+#[test]
+fn indexer_rebuild_resets_index_and_advances_generation() {
+    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
+    std::fs::write(root.repo().join("a.rs"), "fn only() {}\n").expect("write a");
+
+    let config = Arc::new(
+        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("first reconcile");
+    assert_eq!(first.repository_generation, 1);
+
+    let rebuild = indexer
+        .reconcile(leantoken::IndexingMode::Rebuild)
+        .expect("rebuild");
+    assert_eq!(rebuild.files_indexed, 1);
+    assert_eq!(rebuild.repository_generation, 2);
+
+    let hits = storage.search_word("only", 10).expect("search");
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
 fn indexer_respects_chunk_lines_and_bytes() {
     let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
     let content: String = (0..100).map(|i| format!("line {}\n", i)).collect();
@@ -2087,7 +2260,9 @@ fn indexer_respects_chunk_lines_and_bytes() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
-    let response = indexer.reconcile(false).expect("reconcile");
+    let response = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("reconcile");
     assert_eq!(response.files_indexed, 1);
 
     let file = storage.find_file("big.rs").expect("find").expect("exists");
@@ -2120,7 +2295,9 @@ fn full_reconcile_reindexes_when_content_changes_but_size_and_mtime_match() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
-    let first = indexer.reconcile(false).expect("first reconcile");
+    let first = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("first reconcile");
     assert_eq!(first.files_indexed, 1);
     assert_eq!(first.repository_generation, 1);
     assert!(
@@ -2146,7 +2323,9 @@ fn full_reconcile_reindexes_when_content_changes_but_size_and_mtime_match() {
     assert_eq!(after_meta.len(), original_meta.len());
     assert_eq!(after_meta.modified().expect("mtime after"), original_mtime);
 
-    let second = indexer.reconcile(false).expect("second reconcile");
+    let second = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("second reconcile");
     assert_eq!(
         second.files_indexed, 1,
         "content-hash must detect same-size mtime-preserved rewrite"

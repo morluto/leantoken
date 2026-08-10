@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use leantoken::Config;
-use leantoken::model::{QueryReceiptAction, SearchMode, SearchRequest};
+use leantoken::model::{QueryReceiptAction, SearchMode, SearchOccurrenceOutput, SearchRequest};
 use leantoken::services::Services;
 use serde::Serialize;
 
@@ -86,11 +86,14 @@ async fn main() -> AnyResult<()> {
     });
     let services = Services::open(Config::discover(&repository, Some(database))?)?;
     if !args.skip_index {
-        services.index(false).await?;
+        services.index(leantoken::IndexingMode::Reconcile).await?;
     }
 
     let recorded = services
-        .search_occurrences(request(&args.query, Some(QueryReceiptAction::Record)), true)
+        .search_occurrences(
+            request(&args.query, Some(QueryReceiptAction::Record)),
+            SearchOccurrenceOutput::Coordinates,
+        )
         .await?;
     let proof = recorded
         .query_receipt
@@ -183,7 +186,9 @@ async fn timed(
     expect_reuse: bool,
 ) -> AnyResult<u128> {
     let started = Instant::now();
-    let response = services.search_occurrences(request, true).await?;
+    let response = services
+        .search_occurrences(request, SearchOccurrenceOutput::Coordinates)
+        .await?;
     let elapsed = started.elapsed().as_micros();
     if response.occurrences_total != expected_total {
         return Err("occurrence parity changed between profile arms".into());

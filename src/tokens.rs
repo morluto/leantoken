@@ -15,9 +15,15 @@ pub(crate) enum McpResponseMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpProtocolShape {
+    Legacy,
+    Modern,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct McpResponseShape {
     pub(crate) mode: McpResponseMode,
-    pub(crate) modern_protocol: bool,
+    pub(crate) protocol: McpProtocolShape,
 }
 
 pub(crate) fn build_mcp_tool_result(value: Value, mode: McpResponseMode) -> CallToolResult {
@@ -36,7 +42,7 @@ pub(crate) fn build_mcp_tool_result(value: Value, mode: McpResponseMode) -> Call
 
 pub(crate) fn model_visible_mcp_result(value: Value, shape: McpResponseShape) -> ServerResult {
     let mut result = ServerResult::CallToolResult(build_mcp_tool_result(value, shape.mode));
-    if !shape.modern_protocol {
+    if matches!(shape.protocol, McpProtocolShape::Legacy) {
         result.strip_result_type_for_legacy_peer();
     }
     result
@@ -49,7 +55,7 @@ pub(crate) struct ResponseTokenAccounting {
     pub(crate) total_response_tokens: usize,
 }
 
-/// Monotonic prefix fitting primitive for exact serialized-response counts.
+/// Monotonic prefix fitting primitive for an exact serialized-response budget.
 pub(crate) struct ResponseBudget {
     max_tokens: usize,
 }
@@ -435,6 +441,7 @@ mod tests {
 
     #[test]
     fn response_budget_finds_the_largest_monotonic_prefix() {
+        let tokenizer = Tokenizer::Cl100kBase;
         let budget = ResponseBudget::new(34);
         assert_eq!(
             budget
@@ -448,6 +455,9 @@ mod tests {
                 .expect("empty prefix does not fit"),
             None
         );
+        let response = json!({"message": "bounded"});
+        let payload = serde_json::to_string(&response).expect("serialized response");
+        assert!(tokenizer.count(&payload) <= 34);
     }
 
     #[test]

@@ -700,11 +700,6 @@ pub(crate) enum ManagedCacheIdentity {
     },
 }
 
-#[cfg(test)]
-pub(crate) fn managed_cache_id(root: &Path) -> String {
-    managed_cache_id_for_scope(root, &IndexScope::default())
-}
-
 pub(crate) fn managed_cache_id_for_scope(root: &Path, scope: &IndexScope) -> String {
     managed_cache_id_for_version(root, INDEX_CONTENT_VERSION, scope.digest())
 }
@@ -738,13 +733,6 @@ pub(crate) fn parse_managed_cache_id(value: &str) -> Option<ManagedCacheIdentity
         root_hash: root_hash.to_owned(),
         scope_digest,
     })
-}
-
-#[cfg(test)]
-pub(crate) fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
-    parse_managed_cache_id(value)
-        .as_ref()
-        .is_some_and(|identity| managed_cache_identity_matches_root(identity, value, root))
 }
 
 pub(crate) fn managed_cache_identity_matches_root(
@@ -798,6 +786,16 @@ fn repository_fallback_database_path(root: &Path, scope: &IndexScope) -> PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn managed_cache_id(root: &Path) -> String {
+        managed_cache_id_for_scope(root, &IndexScope::default())
+    }
+
+    fn managed_cache_id_matches_root(value: &str, root: &Path) -> bool {
+        parse_managed_cache_id(value)
+            .as_ref()
+            .is_some_and(|identity| managed_cache_identity_matches_root(identity, value, root))
+    }
 
     #[cfg(unix)]
     #[test]

@@ -347,7 +347,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             .expect("isolated config");
     let isolated_services = Services::open(isolated_config).expect("isolated services");
     isolated_services
-        .index(false)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index isolated repository");
     std::fs::write(isolated.path().join("unindexed.rs"), "fn new_file() {}\n")
@@ -649,7 +649,10 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
         "\nfn target() {\n    new_behavior();\n}\n",
     )
     .expect("move and edit symbol");
-    services.index(false).await.expect("reindex moved symbol");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("reindex moved symbol");
 
     let changed = services
         .read(ReadRequest {
@@ -1464,7 +1467,10 @@ async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
         config.tokenizer = tokenizer;
         let services = Services::open(config).expect("services");
-        services.index(false).await.expect("index source");
+        services
+            .index(leantoken::IndexingMode::Reconcile)
+            .await
+            .expect("index source");
 
         let read_request =
             |path: &str, continuation_cursor: Option<String>, max_tokens: usize| ReadRequest {
@@ -1684,7 +1690,10 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     assert_eq!(unchanged.continuation_cursor, first.continuation_cursor);
 
     std::fs::write(root.path().join("other.rs"), "fn other() {}\n").expect("write unrelated file");
-    services.index(false).await.expect("advance generation");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("advance generation");
     let stale_generation = services
         .read(ReadRequest {
             path: "large.rs".into(),
@@ -1757,7 +1766,10 @@ async fn read_rejects_ignored_files() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let error = services
         .read(ReadRequest {
@@ -1868,7 +1880,10 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let read = services
         .read(ReadRequest {

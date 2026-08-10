@@ -40,6 +40,12 @@ pub enum ReadPolicy {
     Full,
 }
 
+impl ReadPolicy {
+    pub(crate) const fn is_full(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
 impl std::fmt::Display for ReadPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

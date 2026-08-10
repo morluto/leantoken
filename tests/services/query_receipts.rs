@@ -30,7 +30,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
     let recorded = services
         .search_occurrences(
             exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("record query receipt");
@@ -52,7 +52,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
                     receipt_id: receipt_id.clone(),
                 },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("reuse query receipt");
@@ -80,7 +80,7 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
     let mut paged = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     paged.max_results = Some(1);
     let response = services
-        .search_occurrences(paged, true)
+        .search_occurrences(paged, SearchOccurrenceOutput::Coordinates)
         .await
         .expect("paged exhaustive response");
     let outcome = response.query_receipt.expect("incomplete outcome");
@@ -97,7 +97,7 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
     let error = services
         .search_occurrences_with_options_consistency_cancellable(
             exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
-            true,
+            SearchOccurrenceOutput::Coordinates,
             IndexConsistency::IndexedGeneration,
             ServiceCallOptions::new(),
             cancellation,
@@ -116,7 +116,7 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
     let error = services
         .search_occurrences_with_options(
             request.clone(),
-            true,
+            SearchOccurrenceOutput::Coordinates,
             ServiceCallOptions::new().with_max_response_tokens(1),
         )
         .await
@@ -132,7 +132,7 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
     let retry = services
         .search_occurrences_with_options(
             request,
-            true,
+            SearchOccurrenceOutput::Coordinates,
             ServiceCallOptions::new().with_max_response_tokens(minimum_required_response_tokens),
         )
         .await
@@ -146,7 +146,9 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
     let mut invalid_regex = exact_request("(", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     invalid_regex.mode = SearchMode::Regex;
     assert!(matches!(
-        services.search_occurrences(invalid_regex, true).await,
+        services
+            .search_occurrences(invalid_regex, SearchOccurrenceOutput::Coordinates)
+            .await,
         Err(Error::Regex(_))
     ));
     assert_eq!(query_receipt_count(&database), 1);
@@ -163,7 +165,7 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
     );
     regex.mode = SearchMode::Regex;
     let recorded = services
-        .search_occurrences(regex.clone(), true)
+        .search_occurrences(regex.clone(), SearchOccurrenceOutput::Coordinates)
         .await
         .expect("record exhaustive regex");
     let receipt_id = recorded
@@ -173,7 +175,7 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
         .expect("regex receipt id");
     regex.query_receipt = Some(QueryReceiptAction::Reuse { receipt_id });
     let reused = services
-        .search_occurrences(regex, true)
+        .search_occurrences(regex, SearchOccurrenceOutput::Coordinates)
         .await
         .expect("reuse regex proof");
     assert_eq!(
@@ -184,7 +186,7 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
     let mut ranked = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     ranked.mode = SearchMode::Identifier;
     let error = services
-        .search_occurrences(ranked, true)
+        .search_occurrences(ranked, SearchOccurrenceOutput::Coordinates)
         .await
         .expect_err("ranked identifier cannot issue coverage");
     assert!(matches!(
@@ -227,7 +229,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
                 Vec::new(),
                 QueryReceiptAction::Record,
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("record absence");
@@ -246,7 +248,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
                     receipt_id: absence_receipt,
                 },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("reuse absence over subset");
@@ -260,7 +262,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
     let present = services
         .search_occurrences(
             exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("record present result");
@@ -279,7 +281,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
                     receipt_id: present_receipt,
                 },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect_err("nonempty superset cannot derive subset count");
@@ -297,7 +299,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
                 Vec::new(),
                 QueryReceiptAction::Record,
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("record scoped absence");
@@ -306,7 +308,10 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
 
     std::fs::write(root.path().join("notes.md"), "definitely_absent\n")
         .expect("write out-of-scope file");
-    services.index(false).await.expect("publish unrelated file");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish unrelated file");
     let reused = services
         .search_occurrences(
             exact_request(
@@ -317,7 +322,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
                     receipt_id: receipt_id.clone(),
                 },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("reuse unchanged partition");
@@ -333,7 +338,10 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
         "pub fn changed() { let _ = \"definitely_absent\"; }\n",
     )
     .expect("change relevant source");
-    services.index(false).await.expect("publish relevant edit");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish relevant edit");
     let error = services
         .search_occurrences(
             exact_request(
@@ -342,7 +350,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
                 Vec::new(),
                 QueryReceiptAction::Reuse { receipt_id },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect_err("changed partition invalidates proof");
@@ -356,11 +364,14 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
     let database = root.path().join("index.sqlite");
     let config = Config::discover(root.path(), Some(database)).expect("config");
     let services = Services::open(config.clone()).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let recorded = services
         .search_occurrences(
             exact_request("needle", Vec::new(), Vec::new(), QueryReceiptAction::Record),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("record");
@@ -382,7 +393,7 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
                     receipt_id: receipt_id.clone(),
                 },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect("reuse after restart");
@@ -399,7 +410,7 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
                 Vec::new(),
                 QueryReceiptAction::Reuse { receipt_id },
             ),
-            true,
+            SearchOccurrenceOutput::Coordinates,
         )
         .await
         .expect_err("predicate mismatch");

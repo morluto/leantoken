@@ -413,7 +413,10 @@ async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_to
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let files_request = FilesRequest {
         operation: FileOperation::Find,

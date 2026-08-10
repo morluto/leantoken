@@ -10,6 +10,57 @@ pub(super) struct ContextPolicy {
     focus: ContextFocusPolicy,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkingTreeObservation {
+    Unknown,
+    Clean,
+    Modified,
+    Untracked,
+    ModifiedAndUntracked,
+    DirtyUnclassified,
+}
+
+impl WorkingTreeObservation {
+    pub(super) fn from_status(status: &GitWorkingTreeStatus) -> Self {
+        if !status.is_available() {
+            return Self::Unknown;
+        }
+        if status.changed_paths.is_empty() {
+            return Self::Clean;
+        }
+        match (status.has_modified(), status.has_untracked()) {
+            (true, true) => Self::ModifiedAndUntracked,
+            (true, false) => Self::Modified,
+            (false, true) => Self::Untracked,
+            (false, false) => Self::DirtyUnclassified,
+        }
+    }
+
+    pub(super) const fn handoff_state(self) -> HandoffWorkingTreeState {
+        match self {
+            Self::Unknown => HandoffWorkingTreeState::Unknown,
+            Self::Clean => HandoffWorkingTreeState::Clean,
+            Self::Modified
+            | Self::Untracked
+            | Self::ModifiedAndUntracked
+            | Self::DirtyUnclassified => HandoffWorkingTreeState::Dirty,
+        }
+    }
+
+    pub(super) const fn provenance_state(self) -> RepositoryWorkingTreeState {
+        match self {
+            Self::Unknown => RepositoryWorkingTreeState::Unknown,
+            Self::Modified | Self::ModifiedAndUntracked => RepositoryWorkingTreeState::Modified,
+            Self::Untracked => RepositoryWorkingTreeState::Untracked,
+            Self::Clean | Self::DirtyUnclassified => RepositoryWorkingTreeState::Clean,
+        }
+    }
+
+    pub(super) const fn is_available(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+
 enum ContextDelivery {
     Plan,
     Fragments {
@@ -130,15 +181,13 @@ pub(super) struct ContextFinalization<'a> {
     pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
     pub(super) response_profile: ContextResponseProfile,
-    pub(super) immutable_diff_scope: bool,
+    pub(super) diff_evidence_mode: DiffEvidenceMode,
     pub(super) cancellation: &'a CancellationToken,
     pub(super) diagnostics: CandidateDiagnostics,
     pub(super) generation: u64,
     pub(super) diff_scope: Option<&'a DiffScopeReceipt>,
-    pub(super) working_tree_state: HandoffWorkingTreeState,
+    pub(super) working_tree: WorkingTreeObservation,
     pub(super) working_tree_paths: &'a [String],
-    pub(super) working_tree_modified: bool,
-    pub(super) working_tree_untracked: bool,
     pub(super) commit_revision: Option<&'a str>,
     pub(super) branch: Option<&'a str>,
     pub(super) resolved_workflow: ContextWorkflow,

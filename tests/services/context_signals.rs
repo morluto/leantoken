@@ -22,7 +22,10 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let exact = services
         .context_evaluation(ContextRequest {
@@ -125,7 +128,10 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let request = ContextRequest {
         task: "Fix OwnerAlpha and OtherSignal".into(),
         token_budget: 400,

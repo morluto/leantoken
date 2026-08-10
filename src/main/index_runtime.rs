@@ -49,7 +49,7 @@ pub(super) async fn run_index_leader_until_shutdown(
     // The watcher is registered before the scan. Events queued during the scan
     // are applied afterward, closing the startup gap without a second walk.
     let indexed = services
-        .index_cancellable(false, cancellation.clone())
+        .index_cancellable(IndexingMode::Reconcile, cancellation.clone())
         .await;
     let indexed = match indexed {
         Ok(indexed) => indexed,
@@ -202,7 +202,9 @@ pub(super) async fn reconcile_watcher_action(
         }
         WatcherAction::Full => {
             tracing::warn!("watcher scheduled bounded full reconciliation");
-            services.index_cancellable(false, cancellation).await
+            services
+                .index_cancellable(IndexingMode::Reconcile, cancellation)
+                .await
         }
     }
 }

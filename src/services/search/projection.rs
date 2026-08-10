@@ -23,10 +23,14 @@ pub(super) fn search_coverage(
     returned: &[CandidateSearchHit],
 ) -> SearchCoverage {
     SearchCoverage {
-        definitions: coverage_count(all, returned, |hit| hit_has_kind(hit, "symbol")),
-        references: coverage_count(all, returned, |hit| hit_has_kind(hit, "reference")),
+        definitions: coverage_count(all, returned, |hit| {
+            hit_has_kind(hit, SearchHitKind::Symbol)
+        }),
+        references: coverage_count(all, returned, |hit| {
+            hit_has_kind(hit, SearchHitKind::Reference)
+        }),
         text_matches: coverage_count(all, returned, |hit| {
-            hit_has_kind(hit, "text") || hit_has_kind(hit, "regex")
+            hit_has_kind(hit, SearchHitKind::Text) || hit_has_kind(hit, SearchHitKind::Regex)
         }),
     }
 }
@@ -85,7 +89,7 @@ pub(super) fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
         });
         let group = &mut groups[index];
         group.total_hits = group.total_hits.saturating_add(1);
-        if hit_has_kind(hit, "text") || hit_has_kind(hit, "regex") {
+        if hit_has_kind(hit, SearchHitKind::Text) || hit_has_kind(hit, SearchHitKind::Regex) {
             group.text_matches = group.text_matches.saturating_add(1);
         }
 
@@ -98,7 +102,8 @@ pub(super) fn group_search_hits(hits: &[SearchHit]) -> Vec<SearchGroup> {
             group.representative = Some(grouped_search_evidence(hit));
         }
 
-        if hit.role == Some(ReferenceRole::Reference) || hit_has_kind(hit, "reference") {
+        if hit.role == Some(ReferenceRole::Reference) || hit_has_kind(hit, SearchHitKind::Reference)
+        {
             if let Some(reference) = group
                 .references
                 .iter_mut()
@@ -137,22 +142,24 @@ pub(super) enum OccurrenceGroupKey {
     },
 }
 
-pub(super) fn occurrence_group_key(hit: &SearchHit, coordinates_only: bool) -> OccurrenceGroupKey {
-    if coordinates_only {
-        OccurrenceGroupKey::Path(hit.path.clone())
-    } else {
-        OccurrenceGroupKey::Excerpt {
+pub(super) fn occurrence_group_key(
+    hit: &SearchHit,
+    output: SearchOccurrenceOutput,
+) -> OccurrenceGroupKey {
+    match output {
+        SearchOccurrenceOutput::Coordinates => OccurrenceGroupKey::Path(hit.path.clone()),
+        SearchOccurrenceOutput::Excerpts => OccurrenceGroupKey::Excerpt {
             path: hit.path.clone(),
             start_line: hit.start_line,
             end_line: hit.end_line,
             content_hash: hit.content_hash.clone(),
-        }
+        },
     }
 }
 
 pub(super) fn group_occurrence_hits(
     hits: &[SearchHit],
-    coordinates_only: bool,
+    output: SearchOccurrenceOutput,
 ) -> Result<Vec<SearchOccurrenceGroup>> {
     let mut groups = Vec::<SearchOccurrenceGroup>::new();
     let mut positions = HashMap::<OccurrenceGroupKey, usize>::new();
@@ -162,29 +169,32 @@ pub(super) fn group_occurrence_hits(
                 "exhaustive occurrence response omitted exact coordinates".into(),
             )
         })?;
-        let key = occurrence_group_key(hit, coordinates_only);
+        let key = occurrence_group_key(hit, output);
         let index = *positions.entry(key).or_insert_with(|| {
             let index = groups.len();
+            let (start_line, end_line, excerpt, content_hash) = match output {
+                SearchOccurrenceOutput::Coordinates => {
+                    (occurrence.start_line, occurrence.end_line, None, None)
+                }
+                SearchOccurrenceOutput::Excerpts => (
+                    hit.start_line,
+                    hit.end_line,
+                    Some(hit.excerpt.clone()),
+                    Some(hit.content_hash.clone()),
+                ),
+            };
             groups.push(SearchOccurrenceGroup {
                 path: hit.path.clone(),
-                start_line: if coordinates_only {
-                    occurrence.start_line
-                } else {
-                    hit.start_line
-                },
-                end_line: if coordinates_only {
-                    occurrence.end_line
-                } else {
-                    hit.end_line
-                },
-                excerpt: (!coordinates_only).then(|| hit.excerpt.clone()),
-                content_hash: (!coordinates_only).then(|| hit.content_hash.clone()),
+                start_line,
+                end_line,
+                excerpt,
+                content_hash,
                 occurrences: Vec::new(),
             });
             index
         });
         let group = &mut groups[index];
-        if coordinates_only {
+        if output == SearchOccurrenceOutput::Coordinates {
             group.start_line = group.start_line.min(occurrence.start_line);
             group.end_line = group.end_line.max(occurrence.end_line);
         }
@@ -214,32 +224,27 @@ pub(super) fn select_search_page(
     for candidate in hits.iter().skip(offset).take(limit).cloned() {
         check_cancelled(cancellation)?;
         let group_key = match output_shape {
-            SearchOutputShape::OccurrenceGroups {
-                coordinates_only: false,
-            } => Some(occurrence_group_key(&candidate.hit, false)),
+            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => Some(
+                occurrence_group_key(&candidate.hit, SearchOccurrenceOutput::Excerpts),
+            ),
             SearchOutputShape::Full
             | SearchOutputShape::Compact
-            | SearchOutputShape::OccurrenceGroups {
-                coordinates_only: true,
-            } => None,
+            | SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => None,
         };
         let count = match output_shape {
             SearchOutputShape::Full => tokenizer.count(&candidate.hit.excerpt),
             SearchOutputShape::Compact => 0,
-            SearchOutputShape::OccurrenceGroups {
-                coordinates_only: true,
-            } => 0,
-            SearchOutputShape::OccurrenceGroups {
-                coordinates_only: false,
-            } if group_key
-                .as_ref()
-                .is_some_and(|key| charged_occurrence_groups.contains(key)) =>
+            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => 0,
+            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts)
+                if group_key
+                    .as_ref()
+                    .is_some_and(|key| charged_occurrence_groups.contains(key)) =>
             {
                 0
             }
-            SearchOutputShape::OccurrenceGroups {
-                coordinates_only: false,
-            } => tokenizer.count(&candidate.hit.excerpt),
+            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => {
+                tokenizer.count(&candidate.hit.excerpt)
+            }
         };
         if emitted_tokens.saturating_add(count) > token_limit {
             if selected.is_empty() {
@@ -276,16 +281,17 @@ pub(super) fn selected_search_source_tokens(
             .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
             .sum(),
         SearchOutputShape::Compact => 0,
-        SearchOutputShape::OccurrenceGroups {
-            coordinates_only: true,
-        } => 0,
-        SearchOutputShape::OccurrenceGroups {
-            coordinates_only: false,
-        } => {
+        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => 0,
+        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => {
             let mut seen = HashSet::new();
             selected
                 .iter()
-                .filter(|candidate| seen.insert(occurrence_group_key(&candidate.hit, false)))
+                .filter(|candidate| {
+                    seen.insert(occurrence_group_key(
+                        &candidate.hit,
+                        SearchOccurrenceOutput::Excerpts,
+                    ))
+                })
                 .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
                 .sum()
         }

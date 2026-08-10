@@ -2,25 +2,25 @@ use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
 
 impl Services {
-    pub async fn index(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.index_report(rebuild)
+    pub async fn index(&self, mode: IndexingMode) -> Result<IndexResponse> {
+        self.index_report(mode)
             .await
             .map(IndexReport::into_response)
     }
 
     /// Reconcile repository files and include bounded preparation skip reasons.
-    pub async fn index_report(&self, rebuild: bool) -> Result<IndexReport> {
-        self.index_cancellable_report(rebuild, CancellationToken::new())
+    pub async fn index_report(&self, mode: IndexingMode) -> Result<IndexReport> {
+        self.index_cancellable_report(mode, CancellationToken::new())
             .await
     }
 
     /// Reconcile repository files while honoring caller-owned cancellation.
     pub async fn index_cancellable(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexResponse> {
-        self.index_cancellable_report(rebuild, cancellation)
+        self.index_cancellable_report(mode, cancellation)
             .await
             .map(IndexReport::into_response)
     }
@@ -28,7 +28,7 @@ impl Services {
     /// Reconcile with cancellation and include bounded preparation skip reasons.
     pub async fn index_cancellable_report(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexReport> {
         let this = self.clone();
@@ -43,7 +43,7 @@ impl Services {
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
-                .reconcile_cancellable_report(rebuild, &cancellation);
+                .reconcile_cancellable_report(mode, &cancellation);
             operation.release()?;
             result
         })

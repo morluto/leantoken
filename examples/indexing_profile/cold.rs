@@ -1006,7 +1006,10 @@ fn run_profiled_monitored(
     let worker = indexer.clone();
     let worker_cancellation = cancellation.clone();
     let handle = std::thread::spawn(move || {
-        let result = worker.reconcile_cancellable_profiled(false, &worker_cancellation);
+        let result = worker.reconcile_cancellable_profiled(
+            leantoken::IndexingMode::Reconcile,
+            &worker_cancellation,
+        );
         let _ = sender.send(result);
     });
     let interval = Duration::from_millis(sample_interval_ms);

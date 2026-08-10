@@ -18,8 +18,9 @@ use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
     ContextRequest, ContextRequiredEvidence, FileOperation, FilesRequest, HandoffManifestRequest,
-    HistoryOperation, HistoryRequest, IndexConsistency, JsonOperation, JsonProjection, JsonRequest,
-    JsonSelector, OutlineRequest, ReadRequest, SearchMode, SearchRequest, WorkflowEvidence,
+    HistoryOperation, HistoryRequest, IndexConsistency, IndexingMode, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, SearchMode,
+    SearchRequest, WorkflowEvidence,
 };
 use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
@@ -410,7 +411,9 @@ impl Cli {
     #[must_use]
     pub fn app_request(&self) -> AppRequest {
         match &self.command {
-            Commands::Index { rebuild } => AppRequest::Index { rebuild: *rebuild },
+            Commands::Index { rebuild } => AppRequest::Index {
+                mode: IndexingMode::from_rebuild_flag(*rebuild),
+            },
             Commands::Status => AppRequest::Status,
             Commands::Coverage => AppRequest::Coverage,
             Commands::Savings(args) => args
@@ -527,7 +530,7 @@ impl Cli {
 #[allow(clippy::large_enum_variant)]
 pub enum AppRequest {
     Index {
-        rebuild: bool,
+        mode: IndexingMode,
     },
     Status,
     Coverage,

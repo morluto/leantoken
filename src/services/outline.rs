@@ -74,6 +74,25 @@ struct ParsedOutlineRequest {
     token_limit: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutlineOutput {
+    Full,
+    Signatures,
+}
+
+impl OutlineOutput {
+    const fn includes_imports(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    const fn cursor_projection(self) -> Option<&'static str> {
+        match self {
+            Self::Full => None,
+            Self::Signatures => Some("signatures"),
+        }
+    }
+}
+
 fn decode_outline_cursor(cursor: &str) -> Result<OutlineCursor> {
     let fields = cursor.split(':').collect::<Vec<_>>();
     let [generation, kind, offset, query_hash] = fields.as_slice() else {
@@ -265,7 +284,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
         if let Some(consistency) = consistency {
@@ -282,7 +301,7 @@ impl Services {
         let result = self
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.outline_sync(request, options, true, true, cancellation)
+                this.outline_sync(request, options, OutlineOutput::Full, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -355,8 +374,7 @@ impl Services {
                 let response = this.outline_sync(
                     request,
                     ServiceCallOptions::new(),
-                    false,
-                    false,
+                    OutlineOutput::Signatures,
                     cancellation,
                 )?;
                 let mut files = Vec::with_capacity(response.files.len());
@@ -412,8 +430,7 @@ impl Services {
         &self,
         parsed: ParsedOutlineRequest,
         options: ServiceCallOptions,
-        include_imports: bool,
-        record_savings: bool,
+        output: OutlineOutput,
         cancellation: &CancellationToken,
     ) -> Result<OutlineResponse> {
         check_cancelled(cancellation)?;
@@ -425,7 +442,7 @@ impl Services {
         } = parsed;
         let (mut response, baseline_source_tokens) = self.consistent(|session| {
             let generation = session.generation();
-            let cursor_projection = (!include_imports).then_some("signatures");
+            let cursor_projection = output.cursor_projection();
             let offset =
                 outline_cursor_offset(cursor.as_ref(), generation, &request, cursor_projection)?;
             let mut total_symbols = 0usize;
@@ -462,7 +479,7 @@ impl Services {
                 for (kind, count) in kind_counts {
                     *symbol_counts_by_kind.entry(kind).or_insert(0usize) += count;
                 }
-                let file_import_total = if include_imports {
+                let file_import_total = if output.includes_imports() {
                     session.count_imports_for_file(file.id)?
                 } else {
                     0
@@ -705,7 +722,7 @@ impl Services {
         response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
         receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
-        if record_savings {
+        if output == OutlineOutput::Full {
             self.record_token_savings_classified(
                 TokenAccountingOperation::Outline,
                 baseline_source_tokens,

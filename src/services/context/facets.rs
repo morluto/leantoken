@@ -1082,12 +1082,51 @@ mod tests {
     use super::*;
 
     fn exact_atoms(task: &str) -> Vec<String> {
-        plan(task, 64)
-            .queries
-            .into_iter()
-            .filter(|query| query.exact_variant && query.has_facet(FacetKind::ExactAtom))
-            .map(|query| query.value)
-            .collect()
+        technical_atoms(task)
+    }
+
+    fn facet(kind: FacetKind, original: &str, variants: Vec<String>) -> TaskFacet {
+        let mut facets = Vec::new();
+        push_facet(&mut facets, kind, original, variants, 1.0);
+        facets.pop().expect("non-empty facet")
+    }
+
+    #[test]
+    fn extracts_required_technical_atoms_without_stripping_exact_forms() {
+        let task = "Fix Rack::Deflater, _.cloneDeep, res.send, #[serde(untagged)], \
+            _pytest.monkeypatch.notset, renameTable, WithRequiredStructEnabled, \
+            src/services/context.rs, snake_case, kebab-case, camelCase, PascalCase, \
+            ERR_INVALID_CONFIG, and Result<Option<T>,Error>.";
+        let atoms = exact_atoms(task);
+        for expected in [
+            "Rack::Deflater",
+            "_.cloneDeep",
+            "res.send",
+            "#[serde(untagged)]",
+            "_pytest.monkeypatch.notset",
+            "renameTable",
+            "WithRequiredStructEnabled",
+            "src/services/context.rs",
+            "snake_case",
+            "kebab-case",
+            "camelCase",
+            "PascalCase",
+            "ERR_INVALID_CONFIG",
+            "Result<Option<T>,Error>",
+        ] {
+            assert!(
+                atoms.iter().any(|atom| atom == expected),
+                "missing {expected}: {atoms:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_atom_is_the_first_variant_even_when_not_scheduled_as_a_query() {
+        for atom in ["CONFIG", "#[serde(untagged)]"] {
+            let facet = facet(FacetKind::ExactAtom, atom, vec![atom.to_owned()]);
+            assert_eq!(facet.variants.first(), Some(&facet.original));
+        }
     }
 
     #[test]
@@ -1098,6 +1137,30 @@ mod tests {
         assert!(atoms.iter().any(|atom| atom == "res.send"));
         assert!(atoms.iter().any(|atom| atom == "Rack::Deflater"));
         assert!(atoms.iter().any(|atom| atom == "Result<Option<T>,Error>"));
+    }
+
+    #[test]
+    fn quoted_error_text_and_annotations_create_bounded_queries() {
+        let task = "Handle @retry and report \"Failed to lookup view\" without changing behavior.";
+        let plan = plan(task, 12);
+        let annotation = technical_atoms(task)
+            .into_iter()
+            .find(|atom| atom == "@retry")
+            .expect("configuration annotation");
+        assert_eq!(classify_atom(&annotation), FacetKind::Configuration);
+        let phrase = quoted_phrases(task)
+            .into_iter()
+            .find(|phrase| phrase == "Failed to lookup view")
+            .expect("quoted behavior");
+        let annotation = facet(
+            FacetKind::Configuration,
+            &annotation,
+            technical_variants(&annotation),
+        );
+        let phrase = facet(FacetKind::Behavior, &phrase, phrase_variants(&phrase));
+        assert!(plan.queries.len() <= 12);
+        assert!(annotation.variants.len() <= MAX_FACET_VARIANTS);
+        assert!(phrase.variants.len() <= MAX_FACET_VARIANTS);
     }
 
     #[test]
@@ -1162,12 +1225,45 @@ mod tests {
             "Fix render.AsciiJSON for non-BMP JSON with UTF-16 while preserving BMP and ASCII behavior",
             10,
         );
+        let facet = facet(
+            FacetKind::Symbol,
+            "render.AsciiJSON",
+            technical_variants("render.AsciiJSON"),
+        );
+
+        assert_eq!(
+            facet.variants.first().map(String::as_str),
+            Some("render.AsciiJSON")
+        );
+        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
         assert!(plan.queries.iter().any(|query| {
             query.value == "render.AsciiJSON"
                 && query.exact_variant
                 && query.has_facet(FacetKind::ExactAtom)
                 && query.has_facet(FacetKind::Symbol)
         }));
+    }
+
+    #[test]
+    fn kebab_case_error_atoms_retain_a_bounded_phrase_variant() {
+        let plan = plan(
+            "Report the failed-to-lookup-view error through the callback",
+            8,
+        );
+        let facet = facet(
+            FacetKind::Symbol,
+            "failed-to-lookup-view",
+            technical_variants("failed-to-lookup-view"),
+        );
+
+        assert!(
+            facet
+                .variants
+                .iter()
+                .any(|value| value == "failed to lookup view")
+        );
+        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
+        assert!(plan.queries.len() <= 8);
     }
 
     #[test]

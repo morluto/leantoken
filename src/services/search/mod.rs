@@ -35,13 +35,13 @@ mod validation;
 
 use execution::*;
 use hits::*;
-pub(super) use hits::{chunk_search_hit_for_range, fts_quote};
+pub(super) use hits::{OccurrenceMetadata, chunk_search_hit_for_range, fts_quote};
 use projection::*;
 use regex_plan::*;
 pub(super) use regex_plan::{LiteralFullScan, compile_literal_regex};
 use types::*;
 pub(super) use types::{
-    MAX_REGEX_CANDIDATE_CHUNKS, MAX_REGEX_CANDIDATES, MAX_REGEX_CHUNKS_PER_FILE,
+    LexicalMatchKind, MAX_REGEX_CANDIDATE_CHUNKS, MAX_REGEX_CANDIDATES, MAX_REGEX_CHUNKS_PER_FILE,
     MAX_REGEX_FILES_SCANNED, MAX_SCOPED_REGEX_ROWS_SCANNED,
 };
 use validation::*;
@@ -62,7 +62,8 @@ impl Services {
             occurrences_returned: selected.len(),
             occurrences_total: shape
                 .request
-                .all_occurrences
+                .kind
+                .is_exhaustive()
                 .then_some(shape.total_candidates),
             meta: self.meta(
                 shape.generation,
@@ -183,7 +184,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Full;
         let request = self
@@ -204,9 +205,8 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
-                        output_shape,
                         response_options: options,
-                        record_savings: true,
+                        accounting: SearchAccounting::Record,
                     },
                 )
                 .map(|snapshot| snapshot.response)
@@ -260,7 +260,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Compact;
         let request = self
@@ -282,9 +282,8 @@ impl Services {
                         RegexPlanning::Enabled,
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
-                            output_shape,
                             response_options: ServiceCallOptions::new(),
-                            record_savings: false,
+                            accounting: SearchAccounting::Omit,
                         },
                     )?
                     .response;
@@ -353,7 +352,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Full;
         let request = self
@@ -375,9 +374,8 @@ impl Services {
                         RegexPlanning::Enabled,
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
-                            output_shape,
                             response_options: ServiceCallOptions::new(),
-                            record_savings: false,
+                            accounting: SearchAccounting::Omit,
                         },
                     )?
                     .response;
@@ -411,9 +409,9 @@ impl Services {
     pub async fn search_occurrences(
         &self,
         request: SearchRequest,
-        coordinates_only: bool,
+        output: SearchOccurrenceOutput,
     ) -> Result<SearchOccurrencesResponse> {
-        self.search_occurrences_with_options(request, coordinates_only, ServiceCallOptions::new())
+        self.search_occurrences_with_options(request, output, ServiceCallOptions::new())
             .await
     }
 
@@ -421,12 +419,12 @@ impl Services {
     pub async fn search_occurrences_with_options(
         &self,
         request: SearchRequest,
-        coordinates_only: bool,
+        output: SearchOccurrenceOutput,
         options: ServiceCallOptions,
     ) -> Result<SearchOccurrencesResponse> {
         self.search_occurrences_execute(
             request,
-            coordinates_only,
+            output,
             RetrievalExecution::direct(options, CancellationToken::new()),
         )
         .await
@@ -436,14 +434,14 @@ impl Services {
     pub async fn search_occurrences_with_options_consistency_cancellable(
         &self,
         request: SearchRequest,
-        coordinates_only: bool,
+        output: SearchOccurrenceOutput,
         consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchOccurrencesResponse> {
         self.search_occurrences_execute(
             request,
-            coordinates_only,
+            output,
             RetrievalExecution::consistent(consistency, options, cancellation),
         )
         .await
@@ -452,7 +450,7 @@ impl Services {
     async fn search_occurrences_execute(
         &self,
         request: SearchRequest,
-        coordinates_only: bool,
+        output: SearchOccurrenceOutput,
         execution: RetrievalExecution,
     ) -> Result<SearchOccurrencesResponse> {
         let operation = TokenAccountingOperation::Search;
@@ -461,9 +459,9 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve(true);
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        let output_shape = SearchOutputShape::OccurrenceGroups { coordinates_only };
+        let output_shape = SearchOutputShape::OccurrenceGroups(output);
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
@@ -482,9 +480,8 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
-                        output_shape,
                         response_options: ServiceCallOptions::new(),
-                        record_savings: false,
+                        accounting: SearchAccounting::Omit,
                     },
                 )?;
                 let response = snapshot.response;
@@ -493,7 +490,7 @@ impl Services {
                         "grouped occurrence search omitted its exact total".into(),
                     )
                 })?;
-                let groups = group_occurrence_hits(&response.hits, coordinates_only)?;
+                let groups = group_occurrence_hits(&response.hits, output)?;
                 let query_receipt = match &snapshot.query_receipt {
                     QueryReceiptExecution::None => None,
                     QueryReceiptExecution::Pending(record) => Some(recorded_query_receipt_outcome(
@@ -507,7 +504,7 @@ impl Services {
                     groups,
                     occurrences_returned: response.occurrences_returned,
                     occurrences_total,
-                    coordinates_only,
+                    coordinates_only: output.coordinates_only(),
                     coverage: response.coverage,
                     query_receipt,
                     meta: response.meta,
@@ -543,9 +540,8 @@ impl Services {
                     RegexPlanning::Enabled,
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
-                        output_shape,
                         response_options: ServiceCallOptions::new(),
-                        record_savings: true,
+                        accounting: SearchAccounting::Record,
                     },
                 )?;
                 Ok(SearchEvaluation {
@@ -576,9 +572,8 @@ impl Services {
                     RegexPlanning::Disabled,
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
-                        output_shape,
                         response_options: ServiceCallOptions::new(),
-                        record_savings: true,
+                        accounting: SearchAccounting::Record,
                     },
                 )?;
                 Ok(SearchEvaluation {
@@ -599,7 +594,11 @@ impl Services {
         execution: SearchExecutionOptions,
     ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
-        let ParsedSearchRequest { request, prepared } = parsed;
+        let ParsedSearchRequest {
+            request,
+            prepared,
+            output_shape,
+        } = parsed;
         let mut snapshot = self.consistent(|session| {
             let generation = session.generation();
             self.search_snapshot(
@@ -612,6 +611,7 @@ impl Services {
                     request: &request,
                     prepared: &prepared,
                 },
+                output_shape,
                 execution,
                 execution::SearchScan {
                     regex_planning,
@@ -620,7 +620,7 @@ impl Services {
             )
         })?;
         self.finalize_bounded_response(&mut snapshot.response, execution.response_options)?;
-        if execution.record_savings {
+        if execution.accounting == SearchAccounting::Record {
             self.record_token_savings(
                 TokenAccountingOperation::Search,
                 snapshot.baseline_source_tokens,
@@ -679,7 +679,7 @@ mod tests {
             true,
             0,
             None,
-            false,
+            LexicalMatchKind::Text,
             OccurrenceMaterializationLimit {
                 existing_hits: 5,
                 max_hits: 7,

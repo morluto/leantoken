@@ -372,7 +372,10 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
     let source_receipt = source.meta.receipt_id.expect("source receipt");
     std::fs::write(root.path().join("src/rebase-added.rs"), "fn added() {}\n")
         .expect("generation edit");
-    services.index(false).await.expect("publish generation");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish generation");
 
     services
         .rebase_receipt(ReceiptRebaseRequest {
@@ -427,7 +430,10 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
         "Plain prose without structural LaTeX commands.\n",
     )
     .expect("write empty LaTeX fixture");
-    services.index(false).await.expect("index LaTeX fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index LaTeX fixture");
     let base = services
         .observed_token_savings_snapshot(None)
         .await

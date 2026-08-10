@@ -108,7 +108,7 @@ async fn main() -> AnyResult<()> {
         let storage = Storage::open(&config.database_path)?;
         let indexer = Indexer::new(Arc::new(config.clone()), storage)?;
         let index_started = Instant::now();
-        let profile = indexer.reconcile_profiled_report(false)?;
+        let profile = indexer.reconcile_profiled_report(leantoken::IndexingMode::Reconcile)?;
         let response = &profile.report.response;
         json!({
             "skipped": false,
@@ -1118,7 +1118,10 @@ mod tests {
             0
         );
         let services = Services::open(config).expect("services");
-        services.index(false).await.expect("index");
+        services
+            .index(leantoken::IndexingMode::Reconcile)
+            .await
+            .expect("index");
 
         let text = services
             .search(SearchRequest {

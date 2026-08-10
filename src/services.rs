@@ -128,12 +128,25 @@ pub struct Services {
     context_exclude_paths: validation::PathMatcher,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexSnapshotReadiness {
+    RequireReady,
+    AllowEmpty,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ReceiptResourceReserve {
+    #[default]
+    Omit,
+    Include,
+}
+
 /// Per-call response controls shared by service entry points.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
-    receipt_resource_reserve: bool,
+    receipt_resource_reserve: ReceiptResourceReserve,
     mcp_response_shape: Option<crate::tokens::McpResponseShape>,
     context_response_profile: Option<ContextResponseProfile>,
     initial_reconciliation_deadline: Option<tokio::time::Instant>,
@@ -145,7 +158,7 @@ impl ServiceCallOptions {
     pub const fn new() -> Self {
         Self {
             max_response_tokens: None,
-            receipt_resource_reserve: false,
+            receipt_resource_reserve: ReceiptResourceReserve::Omit,
             mcp_response_shape: None,
             context_response_profile: None,
             initial_reconciliation_deadline: None,
@@ -170,13 +183,16 @@ impl ServiceCallOptions {
 
     /// Reserve space for the adapter's optional receipt-resource decoration.
     #[must_use]
-    pub const fn with_receipt_resource_reserve(mut self, enabled: bool) -> Self {
-        self.receipt_resource_reserve = enabled;
+    pub const fn with_receipt_resource_reserve(mut self) -> Self {
+        self.receipt_resource_reserve = ReceiptResourceReserve::Include;
         self
     }
 
     pub(crate) const fn receipt_resource_reserve(self) -> bool {
-        self.receipt_resource_reserve
+        matches!(
+            self.receipt_resource_reserve,
+            ReceiptResourceReserve::Include
+        )
     }
 
     pub(crate) const fn with_mcp_response_shape(
@@ -416,14 +432,14 @@ impl Services {
         &self,
         operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
-        self.consistent_inner(false, operation)
+        self.consistent_inner(IndexSnapshotReadiness::RequireReady, operation)
     }
 
     fn consistent_allow_empty<T>(
         &self,
         operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
-        self.consistent_inner(true, operation)
+        self.consistent_inner(IndexSnapshotReadiness::AllowEmpty, operation)
     }
 
     /// Assemble a response against one WAL snapshot (DEFERRED read transaction).
@@ -432,7 +448,7 @@ impl Services {
     /// returns a typed retryable error rather than a partial response.
     fn consistent_inner<T>(
         &self,
-        allow_empty: bool,
+        readiness: IndexSnapshotReadiness,
         operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         for attempt in 0..3 {
@@ -448,7 +464,7 @@ impl Services {
                 Err(error) => return Err(error),
             };
             let generation = snapshot.generation();
-            if generation == 0 && !allow_empty {
+            if generation == 0 && matches!(readiness, IndexSnapshotReadiness::RequireReady) {
                 return Err(Error::IndexNotReady);
             }
             // Do not retry operation errors: after the first read, this session

@@ -26,13 +26,11 @@ struct PreparedContext {
     workflow: ContextWorkflow,
     workflow_evidence: WorkflowEvidence,
     response_profile: ContextResponseProfile,
-    immutable_diff_scope: bool,
+    diff_evidence_mode: DiffEvidenceMode,
     diff_scope: Option<DiffScopeReceipt>,
     changed_paths: HashSet<String>,
-    working_tree_state: HandoffWorkingTreeState,
+    working_tree: WorkingTreeObservation,
     working_tree_paths: Vec<String>,
-    working_tree_modified: bool,
-    working_tree_untracked: bool,
     path_filter: PathFilter,
 }
 
@@ -81,16 +79,12 @@ impl Services {
             diff_scope,
             working_tree,
         } = self.resolve_diff_scope(&request, revision.as_ref())?;
-        let immutable_diff_scope = revision.as_ref().is_some_and(ContextRevision::is_range);
-        let working_tree_state = if !working_tree.is_available() {
-            HandoffWorkingTreeState::Unknown
-        } else if working_tree.changed_paths.is_empty() {
-            HandoffWorkingTreeState::Clean
+        let diff_evidence_mode = if revision.as_ref().is_some_and(ContextRevision::is_range) {
+            DiffEvidenceMode::ImmutableRange
         } else {
-            HandoffWorkingTreeState::Dirty
+            DiffEvidenceMode::WorkingTree
         };
-        let working_tree_modified = working_tree.has_modified();
-        let working_tree_untracked = working_tree.has_untracked();
+        let working_tree_observation = WorkingTreeObservation::from_status(&working_tree);
         let working_tree_paths = working_tree
             .changed_paths
             .iter()
@@ -113,13 +107,11 @@ impl Services {
                 workflow,
                 workflow_evidence,
                 response_profile,
-                immutable_diff_scope,
+                diff_evidence_mode,
                 diff_scope,
                 changed_paths,
-                working_tree_state,
+                working_tree: working_tree_observation,
                 working_tree_paths,
-                working_tree_modified,
-                working_tree_untracked,
                 path_filter,
             },
             retrieval,
@@ -138,13 +130,11 @@ impl Services {
             workflow,
             workflow_evidence,
             response_profile,
-            immutable_diff_scope,
+            diff_evidence_mode,
             diff_scope,
             changed_paths,
-            working_tree_state,
+            working_tree,
             working_tree_paths,
-            working_tree_modified,
-            working_tree_untracked,
             path_filter,
         } = prepared;
         let ContextRetrieval {
@@ -297,15 +287,13 @@ impl Services {
                     policy: &policy,
                     options,
                     response_profile,
-                    immutable_diff_scope,
+                    diff_evidence_mode,
                     cancellation,
                     diagnostics,
                     generation,
                     diff_scope: diff_scope.as_ref(),
-                    working_tree_state,
+                    working_tree,
                     working_tree_paths: &working_tree_paths,
-                    working_tree_modified,
-                    working_tree_untracked,
                     commit_revision: commit_revision.as_deref(),
                     branch: branch.as_deref(),
                     resolved_workflow,

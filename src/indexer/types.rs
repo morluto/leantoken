@@ -169,12 +169,6 @@ impl FilePreparationDiagnostics {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum StorageProfiling {
-    Omit,
-    Collect,
-}
-
 pub(super) struct LazyWorkerPool {
     pub(super) pool: OnceLock<ThreadPool>,
     pub(super) init: Mutex<()>,
@@ -189,7 +183,6 @@ pub(super) struct ChangeSet {
     pub(super) created: Vec<String>,
     pub(super) modified: Vec<String>,
     pub(super) deleted: Vec<String>,
-    pub(super) visibility_recomputed: bool,
 }
 
 #[derive(Debug)]
@@ -211,7 +204,6 @@ impl ChangeSet {
         existing: &HashMap<String, crate::storage::FileRecord>,
         candidates: &HashMap<String, DiscoveredFile>,
         deletions: &HashSet<String>,
-        visibility_recomputed: bool,
     ) -> Self {
         let mut created = Vec::new();
         let mut modified = Vec::new();
@@ -230,7 +222,6 @@ impl ChangeSet {
             created,
             modified,
             deleted,
-            visibility_recomputed,
         }
     }
 

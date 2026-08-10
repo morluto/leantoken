@@ -246,15 +246,13 @@ impl Services {
             policy,
             options,
             response_profile,
-            immutable_diff_scope,
+            diff_evidence_mode,
             cancellation,
             diagnostics,
             generation,
             diff_scope,
-            working_tree_state,
+            working_tree,
             working_tree_paths,
-            working_tree_modified,
-            working_tree_untracked,
             commit_revision,
             branch,
             resolved_workflow,
@@ -332,20 +330,10 @@ impl Services {
         let provenance = RepositoryProvenance {
             commit_revision: commit_revision.map(str::to_owned),
             branch: branch.map(str::to_owned),
-            working_tree_state: if working_tree_state == HandoffWorkingTreeState::Unknown {
-                RepositoryWorkingTreeState::Unknown
-            } else if working_tree_modified {
-                RepositoryWorkingTreeState::Modified
-            } else if working_tree_untracked {
-                RepositoryWorkingTreeState::Untracked
-            } else {
-                RepositoryWorkingTreeState::Clean
-            },
+            working_tree_state: working_tree.provenance_state(),
             repository_generation: generation,
             freshness: response.meta.freshness.clone(),
-            status: if commit_revision.is_some()
-                && branch.is_some()
-                && working_tree_state != HandoffWorkingTreeState::Unknown
+            status: if commit_revision.is_some() && branch.is_some() && working_tree.is_available()
             {
                 RepositoryProvenanceStatus::Available
             } else {
@@ -371,7 +359,7 @@ impl Services {
                         scope: &scope,
                         workflow: resolved_workflow,
                         policy,
-                        immutable_range: immutable_diff_scope,
+                        mode: diff_evidence_mode,
                         cancellation,
                     })
                 })
@@ -442,7 +430,7 @@ impl Services {
                     commit_revision: handoff_commit_revision,
                     commit_revision_available,
                     working_tree_state: if commit_revision_available {
-                        working_tree_state
+                        working_tree.handoff_state()
                     } else {
                         HandoffWorkingTreeState::Unknown
                     },

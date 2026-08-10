@@ -274,11 +274,6 @@ pub(super) fn read_bounded(
     read_bounded_file(root.open(path)?.into_std(), max_bytes)
 }
 
-#[cfg(test)]
-pub(super) fn read_bounded_path(path: &Path, max_bytes: u64) -> std::io::Result<Option<Vec<u8>>> {
-    read_bounded_file(fs::File::open(path)?, max_bytes)
-}
-
 pub(super) fn read_bounded_file(
     file: fs::File,
     max_bytes: u64,

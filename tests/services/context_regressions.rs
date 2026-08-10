@@ -19,7 +19,10 @@ async fn required_evidence_does_not_transfer_to_overlapping_content() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let response = services
         .context(ContextRequest {
@@ -128,7 +131,10 @@ async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let mut request = context_limit_request(1_200);
     request.max_fragments = Some(6);
     request.task = "Fix direct CLI context on an initial database so it initializes the first \
