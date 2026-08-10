@@ -1240,139 +1240,140 @@
 <a href=#1240 id=1240 data-nosnippet>1240</a>            query.value == <span class="string">"render.AsciiJSON"
 <a href=#1241 id=1241 data-nosnippet>1241</a>                </span>&amp;&amp; query.exact_variant
 <a href=#1242 id=1242 data-nosnippet>1242</a>                &amp;&amp; query.has_facet(FacetKind::ExactAtom)
-<a href=#1243 id=1243 data-nosnippet>1243</a>        }));
-<a href=#1244 id=1244 data-nosnippet>1244</a>    }
-<a href=#1245 id=1245 data-nosnippet>1245</a>
-<a href=#1246 id=1246 data-nosnippet>1246</a>    <span class="attr">#[test]
-<a href=#1247 id=1247 data-nosnippet>1247</a>    </span><span class="kw">fn </span>kebab_case_error_atoms_retain_a_bounded_phrase_variant() {
-<a href=#1248 id=1248 data-nosnippet>1248</a>        <span class="kw">let </span>plan = plan(
-<a href=#1249 id=1249 data-nosnippet>1249</a>            <span class="string">"Report the failed-to-lookup-view error through the callback"</span>,
-<a href=#1250 id=1250 data-nosnippet>1250</a>            <span class="number">8</span>,
-<a href=#1251 id=1251 data-nosnippet>1251</a>        );
-<a href=#1252 id=1252 data-nosnippet>1252</a>        <span class="kw">let </span>facet = facet(
-<a href=#1253 id=1253 data-nosnippet>1253</a>            FacetKind::Symbol,
-<a href=#1254 id=1254 data-nosnippet>1254</a>            <span class="string">"failed-to-lookup-view"</span>,
-<a href=#1255 id=1255 data-nosnippet>1255</a>            technical_variants(<span class="string">"failed-to-lookup-view"</span>),
-<a href=#1256 id=1256 data-nosnippet>1256</a>        );
-<a href=#1257 id=1257 data-nosnippet>1257</a>
-<a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="macro">assert!</span>(
-<a href=#1259 id=1259 data-nosnippet>1259</a>            facet
-<a href=#1260 id=1260 data-nosnippet>1260</a>                .variants
-<a href=#1261 id=1261 data-nosnippet>1261</a>                .iter()
-<a href=#1262 id=1262 data-nosnippet>1262</a>                .any(|value| value == <span class="string">"failed to lookup view"</span>)
-<a href=#1263 id=1263 data-nosnippet>1263</a>        );
-<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="macro">assert!</span>(facet.variants.len() &lt;= MAX_FACET_VARIANTS);
-<a href=#1265 id=1265 data-nosnippet>1265</a>        <span class="macro">assert!</span>(plan.queries.len() &lt;= <span class="number">8</span>);
-<a href=#1266 id=1266 data-nosnippet>1266</a>    }
-<a href=#1267 id=1267 data-nosnippet>1267</a>
-<a href=#1268 id=1268 data-nosnippet>1268</a>    <span class="attr">#[test]
-<a href=#1269 id=1269 data-nosnippet>1269</a>    </span><span class="kw">fn </span>workflow_evidence_reserves_deterministic_typed_query_lanes() {
-<a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="kw">let </span>evidence = WorkflowEvidence::new()
-<a href=#1271 id=1271 data-nosnippet>1271</a>            .with_failure_traces([<span class="string">"error: default_values_if is missing"</span>.to_owned()])
-<a href=#1272 id=1272 data-nosnippet>1272</a>            .with_symbols([<span class="string">"default_values_if"</span>.to_owned()])
-<a href=#1273 id=1273 data-nosnippet>1273</a>            .with_paths([<span class="string">"tests/builder/default_vals.rs"</span>.to_owned()])
-<a href=#1274 id=1274 data-nosnippet>1274</a>            .with_test_intents([<span class="string">"default values regression"</span>.to_owned()]);
-<a href=#1275 id=1275 data-nosnippet>1275</a>
-<a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="kw">let </span>first = plan_with_workflow_evidence(<span class="string">"cargo test failed"</span>, <span class="kw-2">&amp;</span>evidence, <span class="number">12</span>);
-<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span>second = plan_with_workflow_evidence(<span class="string">"cargo test failed"</span>, <span class="kw-2">&amp;</span>evidence, <span class="number">12</span>);
-<a href=#1278 id=1278 data-nosnippet>1278</a>
-<a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="macro">assert_eq!</span>(first.queries, second.queries);
-<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="macro">assert!</span>(first.queries.len() &lt;= <span class="number">12</span>);
-<a href=#1281 id=1281 data-nosnippet>1281</a>        <span class="kw">for </span>kind <span class="kw">in </span>[
-<a href=#1282 id=1282 data-nosnippet>1282</a>            FacetKind::FailureTrace,
-<a href=#1283 id=1283 data-nosnippet>1283</a>            FacetKind::Symbol,
-<a href=#1284 id=1284 data-nosnippet>1284</a>            FacetKind::Path,
-<a href=#1285 id=1285 data-nosnippet>1285</a>            FacetKind::TestIntent,
-<a href=#1286 id=1286 data-nosnippet>1286</a>        ] {
-<a href=#1287 id=1287 data-nosnippet>1287</a>            <span class="macro">assert!</span>(
-<a href=#1288 id=1288 data-nosnippet>1288</a>                first.queries.iter().any(|query| query.has_facet(kind)),
-<a href=#1289 id=1289 data-nosnippet>1289</a>                <span class="string">"missing {kind:?}: {:?}"</span>,
-<a href=#1290 id=1290 data-nosnippet>1290</a>                first.queries
-<a href=#1291 id=1291 data-nosnippet>1291</a>            );
-<a href=#1292 id=1292 data-nosnippet>1292</a>        }
-<a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="macro">assert_eq!</span>(
-<a href=#1294 id=1294 data-nosnippet>1294</a>            first.queries.first().map(|query| query.value.as_str()),
-<a href=#1295 id=1295 data-nosnippet>1295</a>            <span class="prelude-val">Some</span>(<span class="string">"default_values_if"</span>)
-<a href=#1296 id=1296 data-nosnippet>1296</a>        );
-<a href=#1297 id=1297 data-nosnippet>1297</a>    }
-<a href=#1298 id=1298 data-nosnippet>1298</a>
-<a href=#1299 id=1299 data-nosnippet>1299</a>    <span class="attr">#[test]
-<a href=#1300 id=1300 data-nosnippet>1300</a>    </span><span class="kw">fn </span>empty_workflow_evidence_preserves_the_existing_plan() {
-<a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="kw">let </span>task = <span class="string">"fix Parser::parse for src/parser.rs"</span>;
-<a href=#1302 id=1302 data-nosnippet>1302</a>
-<a href=#1303 id=1303 data-nosnippet>1303</a>        <span class="macro">assert_eq!</span>(
-<a href=#1304 id=1304 data-nosnippet>1304</a>            plan(task, <span class="number">12</span>).queries,
-<a href=#1305 id=1305 data-nosnippet>1305</a>            plan_with_workflow_evidence(task, <span class="kw-2">&amp;</span>WorkflowEvidence::default(), <span class="number">12</span>).queries
-<a href=#1306 id=1306 data-nosnippet>1306</a>        );
-<a href=#1307 id=1307 data-nosnippet>1307</a>    }
-<a href=#1308 id=1308 data-nosnippet>1308</a>
-<a href=#1309 id=1309 data-nosnippet>1309</a>    <span class="attr">#[test]
-<a href=#1310 id=1310 data-nosnippet>1310</a>    </span><span class="kw">fn </span>task_roles_separate_primary_preserve_and_test_queries() {
-<a href=#1311 id=1311 data-nosnippet>1311</a>        <span class="kw">let </span>facet_plan = plan(
-<a href=#1312 id=1312 data-nosnippet>1312</a>            <span class="string">"Fix direct context initialization instead of index_not_ready. Preserve MCP startup \
-<a href=#1313 id=1313 data-nosnippet>1313</a>             and snapshot consistency. Add a regression test."</span>,
-<a href=#1314 id=1314 data-nosnippet>1314</a>            <span class="number">16</span>,
-<a href=#1315 id=1315 data-nosnippet>1315</a>        );
-<a href=#1316 id=1316 data-nosnippet>1316</a>
-<a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="macro">assert!</span>(facet_plan.queries.iter().any(|query| {
-<a href=#1318 id=1318 data-nosnippet>1318</a>            query.has_facet(FacetKind::PrimaryChange)
-<a href=#1319 id=1319 data-nosnippet>1319</a>                &amp;&amp; (query.value == <span class="string">"context" </span>|| query.value == <span class="string">"initialization"</span>)
-<a href=#1320 id=1320 data-nosnippet>1320</a>        }));
-<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="macro">assert!</span>(facet_plan.queries.iter().any(|query| {
-<a href=#1322 id=1322 data-nosnippet>1322</a>            query.has_facet(FacetKind::FailureTrace) &amp;&amp; query.value.contains(<span class="string">"index_not_ready"</span>)
-<a href=#1323 id=1323 data-nosnippet>1323</a>        }));
-<a href=#1324 id=1324 data-nosnippet>1324</a>        <span class="macro">assert!</span>(
-<a href=#1325 id=1325 data-nosnippet>1325</a>            facet_plan
-<a href=#1326 id=1326 data-nosnippet>1326</a>                .queries
-<a href=#1327 id=1327 data-nosnippet>1327</a>                .iter()
-<a href=#1328 id=1328 data-nosnippet>1328</a>                .any(|query| query.has_facet(FacetKind::PreserveConstraint))
-<a href=#1329 id=1329 data-nosnippet>1329</a>        );
-<a href=#1330 id=1330 data-nosnippet>1330</a>        <span class="macro">assert!</span>(
-<a href=#1331 id=1331 data-nosnippet>1331</a>            facet_plan
-<a href=#1332 id=1332 data-nosnippet>1332</a>                .queries
-<a href=#1333 id=1333 data-nosnippet>1333</a>                .iter()
-<a href=#1334 id=1334 data-nosnippet>1334</a>                .any(|query| query.has_facet(FacetKind::TestIntent))
-<a href=#1335 id=1335 data-nosnippet>1335</a>        );
-<a href=#1336 id=1336 data-nosnippet>1336</a>        <span class="macro">assert_eq!</span>(
-<a href=#1337 id=1337 data-nosnippet>1337</a>            primary_task_text(<span class="string">"Which test suite verifies the MCP tool schemas?"</span>),
-<a href=#1338 id=1338 data-nosnippet>1338</a>            <span class="string">"Which test suite verifies the MCP tool schemas?"
-<a href=#1339 id=1339 data-nosnippet>1339</a>        </span>);
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="macro">assert!</span>(
-<a href=#1341 id=1341 data-nosnippet>1341</a>            plan(<span class="string">"Test direct context initialization"</span>, <span class="number">8</span>)
-<a href=#1342 id=1342 data-nosnippet>1342</a>                .queries
-<a href=#1343 id=1343 data-nosnippet>1343</a>                .iter()
-<a href=#1344 id=1344 data-nosnippet>1344</a>                .any(|query| query.has_facet(FacetKind::TestIntent))
-<a href=#1345 id=1345 data-nosnippet>1345</a>        );
-<a href=#1346 id=1346 data-nosnippet>1346</a>
-<a href=#1347 id=1347 data-nosnippet>1347</a>        <span class="kw">let </span>mixed = plan(
-<a href=#1348 id=1348 data-nosnippet>1348</a>            <span class="string">"Add SearchCompactResponse compact output while preserving full ranking and regression tests"</span>,
-<a href=#1349 id=1349 data-nosnippet>1349</a>            <span class="number">16</span>,
-<a href=#1350 id=1350 data-nosnippet>1350</a>        );
-<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="kw">let </span>exact = mixed
-<a href=#1352 id=1352 data-nosnippet>1352</a>            .queries
-<a href=#1353 id=1353 data-nosnippet>1353</a>            .iter()
-<a href=#1354 id=1354 data-nosnippet>1354</a>            .find(|query| query.value == <span class="string">"SearchCompactResponse"</span>)
-<a href=#1355 id=1355 data-nosnippet>1355</a>            .expect(<span class="string">"exact implementation query"</span>);
-<a href=#1356 id=1356 data-nosnippet>1356</a>        <span class="macro">assert!</span>(exact.has_facet(FacetKind::PrimaryChange));
-<a href=#1357 id=1357 data-nosnippet>1357</a>        <span class="macro">assert!</span>(!exact.has_facet(FacetKind::TestIntent));
-<a href=#1358 id=1358 data-nosnippet>1358</a>        <span class="macro">assert!</span>(mixed.queries.iter().any(|query| {
-<a href=#1359 id=1359 data-nosnippet>1359</a>            query.has_facet(FacetKind::PreserveConstraint)
-<a href=#1360 id=1360 data-nosnippet>1360</a>                &amp;&amp; !query.has_facet(FacetKind::TestIntent)
-<a href=#1361 id=1361 data-nosnippet>1361</a>        }));
-<a href=#1362 id=1362 data-nosnippet>1362</a>        <span class="kw">let </span>primary_phrase = [<span class="string">"search"</span>, <span class="string">"projection"</span>].join(<span class="string">" "</span>);
-<a href=#1363 id=1363 data-nosnippet>1363</a>        <span class="kw">let </span>natural_task = <span class="macro">format!</span>(
-<a href=#1364 id=1364 data-nosnippet>1364</a>            <span class="string">"Add a source-free compact {primary_phrase} to CLI and MCP while preserving full ranking"
-<a href=#1365 id=1365 data-nosnippet>1365</a>        </span>);
-<a href=#1366 id=1366 data-nosnippet>1366</a>        <span class="kw">let </span>natural = plan(<span class="kw-2">&amp;</span>natural_task, <span class="number">16</span>);
-<a href=#1367 id=1367 data-nosnippet>1367</a>        <span class="macro">assert!</span>(natural.queries.iter().any(|query| {
-<a href=#1368 id=1368 data-nosnippet>1368</a>            query.value == primary_phrase &amp;&amp; query.has_facet(FacetKind::PrimaryChange)
-<a href=#1369 id=1369 data-nosnippet>1369</a>        }));
-<a href=#1370 id=1370 data-nosnippet>1370</a>        <span class="macro">assert_eq!</span>(
-<a href=#1371 id=1371 data-nosnippet>1371</a>            primary_task_text(
-<a href=#1372 id=1372 data-nosnippet>1372</a>                <span class="string">"Add SearchCompactResponse compact output while preserving full ranking"
-<a href=#1373 id=1373 data-nosnippet>1373</a>            </span>),
-<a href=#1374 id=1374 data-nosnippet>1374</a>            <span class="string">"Add SearchCompactResponse compact output"
-<a href=#1375 id=1375 data-nosnippet>1375</a>        </span>);
-<a href=#1376 id=1376 data-nosnippet>1376</a>    }
-<a href=#1377 id=1377 data-nosnippet>1377</a>}
+<a href=#1243 id=1243 data-nosnippet>1243</a>                &amp;&amp; query.has_facet(FacetKind::Symbol)
+<a href=#1244 id=1244 data-nosnippet>1244</a>        }));
+<a href=#1245 id=1245 data-nosnippet>1245</a>    }
+<a href=#1246 id=1246 data-nosnippet>1246</a>
+<a href=#1247 id=1247 data-nosnippet>1247</a>    <span class="attr">#[test]
+<a href=#1248 id=1248 data-nosnippet>1248</a>    </span><span class="kw">fn </span>kebab_case_error_atoms_retain_a_bounded_phrase_variant() {
+<a href=#1249 id=1249 data-nosnippet>1249</a>        <span class="kw">let </span>plan = plan(
+<a href=#1250 id=1250 data-nosnippet>1250</a>            <span class="string">"Report the failed-to-lookup-view error through the callback"</span>,
+<a href=#1251 id=1251 data-nosnippet>1251</a>            <span class="number">8</span>,
+<a href=#1252 id=1252 data-nosnippet>1252</a>        );
+<a href=#1253 id=1253 data-nosnippet>1253</a>        <span class="kw">let </span>facet = facet(
+<a href=#1254 id=1254 data-nosnippet>1254</a>            FacetKind::Symbol,
+<a href=#1255 id=1255 data-nosnippet>1255</a>            <span class="string">"failed-to-lookup-view"</span>,
+<a href=#1256 id=1256 data-nosnippet>1256</a>            technical_variants(<span class="string">"failed-to-lookup-view"</span>),
+<a href=#1257 id=1257 data-nosnippet>1257</a>        );
+<a href=#1258 id=1258 data-nosnippet>1258</a>
+<a href=#1259 id=1259 data-nosnippet>1259</a>        <span class="macro">assert!</span>(
+<a href=#1260 id=1260 data-nosnippet>1260</a>            facet
+<a href=#1261 id=1261 data-nosnippet>1261</a>                .variants
+<a href=#1262 id=1262 data-nosnippet>1262</a>                .iter()
+<a href=#1263 id=1263 data-nosnippet>1263</a>                .any(|value| value == <span class="string">"failed to lookup view"</span>)
+<a href=#1264 id=1264 data-nosnippet>1264</a>        );
+<a href=#1265 id=1265 data-nosnippet>1265</a>        <span class="macro">assert!</span>(facet.variants.len() &lt;= MAX_FACET_VARIANTS);
+<a href=#1266 id=1266 data-nosnippet>1266</a>        <span class="macro">assert!</span>(plan.queries.len() &lt;= <span class="number">8</span>);
+<a href=#1267 id=1267 data-nosnippet>1267</a>    }
+<a href=#1268 id=1268 data-nosnippet>1268</a>
+<a href=#1269 id=1269 data-nosnippet>1269</a>    <span class="attr">#[test]
+<a href=#1270 id=1270 data-nosnippet>1270</a>    </span><span class="kw">fn </span>workflow_evidence_reserves_deterministic_typed_query_lanes() {
+<a href=#1271 id=1271 data-nosnippet>1271</a>        <span class="kw">let </span>evidence = WorkflowEvidence::new()
+<a href=#1272 id=1272 data-nosnippet>1272</a>            .with_failure_traces([<span class="string">"error: default_values_if is missing"</span>.to_owned()])
+<a href=#1273 id=1273 data-nosnippet>1273</a>            .with_symbols([<span class="string">"default_values_if"</span>.to_owned()])
+<a href=#1274 id=1274 data-nosnippet>1274</a>            .with_paths([<span class="string">"tests/builder/default_vals.rs"</span>.to_owned()])
+<a href=#1275 id=1275 data-nosnippet>1275</a>            .with_test_intents([<span class="string">"default values regression"</span>.to_owned()]);
+<a href=#1276 id=1276 data-nosnippet>1276</a>
+<a href=#1277 id=1277 data-nosnippet>1277</a>        <span class="kw">let </span>first = plan_with_workflow_evidence(<span class="string">"cargo test failed"</span>, <span class="kw-2">&amp;</span>evidence, <span class="number">12</span>);
+<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="kw">let </span>second = plan_with_workflow_evidence(<span class="string">"cargo test failed"</span>, <span class="kw-2">&amp;</span>evidence, <span class="number">12</span>);
+<a href=#1279 id=1279 data-nosnippet>1279</a>
+<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="macro">assert_eq!</span>(first.queries, second.queries);
+<a href=#1281 id=1281 data-nosnippet>1281</a>        <span class="macro">assert!</span>(first.queries.len() &lt;= <span class="number">12</span>);
+<a href=#1282 id=1282 data-nosnippet>1282</a>        <span class="kw">for </span>kind <span class="kw">in </span>[
+<a href=#1283 id=1283 data-nosnippet>1283</a>            FacetKind::FailureTrace,
+<a href=#1284 id=1284 data-nosnippet>1284</a>            FacetKind::Symbol,
+<a href=#1285 id=1285 data-nosnippet>1285</a>            FacetKind::Path,
+<a href=#1286 id=1286 data-nosnippet>1286</a>            FacetKind::TestIntent,
+<a href=#1287 id=1287 data-nosnippet>1287</a>        ] {
+<a href=#1288 id=1288 data-nosnippet>1288</a>            <span class="macro">assert!</span>(
+<a href=#1289 id=1289 data-nosnippet>1289</a>                first.queries.iter().any(|query| query.has_facet(kind)),
+<a href=#1290 id=1290 data-nosnippet>1290</a>                <span class="string">"missing {kind:?}: {:?}"</span>,
+<a href=#1291 id=1291 data-nosnippet>1291</a>                first.queries
+<a href=#1292 id=1292 data-nosnippet>1292</a>            );
+<a href=#1293 id=1293 data-nosnippet>1293</a>        }
+<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="macro">assert_eq!</span>(
+<a href=#1295 id=1295 data-nosnippet>1295</a>            first.queries.first().map(|query| query.value.as_str()),
+<a href=#1296 id=1296 data-nosnippet>1296</a>            <span class="prelude-val">Some</span>(<span class="string">"default_values_if"</span>)
+<a href=#1297 id=1297 data-nosnippet>1297</a>        );
+<a href=#1298 id=1298 data-nosnippet>1298</a>    }
+<a href=#1299 id=1299 data-nosnippet>1299</a>
+<a href=#1300 id=1300 data-nosnippet>1300</a>    <span class="attr">#[test]
+<a href=#1301 id=1301 data-nosnippet>1301</a>    </span><span class="kw">fn </span>empty_workflow_evidence_preserves_the_existing_plan() {
+<a href=#1302 id=1302 data-nosnippet>1302</a>        <span class="kw">let </span>task = <span class="string">"fix Parser::parse for src/parser.rs"</span>;
+<a href=#1303 id=1303 data-nosnippet>1303</a>
+<a href=#1304 id=1304 data-nosnippet>1304</a>        <span class="macro">assert_eq!</span>(
+<a href=#1305 id=1305 data-nosnippet>1305</a>            plan(task, <span class="number">12</span>).queries,
+<a href=#1306 id=1306 data-nosnippet>1306</a>            plan_with_workflow_evidence(task, <span class="kw-2">&amp;</span>WorkflowEvidence::default(), <span class="number">12</span>).queries
+<a href=#1307 id=1307 data-nosnippet>1307</a>        );
+<a href=#1308 id=1308 data-nosnippet>1308</a>    }
+<a href=#1309 id=1309 data-nosnippet>1309</a>
+<a href=#1310 id=1310 data-nosnippet>1310</a>    <span class="attr">#[test]
+<a href=#1311 id=1311 data-nosnippet>1311</a>    </span><span class="kw">fn </span>task_roles_separate_primary_preserve_and_test_queries() {
+<a href=#1312 id=1312 data-nosnippet>1312</a>        <span class="kw">let </span>facet_plan = plan(
+<a href=#1313 id=1313 data-nosnippet>1313</a>            <span class="string">"Fix direct context initialization instead of index_not_ready. Preserve MCP startup \
+<a href=#1314 id=1314 data-nosnippet>1314</a>             and snapshot consistency. Add a regression test."</span>,
+<a href=#1315 id=1315 data-nosnippet>1315</a>            <span class="number">16</span>,
+<a href=#1316 id=1316 data-nosnippet>1316</a>        );
+<a href=#1317 id=1317 data-nosnippet>1317</a>
+<a href=#1318 id=1318 data-nosnippet>1318</a>        <span class="macro">assert!</span>(facet_plan.queries.iter().any(|query| {
+<a href=#1319 id=1319 data-nosnippet>1319</a>            query.has_facet(FacetKind::PrimaryChange)
+<a href=#1320 id=1320 data-nosnippet>1320</a>                &amp;&amp; (query.value == <span class="string">"context" </span>|| query.value == <span class="string">"initialization"</span>)
+<a href=#1321 id=1321 data-nosnippet>1321</a>        }));
+<a href=#1322 id=1322 data-nosnippet>1322</a>        <span class="macro">assert!</span>(facet_plan.queries.iter().any(|query| {
+<a href=#1323 id=1323 data-nosnippet>1323</a>            query.has_facet(FacetKind::FailureTrace) &amp;&amp; query.value.contains(<span class="string">"index_not_ready"</span>)
+<a href=#1324 id=1324 data-nosnippet>1324</a>        }));
+<a href=#1325 id=1325 data-nosnippet>1325</a>        <span class="macro">assert!</span>(
+<a href=#1326 id=1326 data-nosnippet>1326</a>            facet_plan
+<a href=#1327 id=1327 data-nosnippet>1327</a>                .queries
+<a href=#1328 id=1328 data-nosnippet>1328</a>                .iter()
+<a href=#1329 id=1329 data-nosnippet>1329</a>                .any(|query| query.has_facet(FacetKind::PreserveConstraint))
+<a href=#1330 id=1330 data-nosnippet>1330</a>        );
+<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="macro">assert!</span>(
+<a href=#1332 id=1332 data-nosnippet>1332</a>            facet_plan
+<a href=#1333 id=1333 data-nosnippet>1333</a>                .queries
+<a href=#1334 id=1334 data-nosnippet>1334</a>                .iter()
+<a href=#1335 id=1335 data-nosnippet>1335</a>                .any(|query| query.has_facet(FacetKind::TestIntent))
+<a href=#1336 id=1336 data-nosnippet>1336</a>        );
+<a href=#1337 id=1337 data-nosnippet>1337</a>        <span class="macro">assert_eq!</span>(
+<a href=#1338 id=1338 data-nosnippet>1338</a>            primary_task_text(<span class="string">"Which test suite verifies the MCP tool schemas?"</span>),
+<a href=#1339 id=1339 data-nosnippet>1339</a>            <span class="string">"Which test suite verifies the MCP tool schemas?"
+<a href=#1340 id=1340 data-nosnippet>1340</a>        </span>);
+<a href=#1341 id=1341 data-nosnippet>1341</a>        <span class="macro">assert!</span>(
+<a href=#1342 id=1342 data-nosnippet>1342</a>            plan(<span class="string">"Test direct context initialization"</span>, <span class="number">8</span>)
+<a href=#1343 id=1343 data-nosnippet>1343</a>                .queries
+<a href=#1344 id=1344 data-nosnippet>1344</a>                .iter()
+<a href=#1345 id=1345 data-nosnippet>1345</a>                .any(|query| query.has_facet(FacetKind::TestIntent))
+<a href=#1346 id=1346 data-nosnippet>1346</a>        );
+<a href=#1347 id=1347 data-nosnippet>1347</a>
+<a href=#1348 id=1348 data-nosnippet>1348</a>        <span class="kw">let </span>mixed = plan(
+<a href=#1349 id=1349 data-nosnippet>1349</a>            <span class="string">"Add SearchCompactResponse compact output while preserving full ranking and regression tests"</span>,
+<a href=#1350 id=1350 data-nosnippet>1350</a>            <span class="number">16</span>,
+<a href=#1351 id=1351 data-nosnippet>1351</a>        );
+<a href=#1352 id=1352 data-nosnippet>1352</a>        <span class="kw">let </span>exact = mixed
+<a href=#1353 id=1353 data-nosnippet>1353</a>            .queries
+<a href=#1354 id=1354 data-nosnippet>1354</a>            .iter()
+<a href=#1355 id=1355 data-nosnippet>1355</a>            .find(|query| query.value == <span class="string">"SearchCompactResponse"</span>)
+<a href=#1356 id=1356 data-nosnippet>1356</a>            .expect(<span class="string">"exact implementation query"</span>);
+<a href=#1357 id=1357 data-nosnippet>1357</a>        <span class="macro">assert!</span>(exact.has_facet(FacetKind::PrimaryChange));
+<a href=#1358 id=1358 data-nosnippet>1358</a>        <span class="macro">assert!</span>(!exact.has_facet(FacetKind::TestIntent));
+<a href=#1359 id=1359 data-nosnippet>1359</a>        <span class="macro">assert!</span>(mixed.queries.iter().any(|query| {
+<a href=#1360 id=1360 data-nosnippet>1360</a>            query.has_facet(FacetKind::PreserveConstraint)
+<a href=#1361 id=1361 data-nosnippet>1361</a>                &amp;&amp; !query.has_facet(FacetKind::TestIntent)
+<a href=#1362 id=1362 data-nosnippet>1362</a>        }));
+<a href=#1363 id=1363 data-nosnippet>1363</a>        <span class="kw">let </span>primary_phrase = [<span class="string">"search"</span>, <span class="string">"projection"</span>].join(<span class="string">" "</span>);
+<a href=#1364 id=1364 data-nosnippet>1364</a>        <span class="kw">let </span>natural_task = <span class="macro">format!</span>(
+<a href=#1365 id=1365 data-nosnippet>1365</a>            <span class="string">"Add a source-free compact {primary_phrase} to CLI and MCP while preserving full ranking"
+<a href=#1366 id=1366 data-nosnippet>1366</a>        </span>);
+<a href=#1367 id=1367 data-nosnippet>1367</a>        <span class="kw">let </span>natural = plan(<span class="kw-2">&amp;</span>natural_task, <span class="number">16</span>);
+<a href=#1368 id=1368 data-nosnippet>1368</a>        <span class="macro">assert!</span>(natural.queries.iter().any(|query| {
+<a href=#1369 id=1369 data-nosnippet>1369</a>            query.value == primary_phrase &amp;&amp; query.has_facet(FacetKind::PrimaryChange)
+<a href=#1370 id=1370 data-nosnippet>1370</a>        }));
+<a href=#1371 id=1371 data-nosnippet>1371</a>        <span class="macro">assert_eq!</span>(
+<a href=#1372 id=1372 data-nosnippet>1372</a>            primary_task_text(
+<a href=#1373 id=1373 data-nosnippet>1373</a>                <span class="string">"Add SearchCompactResponse compact output while preserving full ranking"
+<a href=#1374 id=1374 data-nosnippet>1374</a>            </span>),
+<a href=#1375 id=1375 data-nosnippet>1375</a>            <span class="string">"Add SearchCompactResponse compact output"
+<a href=#1376 id=1376 data-nosnippet>1376</a>        </span>);
+<a href=#1377 id=1377 data-nosnippet>1377</a>    }
+<a href=#1378 id=1378 data-nosnippet>1378</a>}
 </code></pre></div></section></main></body></html>

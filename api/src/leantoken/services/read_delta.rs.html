@@ -691,134 +691,104 @@
 <a href=#691 id=691 data-nosnippet>691</a>    }
 <a href=#692 id=692 data-nosnippet>692</a>
 <a href=#693 id=693 data-nosnippet>693</a>    <span class="attr">#[test]
-<a href=#694 id=694 data-nosnippet>694</a>    </span><span class="kw">fn </span>registry_reuses_cached_unified_diff_for_matching_base_and_head() {
-<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>registry = ReadDeltaRegistry::default();
+<a href=#694 id=694 data-nosnippet>694</a>    </span><span class="kw">fn </span>registry_prunes_expired_delta_entries() {
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>now = Instant::now();
 <a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>key = DeltaCacheKey {
 <a href=#697 id=697 data-nosnippet>697</a>            target_key: <span class="string">"target"</span>.into(),
 <a href=#698 id=698 data-nosnippet>698</a>            base_hash: <span class="string">"base"</span>.into(),
 <a href=#699 id=699 data-nosnippet>699</a>            head_hash: <span class="string">"head"</span>.into(),
 <a href=#700 id=700 data-nosnippet>700</a>        };
-<a href=#701 id=701 data-nosnippet>701</a>        registry
-<a href=#702 id=702 data-nosnippet>702</a>            .insert_delta(key.clone(), <span class="string">"cached-diff"</span>.into())
-<a href=#703 id=703 data-nosnippet>703</a>            .expect(<span class="string">"cache unified diff"</span>);
-<a href=#704 id=704 data-nosnippet>704</a>
-<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>reused = registry
-<a href=#706 id=706 data-nosnippet>706</a>            .lookup_delta(<span class="string">"target"</span>, <span class="string">"base"</span>, <span class="string">"head"</span>)
-<a href=#707 id=707 data-nosnippet>707</a>            .expect(<span class="string">"lookup"</span>)
-<a href=#708 id=708 data-nosnippet>708</a>            .expect(<span class="string">"cached delta"</span>);
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert_eq!</span>(reused, <span class="string">"cached-diff"</span>);
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="macro">assert!</span>(
-<a href=#711 id=711 data-nosnippet>711</a>            registry
-<a href=#712 id=712 data-nosnippet>712</a>                .lookup_delta(<span class="string">"target"</span>, <span class="string">"other"</span>, <span class="string">"head"</span>)
-<a href=#713 id=713 data-nosnippet>713</a>                .expect(<span class="string">"miss"</span>)
-<a href=#714 id=714 data-nosnippet>714</a>                .is_none()
-<a href=#715 id=715 data-nosnippet>715</a>        );
-<a href=#716 id=716 data-nosnippet>716</a>
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>state = registry.state.lock().expect(<span class="string">"delta registry"</span>);
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="macro">assert_eq!</span>(state.deltas.len(), <span class="number">1</span>);
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="macro">assert_eq!</span>(state.delta_order.iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(), <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>key]);
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="macro">assert_eq!</span>(state.delta_bytes, <span class="string">"cached-diff"</span>.len());
-<a href=#721 id=721 data-nosnippet>721</a>    }
-<a href=#722 id=722 data-nosnippet>722</a>
-<a href=#723 id=723 data-nosnippet>723</a>    <span class="attr">#[test]
-<a href=#724 id=724 data-nosnippet>724</a>    </span><span class="kw">fn </span>registry_prunes_expired_delta_entries() {
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>now = Instant::now();
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span>key = DeltaCacheKey {
-<a href=#727 id=727 data-nosnippet>727</a>            target_key: <span class="string">"target"</span>.into(),
-<a href=#728 id=728 data-nosnippet>728</a>            base_hash: <span class="string">"base"</span>.into(),
-<a href=#729 id=729 data-nosnippet>729</a>            head_hash: <span class="string">"head"</span>.into(),
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = RegistryState {
+<a href=#702 id=702 data-nosnippet>702</a>            delta_bytes: <span class="number">3</span>,
+<a href=#703 id=703 data-nosnippet>703</a>            ..RegistryState::default()
+<a href=#704 id=704 data-nosnippet>704</a>        };
+<a href=#705 id=705 data-nosnippet>705</a>        state.delta_order.push_back(key.clone());
+<a href=#706 id=706 data-nosnippet>706</a>        state.deltas.insert(
+<a href=#707 id=707 data-nosnippet>707</a>            key,
+<a href=#708 id=708 data-nosnippet>708</a>            DeltaCacheEntry {
+<a href=#709 id=709 data-nosnippet>709</a>                delta: <span class="string">"abc"</span>.into(),
+<a href=#710 id=710 data-nosnippet>710</a>                inserted_at: now,
+<a href=#711 id=711 data-nosnippet>711</a>            },
+<a href=#712 id=712 data-nosnippet>712</a>        );
+<a href=#713 id=713 data-nosnippet>713</a>
+<a href=#714 id=714 data-nosnippet>714</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, now + READ_DELTA_TTL + Duration::from_secs(<span class="number">1</span>));
+<a href=#715 id=715 data-nosnippet>715</a>
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="macro">assert!</span>(state.deltas.is_empty());
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="macro">assert!</span>(state.delta_order.is_empty());
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="macro">assert_eq!</span>(state.delta_bytes, <span class="number">0</span>);
+<a href=#719 id=719 data-nosnippet>719</a>    }
+<a href=#720 id=720 data-nosnippet>720</a>
+<a href=#721 id=721 data-nosnippet>721</a>    <span class="attr">#[test]
+<a href=#722 id=722 data-nosnippet>722</a>    </span><span class="kw">fn </span>oversized_complete_base_reports_both_process_and_persistence_fallbacks() {
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>directory = tempfile::tempdir().expect(<span class="string">"directory"</span>);
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span>storage = Storage::open(directory.path().join(<span class="string">"index.sqlite"</span>)).expect(<span class="string">"storage"</span>);
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>content = <span class="string">"x"</span>.repeat(MAX_READ_DELTA_ENTRY_BYTES + <span class="number">1</span>);
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span>content_hash = <span class="kw">crate</span>::text::hash(<span class="kw-2">&amp;</span>content);
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>target = NewReadTarget::Lines {
+<a href=#728 id=728 data-nosnippet>728</a>            start: std::num::NonZeroUsize::new(<span class="number">1</span>).expect(<span class="string">"one is non-zero"</span>),
+<a href=#729 id=729 data-nosnippet>729</a>            end: <span class="prelude-val">None</span>,
 <a href=#730 id=730 data-nosnippet>730</a>        };
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = RegistryState {
-<a href=#732 id=732 data-nosnippet>732</a>            delta_bytes: <span class="number">3</span>,
-<a href=#733 id=733 data-nosnippet>733</a>            ..RegistryState::default()
-<a href=#734 id=734 data-nosnippet>734</a>        };
-<a href=#735 id=735 data-nosnippet>735</a>        state.delta_order.push_back(key.clone());
-<a href=#736 id=736 data-nosnippet>736</a>        state.deltas.insert(
-<a href=#737 id=737 data-nosnippet>737</a>            key,
-<a href=#738 id=738 data-nosnippet>738</a>            DeltaCacheEntry {
-<a href=#739 id=739 data-nosnippet>739</a>                delta: <span class="string">"abc"</span>.into(),
-<a href=#740 id=740 data-nosnippet>740</a>                inserted_at: now,
-<a href=#741 id=741 data-nosnippet>741</a>            },
-<a href=#742 id=742 data-nosnippet>742</a>        );
-<a href=#743 id=743 data-nosnippet>743</a>
-<a href=#744 id=744 data-nosnippet>744</a>        prune_expired(<span class="kw-2">&amp;mut </span>state, now + READ_DELTA_TTL + Duration::from_secs(<span class="number">1</span>));
-<a href=#745 id=745 data-nosnippet>745</a>
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="macro">assert!</span>(state.deltas.is_empty());
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="macro">assert!</span>(state.delta_order.is_empty());
-<a href=#748 id=748 data-nosnippet>748</a>        <span class="macro">assert_eq!</span>(state.delta_bytes, <span class="number">0</span>);
-<a href=#749 id=749 data-nosnippet>749</a>    }
-<a href=#750 id=750 data-nosnippet>750</a>
-<a href=#751 id=751 data-nosnippet>751</a>    <span class="attr">#[test]
-<a href=#752 id=752 data-nosnippet>752</a>    </span><span class="kw">fn </span>oversized_complete_base_reports_both_process_and_persistence_fallbacks() {
-<a href=#753 id=753 data-nosnippet>753</a>        <span class="kw">let </span>directory = tempfile::tempdir().expect(<span class="string">"directory"</span>);
-<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>storage = Storage::open(directory.path().join(<span class="string">"index.sqlite"</span>)).expect(<span class="string">"storage"</span>);
-<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span>content = <span class="string">"x"</span>.repeat(MAX_READ_DELTA_ENTRY_BYTES + <span class="number">1</span>);
-<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>content_hash = <span class="kw">crate</span>::text::hash(<span class="kw-2">&amp;</span>content);
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>target = NewReadTarget::Lines {
-<a href=#758 id=758 data-nosnippet>758</a>            start: std::num::NonZeroUsize::new(<span class="number">1</span>).expect(<span class="string">"one is non-zero"</span>),
-<a href=#759 id=759 data-nosnippet>759</a>            end: <span class="prelude-val">None</span>,
-<a href=#760 id=760 data-nosnippet>760</a>        };
-<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>response = ReadResponse {
-<a href=#762 id=762 data-nosnippet>762</a>            path: <span class="string">"oversized.rs"</span>.into(),
-<a href=#763 id=763 data-nosnippet>763</a>            status: <span class="kw">crate</span>::model::ReadStatus::Content,
-<a href=#764 id=764 data-nosnippet>764</a>            target_start_line: <span class="number">1</span>,
-<a href=#765 id=765 data-nosnippet>765</a>            target_end_line: <span class="number">1</span>,
-<a href=#766 id=766 data-nosnippet>766</a>            returned_start_line: <span class="number">1</span>,
-<a href=#767 id=767 data-nosnippet>767</a>            returned_end_line: <span class="number">1</span>,
-<a href=#768 id=768 data-nosnippet>768</a>            truncated: <span class="bool-val">false</span>,
-<a href=#769 id=769 data-nosnippet>769</a>            next_start_line: <span class="prelude-val">None</span>,
-<a href=#770 id=770 data-nosnippet>770</a>            continuation_cursor: <span class="prelude-val">None</span>,
-<a href=#771 id=771 data-nosnippet>771</a>            truncation_guidance: <span class="prelude-val">None</span>,
-<a href=#772 id=772 data-nosnippet>772</a>            not_modified: <span class="bool-val">false</span>,
-<a href=#773 id=773 data-nosnippet>773</a>            content: <span class="prelude-val">Some</span>(content.clone()),
-<a href=#774 id=774 data-nosnippet>774</a>            delta: <span class="prelude-val">None</span>,
-<a href=#775 id=775 data-nosnippet>775</a>            delta_receipt: <span class="prelude-val">None</span>,
-<a href=#776 id=776 data-nosnippet>776</a>            content_hash,
-<a href=#777 id=777 data-nosnippet>777</a>            indexed_hash: <span class="prelude-val">Some</span>(<span class="string">"indexed"</span>.into()),
-<a href=#778 id=778 data-nosnippet>778</a>            index_stale: <span class="bool-val">false</span>,
-<a href=#779 id=779 data-nosnippet>779</a>            index_state: <span class="kw">crate</span>::model::ReadIndexState::Current,
-<a href=#780 id=780 data-nosnippet>780</a>            live_bytes_read: content.len(),
-<a href=#781 id=781 data-nosnippet>781</a>            meta: ResponseMeta {
-<a href=#782 id=782 data-nosnippet>782</a>                repository_id: <span class="string">"repository"</span>.into(),
-<a href=#783 id=783 data-nosnippet>783</a>                repository_generation: <span class="number">1</span>,
-<a href=#784 id=784 data-nosnippet>784</a>                freshness: Freshness::Current,
-<a href=#785 id=785 data-nosnippet>785</a>                index_scope: <span class="kw">crate</span>::model::IndexScopeMode::Full,
-<a href=#786 id=786 data-nosnippet>786</a>                index_scope_digest: <span class="prelude-val">None</span>,
-<a href=#787 id=787 data-nosnippet>787</a>                source_tokens: <span class="number">0</span>,
-<a href=#788 id=788 data-nosnippet>788</a>                protocol_tokens: <span class="number">0</span>,
-<a href=#789 id=789 data-nosnippet>789</a>                path_and_metadata_tokens: <span class="number">0</span>,
-<a href=#790 id=790 data-nosnippet>790</a>                total_response_tokens: <span class="number">0</span>,
-<a href=#791 id=791 data-nosnippet>791</a>                tokenizer: <span class="string">"cl100k_base"</span>.into(),
-<a href=#792 id=792 data-nosnippet>792</a>                token_count_exact: <span class="bool-val">true</span>,
-<a href=#793 id=793 data-nosnippet>793</a>                receipt_id: <span class="prelude-val">None</span>,
-<a href=#794 id=794 data-nosnippet>794</a>                receipt_suppressed_exact: <span class="number">0</span>,
-<a href=#795 id=795 data-nosnippet>795</a>                receipt_suppressed_overlap: <span class="number">0</span>,
-<a href=#796 id=796 data-nosnippet>796</a>                receipt_near_duplicates: <span class="number">0</span>,
-<a href=#797 id=797 data-nosnippet>797</a>                next_cursor: <span class="prelude-val">None</span>,
-<a href=#798 id=798 data-nosnippet>798</a>            },
-<a href=#799 id=799 data-nosnippet>799</a>        };
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>evaluation = ReadDeltaRegistry::default()
-<a href=#801 id=801 data-nosnippet>801</a>            .evaluate(ReadDeltaInput {
-<a href=#802 id=802 data-nosnippet>802</a>                repository_id: <span class="string">"repository"</span>,
-<a href=#803 id=803 data-nosnippet>803</a>                storage: <span class="kw-2">&amp;</span>storage,
-<a href=#804 id=804 data-nosnippet>804</a>                path: <span class="kw-2">&amp;</span>response.path,
-<a href=#805 id=805 data-nosnippet>805</a>                target: <span class="kw-2">&amp;</span>target,
-<a href=#806 id=806 data-nosnippet>806</a>                expected_hash: <span class="prelude-val">None</span>,
-<a href=#807 id=807 data-nosnippet>807</a>                response: <span class="kw-2">&amp;</span>response,
-<a href=#808 id=808 data-nosnippet>808</a>                current_content: <span class="kw-2">&amp;</span>content,
-<a href=#809 id=809 data-nosnippet>809</a>                full_tokens: <span class="number">1</span>,
-<a href=#810 id=810 data-nosnippet>810</a>                tokenizer: Tokenizer::Cl100kBase,
-<a href=#811 id=811 data-nosnippet>811</a>            })
-<a href=#812 id=812 data-nosnippet>812</a>            .expect(<span class="string">"evaluate oversized base"</span>);
-<a href=#813 id=813 data-nosnippet>813</a>        <span class="macro">assert_eq!</span>(
-<a href=#814 id=814 data-nosnippet>814</a>            evaluation.receipt.fallback_reason,
-<a href=#815 id=815 data-nosnippet>815</a>            <span class="prelude-val">Some</span>(ReadDeltaFallback::ContentTooLarge)
-<a href=#816 id=816 data-nosnippet>816</a>        );
-<a href=#817 id=817 data-nosnippet>817</a>        <span class="macro">assert_eq!</span>(
-<a href=#818 id=818 data-nosnippet>818</a>            evaluation.receipt.persistence_fallback_reason,
-<a href=#819 id=819 data-nosnippet>819</a>            <span class="prelude-val">Some</span>(ReadDeltaPersistenceFallback::ContentTooLarge)
-<a href=#820 id=820 data-nosnippet>820</a>        );
-<a href=#821 id=821 data-nosnippet>821</a>        <span class="macro">assert!</span>(!evaluation.receipt.head_persisted);
-<a href=#822 id=822 data-nosnippet>822</a>    }
-<a href=#823 id=823 data-nosnippet>823</a>}
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>response = ReadResponse {
+<a href=#732 id=732 data-nosnippet>732</a>            path: <span class="string">"oversized.rs"</span>.into(),
+<a href=#733 id=733 data-nosnippet>733</a>            status: <span class="kw">crate</span>::model::ReadStatus::Content,
+<a href=#734 id=734 data-nosnippet>734</a>            target_start_line: <span class="number">1</span>,
+<a href=#735 id=735 data-nosnippet>735</a>            target_end_line: <span class="number">1</span>,
+<a href=#736 id=736 data-nosnippet>736</a>            returned_start_line: <span class="number">1</span>,
+<a href=#737 id=737 data-nosnippet>737</a>            returned_end_line: <span class="number">1</span>,
+<a href=#738 id=738 data-nosnippet>738</a>            truncated: <span class="bool-val">false</span>,
+<a href=#739 id=739 data-nosnippet>739</a>            next_start_line: <span class="prelude-val">None</span>,
+<a href=#740 id=740 data-nosnippet>740</a>            continuation_cursor: <span class="prelude-val">None</span>,
+<a href=#741 id=741 data-nosnippet>741</a>            truncation_guidance: <span class="prelude-val">None</span>,
+<a href=#742 id=742 data-nosnippet>742</a>            not_modified: <span class="bool-val">false</span>,
+<a href=#743 id=743 data-nosnippet>743</a>            content: <span class="prelude-val">Some</span>(content.clone()),
+<a href=#744 id=744 data-nosnippet>744</a>            delta: <span class="prelude-val">None</span>,
+<a href=#745 id=745 data-nosnippet>745</a>            delta_receipt: <span class="prelude-val">None</span>,
+<a href=#746 id=746 data-nosnippet>746</a>            content_hash,
+<a href=#747 id=747 data-nosnippet>747</a>            indexed_hash: <span class="prelude-val">Some</span>(<span class="string">"indexed"</span>.into()),
+<a href=#748 id=748 data-nosnippet>748</a>            index_stale: <span class="bool-val">false</span>,
+<a href=#749 id=749 data-nosnippet>749</a>            index_state: <span class="kw">crate</span>::model::ReadIndexState::Current,
+<a href=#750 id=750 data-nosnippet>750</a>            live_bytes_read: content.len(),
+<a href=#751 id=751 data-nosnippet>751</a>            meta: ResponseMeta {
+<a href=#752 id=752 data-nosnippet>752</a>                repository_id: <span class="string">"repository"</span>.into(),
+<a href=#753 id=753 data-nosnippet>753</a>                repository_generation: <span class="number">1</span>,
+<a href=#754 id=754 data-nosnippet>754</a>                freshness: Freshness::Current,
+<a href=#755 id=755 data-nosnippet>755</a>                index_scope: <span class="kw">crate</span>::model::IndexScopeMode::Full,
+<a href=#756 id=756 data-nosnippet>756</a>                index_scope_digest: <span class="prelude-val">None</span>,
+<a href=#757 id=757 data-nosnippet>757</a>                source_tokens: <span class="number">0</span>,
+<a href=#758 id=758 data-nosnippet>758</a>                protocol_tokens: <span class="number">0</span>,
+<a href=#759 id=759 data-nosnippet>759</a>                path_and_metadata_tokens: <span class="number">0</span>,
+<a href=#760 id=760 data-nosnippet>760</a>                total_response_tokens: <span class="number">0</span>,
+<a href=#761 id=761 data-nosnippet>761</a>                tokenizer: <span class="string">"cl100k_base"</span>.into(),
+<a href=#762 id=762 data-nosnippet>762</a>                token_count_exact: <span class="bool-val">true</span>,
+<a href=#763 id=763 data-nosnippet>763</a>                receipt_id: <span class="prelude-val">None</span>,
+<a href=#764 id=764 data-nosnippet>764</a>                receipt_suppressed_exact: <span class="number">0</span>,
+<a href=#765 id=765 data-nosnippet>765</a>                receipt_suppressed_overlap: <span class="number">0</span>,
+<a href=#766 id=766 data-nosnippet>766</a>                receipt_near_duplicates: <span class="number">0</span>,
+<a href=#767 id=767 data-nosnippet>767</a>                next_cursor: <span class="prelude-val">None</span>,
+<a href=#768 id=768 data-nosnippet>768</a>            },
+<a href=#769 id=769 data-nosnippet>769</a>        };
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>evaluation = ReadDeltaRegistry::default()
+<a href=#771 id=771 data-nosnippet>771</a>            .evaluate(ReadDeltaInput {
+<a href=#772 id=772 data-nosnippet>772</a>                repository_id: <span class="string">"repository"</span>,
+<a href=#773 id=773 data-nosnippet>773</a>                storage: <span class="kw-2">&amp;</span>storage,
+<a href=#774 id=774 data-nosnippet>774</a>                path: <span class="kw-2">&amp;</span>response.path,
+<a href=#775 id=775 data-nosnippet>775</a>                target: <span class="kw-2">&amp;</span>target,
+<a href=#776 id=776 data-nosnippet>776</a>                expected_hash: <span class="prelude-val">None</span>,
+<a href=#777 id=777 data-nosnippet>777</a>                response: <span class="kw-2">&amp;</span>response,
+<a href=#778 id=778 data-nosnippet>778</a>                current_content: <span class="kw-2">&amp;</span>content,
+<a href=#779 id=779 data-nosnippet>779</a>                full_tokens: <span class="number">1</span>,
+<a href=#780 id=780 data-nosnippet>780</a>                tokenizer: Tokenizer::Cl100kBase,
+<a href=#781 id=781 data-nosnippet>781</a>            })
+<a href=#782 id=782 data-nosnippet>782</a>            .expect(<span class="string">"evaluate oversized base"</span>);
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="macro">assert_eq!</span>(
+<a href=#784 id=784 data-nosnippet>784</a>            evaluation.receipt.fallback_reason,
+<a href=#785 id=785 data-nosnippet>785</a>            <span class="prelude-val">Some</span>(ReadDeltaFallback::ContentTooLarge)
+<a href=#786 id=786 data-nosnippet>786</a>        );
+<a href=#787 id=787 data-nosnippet>787</a>        <span class="macro">assert_eq!</span>(
+<a href=#788 id=788 data-nosnippet>788</a>            evaluation.receipt.persistence_fallback_reason,
+<a href=#789 id=789 data-nosnippet>789</a>            <span class="prelude-val">Some</span>(ReadDeltaPersistenceFallback::ContentTooLarge)
+<a href=#790 id=790 data-nosnippet>790</a>        );
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="macro">assert!</span>(!evaluation.receipt.head_persisted);
+<a href=#792 id=792 data-nosnippet>792</a>    }
+<a href=#793 id=793 data-nosnippet>793</a>}
 </code></pre></div></section></main></body></html>
