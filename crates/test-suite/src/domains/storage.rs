@@ -69,7 +69,7 @@ fn query_plan(
 }
 
 #[test]
-fn storage_opens_and_validates_fts5_support() {
+fn storage_public_lifecycle_preserves_projections_search_and_atomic_generations() {
     let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
     let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
@@ -77,23 +77,112 @@ fn storage_opens_and_validates_fts5_support() {
     assert_eq!(meta.schema_version, 10);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
-}
 
-#[test]
-fn storage_reopen_uses_existing_index() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let db = dir.root().join("index.sqlite");
+    let generation = storage
+        .full_reconcile(
+            "hash1",
+            vec![
+                sample_file("src/lib.rs", "fn hello() {}\nfn worldliness() {}\n"),
+                sample_file("src/main.rs", "fn removable() {}\n"),
+            ],
+        )
+        .expect("initial reconcile");
+    assert_eq!(generation, 1);
+    assert_eq!(storage.list_files(10, None).expect("list").len(), 2);
 
-    let storage = Storage::open(&db).expect("open first");
-    storage
-        .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn a() {}")])
-        .expect("reconcile");
+    let file = storage
+        .find_file("src/lib.rs")
+        .expect("find")
+        .expect("indexed file");
+    assert_eq!(file.generation, 1);
+    assert_eq!(
+        storage
+            .get_chunks_for_file(file.id, 10)
+            .expect("chunks")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage
+            .get_symbols_for_file(file.id, 10)
+            .expect("symbols")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage
+            .get_references_for_file(file.id, 10)
+            .expect("references")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage
+            .get_imports_for_file(file.id, 10)
+            .expect("imports")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage.search_word("hello", 10).expect("word search").len(),
+        1
+    );
+    assert_eq!(
+        storage
+            .search_trigram("wor", 10)
+            .expect("trigram search")
+            .len(),
+        1
+    );
 
-    let storage2 = Storage::open(&db).expect("open second");
-    let found = storage2.find_file("src/lib.rs").expect("find");
-    assert!(found.is_some());
-    let meta = storage2.meta().expect("meta");
-    assert_eq!(meta.repository_generation, 1);
+    let generation = storage
+        .reconcile_files(
+            "hash1",
+            vec![sample_file("src/lib.rs", "fn changed() {}\n")],
+            &["src/main.rs".to_owned()],
+        )
+        .expect("atomic replacement and deletion");
+    assert_eq!(generation, 2);
+    assert!(
+        storage
+            .find_file("src/main.rs")
+            .expect("find removed")
+            .is_none()
+    );
+    assert!(
+        storage
+            .search_word("hello", 10)
+            .expect("old search")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .search_word("changed", 10)
+            .expect("replacement search")
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage.meta().expect("updated meta").repository_generation,
+        2
+    );
+
+    drop(storage);
+    let reopened = Storage::open(&db).expect("reopen");
+    assert_eq!(
+        reopened
+            .meta()
+            .expect("reopened meta")
+            .repository_generation,
+        2
+    );
+    assert_eq!(
+        reopened
+            .search_word("changed", 10)
+            .expect("reopened search")
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -679,102 +768,6 @@ fn hot_relational_projections_use_their_indexes() {
 }
 
 #[test]
-fn initial_reconcile_advances_generation_and_indexes() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
-
-    let files = vec![
-        sample_file("src/lib.rs", "fn hello() {}\nfn world() {}\n"),
-        sample_file("src/main.rs", "fn greet() {}\n"),
-    ];
-
-    let generation = storage.full_reconcile("hash1", files).expect("reconcile");
-    assert_eq!(generation, 1);
-
-    let listed = storage.list_files(10, None).expect("list");
-    assert_eq!(listed.len(), 2);
-
-    let found = storage.find_file("src/lib.rs").expect("find");
-    assert!(found.is_some());
-    let file = found.unwrap();
-    assert_eq!(file.path, "src/lib.rs");
-    assert_eq!(file.generation, 1);
-
-    let chunks = storage.get_chunks_for_file(file.id, 10).expect("chunks");
-    assert_eq!(chunks.len(), 1);
-
-    let symbols = storage.get_symbols_for_file(file.id, 10).expect("symbols");
-    assert_eq!(symbols.len(), 1);
-    assert_eq!(symbols[0].name, "main");
-
-    let refs = storage.get_references_for_file(file.id, 10).expect("refs");
-    assert_eq!(refs.len(), 1);
-
-    let imports = storage.get_imports_for_file(file.id, 10).expect("imports");
-    assert_eq!(imports.len(), 1);
-}
-
-#[test]
-fn fts5_word_search_finds_indexed_content() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
-
-    storage
-        .full_reconcile("hash1", vec![sample_file("src/lib.rs", "fn hello() {}\n")])
-        .expect("reconcile");
-
-    let hits = storage.search_word("hello", 10).expect("search word");
-    assert_eq!(hits.len(), 1);
-    assert!(hits[0].content.contains("hello"));
-    assert_eq!(hits[0].path, "src/lib.rs");
-}
-
-#[test]
-fn fts5_trigram_search_finds_substrings() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
-
-    storage
-        .full_reconcile(
-            "hash1",
-            vec![sample_file("src/lib.rs", "fn worldliness() {}\n")],
-        )
-        .expect("reconcile");
-
-    let hits = storage.search_trigram("wor", 10).expect("search trigram");
-    assert_eq!(hits.len(), 1);
-    assert!(hits[0].content.contains("worldliness"));
-}
-
-#[test]
-fn generation_consistency_across_reopen_and_modify() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let db = dir.root().join("index.sqlite");
-    let storage = Storage::open(&db).expect("open");
-
-    let generation1 = storage
-        .full_reconcile("hash1", vec![sample_file("src/a.rs", "fn alpha() {}\n")])
-        .expect("reconcile");
-    assert_eq!(generation1, 1);
-
-    let generation2 = storage
-        .reconcile_files(
-            "hash1",
-            vec![sample_file("src/a.rs", "fn beta() {}\n")],
-            &[],
-        )
-        .expect("reconcile replacement");
-    assert_eq!(generation2, 2);
-
-    let storage2 = Storage::open(&db).expect("reopen");
-    let meta = storage2.meta().expect("meta");
-    assert_eq!(meta.repository_generation, 2);
-
-    let hits = storage2.search_word("beta", 10).expect("search");
-    assert_eq!(hits.len(), 1);
-}
-
-#[test]
 fn failed_reconcile_rolls_back_file_and_generation() {
     let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
     let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
@@ -799,41 +792,6 @@ fn failed_reconcile_rolls_back_file_and_generation() {
             .expect("new content")
             .is_empty()
     );
-}
-
-#[test]
-fn reconcile_files_commits_replacements_and_deletions_as_one_generation() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
-    storage
-        .full_reconcile(
-            "hash1",
-            vec![
-                sample_file("keep.rs", "fn keep() {}\n"),
-                sample_file("remove.rs", "fn remove() {}\n"),
-            ],
-        )
-        .expect("initial reconcile");
-
-    let generation = storage
-        .reconcile_files(
-            "hash1",
-            vec![sample_file("keep.rs", "fn changed() {}\n")],
-            &["remove.rs".to_string()],
-        )
-        .expect("incremental reconcile");
-
-    assert_eq!(generation, 2);
-    assert!(storage.find_file("remove.rs").expect("find").is_none());
-    assert_eq!(storage.search_word("changed", 10).expect("search").len(), 1);
-    assert!(storage.search_word("keep", 10).expect("search").is_empty());
-    assert!(
-        storage
-            .search_word("remove", 10)
-            .expect("search")
-            .is_empty()
-    );
-    assert_eq!(storage.meta().expect("meta").repository_generation, 2);
 }
 
 #[test]

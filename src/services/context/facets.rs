@@ -1240,6 +1240,7 @@ mod tests {
             query.value == "render.AsciiJSON"
                 && query.exact_variant
                 && query.has_facet(FacetKind::ExactAtom)
+                && query.has_facet(FacetKind::Symbol)
         }));
     }
 

@@ -373,10 +373,13 @@ run them in parallel rather than starting one executable per file.
 - `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
   safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
   bounded chunking, targeted reconciliation, and dependency invalidation;
-- `crates/test-suite/src/domains/retrieval.rs`: tokenizer budgets, ranking,
-  deduplication, path/symbol focus, known-hash omission, and receipts;
-- `crates/test-suite/src/domains/platform.rs`: normalized repository keys and
-  native watcher delivery and shutdown;
+- `crates/test-suite/src/domains/retrieval.rs`: public retrieval primitive
+  compatibility plus cross-component budget, scope, known-hash omission, and
+  receipt composition; detailed tokenizer and ranking behavior stays with the
+  owning production modules;
+- `crates/test-suite/src/domains/platform.rs`: public configuration path,
+  cache identity, safety, and limit boundaries plus native watcher delivery
+  and shutdown;
 - `crates/test-suite/src/domains/protocol.rs`: SDK initialization, readiness
   states, retryable startup errors, tool calls, cancellation, and liveness;
 - `crates/test-suite/src/domains/contracts.rs`: real tool-catalog and JSON-RPC

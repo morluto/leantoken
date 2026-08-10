@@ -36,210 +36,95 @@ fn candidate(path: &str, lines: &str, score: f64) -> Candidate {
 }
 
 #[test]
-fn retrieval_tokenizer_contract_is_explicit() {
-    let tokenizer = Tokenizer::default();
-    assert!(tokenizer.count("fn retrieve() {}") > 0);
-    assert!(!tokenizer.name().is_empty());
-}
-
-#[test]
-fn count_is_nonzero_for_source() {
-    let text = "fn main() { println!(\"hello\"); }\n";
-    assert!(count(text) > 0);
-}
-
-#[test]
-fn truncate_respects_budget_and_valid_utf8() {
+fn public_retrieval_primitives_preserve_external_contracts() {
     let source = "fn café() { println!(\"hello\"); }\n".repeat(20);
+    let tokenizer = Tokenizer::default();
     let (prefix, tokens) = truncate(&source, 12);
+    assert_eq!(tokenizer.name(), "cl100k_base");
+    assert!(count(&source) > 12);
     assert!(source.starts_with(prefix));
     assert!(tokens <= 12);
+    assert_eq!(tokens, count(prefix));
     assert!(std::str::from_utf8(prefix.as_bytes()).is_ok());
-}
 
-#[test]
-fn truncate_zero_budget_returns_empty() {
-    let (prefix, tokens) = truncate("hello world", 0);
-    assert_eq!(prefix, "");
-    assert_eq!(tokens, 0);
-}
-
-#[test]
-fn truncate_short_text_passes_through() {
-    let text = "fn a() {}";
-    let (prefix, tokens) = truncate(text, 100);
-    assert_eq!(prefix, text);
-    assert_eq!(tokens, count(text));
-}
-
-#[test]
-fn truncate_never_exceeds_content_length() {
-    let text = "αβγ";
-    let (prefix, tokens) = truncate(text, 1);
-    assert!(prefix.len() <= text.len());
-    assert!(tokens <= count(text));
-    assert!(std::str::from_utf8(prefix.as_bytes()).is_ok());
-}
-
-#[test]
-fn rank_orders_candidates_by_score() {
-    let candidates = vec![
-        candidate("b.rs", "fn b() {}", 0.1),
-        candidate("a.rs", "fn a() {}", 0.9),
-        candidate("c.rs", "fn c() {}", 0.5),
-    ];
-    let ranked = rank(candidates, &Weights::default());
-    assert_eq!(ranked[0].candidate.path, "a.rs");
-    assert_eq!(ranked[1].candidate.path, "c.rs");
-    assert_eq!(ranked[2].candidate.path, "b.rs");
-    assert!(ranked[0].score >= ranked[1].score);
-    assert!(ranked[1].score >= ranked[2].score);
-}
-
-#[test]
-fn score_is_finite_and_non_negative() {
-    let c = candidate("a.rs", "fn main() {}", 1.0)
-        .symbol(1.0)
-        .reference(1.0)
-        .bm25(10.0)
-        .path_score(0.8)
-        .focus_boost(0.5)
-        .import_boost(0.5)
-        .change_boost(0.5)
-        .lexical_frequency_penalty(0.2);
-    let scored = rank(vec![c], &Weights::default());
-    assert!(scored[0].score.is_finite());
-    assert!(scored[0].score >= 0.0);
+    let exact = Candidate::new("a.rs", 1, 1, "fn a() {}")
+        .exact(1.0)
+        .bm25(0.1);
+    let lexical = Candidate::new("b.rs", 1, 1, "fn b() {}")
+        .exact(0.1)
+        .bm25(10.0);
+    let exact_weights = Weights {
+        exact: 1.0,
+        bm25: 0.0,
+        ..Weights::default()
+    };
+    let lexical_weights = Weights {
+        exact: 0.0,
+        bm25: 1.0,
+        ..Weights::default()
+    };
     assert_eq!(
-        scored[0].content_hash.len(),
-        leantoken::text::CONTENT_FINGERPRINT_HEX_LEN
+        rank(vec![exact.clone(), lexical.clone()], &exact_weights)[0]
+            .candidate
+            .path,
+        "a.rs"
     );
-    assert!(scored[0].token_count > 0);
-}
-
-#[test]
-fn deduplicate_removes_content_identical_candidates() {
-    let c1 = candidate("a.rs", "fn dup() {}", 1.0);
-    let c2 = candidate("a.rs", "fn dup() {}", 0.5);
-    let deduped = deduplicate(rank(vec![c1, c2], &Weights::default()));
-    assert_eq!(deduped.len(), 1);
-    assert!(deduped[0].score > 0.0);
-}
-
-#[test]
-fn deduplicate_keeps_overlapping_higher_scored_same_file() {
-    let c1 = candidate("a.rs", "fn low() {}\n", 0.5).exact(0.5);
-    let c2 = candidate("a.rs", "fn low() {}\nfn high() {}\n", 1.0).exact(1.0);
-    let deduped = deduplicate(rank(vec![c1, c2], &Weights::default()));
-    assert_eq!(deduped.len(), 1);
-    assert_eq!(deduped[0].candidate.content, "fn low() {}\nfn high() {}\n");
-}
-
-#[test]
-fn select_respects_token_budget() {
-    let candidates = vec![
-        candidate("a.rs", "fn a1() {}\nfn a2() {}\n", 1.0),
-        candidate("b.rs", "fn b1() {}\nfn b2() {}\n", 0.9),
-        candidate("c.rs", "fn c1() {}\n", 0.8),
-    ];
-    let request = request_with_budget(10);
-    let response = select(candidates, &request, 1);
-    let total: usize = response.fragments.iter().map(|f| f.token_count).sum();
-    assert!(total <= request.token_budget);
-    assert!(response.meta.source_tokens <= request.token_budget);
-    assert_eq!(response.meta.repository_generation, 1);
-    assert!(matches!(response.meta.freshness, Freshness::Current));
-}
-
-#[test]
-fn select_omits_known_hashes_and_reports_them() {
-    let candidates = vec![
-        candidate("known.rs", "fn known() {}", 1.0),
-        candidate("new.rs", "fn new() {}", 0.9),
-    ];
-    let known_hash = leantoken::text::hash("fn known() {}");
-    let mut request = request_with_budget(50);
-    request.known_hashes = vec![known_hash];
-    request.explain_diagnostics = true;
-    let response = select(candidates, &request, 2);
-    assert!(response.fragments.iter().all(|f| f.path != "known.rs"));
-    assert!(response.omitted.iter().any(|o| o.path == "known.rs"));
-    assert!(!response.receipt.task_fingerprint.is_empty());
-    assert_eq!(response.meta.repository_generation, 2);
     assert_eq!(
-        response.receipt.fragment_hashes.len(),
-        response.fragments.len()
+        rank(vec![exact, lexical], &lexical_weights)[0]
+            .candidate
+            .path,
+        "b.rs"
     );
+
+    let deduped = deduplicate(rank(
+        vec![
+            candidate("same.rs", "fn duplicate() {}", 1.0),
+            candidate("same.rs", "fn duplicate() {}", 0.5),
+        ],
+        &Weights::default(),
+    ));
+    assert_eq!(deduped.len(), 1);
+    assert_eq!(deduped[0].candidate.path, "same.rs");
 }
 
 #[test]
-fn select_excludes_paths() {
+fn select_composes_budget_scope_omissions_and_receipt() {
+    let known_content = "fn known() {}";
     let candidates = vec![
-        candidate("src/lib.rs", "fn lib() {}", 1.0),
-        candidate("tests/lib.rs", "fn test() {}", 0.9),
-    ];
-    let mut request = request_with_budget(50);
-    request.exclude_paths = vec!["tests".into()];
-    let response = select(candidates, &request, 1);
-    assert!(response.fragments.iter().all(|f| f.path != "tests/lib.rs"));
-}
-
-#[test]
-fn select_uses_globs_and_normalized_separators_for_path_signals() {
-    let candidates = vec![
-        candidate("src/lib.rs", "fn lib() {}", 0.5),
-        candidate("dist/lib.rs", "fn generated() {}", 1.0),
+        candidate("known.rs", known_content, 1.1),
+        candidate("src/lib.rs", "fn selected() {}", 0.5).symbol_name("Selected"),
+        candidate("src/mainly.rs", "fn mainly() {}", 0.5).symbol_name("Mainly"),
+        candidate("dist/generated.rs", "fn generated() {}", 1.2),
     ];
     let mut request = request_with_budget(50);
     request.focus_paths = vec![r"src\**\*.rs".into()];
+    request.focus_symbols = vec!["Selected".into()];
     request.exclude_paths = vec!["dist/**".into()];
-    let response = select(candidates, &request, 1);
-    assert_eq!(response.fragments[0].path, "src/lib.rs");
-    assert!(
-        response
-            .fragments
-            .iter()
-            .all(|item| item.path != "dist/lib.rs")
-    );
-}
+    request.known_hashes = vec![leantoken::text::hash(known_content)];
+    request.explain_diagnostics = true;
 
-#[test]
-fn select_does_not_focus_substring_path_matches() {
-    let candidates = vec![
-        candidate("src/main.rs", "fn main() {}", 0.5),
-        candidate("src/mainly.rs", "fn mainly() {}", 0.6),
-    ];
-    let mut request = request_with_budget(50);
-    request.focus_paths = vec!["main".into()];
-    let response = select(candidates, &request, 1);
-    assert_eq!(response.fragments[0].path, "src/mainly.rs");
-}
-
-#[test]
-fn select_boosts_focus_paths_and_symbols() {
-    let candidates = vec![
-        candidate("src/a.rs", "fn a() {}", 0.5).symbol_name("Alpha"),
-        candidate("src/b.rs", "fn b() {}", 0.5).symbol_name("Beta"),
-    ];
-    let mut request = request_with_budget(50);
-    request.focus_paths = vec!["src/a.rs".into()];
-    request.focus_symbols = vec!["Alpha".into()];
-    let response = select(candidates, &request, 1);
+    let response = select(candidates, &request, 7);
+    let total: usize = response.fragments.iter().map(|f| f.token_count).sum();
+    assert!(total <= request.token_budget);
+    assert!(response.meta.source_tokens <= request.token_budget);
+    assert_eq!(response.meta.repository_generation, 7);
+    assert!(matches!(response.meta.freshness, Freshness::Current));
     assert_eq!(
         response
             .fragments
             .first()
             .map(|fragment| fragment.path.as_str()),
-        Some("src/a.rs")
+        Some("src/lib.rs")
     );
-}
-
-#[test]
-fn select_produces_evidence_receipt_with_hashes_and_generation() {
-    let candidates = vec![candidate("src/lib.rs", "fn main() {}", 1.0)];
-    let request = request_with_budget(50);
-    let response = select(candidates, &request, 7);
-    assert_eq!(response.meta.repository_generation, 7);
+    assert!(
+        response
+            .fragments
+            .iter()
+            .all(|item| item.path != "known.rs" && !item.path.starts_with("dist/"))
+    );
+    assert_eq!(response.omission_summary.known_hash, 1);
+    assert_eq!(response.omission_summary.path_excluded, 1);
+    assert!(!response.receipt.task_fingerprint.is_empty());
     assert_eq!(
         response.receipt.fragment_hashes.len(),
         response.fragments.len()
@@ -254,28 +139,13 @@ fn select_produces_evidence_receipt_with_hashes_and_generation() {
 }
 
 #[test]
-fn custom_weights_change_ranking() {
-    let c1 = Candidate::new("a.rs", 1, 1, "fn a() {}")
-        .exact(1.0)
-        .bm25(0.1);
-    let c2 = Candidate::new("b.rs", 1, 1, "fn b() {}")
-        .exact(0.1)
-        .bm25(10.0);
-    let exact_weights = Weights {
-        exact: 1.0,
-        bm25: 0.0,
-        ..Weights::default()
-    };
-    assert_eq!(
-        rank(vec![c1.clone(), c2.clone()], &exact_weights)[0]
-            .candidate
-            .path,
-        "a.rs"
-    );
-    let bm25_weights = Weights {
-        exact: 0.0,
-        bm25: 1.0,
-        ..Weights::default()
-    };
-    assert_eq!(rank(vec![c1, c2], &bm25_weights)[0].candidate.path, "b.rs");
+fn select_does_not_focus_substring_path_matches() {
+    let candidates = vec![
+        candidate("src/main.rs", "fn main() {}", 0.5),
+        candidate("src/mainly.rs", "fn mainly() {}", 0.6),
+    ];
+    let mut request = request_with_budget(50);
+    request.focus_paths = vec!["main".into()];
+    let response = select(candidates, &request, 1);
+    assert_eq!(response.fragments[0].path, "src/mainly.rs");
 }

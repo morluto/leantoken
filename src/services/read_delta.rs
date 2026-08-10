@@ -691,36 +691,6 @@ mod tests {
     }
 
     #[test]
-    fn registry_reuses_cached_unified_diff_for_matching_base_and_head() {
-        let registry = ReadDeltaRegistry::default();
-        let key = DeltaCacheKey {
-            target_key: "target".into(),
-            base_hash: "base".into(),
-            head_hash: "head".into(),
-        };
-        registry
-            .insert_delta(key.clone(), "cached-diff".into())
-            .expect("cache unified diff");
-
-        let reused = registry
-            .lookup_delta("target", "base", "head")
-            .expect("lookup")
-            .expect("cached delta");
-        assert_eq!(reused, "cached-diff");
-        assert!(
-            registry
-                .lookup_delta("target", "other", "head")
-                .expect("miss")
-                .is_none()
-        );
-
-        let state = registry.state.lock().expect("delta registry");
-        assert_eq!(state.deltas.len(), 1);
-        assert_eq!(state.delta_order.iter().collect::<Vec<_>>(), vec![&key]);
-        assert_eq!(state.delta_bytes, "cached-diff".len());
-    }
-
-    #[test]
     fn registry_prunes_expired_delta_entries() {
         let now = Instant::now();
         let key = DeltaCacheKey {

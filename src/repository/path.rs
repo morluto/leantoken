@@ -67,11 +67,31 @@ mod typed_path_tests {
                 expected
             );
         }
+        assert_eq!(
+            validate_relative("src/lib.rs").expect("public relative path"),
+            PathBuf::from("src/lib.rs")
+        );
+        assert_eq!(
+            normalize_relative(r".\src\lib.rs").expect("public normalized path"),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            slash_path(Path::new("src/nested/lib.rs")),
+            "src/nested/lib.rs"
+        );
     }
 
     #[test]
     fn paths_and_patterns_fail_closed_on_escape_or_empty_values() {
-        for value in ["", "   ", "/src", r"C:\\src", "../src", r"..\\src"] {
+        for value in [
+            "",
+            "   ",
+            "/src",
+            r"C:\\src",
+            "../src",
+            r"..\\src",
+            "src/nu\0ll",
+        ] {
             assert!(
                 RepositoryPath::parse(value).is_err(),
                 "accepted path {value:?}"

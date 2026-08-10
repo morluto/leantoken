@@ -1213,7 +1213,7 @@ async fn files_find_rejects_whitespace_only_queries() {
 }
 
 #[tokio::test]
-async fn token_savings_uses_the_shared_blocking_executor() {
+async fn token_savings_rejects_work_when_blocking_capacity_is_saturated() {
     let root = tempfile::tempdir().expect("root");
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");

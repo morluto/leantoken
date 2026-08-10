@@ -10,50 +10,18 @@ use super::projection::{count_nodes, escape_pointer, json_type};
 use crate::Result;
 use crate::services::Services;
 
-/// Work counters for one schema projection call, used by diagnostics and the
-/// schema profile example to measure candidate reuse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) struct SchemaProjectionCounters {
-    /// Number of `build_schema_breadth_first` invocations.
-    pub(super) schema_builds: usize,
-    /// Number of `serde_json::to_string` calls on schema candidates.
-    pub(super) schema_serializations: usize,
-    /// Number of tokenizer count calls on serialized schema candidates.
-    pub(super) schema_token_counts: usize,
-    /// Number of times a cached `MeasuredProjection` was reused.
-    pub(super) cache_hits: usize,
-}
-
-/// Cached projection of one schema candidate: the rendered JSON value, its
-/// serialized string, and the exact tokenizer count over that string. The
-/// serialized string is retained so the final selection does not need to be
-/// re-serialized for token accounting.
+/// Cached projection of one schema candidate and its exact token count.
 pub(super) struct MeasuredProjection {
     value: Value,
-    /// Cached serialized representation. Retained for the projection cache
-    /// contract so callers that need the serialized form (e.g. response
-    /// fitting diagnostics) can reuse it without re-serializing.
-    #[allow(dead_code)]
-    serialized: String,
     tokens: usize,
 }
 
 impl MeasuredProjection {
-    fn measure(
-        services: &Services,
-        value: Value,
-        counters: &mut SchemaProjectionCounters,
-    ) -> Result<Self> {
+    fn measure(services: &Services, value: Value) -> Result<Self> {
         let serialized = serde_json::to_string(&value)
             .map_err(|error| crate::Error::SerializationFailure(error.to_string()))?;
-        counters.schema_serializations = counters.schema_serializations.saturating_add(1);
         let tokens = services.config.tokenizer.count(&serialized);
-        counters.schema_token_counts = counters.schema_token_counts.saturating_add(1);
-        Ok(Self {
-            value,
-            serialized,
-            tokens,
-        })
+        Ok(Self { value, tokens })
     }
 
     pub(super) fn tokens(&self) -> usize {
@@ -70,7 +38,6 @@ impl MeasuredProjection {
 pub(super) struct SchemaProjectionPlan<'a> {
     services: &'a Services,
     cache: BTreeMap<usize, MeasuredProjection>,
-    counters: SchemaProjectionCounters,
 }
 
 impl<'a> SchemaProjectionPlan<'a> {
@@ -78,7 +45,6 @@ impl<'a> SchemaProjectionPlan<'a> {
         Self {
             services,
             cache: BTreeMap::new(),
-            counters: SchemaProjectionCounters::default(),
         }
     }
 
@@ -88,20 +54,13 @@ impl<'a> SchemaProjectionPlan<'a> {
     fn candidate(&mut self, value: &Value, max_items: usize) -> Result<&MeasuredProjection> {
         if !self.cache.contains_key(&max_items) {
             let built = build_schema_breadth_first(value, max_items);
-            self.counters.schema_builds = self.counters.schema_builds.saturating_add(1);
-            let measured = MeasuredProjection::measure(self.services, built, &mut self.counters)?;
+            let measured = MeasuredProjection::measure(self.services, built)?;
             self.cache.insert(max_items, measured);
-        } else {
-            self.counters.cache_hits = self.counters.cache_hits.saturating_add(1);
         }
         Ok(self
             .cache
             .get(&max_items)
             .expect("entry was just inserted or cached"))
-    }
-
-    fn counters(&self) -> &SchemaProjectionCounters {
-        &self.counters
     }
 }
 
@@ -112,7 +71,6 @@ pub(super) struct SchemaProjection {
     remaining_items: usize,
     incomplete_reason: Option<crate::model::JsonIncompleteReason>,
     projected_tokens: usize,
-    counters: SchemaProjectionCounters,
 }
 
 impl SchemaProjection {
@@ -125,7 +83,6 @@ impl SchemaProjection {
         usize,
         Option<crate::model::JsonIncompleteReason>,
         usize,
-        SchemaProjectionCounters,
     ) {
         (
             self.value,
@@ -134,7 +91,6 @@ impl SchemaProjection {
             self.remaining_items,
             self.incomplete_reason,
             self.projected_tokens,
-            self.counters,
         )
     }
 }
@@ -352,7 +308,6 @@ pub(super) fn project_schema_page(
             .into_value();
         (best_items, schema, best_tokens)
     };
-    let counters = plan.counters().clone();
     let remaining_items = total_items.saturating_sub(returned_items);
     let incomplete_reason = (remaining_items > 0).then_some(if returned_items < item_limit {
         crate::model::JsonIncompleteReason::MaxTokens
@@ -366,6 +321,5 @@ pub(super) fn project_schema_page(
         remaining_items,
         incomplete_reason,
         projected_tokens,
-        counters,
     })
 }
