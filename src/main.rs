@@ -10,7 +10,7 @@ use leantoken::{
     Result, cache,
     cli::{AppRequest, Cli, SearchProjectionArg},
     doctor, episode, mcp,
-    model::{IndexConsistency, IndexState},
+    model::{IndexConsistency, IndexState, IndexingMode, SearchOccurrenceOutput},
     services::{ServiceCallOptions, Services},
     setup::{self, SetupOperation},
     upgrade,

@@ -11,7 +11,7 @@ pub(super) use super::{
     remove_managed_artifacts, unix_seconds,
 };
 pub(super) use crate::config::INDEX_CONTENT_VERSION;
-pub(super) use crate::config::managed_cache_id;
+pub(super) use crate::config::parse_managed_cache_id;
 pub(super) use crate::coordination::{LEASE_LOCK_SUFFIX, coordination_sidecar_path};
 pub(super) use crate::model::IndexScopeMode;
 pub(super) use crate::services::Services;

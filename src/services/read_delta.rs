@@ -6,7 +6,7 @@ use similar::TextDiff;
 
 use crate::model::{
     ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
-    ReadDeltaReceipt, ReadRequest, ReadResponse,
+    ReadDeltaReceipt, ReadResponse,
 };
 use crate::read_delta::{
     MAX_READ_DELTA_BASE_BYTES as MAX_READ_DELTA_ENTRY_BYTES,
@@ -16,6 +16,8 @@ use crate::read_delta::{
 use crate::storage::Storage;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
+
+use super::read::NewReadTarget;
 
 const READ_DELTA_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -72,7 +74,9 @@ pub(super) struct ReadDeltaEvaluation {
 pub(super) struct ReadDeltaInput<'a> {
     pub repository_id: &'a str,
     pub storage: &'a Storage,
-    pub request: &'a ReadRequest,
+    pub path: &'a str,
+    pub target: &'a NewReadTarget,
+    pub expected_hash: Option<&'a str>,
     pub response: &'a ReadResponse,
     pub current_content: &'a str,
     pub full_tokens: usize,
@@ -84,14 +88,16 @@ impl ReadDeltaRegistry {
         let ReadDeltaInput {
             repository_id,
             storage,
-            request,
+            path,
+            target,
+            expected_hash,
             response,
             current_content,
             full_tokens,
             tokenizer,
         } = input;
-        let target_key = target_key(repository_id, request);
-        let mut base_hash = request.expected_hash.clone();
+        let target_key = target_key(repository_id, path, target);
+        let mut base_hash = expected_hash.map(str::to_owned);
         let mut base_generation = None;
         let mut base_source = None;
         let mut delta = None;
@@ -100,7 +106,7 @@ impl ReadDeltaRegistry {
         let mut avoided_tokens = 0;
         let mut fallback_reason = None;
 
-        if request.expected_hash.as_deref() == Some(response.content_hash.as_str()) {
+        if expected_hash == Some(response.content_hash.as_str()) {
             outcome = ReadDeltaOutcome::NotModified;
             delta_tokens = Some(0);
             avoided_tokens = full_tokens;
@@ -109,7 +115,7 @@ impl ReadDeltaRegistry {
         } else if current_content.len() > MAX_READ_DELTA_ENTRY_BYTES {
             fallback_reason = Some(ReadDeltaFallback::ContentTooLarge);
         } else {
-            let base = if let Some(expected_hash) = request.expected_hash.as_deref() {
+            let base = if let Some(expected_hash) = expected_hash {
                 if let Some(entry) = self.lookup(&target_key, expected_hash)? {
                     Some((
                         expected_hash.to_owned(),
@@ -417,38 +423,36 @@ impl CacheEntry {
     }
 }
 
-fn target_key(repository_id: &str, request: &ReadRequest) -> String {
+fn target_key(repository_id: &str, path: &str, target: &NewReadTarget) -> String {
     let mut hasher = blake3::Hasher::new();
-    for value in [repository_id, request.path.as_str()] {
+    for value in [repository_id, path] {
         hasher.update(value.as_bytes());
         hasher.update(&[0]);
     }
-    if let Some(symbol) = request.symbol.as_deref() {
-        hasher.update(b"symbol\0");
-        hasher.update(symbol.as_bytes());
-    } else if let Some(heading) = request.heading.as_deref() {
-        hasher.update(b"heading\0");
-        hasher.update(heading.as_bytes());
-        hasher.update(&[0]);
-        hasher.update(
-            &u64::try_from(request.heading_occurrence.unwrap_or(1))
-                .unwrap_or(u64::MAX)
-                .to_le_bytes(),
-        );
-    } else {
-        hasher.update(b"lines\0");
-        hasher.update(
-            &u64::try_from(request.start_line.unwrap_or(1))
-                .unwrap_or(u64::MAX)
-                .to_le_bytes(),
-        );
-        hasher.update(
-            &request
-                .end_line
-                .and_then(|line| u64::try_from(line).ok())
-                .unwrap_or(u64::MAX)
-                .to_le_bytes(),
-        );
+    match target {
+        NewReadTarget::Symbol(symbol) => {
+            hasher.update(b"symbol\0");
+            hasher.update(symbol.as_bytes());
+        }
+        NewReadTarget::Heading { name, occurrence } => {
+            hasher.update(b"heading\0");
+            hasher.update(name.as_bytes());
+            hasher.update(&[0]);
+            hasher.update(
+                &u64::try_from(occurrence.get())
+                    .unwrap_or(u64::MAX)
+                    .to_le_bytes(),
+            );
+        }
+        NewReadTarget::Lines { start, end } => {
+            hasher.update(b"lines\0");
+            hasher.update(&u64::try_from(start.get()).unwrap_or(u64::MAX).to_le_bytes());
+            hasher.update(
+                &end.and_then(|line| u64::try_from(line).ok())
+                    .unwrap_or(u64::MAX)
+                    .to_le_bytes(),
+            );
+        }
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -750,22 +754,12 @@ mod tests {
         let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
         let content = "x".repeat(MAX_READ_DELTA_ENTRY_BYTES + 1);
         let content_hash = crate::text::hash(&content);
-        let request = ReadRequest {
-            path: "oversized.rs".into(),
-            start_line: None,
-            end_line: None,
-            symbol: None,
-            heading: None,
-            heading_occurrence: None,
-            continuation_cursor: None,
-            max_tokens: Some(32_000),
-            expected_hash: None,
-            delta: true,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::Full,
+        let target = NewReadTarget::Lines {
+            start: std::num::NonZeroUsize::new(1).expect("one is non-zero"),
+            end: None,
         };
         let response = ReadResponse {
-            path: request.path.clone(),
+            path: "oversized.rs".into(),
             status: crate::model::ReadStatus::Content,
             target_start_line: 1,
             target_end_line: 1,
@@ -807,7 +801,9 @@ mod tests {
             .evaluate(ReadDeltaInput {
                 repository_id: "repository",
                 storage: &storage,
-                request: &request,
+                path: &response.path,
+                target: &target,
+                expected_hash: None,
                 response: &response,
                 current_content: &content,
                 full_tokens: 1,

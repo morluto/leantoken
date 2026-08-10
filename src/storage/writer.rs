@@ -18,7 +18,7 @@ impl ReconciliationWriter<'_, '_> {
         file: IndexedFile,
         source_tokens: Option<(&str, usize)>,
     ) -> Result<()> {
-        if !self.rebuild {
+        if !self.mode.is_rebuild() {
             self.transaction
                 .execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
         }
@@ -29,7 +29,7 @@ impl ReconciliationWriter<'_, '_> {
 
     /// Remove one path, deduplicating repeated deletion signals.
     pub(crate) fn delete(&mut self, path: &str) -> Result<()> {
-        if !self.deletions.insert(path.to_string()) || self.rebuild {
+        if !self.deletions.insert(path.to_string()) || self.mode.is_rebuild() {
             return Ok(());
         }
         self.transaction

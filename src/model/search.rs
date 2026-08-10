@@ -40,6 +40,22 @@ impl SearchMode {
     }
 }
 
+/// Source representation returned for exhaustive occurrence groups.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SearchOccurrenceOutput {
+    /// Return one verifiable excerpt for each group of occurrences.
+    #[default]
+    Excerpts,
+    /// Return source-free coordinates grouped only by path.
+    Coordinates,
+}
+
+impl SearchOccurrenceOutput {
+    pub(crate) const fn coordinates_only(self) -> bool {
+        matches!(self, Self::Coordinates)
+    }
+}
+
 pub(crate) const EXHAUSTIVE_SEARCH_MODES: &[&str] = &["text", "regex"];
 pub(crate) const RANKED_SYMBOL_SEARCH_EXAMPLE: &str =
     r#"{"operation":{"kind":"symbol","query":"Services"}}"#;

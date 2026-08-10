@@ -13,7 +13,10 @@ async fn context_required_evidence_reports_bounded_path_inspection() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let mut request = context_limit_request(500);
     request.task = "Find EVIDENCE_OUTSIDE_INSPECTION_BOUND.".into();
     request.required_evidence = vec![ContextRequiredEvidence {

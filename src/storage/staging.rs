@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use tempfile::TempDir;
 
-const STAGE_FORMAT_VERSION: i64 = 1;
+const STAGE_FORMAT_VERSION: i64 = 2;
 
 const STAGE_SCHEMA_SQL: &str = r#"
 CREATE TABLE stage_meta (
@@ -118,10 +118,10 @@ pub(crate) struct PreparedReconciliation {
     tokenizer: String,
     baseline_generation: u64,
     config_hash: String,
-    rebuild: bool,
+    mode: IndexingMode,
     next_ordinal: i64,
     diagnostics: StagingDiagnostics,
-    profile: bool,
+    profiling: StorageProfiling,
 }
 
 pub(crate) struct FinalizedReconciliation {
@@ -130,7 +130,7 @@ pub(crate) struct FinalizedReconciliation {
     tokenizer: String,
     baseline_generation: u64,
     config_hash: String,
-    rebuild: bool,
+    mode: IndexingMode,
     diagnostics: StagingDiagnostics,
 }
 
@@ -140,8 +140,8 @@ impl PreparedReconciliation {
         tokenizer: &str,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
-        profile: bool,
+        mode: IndexingMode,
+        profiling: StorageProfiling,
     ) -> Result<Self> {
         Ok(Self {
             _directory: None,
@@ -152,10 +152,10 @@ impl PreparedReconciliation {
             tokenizer: tokenizer.to_string(),
             baseline_generation: baseline.repository_generation,
             config_hash: config_hash.to_string(),
-            rebuild,
+            mode,
             next_ordinal: 0,
             diagnostics: StagingDiagnostics::default(),
-            profile,
+            profiling,
         })
     }
 
@@ -163,7 +163,11 @@ impl PreparedReconciliation {
         if self.connection.is_some() {
             return Ok(());
         }
-        let write_before = self.profile.then(process_write_bytes).flatten();
+        let write_before = self
+            .profiling
+            .is_collecting()
+            .then(process_write_bytes)
+            .flatten();
         let started = Instant::now();
         let directory = tempfile::Builder::new()
             .prefix(".leantoken-stage-")
@@ -174,32 +178,27 @@ impl PreparedReconciliation {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.execute_batch(STAGE_SCHEMA_SQL)?;
         connection.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL;")?;
-        connection.execute_batch(
+        connection.execute(
             "INSERT INTO stage_meta(key, value) VALUES
-             ('format_version', '1'),
-             ('baseline_generation', '0'),
-             ('config_hash', ''),
-             ('rebuild', '0'),
-             ('tokenizer', '');",
-        )?;
-        connection.execute(
-            "UPDATE stage_meta SET value = ?1 WHERE key = 'baseline_generation'",
-            params![self.baseline_generation.to_string()],
-        )?;
-        connection.execute(
-            "UPDATE stage_meta SET value = ?1 WHERE key = 'config_hash'",
-            params![&self.config_hash],
-        )?;
-        connection.execute(
-            "UPDATE stage_meta SET value = ?1 WHERE key = 'rebuild'",
-            params![if self.rebuild { "1" } else { "0" }],
-        )?;
-        connection.execute(
-            "UPDATE stage_meta SET value = ?1 WHERE key = 'tokenizer'",
-            params![&self.tokenizer],
+             ('format_version', ?1),
+             ('baseline_generation', ?2),
+             ('config_hash', ?3),
+             ('indexing_mode', ?4),
+             ('tokenizer', ?5)",
+            params![
+                STAGE_FORMAT_VERSION.to_string(),
+                self.baseline_generation.to_string(),
+                &self.config_hash,
+                indexing_mode_stage_value(self.mode),
+                &self.tokenizer,
+            ],
         )?;
         self.diagnostics.write_ms += started.elapsed().as_secs_f64() * 1_000.0;
-        let write_after = self.profile.then(process_write_bytes).flatten();
+        let write_after = self
+            .profiling
+            .is_collecting()
+            .then(process_write_bytes)
+            .flatten();
         self.diagnostics.write_bytes = write_before
             .zip(write_after)
             .map(|(before, after)| after.saturating_sub(before));
@@ -227,7 +226,11 @@ impl PreparedReconciliation {
             return Ok(());
         }
         self.initialize()?;
-        let write_before = self.profile.then(process_write_bytes).flatten();
+        let write_before = self
+            .profiling
+            .is_collecting()
+            .then(process_write_bytes)
+            .flatten();
         let started = Instant::now();
         let connection = self.connection.as_mut().ok_or_else(|| {
             Error::OperationFailure("reconciliation stage connection is closed".into())
@@ -269,7 +272,11 @@ impl PreparedReconciliation {
         }
 
         self.diagnostics.write_ms += started.elapsed().as_secs_f64() * 1_000.0;
-        let write_after = self.profile.then(process_write_bytes).flatten();
+        let write_after = self
+            .profiling
+            .is_collecting()
+            .then(process_write_bytes)
+            .flatten();
         if let Some(bytes) = write_before
             .zip(write_after)
             .map(|(before, after)| after.saturating_sub(before))
@@ -299,7 +306,7 @@ impl PreparedReconciliation {
             tokenizer: self.tokenizer,
             baseline_generation: self.baseline_generation,
             config_hash: self.config_hash,
-            rebuild: self.rebuild,
+            mode: self.mode,
             diagnostics: self.diagnostics,
         })
     }
@@ -336,11 +343,12 @@ impl FinalizedReconciliation {
             .parse::<u64>()
             .map_err(|_| Error::OperationFailure("invalid reconciliation stage baseline".into()))?;
         let config_hash = Self::stage_meta(&connection, "config_hash")?;
-        let rebuild = Self::stage_meta(&connection, "rebuild")?;
+        let mode =
+            parse_indexing_mode_stage_value(&Self::stage_meta(&connection, "indexing_mode")?)?;
         let tokenizer = Self::stage_meta(&connection, "tokenizer")?;
         if baseline_generation != self.baseline_generation
             || config_hash != self.config_hash
-            || rebuild != if self.rebuild { "1" } else { "0" }
+            || mode != self.mode
             || tokenizer != self.tokenizer
         {
             return Err(Error::OperationFailure(
@@ -617,6 +625,23 @@ impl FinalizedReconciliation {
     }
 }
 
+fn indexing_mode_stage_value(mode: IndexingMode) -> &'static str {
+    match mode {
+        IndexingMode::Reconcile => "reconcile",
+        IndexingMode::Rebuild => "rebuild",
+    }
+}
+
+fn parse_indexing_mode_stage_value(value: &str) -> Result<IndexingMode> {
+    match value {
+        "reconcile" => Ok(IndexingMode::Reconcile),
+        "rebuild" => Ok(IndexingMode::Rebuild),
+        _ => Err(Error::OperationFailure(
+            "invalid reconciliation stage indexing mode".into(),
+        )),
+    }
+}
+
 struct StageFileRow {
     id: i64,
     path: String,
@@ -644,8 +669,8 @@ mod tests {
             "fixture-tokenizer",
             &baseline,
             "config",
-            false,
-            false,
+            IndexingMode::Reconcile,
+            StorageProfiling::Omit,
         )
         .expect("stage");
         stage.stage_removal("old.rs".into());
@@ -662,6 +687,46 @@ mod tests {
         assert_eq!(stage.removals, vec!["old.rs"]);
         assert!(stage.replacements.is_empty());
         assert_eq!(stage.next_ordinal, 0);
+    }
+
+    #[test]
+    fn publication_rejects_an_unknown_staged_indexing_mode() {
+        let root = tempfile::tempdir().expect("repository root");
+        let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+        let baseline = storage.meta().expect("baseline");
+        let mut stage = PreparedReconciliation::new(
+            &storage,
+            "fixture-tokenizer",
+            &baseline,
+            "config",
+            IndexingMode::Reconcile,
+            StorageProfiling::Omit,
+        )
+        .expect("stage");
+        stage.initialize().expect("initialize stage");
+        stage
+            .connection
+            .as_ref()
+            .expect("initialized stage connection")
+            .execute(
+                "UPDATE stage_meta SET value = 'unexpected' WHERE key = 'indexing_mode'",
+                [],
+            )
+            .expect("corrupt staged mode");
+        let stage = stage.finish().expect("finish stage");
+
+        let error = storage
+            .publish_reconciliation_at(&baseline, "config", IndexingMode::Reconcile, |writer| {
+                stage.apply(writer)
+            })
+            .expect_err("unknown staged mode must fail publication");
+
+        assert!(matches!(
+            error,
+            Error::OperationFailure(message)
+                if message == "invalid reconciliation stage indexing mode"
+        ));
+        assert_eq!(storage.repository_generation().expect("generation"), 0);
     }
 
     #[test]
@@ -710,8 +775,8 @@ mod tests {
             "fixture-tokenizer",
             &baseline,
             "config",
-            false,
-            true,
+            IndexingMode::Reconcile,
+            StorageProfiling::Collect,
         )
         .expect("stage");
         stage.stage_removal("old.rs".into());
@@ -726,7 +791,9 @@ mod tests {
         assert!(stage.diagnostics().database_bytes > 0);
 
         let (generation, ()) = storage
-            .publish_reconciliation_at(&baseline, "config", false, |writer| stage.apply(writer))
+            .publish_reconciliation_at(&baseline, "config", IndexingMode::Reconcile, |writer| {
+                stage.apply(writer)
+            })
             .expect("publish staged rows");
         assert_eq!(generation, 2);
 

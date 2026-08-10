@@ -43,7 +43,10 @@ async fn mcp_handoff_token_costs() {
     let config = Config::discover(&root, Some(temp.path().join("index.sqlite"))).expect("config");
     let tokenizer = config.tokenizer;
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(true).await.expect("cold index");
+    services
+        .index(leantoken::IndexingMode::Rebuild)
+        .await
+        .expect("cold index");
 
     let started = Instant::now();
 

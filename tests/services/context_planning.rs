@@ -68,7 +68,7 @@ async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
     )
     .expect("write unrelated registration fixture");
     services
-        .index(false)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index MCP routing fixture");
 
@@ -196,7 +196,10 @@ async fn context_options_enforce_the_final_serialized_service_response_budget() 
         )
         .expect("write context budget fixture");
     }
-    services.index(false).await.expect("reindex budget fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("reindex budget fixture");
     let request = context_limit_request(1_000);
     let source_budget = request.token_budget;
     let unrestricted = services
@@ -478,7 +481,10 @@ async fn context_response_profiles_only_change_bounded_presentation() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
@@ -804,7 +810,10 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let mut request = context_limit_request(200);
     request.task = "find shared_capture_target".into();
     request.include_paths = vec!["src/browser/**".into()];
@@ -878,7 +887,10 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let files = services
         .files(FilesRequest {
@@ -996,7 +1008,10 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let mut ordinary_focus = context_limit_request(1_000);
     ordinary_focus.task = "change shared_scope_target".into();
@@ -1195,7 +1210,10 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let request = {
         let mut request = context_limit_request(4_000);
@@ -1439,7 +1457,10 @@ async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let request = {
         let mut request = context_limit_request(12_000);
@@ -1543,7 +1564,10 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("initial index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("initial index");
 
     let focus_symbols = ["focus_alpha", "focus_beta", "focus_gamma"];
     let mut updated_source = String::new();
@@ -1653,7 +1677,10 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let mut request = context_limit_request(500);
     request.task = "change strict_changed_target".into();
@@ -1747,7 +1774,10 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let mut request = context_limit_request(300);
     request.task = "investigate a different subsystem".into();
     request.include_paths = vec!["src/**".into(), "absent/**".into()];
@@ -1919,7 +1949,10 @@ async fn context_required_evidence_covers_doq_ranges_and_rejects_intro_fallbacks
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let mut request = context_limit_request(5_000);
     request.task =
@@ -2027,7 +2060,10 @@ async fn context_marks_partial_required_symbols_without_claiming_complete_covera
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let mut request = context_limit_request(300);
     request.task = "inspect required_long_symbol".into();
     request.must_include_symbols = vec!["required_long_symbol".into()];

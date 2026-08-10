@@ -84,7 +84,10 @@ async fn main() {
     let services = Services::open(config).expect("services");
 
     let cold_start = Instant::now();
-    services.index(true).await.expect("cold index");
+    services
+        .index(leantoken::IndexingMode::Rebuild)
+        .await
+        .expect("cold index");
     let cold_index_ms = cold_start.elapsed().as_secs_f64() * 1_000.0;
 
     let mut task_reports = Vec::new();

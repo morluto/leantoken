@@ -43,6 +43,20 @@ struct ResolvedHistoricalSymbol {
     content: String,
 }
 
+#[derive(Clone, Copy)]
+enum HistoryText<'a> {
+    Symbol(&'a str),
+    Diff(&'a str),
+}
+
+impl<'a> HistoryText<'a> {
+    const fn content(self) -> &'a str {
+        match self {
+            Self::Symbol(content) | Self::Diff(content) => content,
+        }
+    }
+}
+
 enum HistoricalSymbolEndpoints {
     Modified {
         before: Box<ResolvedHistoricalSymbol>,
@@ -1223,14 +1237,16 @@ impl Services {
             let boundaries = char_boundaries(&content);
             minimum = Some(self.history_text_prefix_candidate(
                 response,
-                &content,
+                HistoryText::Symbol(&content),
                 &boundaries,
                 usize::from(boundaries.len() > 1),
-                false,
             ));
-            if let Some(candidate) =
-                self.fit_history_text_prefix(response, &content, &boundaries, options, false)?
-            {
+            if let Some(candidate) = self.fit_history_text_prefix(
+                response,
+                HistoryText::Symbol(&content),
+                &boundaries,
+                options,
+            )? {
                 *response = candidate;
                 return Ok(());
             }
@@ -1238,14 +1254,16 @@ impl Services {
             let boundaries = char_boundaries(&diff);
             minimum = Some(self.history_text_prefix_candidate(
                 response,
-                &diff,
+                HistoryText::Diff(&diff),
                 &boundaries,
                 usize::from(boundaries.len() > 1),
-                true,
             ));
-            if let Some(candidate) =
-                self.fit_history_text_prefix(response, &diff, &boundaries, options, true)?
-            {
+            if let Some(candidate) = self.fit_history_text_prefix(
+                response,
+                HistoryText::Diff(&diff),
+                &boundaries,
+                options,
+            )? {
                 *response = candidate;
                 return Ok(());
             }
@@ -1254,7 +1272,7 @@ impl Services {
             let max_response_tokens = options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit");
-            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let budget = ResponseBudget::new(max_response_tokens);
             let keep = budget.largest_fitting_prefix(original.commits.len(), |keep| {
                 let mut candidate = original.clone();
                 candidate.commits.truncate(keep);
@@ -1297,7 +1315,7 @@ impl Services {
         let max_response_tokens = options.max_response_tokens().ok_or_else(|| {
             Error::InvalidConfiguration("fitting requires a response token limit".into())
         })?;
-        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let budget = ResponseBudget::new(max_response_tokens);
         let mut skeleton = original.clone();
         for result in &mut skeleton.results {
             if result.diff.take().is_some() {
@@ -1403,48 +1421,50 @@ impl Services {
     fn fit_history_text_prefix(
         &self,
         response: &HistoryResponse,
-        text: &str,
+        text: HistoryText<'_>,
         boundaries: &[usize],
         options: ServiceCallOptions,
-        is_diff: bool,
     ) -> Result<Option<HistoryResponse>> {
         let max_response_tokens = options.max_response_tokens().ok_or_else(|| {
             Error::InvalidConfiguration("fitting requires a response token limit".into())
         })?;
-        let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+        let budget = ResponseBudget::new(max_response_tokens);
         let keep = budget.largest_fitting_prefix(boundaries.len().saturating_sub(1), |keep| {
-            let candidate =
-                self.history_text_prefix_candidate(response, text, boundaries, keep, is_diff);
+            let candidate = self.history_text_prefix_candidate(response, text, boundaries, keep);
             self.finalized_response_tokens(&candidate, options)
         })?;
         let Some(keep) = keep.filter(|keep| *keep > 0) else {
             return Ok(None);
         };
         Ok(Some(self.history_text_prefix_candidate(
-            response, text, boundaries, keep, is_diff,
+            response, text, boundaries, keep,
         )))
     }
 
     fn history_text_prefix_candidate(
         &self,
         response: &HistoryResponse,
-        text: &str,
+        text: HistoryText<'_>,
         boundaries: &[usize],
         keep: usize,
-        is_diff: bool,
     ) -> HistoryResponse {
-        let prefix = &text[..boundaries[keep]];
+        let prefix = &text.content()[..boundaries[keep]];
         let mut candidate = response.clone();
         let source_tokens = self.config.tokenizer.count(prefix);
         candidate.meta.source_tokens = source_tokens;
         candidate.result_complete = false;
-        if is_diff {
-            candidate.diff = Some(prefix.to_owned());
-            candidate.diff_truncated = true;
-        } else if let Some(symbol) = candidate.symbol.as_mut() {
-            symbol.content = Some(prefix.to_owned());
-            symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
-            symbol.truncated = true;
+        match text {
+            HistoryText::Diff(_) => {
+                candidate.diff = Some(prefix.to_owned());
+                candidate.diff_truncated = true;
+            }
+            HistoryText::Symbol(_) => {
+                if let Some(symbol) = candidate.symbol.as_mut() {
+                    symbol.content = Some(prefix.to_owned());
+                    symbol.returned_end_line = returned_end_line(symbol.target_start_line, prefix);
+                    symbol.truncated = true;
+                }
+            }
         }
         candidate
     }

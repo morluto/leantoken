@@ -440,7 +440,7 @@ async fn main() -> Result<(), DynError> {
         let database = scratch.path().join(format!("{}.sqlite", corpus.name));
         let services = Services::open(Config::discover(&root, Some(database.clone()))?)?;
         let started = Instant::now();
-        let indexed = services.index(true).await?;
+        let indexed = services.index(leantoken::IndexingMode::Rebuild).await?;
         let cold_index_ms = elapsed_ms(started);
         if !indexed.warnings.is_empty() {
             return Err(format!(
@@ -453,7 +453,7 @@ async fn main() -> Result<(), DynError> {
         let mut noop_reconcile_ms = Vec::new();
         for _ in 0..manifest.repetitions {
             let started = Instant::now();
-            let reconciled = services.index(false).await?;
+            let reconciled = services.index(leantoken::IndexingMode::Reconcile).await?;
             if reconciled.files_indexed != 0 || reconciled.files_removed != 0 {
                 return Err(
                     format!("{} no-op reconciliation changed the index", corpus.name).into(),

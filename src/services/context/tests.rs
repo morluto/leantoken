@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn working_tree_observation_ignores_changes_outside_the_scoped_root() {
+    let status = crate::repository::parse_git_status_observation(
+        std::io::Cursor::new(b"M  sibling.rs\0"),
+        10,
+        "nested/",
+    );
+
+    assert!(status.is_available());
+    assert!(status.changed_paths.is_empty());
+    assert_eq!(
+        WorkingTreeObservation::from_status(&status),
+        WorkingTreeObservation::Clean
+    );
+}
+
+#[test]
 fn lexical_match_facts_share_first_match_and_saturate_frequency_count() {
     let content = (0..100)
         .map(|index| format!("needle_{index}"))

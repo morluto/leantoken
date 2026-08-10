@@ -84,7 +84,7 @@ async fn main() -> leantoken::Result<()> {
     let services = Services::open(config)?;
 
     let index_started = Instant::now();
-    let indexed = services.index(false).await?;
+    let indexed = services.index(leantoken::IndexingMode::Reconcile).await?;
     let index_elapsed = index_started.elapsed();
 
     let regex_request = SearchRequest {

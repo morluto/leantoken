@@ -155,15 +155,6 @@ pub(crate) fn git_worktree_prefix(root: &Path) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-pub(crate) fn parse_git_status<R: BufRead>(
-    mut reader: R,
-    max: usize,
-    prefix: &str,
-) -> HashSet<String> {
-    parse_git_status_observation(&mut reader, max, prefix).changed_paths
-}
-
 pub(crate) fn parse_git_status_observation<R: BufRead>(
     mut reader: R,
     max: usize,

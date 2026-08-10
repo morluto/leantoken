@@ -32,19 +32,18 @@ impl Indexer {
     }
 
     /// Reconcile filesystem state into one committed repository generation.
-    pub fn reconcile(&self, rebuild: bool) -> Result<IndexResponse> {
-        self.reconcile_report(rebuild)
-            .map(IndexReport::into_response)
+    pub fn reconcile(&self, mode: IndexingMode) -> Result<IndexResponse> {
+        self.reconcile_report(mode).map(IndexReport::into_response)
     }
 
     /// Reconcile filesystem state and include bounded preparation skip reasons.
-    pub fn reconcile_report(&self, rebuild: bool) -> Result<IndexReport> {
-        self.reconcile_cancellable_report(rebuild, &CancellationToken::new())
+    pub fn reconcile_report(&self, mode: IndexingMode) -> Result<IndexReport> {
+        self.reconcile_cancellable_report(mode, &CancellationToken::new())
     }
 
     /// Reconcile a full repository and return phase diagnostics for benchmarks.
-    pub fn reconcile_profiled(&self, rebuild: bool) -> Result<ProfiledIndexResponse> {
-        self.reconcile_profiled_report(rebuild)
+    pub fn reconcile_profiled(&self, mode: IndexingMode) -> Result<ProfiledIndexResponse> {
+        self.reconcile_profiled_report(mode)
             .map(|profiled| ProfiledIndexResponse {
                 response: profiled.report.into_response(),
                 diagnostics: profiled.diagnostics,
@@ -52,37 +51,37 @@ impl Indexer {
     }
 
     /// Reconcile a full repository with additive details and phase diagnostics.
-    pub fn reconcile_profiled_report(&self, rebuild: bool) -> Result<ProfiledIndexReport> {
-        self.reconcile_cancellable_profiled_report(rebuild, &CancellationToken::new())
+    pub fn reconcile_profiled_report(&self, mode: IndexingMode) -> Result<ProfiledIndexReport> {
+        self.reconcile_cancellable_profiled_report(mode, &CancellationToken::new())
     }
 
     /// Reconcile the repository with cooperative cancellation and stale-plan retry.
     pub fn reconcile_cancellable(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
     ) -> Result<IndexResponse> {
-        self.reconcile_cancellable_report(rebuild, cancellation)
+        self.reconcile_cancellable_report(mode, cancellation)
             .map(IndexReport::into_response)
     }
 
     /// Reconcile with cancellation and include bounded preparation skip reasons.
     pub fn reconcile_cancellable_report(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
     ) -> Result<IndexReport> {
-        self.reconcile_cancellable_report_inner(rebuild, cancellation, StorageProfiling::Omit)
+        self.reconcile_cancellable_report_inner(mode, cancellation, StorageProfiling::Omit)
             .map(|profiled| profiled.report)
     }
 
     /// Reconcile a full repository with cancellation and phase diagnostics.
     pub fn reconcile_cancellable_profiled(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexResponse> {
-        self.reconcile_cancellable_profiled_report(rebuild, cancellation)
+        self.reconcile_cancellable_profiled_report(mode, cancellation)
             .map(|profiled| ProfiledIndexResponse {
                 response: profiled.report.into_response(),
                 diagnostics: profiled.diagnostics,
@@ -91,20 +90,20 @@ impl Indexer {
 
     pub(super) fn reconcile_cancellable_profiled_report(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_cancellable_report_inner(rebuild, cancellation, StorageProfiling::Collect)
+        self.reconcile_cancellable_report_inner(mode, cancellation, StorageProfiling::Collect)
     }
 
     pub(super) fn reconcile_cancellable_report_inner(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
     ) -> Result<ProfiledIndexReport> {
         for _ in 0..3 {
-            match self.reconcile_once(rebuild, cancellation, profiling) {
+            match self.reconcile_once(mode, cancellation, profiling) {
                 Err(Error::StaleReconciliation { .. }) => continue,
                 result => return result,
             }
@@ -114,22 +113,22 @@ impl Indexer {
 
     pub(super) fn reconcile_once(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
     ) -> Result<ProfiledIndexReport> {
-        self.reconcile_once_with_profiling_hooks(rebuild, cancellation, profiling, || {}, || {})
+        self.reconcile_once_with_profiling_hooks(mode, cancellation, profiling, || {}, || {})
     }
 
     #[cfg(test)]
     pub(super) fn reconcile_once_with_preparation_hook(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
         before_preparation: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         self.reconcile_once_with_profiling_hooks(
-            rebuild,
+            mode,
             cancellation,
             StorageProfiling::Omit,
             before_preparation,
@@ -140,12 +139,12 @@ impl Indexer {
     #[cfg(test)]
     pub(super) fn reconcile_once_with_post_publication_hook(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
         after_publication: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         self.reconcile_once_with_profiling_hooks(
-            rebuild,
+            mode,
             cancellation,
             StorageProfiling::Omit,
             || {},
@@ -155,14 +154,15 @@ impl Indexer {
 
     pub(super) fn reconcile_once_with_profiling_hooks(
         &self,
-        rebuild: bool,
+        mode: IndexingMode,
         cancellation: &CancellationToken,
         profiling: StorageProfiling,
         before_preparation: impl FnOnce(),
         after_publication: impl FnOnce(),
     ) -> Result<ProfiledIndexReport> {
         let total_started = Instant::now();
-        let process_write_before = (profiling == StorageProfiling::Collect)
+        let process_write_before = profiling
+            .is_collecting()
             .then(process_write_bytes)
             .flatten();
         check_cancelled(cancellation)?;
@@ -205,7 +205,7 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let existing = self.existing_files(cancellation)?;
         let config_hash = self.config_hash();
-        let force = rebuild || baseline.config_hash != config_hash;
+        let force = mode.is_rebuild() || baseline.config_hash != config_hash;
 
         let mut repository_paths = HashSet::with_capacity(discovered.len());
         for file in &discovered {
@@ -267,8 +267,8 @@ impl Indexer {
             self.config.tokenizer.name(),
             &baseline,
             &config_hash,
-            rebuild,
-            profiling == StorageProfiling::Collect,
+            mode,
+            profiling,
         )?;
         const MAX_INITIAL_REMOVALS_PER_STAGE: usize = 256;
         for path in &removed_paths {
@@ -357,14 +357,12 @@ impl Indexer {
         };
         let observe_publication =
             |phase| observe_publication_phase(progress.as_ref(), cancellation, phase);
-        let (generation, preparation, mut publication_detail) = if profiling
-            == StorageProfiling::Collect
-        {
+        let (generation, preparation, mut publication_detail) = if profiling.is_collecting() {
             self.storage
                 .publish_reconciliation_profiled_at_with_progress(
                     &baseline,
                     &config_hash,
-                    rebuild,
+                    mode,
                     observe_publication,
                     publish,
                 )?
@@ -372,7 +370,7 @@ impl Indexer {
             let (generation, preparation) = self.storage.publish_reconciliation_at_with_progress(
                 &baseline,
                 &config_hash,
-                rebuild,
+                mode,
                 observe_publication,
                 publish,
             )?;
@@ -404,7 +402,8 @@ impl Indexer {
             warnings,
         };
         let report = IndexReport::with_skip_reasons(response, skip_reasons);
-        let process_write_after = (profiling == StorageProfiling::Collect)
+        let process_write_after = profiling
+            .is_collecting()
             .then(process_write_bytes)
             .flatten();
         let process_write_bytes = process_write_before

@@ -317,27 +317,6 @@ impl ReadSession {
             .optional()?)
     }
 
-    #[cfg(test)]
-    pub(crate) fn find_enclosing_symbol(
-        &self,
-        file_id: i64,
-        line: usize,
-    ) -> Result<Option<SymbolRecord>> {
-        let line = usize_to_i64(line)?;
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT id, file_id, name, kind, parent, signature, start_line, end_line, start_byte, end_byte
-                     FROM symbols
-                     WHERE file_id = ?1 AND start_line <= ?2 AND end_line >= ?2
-                     ORDER BY (end_line - start_line), start_byte
-                     LIMIT 1",
-                params![file_id, line],
-                Storage::map_symbol,
-            )
-            .optional()?)
-    }
-
     /// Find the narrowest enclosing symbol for every requested file/line pair.
     ///
     /// Results preserve input order and cardinality; `None` marks a location with

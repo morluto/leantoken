@@ -14,14 +14,6 @@ pub(crate) struct IndexSnapshot {
 }
 
 impl IndexSnapshot {
-    #[cfg(test)]
-    pub(crate) fn new(session: ReadSession, generation: u64) -> Self {
-        Self {
-            session,
-            generation,
-        }
-    }
-
     pub(crate) fn open(storage: &Storage) -> Result<Self> {
         let session = storage.begin_read()?;
         let generation = session.repository_generation()?;

@@ -30,12 +30,17 @@ impl Storage {
         config_hash: &str,
         files: Vec<IndexedFile>,
     ) -> Result<u64> {
-        self.publish_reconciliation_at(baseline, config_hash, true, move |writer| {
-            for file in files {
-                writer.replace(file)?;
-            }
-            Ok(())
-        })
+        self.publish_reconciliation_at(
+            baseline,
+            config_hash,
+            IndexingMode::Rebuild,
+            move |writer| {
+                for file in files {
+                    writer.replace(file)?;
+                }
+                Ok(())
+            },
+        )
         .map(|(generation, ())| generation)
     }
 
@@ -68,15 +73,20 @@ impl Storage {
         replacements: Vec<IndexedFile>,
         deletions: &[String],
     ) -> Result<u64> {
-        self.publish_reconciliation_at(baseline, config_hash, false, move |writer| {
-            for path in deletions {
-                writer.delete(path)?;
-            }
-            for file in replacements {
-                writer.replace(file)?;
-            }
-            Ok(())
-        })
+        self.publish_reconciliation_at(
+            baseline,
+            config_hash,
+            IndexingMode::Reconcile,
+            move |writer| {
+                for path in deletions {
+                    writer.delete(path)?;
+                }
+                for file in replacements {
+                    writer.replace(file)?;
+                }
+                Ok(())
+            },
+        )
         .map(|(generation, ())| generation)
     }
 
@@ -85,11 +95,18 @@ impl Storage {
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
+        mode: IndexingMode,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
-        self.publish_reconciliation_inner(baseline, config_hash, rebuild, false, |_| Ok(()), write)
-            .map(|(generation, output, _)| (generation, output))
+        self.publish_reconciliation_inner(
+            baseline,
+            config_hash,
+            mode,
+            StorageProfiling::Omit,
+            |_| Ok(()),
+            write,
+        )
+        .map(|(generation, output, _)| (generation, output))
     }
 
     /// Build and publish one generation while reporting bounded storage phases.
@@ -97,12 +114,19 @@ impl Storage {
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
+        mode: IndexingMode,
         observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T)> {
-        self.publish_reconciliation_inner(baseline, config_hash, rebuild, false, observe, write)
-            .map(|(generation, output, _)| (generation, output))
+        self.publish_reconciliation_inner(
+            baseline,
+            config_hash,
+            mode,
+            StorageProfiling::Omit,
+            observe,
+            write,
+        )
+        .map(|(generation, output, _)| (generation, output))
     }
 
     /// Build and publish one generation with storage-level profiling enabled.
@@ -111,10 +135,17 @@ impl Storage {
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
+        mode: IndexingMode,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
-        self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, |_| Ok(()), write)
+        self.publish_reconciliation_inner(
+            baseline,
+            config_hash,
+            mode,
+            StorageProfiling::Collect,
+            |_| Ok(()),
+            write,
+        )
     }
 
     /// Build and publish with profiling plus bounded storage-phase reporting.
@@ -122,19 +153,26 @@ impl Storage {
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
+        mode: IndexingMode,
         observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
-        self.publish_reconciliation_inner(baseline, config_hash, rebuild, true, observe, write)
+        self.publish_reconciliation_inner(
+            baseline,
+            config_hash,
+            mode,
+            StorageProfiling::Collect,
+            observe,
+            write,
+        )
     }
 
     pub(crate) fn publish_reconciliation_inner<T>(
         &self,
         baseline: &MetaRecord,
         config_hash: &str,
-        rebuild: bool,
-        profile: bool,
+        mode: IndexingMode,
+        profiling: StorageProfiling,
         mut observe: impl FnMut(ReconciliationPublicationPhase) -> Result<()>,
         write: impl FnOnce(&mut ReconciliationWriter<'_, '_>) -> Result<T>,
     ) -> Result<(u64, T, PublicationDiagnostics)> {
@@ -145,7 +183,7 @@ impl Storage {
         // Profiling uses a disposable writer connection so its temporary
         // auto-checkpoint policy can never leak into ordinary publications.
         // Holding the normal writer lock still serializes in-process mutation.
-        let mut profiled_connection = if profile {
+        let mut profiled_connection = if profiling.is_collecting() {
             let mut connection = Connection::open(&self.path)?;
             Self::configure(&mut connection, DEFAULT_BUSY_TIMEOUT)?;
             connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
@@ -170,12 +208,12 @@ impl Storage {
 
             // Initial and replacement publications can build the external-content
             // FTS indexes once instead of maintaining them for every chunk mutation.
-            let bulk_fts = rebuild || current_generation == 0;
+            let bulk_fts = mode.is_rebuild() || current_generation == 0;
             let mut trigger_guard = bulk_fts
                 .then(|| DatabaseTriggerGuard::disable(&tx))
                 .transpose()?;
 
-            if rebuild {
+            if mode.is_rebuild() {
                 tx.execute("DELETE FROM files", [])?;
                 tx.execute("DELETE FROM path_entries", [])?;
             }
@@ -186,28 +224,28 @@ impl Storage {
             let mut writer = ReconciliationWriter {
                 transaction: &tx,
                 generation: next_generation,
-                rebuild,
+                mode,
                 replacements: 0,
                 deletions: HashSet::new(),
                 projection_refreshes: 0,
             };
             let (output, relational_write_ms, relational_write_bytes) =
-                measured_storage_phase(profile, || write(&mut writer))?;
+                measured_storage_phase(profiling, || write(&mut writer))?;
             diagnostics.relational_write_ms = relational_write_ms;
             diagnostics.relational_write_bytes = relational_write_bytes;
-            let changed = rebuild
+            let changed = mode.is_rebuild()
                 || writer.replacements > 0
                 || !writer.deletions.is_empty()
                 || writer.projection_refreshes > 0
                 || current_config != config_hash;
-            if !rebuild && !writer.deletions.is_empty() {
+            if !mode.is_rebuild() && !writer.deletions.is_empty() {
                 Self::remove_orphan_path_entries(&tx)?;
             }
             drop(writer);
 
             if changed && bulk_fts {
                 observe(ReconciliationPublicationPhase::ChunkWordFts)?;
-                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profiling, || {
                     tx.execute(
                         "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('rebuild')",
                         [],
@@ -218,7 +256,7 @@ impl Storage {
                 diagnostics.chunk_word_fts_rebuild_write_bytes = write_bytes;
 
                 observe(ReconciliationPublicationPhase::ChunkTrigramFts)?;
-                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profiling, || {
                     tx.execute(
                         "INSERT INTO chunks_fts_trigram(chunks_fts_trigram) VALUES('rebuild')",
                         [],
@@ -229,7 +267,7 @@ impl Storage {
                 diagnostics.chunk_trigram_fts_rebuild_write_bytes = write_bytes;
 
                 observe(ReconciliationPublicationPhase::SymbolFts)?;
-                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profiling, || {
                     tx.execute(
                         "INSERT INTO symbols_fts_trigram(symbols_fts_trigram) VALUES('rebuild')",
                         [],
@@ -240,7 +278,7 @@ impl Storage {
                 diagnostics.symbol_fts_rebuild_write_bytes = write_bytes;
 
                 observe(ReconciliationPublicationPhase::ReferenceFts)?;
-                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+                let (_, elapsed_ms, write_bytes) = measured_storage_phase(profiling, || {
                     tx.execute(
                         "INSERT INTO symbol_refs_fts_trigram(symbol_refs_fts_trigram) VALUES('rebuild')",
                         [],
@@ -268,7 +306,7 @@ impl Storage {
             // pre-existing WAL backlog. Rollback still releases BEGIN
             // IMMEDIATE after the baseline check, without rewriting pages for
             // a generation that did not change.
-            let (_, elapsed_ms, write_bytes) = measured_storage_phase(profile, || {
+            let (_, elapsed_ms, write_bytes) = measured_storage_phase(profiling, || {
                 if changed {
                     Ok(tx.commit()?)
                 } else {
@@ -278,7 +316,7 @@ impl Storage {
             diagnostics.commit_ms = elapsed_ms;
             diagnostics.commit_write_bytes = write_bytes;
 
-            if profile {
+            if profiling.is_collecting() {
                 diagnostics.post_commit_diagnostics_complete =
                     populate_post_commit_diagnostics(conn, &self.path, changed, &mut diagnostics)
                         .is_ok();

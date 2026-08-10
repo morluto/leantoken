@@ -1,4 +1,5 @@
 use super::coverage::{MAX_PARSER_COVERAGE_GROUPS, parser_coverage_summary, safe_extension_family};
+use super::read::AdaptiveExcerptRequest;
 use super::savings::signed_token_difference;
 use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
@@ -70,7 +71,10 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("initial index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("initial index");
     services.reconciliation.reset_diagnostics();
     (root, services)
 }
@@ -153,7 +157,7 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
     };
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
-        modern_protocol: true,
+        protocol: crate::tokens::McpProtocolShape::Modern,
     };
     let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
     let successful = services
@@ -903,7 +907,10 @@ async fn index_search_read_and_hash_delta() {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let search = services
         .search(SearchRequest {
@@ -978,7 +985,10 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let file = services
         .storage
         .find_file("lib.rs")
@@ -992,25 +1002,31 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
     };
     let matched_line = 151;
     let enclosing = session
-        .find_enclosing_symbol(file.id, matched_line)
+        .find_enclosing_symbols_batch(&[(file.id, matched_line)])
         .expect("find enclosing symbol")
+        .into_iter()
+        .next()
+        .expect("one enclosing lookup")
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let generation = session
-        .repository_generation()
-        .expect("snapshot generation");
-    let session = crate::services::index_read::IndexReadSnapshot::new(session, generation);
+    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+        .expect("read snapshot");
     let bounded = services
-        .adaptive_context_excerpt(
+        .adaptive_context_excerpts(
             &session,
-            file.id,
-            large.start_line,
-            large.end_line,
-            matched_line,
-            60,
+            &[AdaptiveExcerptRequest {
+                file_id: file.id,
+                declaration_start: large.start_line,
+                declaration_end: large.end_line,
+                matched_line,
+                token_budget: 60,
+            }],
         )
         .expect("bounded excerpt")
+        .into_iter()
+        .next()
+        .expect("one bounded request")
         .expect("bounded declaration");
     assert!(bounded.start_line <= matched_line);
     assert!(bounded.end_line >= matched_line);
@@ -1023,15 +1039,20 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         panic!("small symbol must resolve uniquely");
     };
     let complete = services
-        .adaptive_context_excerpt(
+        .adaptive_context_excerpts(
             &session,
-            file.id,
-            small.start_line,
-            small.end_line,
-            small.start_line,
-            1_000,
+            &[AdaptiveExcerptRequest {
+                file_id: file.id,
+                declaration_start: small.start_line,
+                declaration_end: small.end_line,
+                matched_line: small.start_line,
+                token_budget: 1_000,
+            }],
         )
         .expect("complete excerpt")
+        .into_iter()
+        .next()
+        .expect("one complete request")
         .expect("complete declaration");
     assert_eq!(complete.start_line, small.start_line);
     assert_eq!(complete.end_line, small.end_line);
@@ -1050,7 +1071,10 @@ async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page(
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let mut request = SearchRequest {
         query: "needle".into(),
@@ -1137,7 +1161,10 @@ async fn cancellable_service_stops_before_blocking_work() {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let cancellation = CancellationToken::new();
     cancellation.cancel();

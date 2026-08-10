@@ -1,5 +1,47 @@
 use super::*;
 
+fn apply_test_edit(
+    client: SetupClient,
+    path: &Path,
+    resolution: ResolvedEdit,
+) -> Result<EditStatus> {
+    let status = resolution.status();
+    let action = resolution.action();
+    apply_edit(&PlannedClientEdit {
+        public: ClientSetupPlan {
+            client,
+            path: path.to_path_buf(),
+            action,
+            detected: false,
+        },
+        resolution,
+    })?;
+    Ok(status)
+}
+
+fn edit_json_config(
+    operation: SetupOperation,
+    path: &Path,
+    section_name: &str,
+    shape: JsonEntryShape,
+    launcher: &McpLauncher,
+) -> Result<EditStatus> {
+    let original = read_optional(path)?;
+    let resolution =
+        resolve_json_edit_from_source(operation, path, section_name, shape, launcher, original)?;
+    apply_test_edit(SetupClient::Claude, path, resolution)
+}
+
+fn edit_toml_config(
+    operation: SetupOperation,
+    path: &Path,
+    launcher: &McpLauncher,
+) -> Result<EditStatus> {
+    let original = read_optional(path)?;
+    let resolution = resolve_toml_edit_from_source(operation, path, launcher, original)?;
+    apply_test_edit(SetupClient::Codex, path, resolution)
+}
+
 #[test]
 fn runtime_root_falls_back_below_the_resolved_home() {
     assert_eq!(

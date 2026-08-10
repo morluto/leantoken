@@ -126,10 +126,10 @@ impl LeanTokenMcp {
                             )
                             .await
                             .and_then(serialized_response),
-                        SearchMcpOutput::Occurrences { coordinates_only } => services
+                        SearchMcpOutput::Occurrences(output) => services
                             .search_occurrences_with_options_consistency_cancellable(
                                 request,
-                                coordinates_only,
+                                output,
                                 consistency,
                                 options,
                                 cancellation,

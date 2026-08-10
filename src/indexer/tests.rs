@@ -115,7 +115,9 @@ fn initial_reconcile_reports_completed_aggregate_progress() {
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
 
-    let response = indexer.reconcile(false).expect("initial reconcile");
+    let response = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     let progress = indexer.progress_snapshot().expect("completed progress");
 
     assert_eq!(progress.phase, Some(IndexProgressPhase::Completed));
@@ -150,11 +152,13 @@ fn profiled_noop_preserves_backlogged_wal_without_checkpointing_or_publishing() 
             .expect("disable auto-checkpoint for backlog fixture");
     }
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    let initial = indexer.reconcile(false).expect("initial reconcile");
+    let initial = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     assert_eq!(initial.repository_generation, 1);
 
     let profiled = indexer
-        .reconcile_profiled(false)
+        .reconcile_profiled(IndexingMode::Reconcile)
         .expect("profiled no-op reconciliation");
     assert_eq!(profiled.response.files_indexed, 0);
     assert_eq!(profiled.response.files_unchanged, 32);
@@ -206,11 +210,13 @@ fn full_reconcile_treats_mtime_only_churn_as_content_stable() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
-    let initial = indexer.reconcile(false).expect("initial reconcile");
+    let initial = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     advance_modified_time(&source);
 
     let profiled = indexer
-        .reconcile_profiled(false)
+        .reconcile_profiled(IndexingMode::Reconcile)
         .expect("mtime-only reconcile");
 
     assert_eq!(profiled.response.files_seen, 1);
@@ -238,7 +244,9 @@ fn targeted_reconcile_treats_mtime_only_churn_as_content_stable() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
-    let initial = indexer.reconcile(false).expect("initial reconcile");
+    let initial = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     advance_modified_time(&source);
 
     let response = indexer
@@ -263,11 +271,15 @@ fn same_size_content_change_still_reindexes_when_mtime_changes() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    let initial = indexer.reconcile(false).expect("initial reconcile");
+    let initial = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     fs::write(&source, "pub fn bravo() -> usize { 1 }\n").expect("replacement source");
     advance_modified_time(&source);
 
-    let response = indexer.reconcile(false).expect("changed reconcile");
+    let response = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("changed reconcile");
 
     assert_eq!(response.files_indexed, 1);
     assert_eq!(response.files_unchanged, 0);
@@ -295,7 +307,9 @@ fn cancelled_initial_reconcile_reports_cancelled_terminal_progress() {
     let cancellation = CancellationToken::new();
 
     let error = indexer
-        .reconcile_once_with_preparation_hook(false, &cancellation, || cancellation.cancel())
+        .reconcile_once_with_preparation_hook(IndexingMode::Reconcile, &cancellation, || {
+            cancellation.cancel()
+        })
         .expect_err("cancelled reconcile");
     assert!(matches!(error, Error::Cancelled));
     let progress = indexer.progress_snapshot().expect("cancelled progress");
@@ -370,7 +384,9 @@ fn cancellation_after_publication_returns_committed_success_and_completed_progre
     let cancellation = CancellationToken::new();
 
     let response = indexer
-        .reconcile_once_with_post_publication_hook(false, &cancellation, || cancellation.cancel())
+        .reconcile_once_with_post_publication_hook(IndexingMode::Reconcile, &cancellation, || {
+            cancellation.cancel()
+        })
         .expect("a committed generation must not be reported as cancelled")
         .report;
 
@@ -404,7 +420,9 @@ fn targeted_cancellation_after_publication_returns_committed_success() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     fs::write(&source, "fn after() {}\n").expect("updated source");
     let cancellation = CancellationToken::new();
 
@@ -467,7 +485,9 @@ fn visibility_reconcile_does_not_reclassify_exclusion_after_discovery() {
     );
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     fs::write(root.path().join(".gitignore"), "excluded.rs\n").expect("exclude source");
 
     let response = indexer
@@ -504,10 +524,14 @@ fn full_reconcile_counts_every_preparation_skip_reason() {
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
 
     let response = indexer
-        .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
-            fs::write(growing_path, vec![b'x'; 65]).expect("grow after discovery");
-            fs::remove_file(failed_path).expect("remove after discovery");
-        })
+        .reconcile_once_with_preparation_hook(
+            IndexingMode::Reconcile,
+            &CancellationToken::new(),
+            move || {
+                fs::write(growing_path, vec![b'x'; 65]).expect("grow after discovery");
+                fs::remove_file(failed_path).expect("remove after discovery");
+            },
+        )
         .expect("full reconcile")
         .report;
 
@@ -540,7 +564,9 @@ fn incremental_reconcile_counts_every_preparation_skip_reason() {
     config.max_file_bytes = 64;
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial reconcile");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
 
     fs::write(&indexed_path, "fn replacement() {}\n").expect("indexed replacement");
     fs::write(&binary_path, b"\0binary").expect("binary replacement");
@@ -570,6 +596,17 @@ fn incremental_reconcile_counts_every_preparation_skip_reason() {
     assert!(storage.find_file("binary.rs").expect("binary").is_none());
     assert!(storage.find_file("growing.rs").expect("growing").is_none());
     assert!(storage.find_file("failed.rs").expect("failed").is_some());
+}
+
+fn resolve_import(
+    source_path: &str,
+    raw_target: &str,
+    repository_paths: &HashSet<String>,
+) -> Option<String> {
+    resolve_import_candidates(
+        &import_candidates(source_path, raw_target),
+        repository_paths,
+    )
 }
 
 #[test]
@@ -830,7 +867,9 @@ fn parser_content_version_reindexes_legacy_symbol_rows() {
     let storage = Storage::open(&database).expect("storage");
     let indexer = Indexer::new(config, storage.clone()).expect("indexer");
 
-    let first = indexer.reconcile(false).expect("initial reconcile");
+    let first = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
     assert_eq!(first.repository_generation, 1);
     let legacy_hash = indexer.config_hash_for_content_marker(PREVIOUS_INDEX_CONTENT_MARKER);
     let connection = rusqlite::Connection::open(&database).expect("legacy connection");
@@ -857,7 +896,9 @@ fn parser_content_version_reindexes_legacy_symbol_rows() {
         2
     );
 
-    let reparsed = indexer.reconcile(false).expect("content-version reparse");
+    let reparsed = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("content-version reparse");
     assert_eq!(reparsed.repository_generation, 2);
     assert_eq!(reparsed.files_indexed, 1);
     assert_eq!(reparsed.files_unchanged, 0);
@@ -880,10 +921,14 @@ fn bounded_read_stops_at_limit_plus_one() {
     std::fs::write(&path, "12345").expect("source");
 
     assert_eq!(
-        read_bounded_path(&path, 5).expect("boundary"),
+        read_bounded_file(std::fs::File::open(&path).expect("open source"), 5).expect("boundary"),
         Some(b"12345".to_vec())
     );
-    assert_eq!(read_bounded_path(&path, 4).expect("limit plus one"), None);
+    assert_eq!(
+        read_bounded_file(std::fs::File::open(&path).expect("open source"), 4)
+            .expect("limit plus one"),
+        None
+    );
 }
 
 #[cfg(unix)]
@@ -906,16 +951,22 @@ fn preparation_never_publishes_external_symlink_targets() {
     let inside_for_full = inside_path.clone();
     let external_for_full = external_path.clone();
     indexer
-        .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
-            fs::remove_file(&inside_for_full).expect("remove discovered file");
-            symlink(external_for_full, inside_for_full).expect("replace with symlink");
-        })
+        .reconcile_once_with_preparation_hook(
+            IndexingMode::Reconcile,
+            &CancellationToken::new(),
+            move || {
+                fs::remove_file(&inside_for_full).expect("remove discovered file");
+                symlink(external_for_full, inside_for_full).expect("replace with symlink");
+            },
+        )
         .expect("bounded full reconcile");
     assert!(storage.find_file("inside.rs").expect("lookup").is_none());
 
     fs::remove_file(&inside_path).expect("remove symlink");
     fs::write(&inside_path, "fn inside_original() {}\n").expect("restore inside");
-    indexer.reconcile(false).expect("initial safe index");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial safe index");
     let original = storage
         .find_file("inside.rs")
         .expect("lookup")
@@ -955,9 +1006,11 @@ fn actual_prepared_bytes_drive_aggregate_limit_and_stored_size() {
     let growing = path.clone();
 
     let error = indexer
-        .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
-            fs::write(growing, vec![b'x'; 32]).expect("grow after discovery")
-        })
+        .reconcile_once_with_preparation_hook(
+            IndexingMode::Reconcile,
+            &CancellationToken::new(),
+            move || fs::write(growing, vec![b'x'; 32]).expect("grow after discovery"),
+        )
         .expect_err("actual bytes must cross aggregate limit");
     assert!(matches!(
         error,
@@ -981,9 +1034,11 @@ fn actual_prepared_bytes_drive_aggregate_limit_and_stored_size() {
     config.max_total_source_bytes = 48;
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
     indexer
-        .reconcile_once_with_preparation_hook(false, &CancellationToken::new(), move || {
-            fs::write(path, vec![b'x'; 32]).expect("grow within limit")
-        })
+        .reconcile_once_with_preparation_hook(
+            IndexingMode::Reconcile,
+            &CancellationToken::new(),
+            move || fs::write(path, vec![b'x'; 32]).expect("grow within limit"),
+        )
         .expect("reconcile");
     assert_eq!(
         storage
@@ -1040,12 +1095,14 @@ fn aggregate_limit_is_enforced_on_final_state_not_candidate_order() {
     config.max_total_source_bytes = 50;
     let storage = Storage::open(&config.database_path).expect("storage");
     let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    indexer.reconcile(false).expect("initial index");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial index");
 
     fs::write(&growing, vec![b' '; 45]).expect("grow source");
     fs::write(&shrinking, vec![b' '; 5]).expect("shrink source");
     indexer
-        .reconcile(false)
+        .reconcile(IndexingMode::Reconcile)
         .expect("final aggregate remains within limit");
 
     assert_eq!(
@@ -1076,7 +1133,7 @@ fn reconciliation_can_reduce_an_existing_generation_below_a_new_limit() {
     let storage = Storage::open(&database).expect("storage");
     Indexer::new(Arc::new(initial), storage.clone())
         .expect("indexer")
-        .reconcile(false)
+        .reconcile(IndexingMode::Reconcile)
         .expect("initial index");
 
     fs::write(&path, vec![b' '; 40]).expect("shrink source");
@@ -1086,7 +1143,7 @@ fn reconciliation_can_reduce_an_existing_generation_below_a_new_limit() {
     tightened.max_total_source_bytes = 50;
     Indexer::new(Arc::new(tightened), storage.clone())
         .expect("indexer")
-        .reconcile(false)
+        .reconcile(IndexingMode::Reconcile)
         .expect("reduce stored aggregate");
 
     assert_eq!(

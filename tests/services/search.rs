@@ -413,7 +413,10 @@ async fn text_search_reports_enclosing_symbols_across_languages() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let response = services
         .search(SearchRequest {
@@ -466,7 +469,10 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let response = services
         .search(SearchRequest {
@@ -563,7 +569,7 @@ async fn case_insensitive_search_uses_the_verifier_unicode_case_folding() {
     )
     .expect("write plain-text Unicode fixture");
     services
-        .index(false)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index plain-text Unicode fixture");
     let context = services

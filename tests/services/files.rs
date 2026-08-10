@@ -13,7 +13,10 @@ async fn file_operations_page_without_duplicates() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     for operation in [
         FileOperation::Tree,
@@ -95,7 +98,10 @@ async fn fuzzy_find_ties_prioritize_production_source_and_preserve_pagination() 
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let request = |cursor, max_results| FilesRequest {
         operation: FileOperation::Find,
         path: None,
@@ -168,7 +174,10 @@ async fn files_glob_selective_pattern_returns_only_matching_paths() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let response = services
         .files(FilesRequest {
@@ -200,7 +209,10 @@ async fn file_tree_projection_respects_root_depth_and_removes_empty_directories(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let tree = services
         .files(FilesRequest {
@@ -254,7 +266,10 @@ async fn file_tree_normalizes_equivalent_roots_before_query_and_pagination() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     for aliases in [
         vec![None, Some(""), Some("."), Some("./")],

@@ -91,7 +91,7 @@ async fn run(args: &Args) -> AnyResult<Report> {
     fs::write(root.path().join("near_limit.rs"), &content)?;
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))?;
     let services = Services::open(config)?;
-    services.index(false).await?;
+    services.index(leantoken::IndexingMode::Reconcile).await?;
 
     let shallow = (1, args.range_lines.min(lines));
     let deep_start = lines

@@ -1,10 +1,24 @@
 use super::*;
 use crate::IndexScope;
-use crate::config::{managed_cache_id, managed_cache_id_for_scope};
+use crate::config::managed_cache_id_for_scope;
 use crate::storage::Storage;
 
 pub(super) const FIRST_ID: &str = "0000000000000001";
 pub(super) const SECOND_ID: &str = "0000000000000002";
+
+pub(super) fn managed_cache_id(repository: &Path) -> String {
+    managed_cache_id_for_scope(repository, &IndexScope::default())
+}
+
+pub(super) fn inspect_cache_without_active_probe(
+    manager: &CacheManager,
+    id: &str,
+) -> super::super::InspectedCache {
+    let identity = parse_managed_cache_id(id).expect("managed cache identity");
+    manager
+        .inspect_managed_cache(id, identity, false)
+        .expect("inspect cache before replacement")
+}
 
 pub(super) fn request() -> CachePruneRequest {
     CachePruneRequest {
@@ -26,7 +40,7 @@ pub(super) fn create_current_cache(
     let directory = manager.root.join(&id);
     fs::create_dir_all(&directory).expect("cache directory");
     let database = directory.join(DATABASE_NAME);
-    drop(Storage::open_for_repository(&database, repository).expect("cache database"));
+    drop(Storage::open_for_repository_scoped(&database, repository, None).expect("cache database"));
     Connection::open(&database)
         .expect("cache metadata")
         .execute(

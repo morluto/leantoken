@@ -84,7 +84,10 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         .expect("scoped config"),
     )
     .expect("scoped services");
-    scoped.index(false).await.expect("scoped index");
+    scoped
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("scoped index");
 
     let status = scoped.status().await.expect("scoped status");
     assert_eq!(status.index_scope, IndexScopeMode::Scoped);
@@ -184,7 +187,9 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         Config::discover(root.path(), Some(cache.path().join("full.sqlite"))).expect("full config"),
     )
     .expect("full services");
-    full.index(false).await.expect("full index");
+    full.index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("full index");
     let full_result = full.search(request).await.expect("full search");
     assert_eq!(full_result.meta.index_scope, IndexScopeMode::Full);
     assert_eq!(full_result.meta.index_scope_digest, None);
@@ -214,7 +219,10 @@ async fn same_repository_services_share_committed_generations() {
         Services::open(Config::discover(root.path(), Some(database)).expect("second config"))
             .expect("second services");
 
-    let indexed = first.index(false).await.expect("index");
+    let indexed = first
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let observed = second.status().await.expect("follower status");
 
     assert_eq!(
@@ -243,7 +251,10 @@ async fn independent_repositories_index_concurrently_without_result_leakage() {
     )
     .expect("second services");
 
-    let (first_index, second_index) = tokio::join!(first.index(false), second.index(false));
+    let (first_index, second_index) = tokio::join!(
+        first.index(leantoken::IndexingMode::Reconcile),
+        second.index(leantoken::IndexingMode::Reconcile)
+    );
     first_index.expect("first index");
     second_index.expect("second index");
     let first_status = first.status().await.expect("first status");
@@ -286,7 +297,10 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
     let config = Config::discover(root.path(), Some(alias.join("missing/cache/index.sqlite")))
         .expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let files = services
         .files(FilesRequest {

@@ -10,12 +10,24 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
     validate_cursor(request.cursor.as_deref())?;
-    if request.all_occurrences && !request.mode.supports_all_occurrences() {
-        return Err(incompatible_occurrence_options(
-            request.mode,
-            vec!["all_occurrences=true".into()],
-        ));
-    }
+    Ok(())
+}
+
+pub(super) fn parse_search_kind(
+    request: &SearchRequest,
+    output_shape: SearchOutputShape,
+) -> Result<SearchKind> {
+    let exhaustive_mode = match (request.mode, request.all_occurrences) {
+        (_, false) => None,
+        (SearchMode::Text, true) => Some(ExhaustiveSearchMode::Text),
+        (SearchMode::Regex, true) => Some(ExhaustiveSearchMode::Regex),
+        (mode, true) => {
+            return Err(incompatible_occurrence_options(
+                mode,
+                vec!["all_occurrences=true".into()],
+            ));
+        }
+    };
     if request.prefer_structural
         && !matches!(request.mode, SearchMode::Auto | SearchMode::Identifier)
     {
@@ -58,29 +70,45 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
             )?;
         }
     }
-    Ok(())
-}
-
-pub(super) fn validate_search_output(
-    request: &SearchRequest,
-    output_shape: SearchOutputShape,
-) -> Result<()> {
-    if matches!(output_shape, SearchOutputShape::OccurrenceGroups { .. })
-        && !request.all_occurrences
-    {
+    if matches!(output_shape, SearchOutputShape::OccurrenceGroups(_)) && !request.all_occurrences {
         return Err(Error::InvalidInput {
             field: "occurrence projection",
             reason: "requires all_occurrences=true",
         });
     }
     if request.query_receipt.is_some()
-        && !matches!(output_shape, SearchOutputShape::OccurrenceGroups { .. })
+        && !matches!(output_shape, SearchOutputShape::OccurrenceGroups(_))
     {
         return Err(Error::InvalidInput {
             field: "query_receipt",
             reason: "requires the occurrences projection",
         });
     }
-    Ok(())
+
+    let preference = DefinitionPreference::from_prefer_structural(request.prefer_structural);
+    let query_receipt = match &request.query_receipt {
+        None => PreparedQueryReceipt::None,
+        Some(QueryReceiptAction::Record) => {
+            PreparedQueryReceipt::Record(ExactQueryPredicate::from_request(request)?)
+        }
+        Some(QueryReceiptAction::Reuse { receipt_id }) => PreparedQueryReceipt::Reuse {
+            receipt_id: receipt_id.clone(),
+            predicate: ExactQueryPredicate::from_request(request)?,
+        },
+    };
+    if let Some(mode) = exhaustive_mode {
+        return Ok(SearchKind::Exhaustive {
+            mode,
+            query_receipt,
+        });
+    }
+    Ok(match request.mode {
+        SearchMode::Auto => SearchKind::Auto(preference),
+        SearchMode::Text => SearchKind::Text,
+        SearchMode::Regex => SearchKind::Regex,
+        SearchMode::Identifier => SearchKind::Identifier(preference),
+        SearchMode::Symbol => SearchKind::Symbol,
+        SearchMode::Reference => SearchKind::Reference,
+    })
 }
 use super::*;

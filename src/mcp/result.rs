@@ -59,10 +59,14 @@ impl McpResultMode {
         };
         crate::tokens::McpResponseShape {
             mode,
-            modern_protocol: matches!(
+            protocol: if matches!(
                 protocol,
                 Some(version) if version >= &ProtocolVersion::V_2026_07_28
-            ),
+            ) {
+                crate::tokens::McpProtocolShape::Modern
+            } else {
+                crate::tokens::McpProtocolShape::Legacy
+            },
         }
     }
 }
