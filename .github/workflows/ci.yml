@@ -142,6 +142,7 @@ jobs:
         id: filter
         env:
           SELECTED: ${{ steps.plan.outputs.selected_lanes }}
+          CHANGED_PATHS: ${{ steps.context.outputs.paths }}
         shell: bash
         run: |
           has() { jq -e --arg lane "$1" 'index($lane) != null' <<< "$SELECTED" >/dev/null; }
@@ -158,6 +159,13 @@ jobs:
           else
             rust_quality=false
           fi
+          topology=false
+          if [[ -n "$CHANGED_PATHS" && -f "$CHANGED_PATHS" ]]; then
+            if tr '\0' '\n' < "$CHANGED_PATHS" | grep -qx 'ci/test-topology.json'; then
+              topology=true
+            fi
+          fi
+          echo "topology=$topology" >> "$GITHUB_OUTPUT"
           echo "product=$product" >> "$GITHUB_OUTPUT"
           echo "contract=$contract" >> "$GITHUB_OUTPUT"
           echo "examples=$examples" >> "$GITHUB_OUTPUT"
@@ -180,21 +188,21 @@ jobs:
           node-version: 22
 
       - name: Install Rust
-        if: needs.changes.outputs.rust_quality == 'true'
+        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
           components: rustfmt, clippy
 
       - name: Cache Rust dependencies
-        if: needs.changes.outputs.rust_quality == 'true'
+        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: quality
           cache-workspace-crates: true
 
       - name: Verify locked dependency graph
-        if: needs.changes.outputs.rust_quality == 'true'
+        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
         run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Check duplicate files
@@ -218,7 +226,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Check test architecture
-        if: needs.changes.outputs.rust_quality == 'true'
+        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
         run: cargo xtask check-test-architecture
 
       - name: Lint all targets
