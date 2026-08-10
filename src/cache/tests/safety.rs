@@ -54,9 +54,7 @@ fn prune_rejects_cache_directory_replaced_with_symlink() {
     fs::create_dir(&repository).expect("repository");
     let manager = CacheManager::new(temp.path().join("managed"), 10_000);
     let (id, database) = create_current_cache(&manager, &repository, 100);
-    let inspected = manager
-        .inspect_cache(&id, false)
-        .expect("inspect cache before replacement");
+    let inspected = inspect_cache_without_active_probe(&manager, &id);
     assert!(inspected.safe_to_prune);
 
     let external = temp.path().join("external");
@@ -87,9 +85,7 @@ fn prune_rejects_managed_cache_root_replaced_with_symlink() {
     fs::create_dir(&repository).expect("repository");
     let manager = CacheManager::new(temp.path().join("managed"), 10_000);
     let (id, database) = create_current_cache(&manager, &repository, 100);
-    let inspected = manager
-        .inspect_cache(&id, false)
-        .expect("inspect cache before replacement");
+    let inspected = inspect_cache_without_active_probe(&manager, &id);
     assert!(inspected.safe_to_prune);
 
     let external_root = temp.path().join("external-managed");
@@ -205,7 +201,7 @@ fn future_schema_and_mismatched_identity_are_never_removed_automatically() {
     fs::create_dir_all(&mismatch_directory).expect("mismatch directory");
     let mismatch_database = mismatch_directory.join(DATABASE_NAME);
     drop(
-        Storage::open_for_repository(&mismatch_database, &mismatch_root)
+        Storage::open_for_repository_scoped(&mismatch_database, &mismatch_root, None)
             .expect("mismatch database"),
     );
     let future_migration_id = SECOND_ID;
@@ -262,7 +258,7 @@ fn future_index_content_cache_is_visible_but_never_removed() {
     fs::create_dir_all(&directory).expect("future cache directory");
     let database = directory.join(DATABASE_NAME);
     drop(
-        Storage::open_for_repository(&database, &repository)
+        Storage::open_for_repository_scoped(&database, &repository, None)
             .expect("future cache database fixture"),
     );
     let manager = CacheManager::new(root, 10_000);

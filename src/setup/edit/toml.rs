@@ -1,36 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-pub(super) fn edit_toml_config(
-    operation: SetupOperation,
-    path: &Path,
-    launcher: &McpLauncher,
-) -> Result<EditStatus> {
-    let resolution = resolve_toml_edit(operation, path, launcher)?;
-    let status = resolution.status();
-    let edit = PlannedClientEdit {
-        public: ClientSetupPlan {
-            client: SetupClient::Codex,
-            path: path.to_path_buf(),
-            action: ClientPlanAction::Update,
-            detected: false,
-        },
-        resolution,
-    };
-    apply_edit(&edit)?;
-    Ok(status)
-}
-
-#[cfg(test)]
-pub(super) fn resolve_toml_edit(
-    operation: SetupOperation,
-    path: &Path,
-    launcher: &McpLauncher,
-) -> Result<ResolvedEdit> {
-    let original = read_optional(path)?;
-    resolve_toml_edit_from_source(operation, path, launcher, original)
-}
-
 pub(super) fn resolve_toml_edit_from_source(
     operation: SetupOperation,
     path: &Path,

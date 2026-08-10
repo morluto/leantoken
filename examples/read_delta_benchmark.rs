@@ -152,13 +152,13 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
         root.path(),
         Some(root.path().join("index.sqlite")),
     )?)?;
-    services.index(true).await?;
+    services.index(leantoken::IndexingMode::Rebuild).await?;
     let first = services
         .read(request(case.target, None, case.capture_base))
         .await?;
     fs::write(root.path().join("fixture.rs"), &case.changed)?;
     if case.reindex_after_edit {
-        services.index(false).await?;
+        services.index(leantoken::IndexingMode::Reconcile).await?;
     }
     let base_hash = first.content_hash;
     let changed = services

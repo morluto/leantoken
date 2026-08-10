@@ -12,7 +12,10 @@ async fn search_applies_path_filters_before_candidate_limits() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     for (mode, query) in [
         (SearchMode::Symbol, "shared_target"),
@@ -78,7 +81,10 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let request = SearchRequest {
         query: "audit_key".into(),
         mode: SearchMode::Text,
@@ -188,7 +194,10 @@ async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_vari
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let request = SearchRequest {
         query: query.into(),
@@ -268,7 +277,10 @@ async fn exhaustive_identifier_with_over_bound_case_variants_keeps_full_scan() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let response = services
         .search_evaluation(SearchRequest {
@@ -319,7 +331,10 @@ async fn compact_search_preserves_ranked_hits_and_removes_source_metadata() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let request = SearchRequest {
         query: "shared_compact_target".into(),
         mode: SearchMode::Identifier,
@@ -400,7 +415,10 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let request = SearchRequest {
         query: "F4-P|0-RTT|forbidden-phase|early-data|Handshake|handshake completion".into(),
         mode: SearchMode::Regex,
@@ -427,7 +445,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     assert_eq!(full.hits.len(), 60);
 
     let grouped = services
-        .search_occurrences(request.clone(), false)
+        .search_occurrences(request.clone(), SearchOccurrenceOutput::Excerpts)
         .await
         .expect("grouped occurrence response");
     assert_eq!(grouped.occurrences_total, 60);
@@ -464,7 +482,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     let error = services
         .search_occurrences_with_options(
             request.clone(),
-            false,
+            SearchOccurrenceOutput::Excerpts,
             ServiceCallOptions::new().with_max_response_tokens(response_limit),
         )
         .await
@@ -474,7 +492,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
     let mut coordinate_request = request;
     coordinate_request.max_tokens = Some(1);
     let coordinate_only = services
-        .search_occurrences(coordinate_request, true)
+        .search_occurrences(coordinate_request, SearchOccurrenceOutput::Coordinates)
         .await
         .expect("coordinate-only exhaustive response");
     assert_eq!(coordinate_only.occurrences_total, 60);
@@ -540,7 +558,10 @@ async fn identifier_search_merges_definition_channels_and_reports_coverage() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let response = services
         .search(SearchRequest {
@@ -593,7 +614,10 @@ async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let response = services
         .search(SearchRequest {
             query: r"item\d+".into(),
@@ -643,7 +667,10 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     for (pattern, expected_strategy, expected_source, expected_fallback) in [
         (
@@ -785,7 +812,10 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let request = |query: String, case_sensitive: bool| SearchRequest {
         query,
@@ -869,7 +899,10 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let request = SearchRequest {
         query: "overflow_needle".into(),
         mode: SearchMode::Regex,
@@ -916,7 +949,10 @@ async fn regex_full_scan_reports_the_path_blocking_the_per_file_chunk_bound() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     let request = SearchRequest {
         query: r"\d+".into(),
         mode: SearchMode::Regex,
@@ -963,7 +999,10 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
     let database = root.path().join("index.sqlite");
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let mut connection = rusqlite::Connection::open(database).expect("writer connection");
     let transaction = connection.transaction().expect("transaction");
@@ -1051,7 +1090,10 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
     .expect("write source");
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     // Populate the relational file inventory without creating 10,000 physical
     // files. Only the indexed source owns a chunk, which isolates whether a

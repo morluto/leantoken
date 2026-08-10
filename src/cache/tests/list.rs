@@ -478,7 +478,10 @@ fn legacy_repository_only_identity_remains_visible_and_prunable() {
     let directory = root.join(legacy_id);
     fs::create_dir_all(&directory).expect("legacy cache directory");
     let database = directory.join(DATABASE_NAME);
-    drop(Storage::open_for_repository(&database, &repository).expect("legacy cache database"));
+    drop(
+        Storage::open_for_repository_scoped(&database, &repository, None)
+            .expect("legacy cache database"),
+    );
     let manager = CacheManager::new(root, 10_000);
 
     let listed = manager

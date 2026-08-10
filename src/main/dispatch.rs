@@ -45,9 +45,9 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             doctor::print_report(&report, json)
         }
         AppRequest::Status => print(&Services::status_without_initializing(cli.config()?)?, json),
-        AppRequest::Index { rebuild } => {
+        AppRequest::Index { mode } => {
             let services = repository_services(&cli)?;
-            print(&services.index_report(rebuild).await?, json)
+            print(&services.index_report(mode).await?, json)
         }
         AppRequest::Coverage => {
             let services = repository_services(&cli)?;
@@ -116,11 +116,23 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                         .await?,
                     json,
                 ),
-                SearchProjectionArg::Occurrences | SearchProjectionArg::Coordinates => print(
+                SearchProjectionArg::Occurrences => print(
                     &services
                         .search_occurrences_with_options_consistency_cancellable(
                             request,
-                            projection == SearchProjectionArg::Coordinates,
+                            SearchOccurrenceOutput::Excerpts,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                SearchProjectionArg::Coordinates => print(
+                    &services
+                        .search_occurrences_with_options_consistency_cancellable(
+                            request,
+                            SearchOccurrenceOutput::Coordinates,
                             consistency,
                             service_call_options(max_response_tokens),
                             CancellationToken::new(),

@@ -1,6 +1,7 @@
 use rmcp::{serve_client, serve_server};
 
 use super::*;
+use crate::SearchOccurrenceOutput;
 
 #[test]
 fn request_admission_has_an_exact_fail_fast_boundary() {
@@ -2310,9 +2311,7 @@ fn compact_projections_map_to_service_requests() {
     let (_, output, _, _, _) = search.into_parts();
     assert_eq!(
         output,
-        SearchMcpOutput::Occurrences {
-            coordinates_only: true
-        }
+        SearchMcpOutput::Occurrences(SearchOccurrenceOutput::Coordinates)
     );
 
     let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({

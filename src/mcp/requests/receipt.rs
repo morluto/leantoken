@@ -56,7 +56,7 @@ impl ReceiptRebaseMcpRequest {
                 max_samples_per_outcome: self.max_samples_per_outcome,
             },
             self.consistency,
-            service_call_options_with_receipt(self.max_response_tokens, true),
+            service_call_options_with_receipt(self.max_response_tokens),
             self.expected_repository_id,
         )
     }

@@ -12,14 +12,6 @@ impl Storage {
 
     /// Read status from an existing cache without running migrations, changing
     /// SQLite pragmas, or binding the cache to a repository.
-    #[cfg(test)]
-    pub(crate) fn read_only_status(
-        path: &Path,
-        repository_root: &Path,
-    ) -> Result<ReadOnlyStatusSnapshot> {
-        Self::read_only_status_scoped(path, repository_root, None)
-    }
-
     pub(crate) fn read_only_status_scoped(
         path: &Path,
         repository_root: &Path,
@@ -139,11 +131,15 @@ impl Storage {
         }
         let mut conn = Connection::open(&path)?;
         Self::configure(&mut conn, startup_timeout)?;
-        with_auto_checkpoint_suspended(&mut conn, true, |conn| {
-            MIGRATIONS.to_latest(conn)?;
-            Self::ensure_token_savings_schema(conn)?;
-            Self::ensure_path_projection(conn)
-        })?;
+        with_auto_checkpoint_suspended(
+            &mut conn,
+            AutoCheckpointCompletion::CheckpointIfMutated,
+            |conn| {
+                MIGRATIONS.to_latest(conn)?;
+                Self::ensure_token_savings_schema(conn)?;
+                Self::ensure_path_projection(conn)
+            },
+        )?;
         Self::validate_fts5(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
@@ -166,19 +162,6 @@ impl Storage {
             #[cfg(test)]
             diagnostics: Arc::new(StorageDiagnostics::default()),
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_for_repository(
-        path: impl AsRef<Path>,
-        repository_root: &Path,
-    ) -> Result<Self> {
-        Self::open_for_repository_scoped_with_startup_timeout(
-            path,
-            repository_root,
-            None,
-            DEFAULT_BUSY_TIMEOUT,
-        )
     }
 
     pub(crate) fn open_for_repository_scoped(
@@ -230,7 +213,7 @@ impl Storage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        with_auto_checkpoint_suspended(&mut conn, false, |conn| {
+        with_auto_checkpoint_suspended(&mut conn, AutoCheckpointCompletion::RestoreOnly, |conn| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let (expected_repository, expected_identity): (String, String) = tx.query_row(
                 "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
@@ -445,13 +428,28 @@ impl Storage {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoCheckpointCompletion {
+    RestoreOnly,
+    CheckpointIfMutated,
+}
+
+impl AutoCheckpointCompletion {
+    const fn checkpoints_mutations(self) -> bool {
+        matches!(self, Self::CheckpointIfMutated)
+    }
+}
+
 fn with_auto_checkpoint_suspended<T>(
     conn: &mut Connection,
-    checkpoint_mutations: bool,
+    completion: AutoCheckpointCompletion,
     operation: impl FnOnce(&mut Connection) -> Result<T>,
 ) -> Result<T> {
-    let total_changes_before = checkpoint_mutations.then(|| conn.total_changes());
-    let schema_version_before = checkpoint_mutations
+    let total_changes_before = completion
+        .checkpoints_mutations()
+        .then(|| conn.total_changes());
+    let schema_version_before = completion
+        .checkpoints_mutations()
         .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
         .transpose()?;
     let previous = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))?;
@@ -465,7 +463,8 @@ fn with_auto_checkpoint_suspended<T>(
     } else {
         Ok(())
     };
-    let schema_version_after = checkpoint_mutations
+    let schema_version_after = completion
+        .checkpoints_mutations()
         .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
         .transpose()?;
     let main_database_changed = total_changes_before

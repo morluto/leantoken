@@ -247,7 +247,10 @@ async fn profile_repository(
     let config = Config::discover(repository, Some(database.clone())).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
     let index_started = Instant::now();
-    let index = services.index(false).await.expect("index repository");
+    let index = services
+        .index(IndexingMode::Reconcile)
+        .await
+        .expect("index repository");
     let index_milliseconds = index_started.elapsed().as_millis();
     let source_path = first_source_path(repository);
     let baselines = baseline_responses(&services, &source_path, query).await;

@@ -320,7 +320,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
 
     let start = Instant::now();
-    let initial_profile = indexer.reconcile_profiled_report(false)?;
+    let initial_profile = indexer.reconcile_profiled_report(leantoken::IndexingMode::Reconcile)?;
     let initial_index = IndexSample {
         elapsed_ms: milliseconds(start.elapsed()),
         response: initial_profile.report,
@@ -332,7 +332,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let mut full_noop_diagnostics = Vec::with_capacity(args.iterations);
     for _ in 0..args.iterations {
         let start = Instant::now();
-        let profiled = indexer.reconcile_profiled(false)?;
+        let profiled = indexer.reconcile_profiled(leantoken::IndexingMode::Reconcile)?;
         full_noop_durations.push(start.elapsed());
         require_index_counts(&profiled.response, discovered.len(), 0, "full no-op")?;
         full_noop_diagnostics.push(profiled.diagnostics);
@@ -346,7 +346,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let full_changed = measure_changed_indexing(
         args.iterations,
         &mutation_files[0].absolute_path,
-        || indexer.reconcile(false),
+        || indexer.reconcile(leantoken::IndexingMode::Reconcile),
         discovered.len(),
         "full changed",
     )?;
@@ -390,7 +390,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         || indexer.reconcile_paths(std::slice::from_ref(&delete_relative)),
         || {
             fs::write(&delete_path, &delete_content)?;
-            indexer.reconcile(false)?;
+            indexer.reconcile(leantoken::IndexingMode::Reconcile)?;
             Ok(())
         },
         MinimumIndexCounts {
@@ -420,7 +420,7 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
         || indexer.reconcile_paths(&rename_paths),
         || {
             fs::rename(&rename_destination, &rename_path)?;
-            indexer.reconcile(false)?;
+            indexer.reconcile(leantoken::IndexingMode::Reconcile)?;
             Ok(())
         },
         MinimumIndexCounts {

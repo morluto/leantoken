@@ -92,7 +92,7 @@ async fn main() -> AnyResult<()> {
     let source = generated_source(args.lines);
     fs::write(&source_path, &source)?;
     let services = open_services(root, &database)?;
-    services.index(false).await?;
+    services.index(leantoken::IndexingMode::Reconcile).await?;
     drop(services);
     let database_bytes_after_index = file_bytes(&database);
     let wal_bytes_after_index = file_bytes(&wal_path(&database));

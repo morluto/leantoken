@@ -15,6 +15,7 @@ use crate::config::INDEX_CONTENT_VERSION;
 use crate::error::RetryableOperation;
 use crate::model::{
     IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexSkipReasonCounts,
+    IndexingMode,
 };
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
@@ -25,7 +26,7 @@ use crate::repository::{
 use crate::storage::{
     ChunkInput, ImportInput, ImportProjection, IndexedFile, PreparedReconciliation,
     PublicationDiagnostics, ReconciliationPublicationPhase, ReconciliationWriter, ReferenceInput,
-    Storage, SymbolInput, process_write_bytes,
+    Storage, StorageProfiling, SymbolInput, process_write_bytes,
 };
 use crate::text::{PreparedText, TextKind, hash_bytes};
 use crate::{Config, Error, Result};

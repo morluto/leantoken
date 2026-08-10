@@ -638,7 +638,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let services = Services::open(config)?;
 
         let started = Instant::now();
-        let indexed = services.index(true).await?;
+        let indexed = services.index(leantoken::IndexingMode::Rebuild).await?;
         let cold_index_ms = elapsed_ms(started);
         let mut tasks = Vec::new();
         for task in corpus.tasks {
@@ -3787,7 +3787,10 @@ mod tests {
         let config =
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
         let services = Services::open(config).expect("services");
-        services.index(true).await.expect("index");
+        services
+            .index(leantoken::IndexingMode::Rebuild)
+            .await
+            .expect("index");
         let trace = concat!(
             "FAILED tests/test_options.py::test_flag_value\n",
             "@click.command()\n",
@@ -3919,7 +3922,10 @@ mod tests {
         let config =
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
         let services = Services::open(config).expect("services");
-        services.index(true).await.expect("index");
+        services
+            .index(leantoken::IndexingMode::Rebuild)
+            .await
+            .expect("index");
         let trace = concat!(
             "pytest.param({\"type\": click.BOOL, \"default\": True}, True)\n",
             "@click.command()\n",

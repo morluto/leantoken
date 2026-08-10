@@ -3,17 +3,15 @@ use super::*;
 pub(in crate::mcp) fn service_call_options(
     max_response_tokens: Option<usize>,
 ) -> ServiceCallOptions {
-    service_call_options_with_receipt(max_response_tokens, false)
+    max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
+        ServiceCallOptions::new().with_max_response_tokens(limit)
+    })
 }
 
 pub(in crate::mcp) fn service_call_options_with_receipt(
     max_response_tokens: Option<usize>,
-    receipt: bool,
 ) -> ServiceCallOptions {
-    let options = max_response_tokens.map_or_else(ServiceCallOptions::new, |limit| {
-        ServiceCallOptions::new().with_max_response_tokens(limit)
-    });
-    options.with_receipt_resource_reserve(receipt)
+    service_call_options(max_response_tokens).with_receipt_resource_reserve()
 }
 
 pub(in crate::mcp) const fn default_heading_occurrence() -> usize {

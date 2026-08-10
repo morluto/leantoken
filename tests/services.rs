@@ -10,8 +10,9 @@ use leantoken::{
     JsonProjection, JsonRequest, JsonSelector, OutlinePathResult, OutlinePathStatus,
     OutlineRequest, QueryReceiptAction, QueryReceiptScopeRelation, QueryReceiptStatus,
     ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
-    ReadRequest, ReadStatus, ReceiptRebaseRequest, ReferenceRole, SearchMode, SearchRequest,
-    TokenAccountingOperation, TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence,
+    ReadRequest, ReadStatus, ReceiptRebaseRequest, ReferenceRole, SearchMode,
+    SearchOccurrenceOutput, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
+    TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -65,7 +66,10 @@ async fn fixture() -> (tempfile::TempDir, Services) {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     (root, services)
 }
 
@@ -284,7 +288,10 @@ async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Servi
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index source");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index source");
     (root, services)
 }
 

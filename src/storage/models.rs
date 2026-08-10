@@ -319,7 +319,7 @@ pub(crate) struct StorageDiagnosticsSnapshot {
 pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
     pub(crate) transaction: &'transaction Transaction<'connection>,
     pub(crate) generation: i64,
-    pub(crate) rebuild: bool,
+    pub(crate) mode: IndexingMode,
     pub(crate) replacements: usize,
     pub(crate) deletions: HashSet<String>,
     pub(crate) projection_refreshes: usize,

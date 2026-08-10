@@ -1,5 +1,29 @@
 use super::*;
 
+/// Caller-selected strategy for reconciling repository files into the index.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IndexingMode {
+    /// Reconcile changed repository state, rebuilding only when required for correctness.
+    #[default]
+    Reconcile,
+    /// Replace the complete committed index even when incremental reconciliation is possible.
+    Rebuild,
+}
+
+impl IndexingMode {
+    pub(crate) const fn from_rebuild_flag(rebuild: bool) -> Self {
+        if rebuild {
+            Self::Rebuild
+        } else {
+            Self::Reconcile
+        }
+    }
+
+    pub(crate) const fn is_rebuild(self) -> bool {
+        matches!(self, Self::Rebuild)
+    }
+}
+
 /// Bounded aggregate counts for files skipped during index preparation.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IndexSkipReasonCounts {

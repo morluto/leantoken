@@ -7,6 +7,12 @@ use super::{RetrievalResponse, ServiceCallOptions};
 
 const MAX_ACCOUNTING_PASSES: usize = 32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiptResourceDecoration {
+    Omit,
+    Include,
+}
+
 /// Owns serialized response sizing and caller-ceiling enforcement.
 ///
 /// Keeping this stateful boundary separate from operation orchestration makes
@@ -39,8 +45,12 @@ impl ResponseAccountant {
             meta.source_tokens
         };
         for _ in 0..MAX_ACCOUNTING_PASSES {
-            let accounting =
-                self.accounting(&*response, source_tokens, mcp_response_shape, false)?;
+            let accounting = self.accounting(
+                &*response,
+                source_tokens,
+                mcp_response_shape,
+                ReceiptResourceDecoration::Omit,
+            )?;
             let meta = response.meta_mut();
             if meta.protocol_tokens == accounting.protocol_tokens
                 && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
@@ -99,8 +109,12 @@ impl ResponseAccountant {
             meta.total_response_tokens = 0;
         }
         for _ in 0..MAX_ACCOUNTING_PASSES {
-            let accounting =
-                self.accounting(&*response, source_tokens, mcp_response_shape, true)?;
+            let accounting = self.accounting(
+                &*response,
+                source_tokens,
+                mcp_response_shape,
+                ReceiptResourceDecoration::Include,
+            )?;
             let meta = response.meta_mut();
             if meta.protocol_tokens == accounting.protocol_tokens
                 && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
@@ -262,13 +276,15 @@ impl ResponseAccountant {
         response: &T,
         source_tokens: usize,
         mcp_response_shape: Option<crate::tokens::McpResponseShape>,
-        receipt_resource: bool,
+        receipt_resource: ReceiptResourceDecoration,
     ) -> serde_json::Result<crate::tokens::ResponseTokenAccounting> {
-        if mcp_response_shape.is_none() && !receipt_resource {
+        if mcp_response_shape.is_none()
+            && matches!(receipt_resource, ReceiptResourceDecoration::Omit)
+        {
             return response_token_accounting(response, source_tokens, &self.tokenizer);
         }
         let mut value = serde_json::to_value(response)?;
-        if receipt_resource {
+        if matches!(receipt_resource, ReceiptResourceDecoration::Include) {
             let receipt_id = value
                 .pointer("/meta/receipt_id")
                 .and_then(serde_json::Value::as_str)

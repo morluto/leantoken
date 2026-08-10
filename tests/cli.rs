@@ -876,13 +876,17 @@ fn cli_index_and_status_and_mcp_commands() {
     let cli = parse(&["index"]);
     assert!(matches!(
         cli.app_request(),
-        AppRequest::Index { rebuild: false }
+        AppRequest::Index {
+            mode: leantoken::IndexingMode::Reconcile
+        }
     ));
 
     let cli = parse(&["index", "--rebuild"]);
     assert!(matches!(
         cli.app_request(),
-        AppRequest::Index { rebuild: true }
+        AppRequest::Index {
+            mode: leantoken::IndexingMode::Rebuild
+        }
     ));
 
     let cli = parse(&["status"]);

@@ -1,6 +1,18 @@
 pub(crate) use crate::concurrency::default_read_connection_capacity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorageProfiling {
+    Omit,
+    Collect,
+}
+
+impl StorageProfiling {
+    pub(crate) const fn is_collecting(self) -> bool {
+        matches!(self, Self::Collect)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReconciliationPublicationPhase {
     ChunkWordFts,
     ChunkTrigramFts,
@@ -40,16 +52,22 @@ pub(crate) fn process_write_bytes() -> Option<u64> {
 }
 
 pub(crate) fn measured_storage_phase<T>(
-    enabled: bool,
+    profiling: StorageProfiling,
     operation: impl FnOnce() -> Result<T>,
 ) -> Result<(T, f64, Option<u64>)> {
-    let write_before = enabled.then(process_write_bytes).flatten();
-    let started = enabled.then(std::time::Instant::now);
+    let write_before = profiling
+        .is_collecting()
+        .then(process_write_bytes)
+        .flatten();
+    let started = profiling.is_collecting().then(std::time::Instant::now);
     let output = operation()?;
     let elapsed_ms = started
         .map(|started| started.elapsed().as_secs_f64() * 1_000.0)
         .unwrap_or(0.0);
-    let write_after = enabled.then(process_write_bytes).flatten();
+    let write_after = profiling
+        .is_collecting()
+        .then(process_write_bytes)
+        .flatten();
     let write_bytes = write_before
         .zip(write_after)
         .map(|(before, after)| after.saturating_sub(before));
@@ -97,7 +115,7 @@ pub(crate) fn populate_post_commit_diagnostics(
     if checkpoint {
         diagnostics.checkpoint_attempted = true;
         let ((busy, log_frames, checkpointed_frames), elapsed_ms, write_bytes) =
-            measured_storage_phase(true, || {
+            measured_storage_phase(StorageProfiling::Collect, || {
                 Ok(
                     conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
                         Ok((

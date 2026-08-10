@@ -425,7 +425,7 @@ impl Services {
             let max_response_tokens = options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit");
-            let budget = ResponseBudget::new(&self.config.tokenizer, max_response_tokens);
+            let budget = ResponseBudget::new(max_response_tokens);
             let keep = budget.largest_fitting_prefix(entries.len(), |keep| {
                 let mut candidate = original.clone();
                 let mut value = entries.clone();

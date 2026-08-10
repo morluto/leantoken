@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::QueryReceiptAction;
+use crate::model::{QueryReceiptAction, SearchOccurrenceOutput};
 
 /// A search query that preserves significant leading and trailing whitespace.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
@@ -63,7 +63,7 @@ pub(in crate::mcp) enum SearchMcpOutput {
     Full,
     Compact,
     Grouped,
-    Occurrences { coordinates_only: bool },
+    Occurrences(SearchOccurrenceOutput),
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -321,16 +321,19 @@ impl SearchMcpRequest {
         Option<String>,
     ) {
         let (mode, options) = self.operation.into_parts();
+        let occurrence_output = if options.coordinates_only {
+            SearchOccurrenceOutput::Coordinates
+        } else {
+            SearchOccurrenceOutput::Excerpts
+        };
         let output = match options.projection {
-            SearchMcpProjection::Auto if options.all_occurrences => SearchMcpOutput::Occurrences {
-                coordinates_only: options.coordinates_only,
-            },
+            SearchMcpProjection::Auto if options.all_occurrences => {
+                SearchMcpOutput::Occurrences(occurrence_output)
+            }
             SearchMcpProjection::Auto | SearchMcpProjection::Full => SearchMcpOutput::Full,
             SearchMcpProjection::Compact => SearchMcpOutput::Compact,
             SearchMcpProjection::Grouped => SearchMcpOutput::Grouped,
-            SearchMcpProjection::Occurrences => SearchMcpOutput::Occurrences {
-                coordinates_only: options.coordinates_only,
-            },
+            SearchMcpProjection::Occurrences => SearchMcpOutput::Occurrences(occurrence_output),
         };
         let receipt_resource = options.receipt_id.is_some() || options.query_receipt.is_some();
         (
@@ -364,7 +367,11 @@ impl SearchMcpRequest {
             },
             output,
             options.consistency,
-            service_call_options_with_receipt(options.max_response_tokens, receipt_resource),
+            if receipt_resource {
+                service_call_options_with_receipt(options.max_response_tokens)
+            } else {
+                service_call_options(options.max_response_tokens)
+            },
             self.expected_repository_id,
         )
     }

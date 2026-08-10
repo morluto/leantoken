@@ -92,7 +92,10 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
     )
     .expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index working tree");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index working tree");
     let mut request = context_limit_request(500);
     request.task = "review strict_scope_marker".into();
     request.base_revision = Some("HEAD".into());
@@ -225,7 +228,10 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
     let config =
         Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index working tree");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index working tree");
     let response = services
         .context_with_handoff_workflow_consistency_cancellable(
             ContextRequest {
@@ -438,7 +444,10 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
     let config =
         Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
-    services.index(false).await.expect("index head");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index head");
     let mut request = context_limit_request(2_000);
     request.task = "review public contracts, configuration, and owner tests".into();
     request.base_revision = Some(format!("{base}..{head}"));

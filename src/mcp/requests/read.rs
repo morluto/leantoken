@@ -154,7 +154,11 @@ impl ReadMcpRequest {
                 policy: self.policy,
             },
             self.consistency,
-            service_call_options_with_receipt(self.max_response_tokens, receipt_resource),
+            if receipt_resource {
+                service_call_options_with_receipt(self.max_response_tokens)
+            } else {
+                service_call_options(self.max_response_tokens)
+            },
             self.expected_repository_id,
         )
     }

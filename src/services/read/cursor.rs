@@ -16,7 +16,10 @@ impl ReadCursor {
                 .map_or_else(|| "-".to_string(), |line| line.to_string()),
             self.next_start_line,
             self.next_byte,
-            if self.full { "f" } else { "b" },
+            match self.policy {
+                ReadPolicy::Bounded => "b",
+                ReadPolicy::Full => "f",
+            },
             full_hash,
             prefix_hash,
             self.path_hash,
@@ -46,9 +49,9 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     else {
         return Err(Error::StaleCursor);
     };
-    let full = match *policy {
-        "b" => false,
-        "f" => true,
+    let policy = match *policy {
+        "b" => ReadPolicy::Bounded,
+        "f" => ReadPolicy::Full,
         _ => return Err(Error::StaleCursor),
     };
     let target_end_line = (*target_end != "-")
@@ -59,11 +62,11 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         || (*full_hash != "-"
             && (full_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
                 || !full_hash.bytes().all(is_lower_hex)))
-        || (full && *full_hash == "-")
+        || (policy.is_full() && *full_hash == "-")
         || (*prefix_hash != "-"
             && (prefix_hash.len() != crate::text::CONTENT_FINGERPRINT_HEX_LEN
                 || !prefix_hash.bytes().all(is_lower_hex)))
-        || (!full && *prefix_hash == "-")
+        || (!policy.is_full() && *prefix_hash == "-")
         || path_hash.len() != 16
         || !path_hash.bytes().all(is_lower_hex)
         || (*modified_ns != "-" && modified_ns.parse::<u128>().is_err())
@@ -78,7 +81,7 @@ pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
         next_byte: next_byte.parse().map_err(|_| Error::StaleCursor)?,
         full_hash: (*full_hash != "-").then(|| (*full_hash).to_string()),
         prefix_hash: (*prefix_hash != "-").then(|| (*prefix_hash).to_string()),
-        full,
+        policy,
         file_size: file_size.parse().map_err(|_| Error::StaleCursor)?,
         modified_ns: (*modified_ns != "-").then(|| modified_ns.parse::<u128>().unwrap_or(0)),
         path_hash: (*path_hash).into(),

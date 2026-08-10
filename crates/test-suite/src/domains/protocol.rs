@@ -147,7 +147,10 @@ async fn modern_rmcp_contract_uses_native_result_and_cache_fields() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
     let server_start = tokio::spawn(async move {
@@ -201,7 +204,10 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
     let server_start = tokio::spawn(async move {
@@ -320,7 +326,10 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     config.max_output_tokens = 50;
     config.context_lines = 0;
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
     let server_start = tokio::spawn(async move {
@@ -573,7 +582,10 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
 
     let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
     let server = LeanTokenMcp::new(services);
@@ -1295,7 +1307,10 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
-    services.index(false).await.expect("index fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
     std::fs::remove_file(&indexed_path).expect("remove indexed fixture");
     symlink(&external_path, &indexed_path).expect("external symlink");
 
@@ -1519,7 +1534,10 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     });
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished());
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
     let ready = waiting
         .await
         .expect("join waiting request")

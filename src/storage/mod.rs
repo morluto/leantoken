@@ -20,7 +20,7 @@ use rusqlite_migration::{M, Migrations};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    ReferenceRole, ResponseMeta, TokenAccountingOperation, TokenSavingsRequestClass,
+    IndexingMode, ReferenceRole, ResponseMeta, TokenAccountingOperation, TokenSavingsRequestClass,
 };
 use crate::{Error, Result, RetrievalLimitKind};
 

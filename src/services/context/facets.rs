@@ -74,8 +74,6 @@ impl ContextQuery {
 
 #[derive(Debug, Clone)]
 pub(super) struct FacetPlan {
-    #[cfg(test)]
-    pub(super) facets: Vec<TaskFacet>,
     pub(super) queries: Vec<ContextQuery>,
 }
 
@@ -92,8 +90,6 @@ struct QuerySpec<'a> {
 pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
     if limit == 0 {
         return FacetPlan {
-            #[cfg(test)]
-            facets: Vec::new(),
             queries: Vec::new(),
         };
     }
@@ -220,11 +216,7 @@ pub(super) fn plan(task: &str, limit: usize) -> FacetPlan {
         wants_tests,
     );
     annotate_task_roles(task, &mut queries);
-    FacetPlan {
-        #[cfg(test)]
-        facets,
-        queries,
-    }
+    FacetPlan { queries }
 }
 
 pub(super) fn plan_with_workflow_evidence(
@@ -306,11 +298,7 @@ pub(super) fn plan_with_workflow_evidence(
     for query in plan(task, limit).queries {
         push_workflow_query(&mut queries, &mut seen, query, limit);
     }
-    FacetPlan {
-        #[cfg(test)]
-        facets: Vec::new(),
-        queries,
-    }
+    FacetPlan { queries }
 }
 
 fn push_workflow_query(
@@ -1094,12 +1082,13 @@ mod tests {
     use super::*;
 
     fn exact_atoms(task: &str) -> Vec<String> {
-        plan(task, 64)
-            .facets
-            .into_iter()
-            .filter(|facet| facet.kind == FacetKind::ExactAtom)
-            .map(|facet| facet.original)
-            .collect()
+        technical_atoms(task)
+    }
+
+    fn facet(kind: FacetKind, original: &str, variants: Vec<String>) -> TaskFacet {
+        let mut facets = Vec::new();
+        push_facet(&mut facets, kind, original, variants, 1.0);
+        facets.pop().expect("non-empty facet")
     }
 
     #[test]
@@ -1134,12 +1123,8 @@ mod tests {
 
     #[test]
     fn exact_atom_is_the_first_variant_even_when_not_scheduled_as_a_query() {
-        let plan = plan("Fix CONFIG and #[serde(untagged)].", 12);
-        for facet in plan
-            .facets
-            .iter()
-            .filter(|facet| facet.kind == FacetKind::ExactAtom)
-        {
+        for atom in ["CONFIG", "#[serde(untagged)]"] {
+            let facet = facet(FacetKind::ExactAtom, atom, vec![atom.to_owned()]);
             assert_eq!(facet.variants.first(), Some(&facet.original));
         }
     }
@@ -1155,25 +1140,27 @@ mod tests {
     }
 
     #[test]
-    fn quoted_error_text_and_annotations_create_bounded_facets() {
-        let plan = plan(
-            "Handle @retry and report \"Failed to lookup view\" without changing behavior.",
-            12,
+    fn quoted_error_text_and_annotations_create_bounded_queries() {
+        let task = "Handle @retry and report \"Failed to lookup view\" without changing behavior.";
+        let plan = plan(task, 12);
+        let annotation = technical_atoms(task)
+            .into_iter()
+            .find(|atom| atom == "@retry")
+            .expect("configuration annotation");
+        assert_eq!(classify_atom(&annotation), FacetKind::Configuration);
+        let phrase = quoted_phrases(task)
+            .into_iter()
+            .find(|phrase| phrase == "Failed to lookup view")
+            .expect("quoted behavior");
+        let annotation = facet(
+            FacetKind::Configuration,
+            &annotation,
+            technical_variants(&annotation),
         );
-        assert!(
-            plan.facets.iter().any(|facet| {
-                facet.kind == FacetKind::Configuration && facet.original == "@retry"
-            })
-        );
-        assert!(plan.facets.iter().any(|facet| {
-            facet.kind == FacetKind::Behavior && facet.original == "Failed to lookup view"
-        }));
+        let phrase = facet(FacetKind::Behavior, &phrase, phrase_variants(&phrase));
         assert!(plan.queries.len() <= 12);
-        assert!(
-            plan.facets
-                .iter()
-                .all(|facet| facet.variants.len() <= MAX_FACET_VARIANTS)
-        );
+        assert!(annotation.variants.len() <= MAX_FACET_VARIANTS);
+        assert!(phrase.variants.len() <= MAX_FACET_VARIANTS);
     }
 
     #[test]
@@ -1238,11 +1225,11 @@ mod tests {
             "Fix render.AsciiJSON for non-BMP JSON with UTF-16 while preserving BMP and ASCII behavior",
             10,
         );
-        let facet = plan
-            .facets
-            .iter()
-            .find(|facet| facet.kind == FacetKind::Symbol && facet.original == "render.AsciiJSON")
-            .expect("qualified symbol facet");
+        let facet = facet(
+            FacetKind::Symbol,
+            "render.AsciiJSON",
+            technical_variants("render.AsciiJSON"),
+        );
 
         assert_eq!(
             facet.variants.first().map(String::as_str),
@@ -1262,13 +1249,11 @@ mod tests {
             "Report the failed-to-lookup-view error through the callback",
             8,
         );
-        let facet = plan
-            .facets
-            .iter()
-            .find(|facet| {
-                facet.kind == FacetKind::Symbol && facet.original == "failed-to-lookup-view"
-            })
-            .expect("kebab-case facet");
+        let facet = facet(
+            FacetKind::Symbol,
+            "failed-to-lookup-view",
+            technical_variants("failed-to-lookup-view"),
+        );
 
         assert!(
             facet

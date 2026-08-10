@@ -61,7 +61,7 @@ impl Indexer {
             metrics.max_batch_files = metrics.max_batch_files.max(end - start);
             metrics.max_batch_source_bytes = metrics.max_batch_source_bytes.max(batch_source_bytes);
             let preparation_started = Instant::now();
-            let batch = if profiling == StorageProfiling::Collect {
+            let batch = if profiling.is_collecting() {
                 let profiled = pool.install(|| {
                     candidates[start..end]
                         .par_iter()
@@ -121,13 +121,15 @@ impl Indexer {
                 })?
             };
             metrics.preparation += preparation_started.elapsed();
-            let write_before = (profiling == StorageProfiling::Collect)
+            let write_before = profiling
+                .is_collecting()
                 .then(process_write_bytes)
                 .flatten();
             let insertion_started = Instant::now();
             consume(batch)?;
             metrics.insertion += insertion_started.elapsed();
-            let write_after = (profiling == StorageProfiling::Collect)
+            let write_after = profiling
+                .is_collecting()
                 .then(process_write_bytes)
                 .flatten();
             let batch_write_bytes = write_before

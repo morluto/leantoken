@@ -175,7 +175,10 @@ async fn managed_corrupt_index_is_deleted_and_rebuilt() {
     std::fs::write(&database, b"not a sqlite database").expect("corrupt database");
 
     let services = Services::open(config).expect("recover managed cache");
-    services.index(false).await.expect("rebuild index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("rebuild index");
     assert_eq!(services.status().await.expect("status").file_count, 1);
     assert!(
         std::fs::metadata(&database)
@@ -250,7 +253,10 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
 
-    services.index(false).await.expect("initial index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("initial index");
     let initial_report = services.parser_coverage().await.expect("initial coverage");
     assert_eq!(initial_report.repository_generation, 1);
     let initial = initial_report.coverage;
@@ -291,7 +297,10 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
 
     let updated_rust = "pub fn ready() -> bool { false }\n";
     std::fs::write(root.path().join("lib.rs"), updated_rust).expect("updated rust source");
-    services.index(false).await.expect("incremental index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("incremental index");
     let connection = rusqlite::Connection::open(database).expect("database");
     let distinct_generations: i64 = connection
         .query_row("SELECT count(DISTINCT generation) FROM files", [], |row| {
@@ -345,7 +354,11 @@ async fn first_index_reports_uninitialized_while_reconciling() {
         .acquire_operation(&CancellationToken::new())
         .expect("hold reconciliation lock");
     let indexing_services = services.clone();
-    let indexing = tokio::spawn(async move { indexing_services.index(false).await });
+    let indexing = tokio::spawn(async move {
+        indexing_services
+            .index(leantoken::IndexingMode::Reconcile)
+            .await
+    });
     tokio::task::yield_now().await;
 
     let during = services.status().await.expect("status during first index");

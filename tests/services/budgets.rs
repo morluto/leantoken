@@ -278,7 +278,10 @@ async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
         )
         .expect("write path fixture");
     }
-    services.index(false).await.expect("index added paths");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index added paths");
     let one_entry_request = FilesRequest {
         operation: FileOperation::Tree,
         path: Some("src".into()),
@@ -444,7 +447,10 @@ async fn read_response_budget_reduces_source_without_skipping_continuation() {
         .map(|line| format!("pub const 長い名前_{line:03}: &str = \"escaped-{line}\";\n"))
         .collect::<String>();
     std::fs::write(root.path().join("src/big.rs"), source).expect("write read fixture");
-    services.index(false).await.expect("index read fixture");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index read fixture");
     let request = ReadRequest {
         path: "src/big.rs".into(),
         start_line: Some(1),

@@ -17,18 +17,6 @@ pub(super) fn resolve_imports(
     Ok(())
 }
 
-#[cfg(test)]
-pub(super) fn resolve_import(
-    source_path: &str,
-    raw_target: &str,
-    repository_paths: &HashSet<String>,
-) -> Option<String> {
-    resolve_import_candidates(
-        &import_candidates(source_path, raw_target),
-        repository_paths,
-    )
-}
-
 pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
     let source = std::path::Path::new(source_path);
     let repository_source = crate::repository::RepositoryPath::parse(source_path).ok();

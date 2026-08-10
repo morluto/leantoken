@@ -16,7 +16,10 @@ async fn multi_path_outline_reports_each_path_without_aborting_indexed_results()
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let request = OutlineRequest {
         paths: vec![
@@ -157,7 +160,10 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
 
     let first = services
         .outline(OutlineRequest {
@@ -312,7 +318,10 @@ async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
     )
     .expect("services");
-    services.index(false).await.expect("index fixtures");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixtures");
 
     let outline = services
         .outline(OutlineRequest {

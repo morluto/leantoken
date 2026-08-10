@@ -108,18 +108,238 @@ pub(super) enum SearchDiagnostics {
     Collect,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum DefinitionPreference {
+    #[default]
+    Ranked,
+    Structural,
+}
+
+impl DefinitionPreference {
+    pub(super) const fn from_prefer_structural(prefer_structural: bool) -> Self {
+        if prefer_structural {
+            Self::Structural
+        } else {
+            Self::Ranked
+        }
+    }
+
+    pub(super) const fn prefers_structural(self) -> bool {
+        matches!(self, Self::Structural)
+    }
+}
+
+pub(super) enum PreparedQueryReceipt {
+    None,
+    Record(ExactQueryPredicate),
+    Reuse {
+        receipt_id: String,
+        predicate: ExactQueryPredicate,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExhaustiveSearchMode {
+    Text,
+    Regex,
+}
+
+pub(super) enum SearchKind {
+    Auto(DefinitionPreference),
+    Text,
+    Regex,
+    Identifier(DefinitionPreference),
+    Symbol,
+    Reference,
+    Exhaustive {
+        mode: ExhaustiveSearchMode,
+        query_receipt: PreparedQueryReceipt,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::services) enum LexicalMatchKind {
+    Text,
+    Regex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchHitKind {
+    Symbol,
+    Reference,
+    Text,
+    Regex,
+}
+
+impl SearchHitKind {
+    pub(super) const fn label(self) -> &'static str {
+        match self {
+            Self::Symbol => "symbol",
+            Self::Reference => "reference",
+            Self::Text => "text",
+            Self::Regex => "regex",
+        }
+    }
+}
+
+impl LexicalMatchKind {
+    pub(in crate::services) const fn label(self) -> &'static str {
+        self.hit_kind().label()
+    }
+
+    pub(in crate::services) const fn reason(self) -> &'static str {
+        match self {
+            Self::Text => "text match",
+            Self::Regex => "regex match",
+        }
+    }
+
+    const fn hit_kind(self) -> SearchHitKind {
+        match self {
+            Self::Text => SearchHitKind::Text,
+            Self::Regex => SearchHitKind::Regex,
+        }
+    }
+}
+
+impl SearchKind {
+    pub(super) const fn mode(&self) -> SearchMode {
+        match self {
+            Self::Auto(_) => SearchMode::Auto,
+            Self::Text
+            | Self::Exhaustive {
+                mode: ExhaustiveSearchMode::Text,
+                ..
+            } => SearchMode::Text,
+            Self::Regex
+            | Self::Exhaustive {
+                mode: ExhaustiveSearchMode::Regex,
+                ..
+            } => SearchMode::Regex,
+            Self::Identifier(_) => SearchMode::Identifier,
+            Self::Symbol => SearchMode::Symbol,
+            Self::Reference => SearchMode::Reference,
+        }
+    }
+
+    pub(super) const fn is_exhaustive(&self) -> bool {
+        matches!(self, Self::Exhaustive { .. })
+    }
+
+    pub(super) const fn is_exhaustive_text(&self) -> bool {
+        matches!(
+            self,
+            Self::Exhaustive {
+                mode: ExhaustiveSearchMode::Text,
+                ..
+            }
+        )
+    }
+
+    pub(super) const fn is_regex(&self) -> bool {
+        matches!(
+            self,
+            Self::Regex
+                | Self::Exhaustive {
+                    mode: ExhaustiveSearchMode::Regex,
+                    ..
+                }
+        )
+    }
+
+    pub(super) const fn lexical_match_kind(&self) -> LexicalMatchKind {
+        if self.is_regex() {
+            LexicalMatchKind::Regex
+        } else {
+            LexicalMatchKind::Text
+        }
+    }
+
+    pub(super) const fn definition_preference(&self) -> DefinitionPreference {
+        match self {
+            Self::Auto(preference) | Self::Identifier(preference) => *preference,
+            Self::Text | Self::Regex | Self::Symbol | Self::Reference | Self::Exhaustive { .. } => {
+                DefinitionPreference::Ranked
+            }
+        }
+    }
+
+    pub(super) const fn query_receipt(&self) -> Option<&PreparedQueryReceipt> {
+        match self {
+            Self::Exhaustive { query_receipt, .. } => Some(query_receipt),
+            Self::Auto(_)
+            | Self::Text
+            | Self::Regex
+            | Self::Identifier(_)
+            | Self::Symbol
+            | Self::Reference => None,
+        }
+    }
+}
+
+pub(super) struct SearchInput {
+    pub(super) query: String,
+    pub(super) kind: SearchKind,
+    pub(super) include_paths: Vec<String>,
+    pub(super) exclude_paths: Vec<String>,
+    pub(super) focus_paths: Vec<String>,
+    pub(super) max_results: Option<usize>,
+    pub(super) max_tokens: Option<usize>,
+    pub(super) case_sensitive: bool,
+    pub(super) receipt_id: Option<String>,
+    pub(super) cursor: Option<String>,
+}
+
+impl SearchInput {
+    pub(super) fn from_request(request: SearchRequest, kind: SearchKind) -> Self {
+        let SearchRequest {
+            query,
+            mode: _,
+            include_paths,
+            exclude_paths,
+            focus_paths,
+            max_results,
+            max_tokens,
+            context_lines: _,
+            case_sensitive,
+            all_occurrences: _,
+            prefer_structural: _,
+            receipt_id,
+            query_receipt: _,
+            cursor,
+        } = request;
+        Self {
+            query,
+            kind,
+            include_paths,
+            exclude_paths,
+            focus_paths,
+            max_results,
+            max_tokens,
+            case_sensitive,
+            receipt_id,
+            cursor,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SearchOutputShape {
     Full,
     Compact,
-    OccurrenceGroups { coordinates_only: bool },
+    OccurrenceGroups(SearchOccurrenceOutput),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SearchExecutionOptions {
-    pub(super) output_shape: SearchOutputShape,
     pub(super) response_options: ServiceCallOptions,
-    pub(super) record_savings: bool,
+    pub(super) accounting: SearchAccounting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchAccounting {
+    Omit,
+    Record,
 }
 
 pub(super) enum QueryReceiptExecution {

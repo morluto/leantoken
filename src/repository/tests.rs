@@ -89,7 +89,7 @@ fn git_status_parser_stops_after_collecting_max_paths() {
     let first = b"M  first.rs\0";
     let mut input = Cursor::new([first.as_slice(), b"M  second.rs\0"].concat());
 
-    let changed = parse_git_status(&mut input, 1, "");
+    let changed = parse_git_status_observation(&mut input, 1, "").changed_paths;
 
     assert_eq!(changed, HashSet::from(["first.rs".to_string()]));
     assert_eq!(input.position(), first.len() as u64);

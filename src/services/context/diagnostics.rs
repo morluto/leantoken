@@ -1,12 +1,19 @@
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum CandidateDiagnostics {
+    #[default]
     Omit,
     Collect,
 }
 
+impl CandidateDiagnostics {
+    const fn is_collecting(self) -> bool {
+        matches!(self, Self::Collect)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ContextPhaseTracker {
-    pub(super) enabled: bool,
+    pub(super) diagnostics: CandidateDiagnostics,
     pub(super) generation: u64,
     pub(super) counters: ContextPhaseCounters,
     pub(super) timings: ContextPhaseTimings,
@@ -32,9 +39,9 @@ pub(super) enum ContextTimedPhase {
 impl ContextPhaseTracker {
     pub(super) fn new(diagnostics: CandidateDiagnostics, generation: u64) -> Self {
         Self {
-            enabled: diagnostics == CandidateDiagnostics::Collect,
+            diagnostics,
             generation,
-            started: (diagnostics == CandidateDiagnostics::Collect).then(Instant::now),
+            started: diagnostics.is_collecting().then(Instant::now),
             ..Self::default()
         }
     }
@@ -44,7 +51,7 @@ impl ContextPhaseTracker {
         phase: ContextTimedPhase,
         operation: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
-        if !self.enabled {
+        if !self.diagnostics.is_collecting() {
             return operation();
         }
         let started = Instant::now();
@@ -70,7 +77,7 @@ impl ContextPhaseTracker {
     }
 
     pub(super) fn timer(&self) -> Option<Instant> {
-        self.enabled.then(Instant::now)
+        self.diagnostics.is_collecting().then(Instant::now)
     }
 
     pub(super) fn record_primitive(
@@ -78,7 +85,7 @@ impl ContextPhaseTracker {
         kind: &str,
         normalized_inputs: impl FnOnce() -> String,
     ) {
-        if self.enabled {
+        if self.diagnostics.is_collecting() {
             self.primitive_keys.push(retrieval_primitive_key(
                 self.generation,
                 kind,
@@ -88,7 +95,7 @@ impl ContextPhaseTracker {
     }
 
     pub(super) fn record_enclosing_locations(&mut self, locations: &[(i64, usize)]) {
-        if !self.enabled {
+        if !self.diagnostics.is_collecting() {
             return;
         }
         self.counters.enclosing_location_batches = self
@@ -106,7 +113,7 @@ impl ContextPhaseTracker {
     }
 
     pub(super) fn record_adaptive_excerpts(&mut self, requests: &[AdaptiveExcerptRequest]) {
-        if !self.enabled {
+        if !self.diagnostics.is_collecting() {
             return;
         }
         self.counters.adaptive_excerpt_batches = self
@@ -142,7 +149,7 @@ impl ContextPhaseTracker {
     }
 
     pub(super) fn record_stored_excerpts(&mut self, requests: &[StoredExcerptRequest]) {
-        if !self.enabled {
+        if !self.diagnostics.is_collecting() {
             return;
         }
         self.counters.stored_excerpt_batches = self
@@ -186,7 +193,7 @@ impl ContextPhaseTracker {
         ContextPhaseTimings,
         Vec<RetrievalPrimitiveKey>,
     ) {
-        if !self.enabled {
+        if !self.diagnostics.is_collecting() {
             return (
                 ContextPhaseCounters::default(),
                 ContextPhaseTimings::default(),
@@ -229,8 +236,8 @@ pub(super) fn analyze_lexical_match(
         first.start(),
         first.end(),
         context_lines,
-        false,
-        false,
+        LexicalMatchKind::Text,
+        OccurrenceMetadata::Omit,
         &starts,
     );
     let local_start = byte_to_line(&starts, hit.content.len(), first.start());
