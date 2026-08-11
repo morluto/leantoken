@@ -92,19 +92,21 @@ pub(super) async fn run_mcp_runtime(
     // Process-wide indexing budget: each approved context independently
     // configures its own indexing workers. Log the aggregate so operators
     // know the total process-wide concurrency. See issue #565: with K
-    // approved contexts the process-wide default is (1 + K) workers.
-    let process_wide_workers = config
-        .max_index_workers
-        .saturating_add(approved_contexts.len());
+    // approved contexts the process-wide default is (1 + K) workers, and
+    // with explicit --max-index-workers=N, the total is (1 + K) * N.
+    let per_instance_workers = config.max_index_workers;
+    let context_count = approved_contexts.len();
+    let process_wide_workers = per_instance_workers.saturating_mul(context_count.saturating_add(1));
     let cpu_capacity = std::thread::available_parallelism()
         .map(NonZeroUsize::get)
         .unwrap_or(1);
     if process_wide_workers > cpu_capacity {
         tracing::warn!(
             process_wide_indexing_workers = process_wide_workers,
-            approved_context_count = approved_contexts.len(),
+            approved_context_count = context_count,
+            per_instance_workers,
             cpu_capacity,
-            "process-wide indexing workers exceed CPU capacity; consider setting              --max-index-workers to bound total concurrency"
+            "process-wide indexing workers exceed CPU capacity; reduce approved              repository contexts or decrease --max-index-workers"
         );
     }
     let startup = tokio::task::spawn_blocking(move || {
