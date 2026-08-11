@@ -82,12 +82,7 @@ fn compute_mac(kind: &str, generation: u64, binding_hash: &str, offset: usize) -
 /// request fields that define the result set, and the `offset` to resume
 /// from. The MAC prevents tampering with the offset.
 #[must_use]
-pub(crate) fn encode_cursor(
-    kind: &str,
-    generation: u64,
-    binding_hash: &str,
-    offset: usize,
-) -> String {
+pub fn encode_cursor(kind: &str, generation: u64, binding_hash: &str, offset: usize) -> String {
     let mac = compute_mac(kind, generation, binding_hash, offset);
     format!("{kind}:{generation}:{binding_hash}:{offset}:{mac}")
 }
@@ -162,7 +157,7 @@ pub(crate) fn parse_cursor(
 /// resulting 16-hex-char digest uniquely identifies the request that
 /// produced this cursor.
 #[must_use]
-pub(crate) fn binding_hash(fields: &[&str]) -> String {
+pub fn binding_hash(fields: &[&str]) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"leantoken-cursor-binding-v1\0");
     for field in fields {

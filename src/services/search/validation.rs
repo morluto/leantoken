@@ -10,9 +10,12 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
     // Validate cursor format early so malformed cursors are rejected as
-    // static input errors before any reconciliation work begins.
+    // static input errors before any reconciliation work begins. Accept
+    // both the new 5-field authenticated format and the legacy 2-field
+    // format so existing cursors remain usable across the migration.
     if let Some(cursor) = &request.cursor {
-        if cursor.split(':').count() != 5 {
+        let field_count = cursor.split(':').count();
+        if field_count != 5 && field_count != 2 {
             return Err(Error::StaleCursor);
         }
     }
