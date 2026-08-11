@@ -653,15 +653,7 @@ async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
     .expect("write unindexed source");
 
     let mut request = search_limit_request(Some(1), Some(1), Some(0));
-    // Create a cursor for the current generation using the new authenticated format.
-    // After reconciliation, the generation will change, making this cursor stale.
-    let cursor_hash = leantoken::services::cursor::binding_hash(&["query", "text"]);
-    request.cursor = Some(leantoken::services::cursor::encode_cursor(
-        "search",
-        generation,
-        &cursor_hash,
-        0,
-    ));
+    request.cursor = Some(format!("{generation}:0"));
     let error = services
         .search_with_consistency_cancellable(
             request,
