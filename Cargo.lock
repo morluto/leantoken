@@ -985,6 +985,7 @@ dependencies = [
  "command-group",
  "dialoguer",
  "directories",
+ "getrandom 0.4.3",
  "globset",
  "ignore",
  "inquire",
