@@ -326,11 +326,10 @@ impl Storage {
             ("symbol_refs_fts_trigram", "symbol_refs"),
         ];
         for (fts_table, relational_table) in FTS_PAIRS {
-            let fts_count: i64 = conn.query_row(
-                &format!("SELECT count(*) FROM {fts_table}"),
-                [],
-                |row| row.get(0),
-            )?;
+            let fts_count: i64 =
+                conn.query_row(&format!("SELECT count(*) FROM {fts_table}"), [], |row| {
+                    row.get(0)
+                })?;
             let relational_count: i64 = conn.query_row(
                 &format!("SELECT count(*) FROM {relational_table}"),
                 [],
