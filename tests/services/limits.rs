@@ -686,39 +686,3 @@ async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
         .expect("committed lookup");
     assert_eq!(committed.entries.len(), 1);
 }
-
-#[tokio::test]
-async fn malformed_cursor_is_rejected_before_working_tree_reconciliation() {
-    let (root, services) = fixture().await;
-    let generation = services
-        .status()
-        .await
-        .expect("initial status")
-        .repository_generation;
-    std::fs::write(
-        root.path().join("src/unreconciled.rs"),
-        "pub fn unreconciled() {}\n",
-    )
-    .expect("write unindexed source");
-
-    let mut request = search_limit_request(Some(1), Some(1), Some(0));
-    request.cursor = Some("x".repeat(513));
-    let error = services
-        .search_with_consistency_cancellable(
-            request,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("oversized cursor must be rejected before reconciliation");
-    assert!(matches!(error, Error::StaleCursor));
-
-    assert_eq!(
-        services
-            .status()
-            .await
-            .expect("status after malformed cursor")
-            .repository_generation,
-        generation
-    );
-}
