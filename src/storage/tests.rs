@@ -467,7 +467,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_path_repairs_checkpoint_backlog_but_retain_fts_verification_wal() {
+pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -529,13 +529,9 @@ pub(crate) fn startup_path_repairs_checkpoint_backlog_but_retain_fts_verificatio
     let wal_bytes_after = fs::metadata(wal_path(&database))
         .expect("WAL after repair")
         .len();
-    assert!(
-        wal_bytes_after > 0,
-        "FTS verification records its completed generation without checkpointing"
-    );
-    assert!(
-        wal_bytes_after < wal_bytes_before,
-        "the path-projection repair should checkpoint the pre-existing backlog"
+    assert_eq!(
+        wal_bytes_after, 0,
+        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
     );
 }
 
@@ -628,56 +624,6 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 }
 
 #[test]
-pub(crate) fn startup_fts_integrity_verification_tracks_index_generation() {
-    fn marker(storage: &Storage) -> (i64, i64, i64) {
-        let writer = storage
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        writer
-            .query_row(
-                "SELECT fts_integrity_check_version,
-                        fts_integrity_verified_index_version,
-                        index_version
-                 FROM meta WHERE id = 1",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
-            )
-            .expect("integrity marker")
-    }
-
-    let root = tempfile::tempdir().expect("root");
-    let database = root.path().join("index.sqlite");
-    let storage = Storage::open(&database).expect("storage");
-    let initial = marker(&storage);
-    assert_eq!(initial.0, 1);
-    assert_eq!(initial.1, initial.2);
-
-    storage
-        .full_reconcile(
-            "config",
-            vec![sample_file("needle.rs", "fn fts_generation_marker() {}\n")],
-        )
-        .expect("index fixture");
-    let changed = marker(&storage);
-    assert_eq!(changed.0, initial.0);
-    assert_ne!(changed.1, changed.2);
-    drop(storage);
-
-    let reopened = Storage::open(&database).expect("verify changed index on reopen");
-    let verified = marker(&reopened);
-    assert_eq!(verified.0, changed.0);
-    assert_eq!(verified.1, verified.2);
-    assert_eq!(verified.2, changed.2);
-}
-
-#[test]
 pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
@@ -688,6 +634,9 @@ pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check
             vec![sample_file("needle.rs", "fn repaired_fts_needle() {}\n")],
         )
         .expect("index fixture");
+    drop(storage);
+
+    let storage = Storage::open(&database).expect("initial integrity verification");
     {
         let writer = storage
             .writer

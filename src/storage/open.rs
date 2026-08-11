@@ -137,7 +137,6 @@ impl Storage {
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
                 Self::ensure_token_savings_schema(conn)?;
-                Self::ensure_fts_integrity_schema(conn)?;
                 Self::ensure_path_projection(conn)
             },
         )?;
@@ -313,19 +312,18 @@ impl Storage {
         }
     }
 
-    /// Verify stale persisted FTS5 indexes against their relational tables.
+    /// Verify persisted FTS5 indexes against their relational tables.
     ///
     /// A database can pass migrations, integrity_check, and the FTS5
     /// capability probe while FTS silently omits results. This function
     /// checks that each FTS table matches its external content and issues a
-    /// `rebuild` command if it does not. A successful check is recorded for
-    /// the current index generation, so unchanged databases do not repeat the
-    /// writer-held full scans on every open.
+    /// `rebuild` command if it does not. This runs on every database open:
+    /// external writers can damage an index without changing LeanToken's
+    /// generation marker.
     ///
     /// See issue #563: Validate and repair external-content FTS indexes
     /// instead of probing only FTS5 availability.
     pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
-        const FTS_INTEGRITY_CHECK_VERSION: i64 = 1;
         // Use FTS5's built-in integrity-check command. For external-content
         // tables, `SELECT count(*)` reads through the content table and always
         // matches, even when the FTS index is corrupted. The integrity-check
@@ -339,18 +337,7 @@ impl Storage {
             "symbol_refs_fts_trigram",
         ];
 
-        if Self::fts_integrity_is_current(conn, FTS_INTEGRITY_CHECK_VERSION)? {
-            return Ok(());
-        }
-
-        // Do the inexpensive marker read before taking a writer transaction.
-        // Another process may have completed verification in the meantime, so
-        // check again after acquiring the lock.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if Self::fts_integrity_is_current(&tx, FTS_INTEGRITY_CHECK_VERSION)? {
-            tx.commit()?;
-            return Ok(());
-        }
         for fts_table in FTS_TABLES {
             match tx.execute(
                 &format!("INSERT INTO {fts_table}({fts_table}, rank) VALUES('integrity-check', 1)"),
@@ -369,25 +356,8 @@ impl Storage {
                 Err(error) => return Err(error.into()),
             }
         }
-        tx.execute(
-            "UPDATE meta
-             SET fts_integrity_check_version = ?1,
-                 fts_integrity_verified_index_version = index_version
-             WHERE id = 1",
-            [FTS_INTEGRITY_CHECK_VERSION],
-        )?;
         tx.commit()?;
         Ok(())
-    }
-
-    fn fts_integrity_is_current(conn: &Connection, check_version: i64) -> Result<bool> {
-        Ok(conn.query_row(
-            "SELECT fts_integrity_check_version = ?1
-                    AND fts_integrity_verified_index_version = index_version
-             FROM meta WHERE id = 1",
-            [check_version],
-            |row| row.get(0),
-        )?)
     }
 
     pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
@@ -506,28 +476,6 @@ impl Storage {
             }
         }
         tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    fn ensure_fts_integrity_schema(conn: &mut Connection) -> Result<()> {
-        // This is additive rather than a numbered migration so an older
-        // LeanToken can still open and rebuild its cache.
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for (column, statement) in [
-            (
-                StorageColumn::MetaFtsIntegrityCheckVersion,
-                "ALTER TABLE meta ADD COLUMN fts_integrity_check_version INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                StorageColumn::MetaFtsIntegrityVerifiedIndexVersion,
-                "ALTER TABLE meta ADD COLUMN fts_integrity_verified_index_version INTEGER NOT NULL DEFAULT -1;",
-            ),
-        ] {
-            if !column_exists(&tx, column)? {
-                tx.execute_batch(statement)?;
-            }
-        }
         tx.commit()?;
         Ok(())
     }

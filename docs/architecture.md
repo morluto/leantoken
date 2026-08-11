@@ -788,11 +788,10 @@ their bounded transactions, then
 restore the exact prior connection-local value before returning. This prevents
 an idempotent schema ensure or one-row last-access update from checkpointing an
 unrelated index backlog before reconcile begins. FTS integrity verification
-records both its check version and the index version it verified: each of the
-four external-content indexes is fully scanned at most once for an unchanged
-index generation and check version. A new generation or check version performs
-the scans in one immediate transaction, rebuilds any corrupted index before
-recording success, and leaves any pre-existing WAL backlog uncheckpointed.
+scans each of the four external-content indexes in one immediate transaction
+on every database open. This detects out-of-band index damage that does not
+change LeanToken's index generation, rebuilding any corrupted index before the
+database is used while leaving any pre-existing WAL backlog uncheckpointed.
 Startup tracks both main-table
 row changes and the schema version while checkpointing is suspended; a real
 migration or path-projection repair explicitly requests `TRUNCATE` after the
