@@ -1,11 +1,15 @@
 use std::{
     env,
     error::Error,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
 const SEARCH_SEMANTICS_BUILD_INPUTS: &[&str] = &["Cargo.toml", "build.rs"];
+const MAX_SEARCH_SEMANTICS_SOURCE_DEPTH: usize = 32;
+const MAX_SEARCH_SEMANTICS_SOURCE_FILES: usize = 4_096;
+const MAX_SEARCH_SEMANTICS_SOURCE_PATH_BYTES: usize = 4_096;
+const MAX_SEARCH_SEMANTICS_SOURCE_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let manifest_directory = env::var("CARGO_MANIFEST_DIR")?;
@@ -26,7 +30,7 @@ fn search_semantics_input_paths(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Err
         .iter()
         .map(PathBuf::from)
         .collect::<Vec<_>>();
-    collect_rust_sources(root, Path::new("src"), &mut paths)?;
+    collect_rust_sources(root, Path::new("src"), 0, &mut paths)?;
     paths.sort();
     Ok(paths)
 }
@@ -34,19 +38,40 @@ fn search_semantics_input_paths(root: &Path) -> Result<Vec<PathBuf>, Box<dyn Err
 fn collect_rust_sources(
     root: &Path,
     relative_directory: &Path,
+    depth: usize,
     paths: &mut Vec<PathBuf>,
 ) -> Result<(), Box<dyn Error>> {
+    if depth > MAX_SEARCH_SEMANTICS_SOURCE_DEPTH {
+        return Err(
+            io::Error::other("receipt semantics source tree exceeds the depth limit").into(),
+        );
+    }
     for entry in fs::read_dir(root.join(relative_directory))? {
         let entry = entry?;
         let relative_path = relative_directory.join(entry.file_name());
+        if relative_path.as_os_str().as_encoded_bytes().len()
+            > MAX_SEARCH_SEMANTICS_SOURCE_PATH_BYTES
+        {
+            return Err(
+                io::Error::other("receipt semantics source path exceeds the byte limit").into(),
+            );
+        }
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            collect_rust_sources(root, &relative_path, paths)?;
+            collect_rust_sources(root, &relative_path, depth + 1, paths)?;
         } else if file_type.is_file()
             && relative_path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
         {
+            if paths.len() - SEARCH_SEMANTICS_BUILD_INPUTS.len()
+                >= MAX_SEARCH_SEMANTICS_SOURCE_FILES
+            {
+                return Err(io::Error::other(
+                    "receipt semantics source tree exceeds the file limit",
+                )
+                .into());
+            }
             paths.push(relative_path);
         }
     }
@@ -58,6 +83,11 @@ fn hash_files(root: &Path, paths: Vec<PathBuf>) -> Result<blake3::Hash, Box<dyn 
     for relative_path in paths {
         let path = root.join(&relative_path);
         println!("cargo:rerun-if-changed={}", path.display());
+        if fs::metadata(&path)?.len() > MAX_SEARCH_SEMANTICS_SOURCE_FILE_BYTES {
+            return Err(
+                io::Error::other("receipt semantics source file exceeds the byte limit").into(),
+            );
+        }
         let bytes = fs::read(path)?;
         let relative_path = relative_path.to_string_lossy().replace('\\', "/");
         hasher.update(&(relative_path.len() as u64).to_le_bytes());
