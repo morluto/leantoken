@@ -1,9 +1,9 @@
 use crate::error::RetryableOperation;
 use crate::query_receipt::{
     ExactQueryPredicate, MAX_QUERY_RECEIPT_ID_BYTES, MAX_QUERY_RECEIPTS,
-    MAX_TOTAL_QUERY_RECEIPT_BYTES,
-    QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS, QUERY_RECEIPT_TTL_MILLIS, QueryPartition,
-    QueryReceiptRecord, StoredQueryReceipt, format_query_receipt_id, parse_query_receipt_id,
+    MAX_TOTAL_QUERY_RECEIPT_BYTES, QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS, QUERY_RECEIPT_TTL_MILLIS,
+    QueryPartition, QueryReceiptRecord, StoredQueryReceipt, format_query_receipt_id,
+    parse_query_receipt_id,
 };
 
 #[derive(Debug)]
