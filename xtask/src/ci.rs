@@ -889,7 +889,6 @@ mod tests {
     fn representative_paths_select_each_pr_owned_lane() {
         let cases = [
             ("src/config.rs", "product-linux"),
-            ("build.rs", "product-linux"),
             ("tests/benchmark_contract.rs", "contract"),
             ("examples/context_utilization.rs", "examples"),
             ("Cargo.lock", "dependency-audit"),

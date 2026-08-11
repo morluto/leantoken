@@ -3,12 +3,6 @@
 LeanToken is a headless retrieval service. The CLI and MCP adapters call the
 same typed application services and contain no indexing or ranking logic.
 
-The build-time query-receipt semantics identity hashes the package manifest,
-its build input, and every Rust source under `src/`. That scan is bounded to
-32 directory levels, 4,096 source files, 4,096 bytes per relative path, and
-four MiB per file; it fails the build rather than reading an unexpectedly large
-or deep source tree.
-
 ```text
 repository files
       |

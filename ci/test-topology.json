@@ -24,7 +24,6 @@
     ".gitignore",
     ".gitleaksignore",
     ".pre-commit-config.yaml",
-    "build.rs",
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -43,7 +42,7 @@
       "id": "quality",
       "owner": "repository static validation",
       "required_events": ["pull_request", "merge_group", "push", "schedule", "manual"],
-      "paths": [".agents/", ".codex/", ".devcontainer/", ".env.example", ".gitattributes", ".github/", ".gitignore", ".pre-commit-config.yaml", "AGENTS.md", "CHANGELOG.md", "LICENSE-APACHE", "LICENSE-MIT", "README.md", "assets/", "build.rs", "ci/", "docs/", "scripts/"],
+      "paths": [".agents/", ".codex/", ".devcontainer/", ".env.example", ".gitattributes", ".github/", ".gitignore", ".pre-commit-config.yaml", "AGENTS.md", "CHANGELOG.md", "LICENSE-APACHE", "LICENSE-MIT", "README.md", "assets/", "ci/", "docs/", "scripts/"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     },
@@ -59,7 +58,7 @@
       "id": "product-linux",
       "owner": "product and process behavior on Linux",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },
@@ -67,7 +66,7 @@
       "id": "product-macos",
       "owner": "product and process behavior on macOS",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
       "matrix": [{"name": "macos-latest"}],
       "depends_on": ["quality"]
     },
@@ -75,7 +74,7 @@
       "id": "product-windows",
       "owner": "product and process behavior on Windows",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "examples/", "fixtures/", "docs/", "README.md", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/", ".config/", ".github/workflows/"],
       "matrix": [{"name": "windows-latest"}],
       "depends_on": ["quality"]
     },
@@ -83,7 +82,7 @@
       "id": "contract",
       "owner": "token-economy and executable contracts",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/benchmarks/", "tests/benchmark_contract.rs", "fixtures/sample_repo/", "build.rs", "Cargo.toml", "Cargo.lock"],
+      "paths": ["src/", "crates/benchmarks/", "tests/benchmark_contract.rs", "fixtures/sample_repo/", "Cargo.toml", "Cargo.lock"],
       "matrix": [{"name": "ubuntu-latest"}, {"name": "macos-latest"}, {"name": "windows-latest"}],
       "depends_on": ["quality"]
     },
@@ -91,7 +90,7 @@
       "id": "examples",
       "owner": "benchmark and example contracts",
       "required_events": ["merge_group", "push", "schedule", "manual"],
-      "paths": ["src/", "crates/benchmarks/", "examples/", "benchmarks/", "scripts/agent_walltime_ab.py", "scripts/paired_performance.py", "scripts/test_agent_walltime_ab.py", "scripts/test_paired_performance.py", "tests/benchmark_contract.rs", "build.rs", "Cargo.toml", "Cargo.lock"],
+      "paths": ["src/", "crates/benchmarks/", "examples/", "benchmarks/", "scripts/agent_walltime_ab.py", "scripts/paired_performance.py", "scripts/test_agent_walltime_ab.py", "scripts/test_paired_performance.py", "tests/benchmark_contract.rs", "Cargo.toml", "Cargo.lock"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },
@@ -99,7 +98,7 @@
       "id": "coverage",
       "owner": "instrumented Rust behavior",
       "required_events": ["schedule", "manual"],
-      "paths": ["src/", "crates/", "xtask/", "tests/", "fixtures/", "build.rs", "Cargo.toml", "Cargo.lock"],
+      "paths": ["src/", "crates/", "xtask/", "tests/", "fixtures/", "Cargo.toml", "Cargo.lock"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },
@@ -115,7 +114,7 @@
       "id": "release-plan",
       "owner": "release packaging inputs",
       "required_events": ["manual"],
-      "paths": ["build.rs", "Cargo.toml", "Cargo.lock", "cliff.toml", "dist-workspace.toml", "npm/", "server.json", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "cliff.toml", "dist-workspace.toml", "npm/", "server.json", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     },
@@ -123,7 +122,7 @@
       "id": "npm",
       "owner": "npm packaging and installation",
       "required_events": ["merge_group", "push", "manual"],
-      "paths": ["build.rs", "Cargo.toml", "Cargo.lock", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "npm/", "scripts/build-npm-packages.mjs", ".github/workflows/ci.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": ["quality"]
     },

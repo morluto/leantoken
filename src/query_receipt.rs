@@ -13,8 +13,6 @@ pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
 const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
-const SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST: &str =
-    env!("LEANTOKEN_SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST");
 
 /// Compute a fingerprint of the actual search semantics, derived from the
 /// algorithm configuration rather than a manually maintained integer.
@@ -23,37 +21,19 @@ const SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST: &str =
 /// - The package version (changes on every release)
 /// - The index content version (changes when the index format changes)
 /// - The query receipt semantics version (manual baseline)
-/// - All Rust sources, the package manifest, and the build input that derives
-///   their identity
-///
 /// The semantics version is the explicit compatibility boundary for external
-/// dependencies. Bump it when a dependency update can change exhaustive-search
-/// behavior; a package-local lockfile is not the dependency graph selected
-/// when LeanToken is used from another Cargo workspace.
+/// dependencies and implementation changes. Bump it whenever either can
+/// change exhaustive-search behavior.
 ///
 /// When any of these change, old receipts are automatically invalidated. See
 /// issue #545.
 pub(crate) fn search_semantics_fingerprint() -> u64 {
-    search_semantics_fingerprint_from_inputs(
-        env!("CARGO_PKG_VERSION"),
-        crate::config::INDEX_CONTENT_VERSION,
-        QUERY_RECEIPT_SEMANTICS_VERSION,
-        SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST.as_bytes(),
-    )
-}
-
-fn search_semantics_fingerprint_from_inputs(
-    package_version: &str,
-    index_content_version: u32,
-    semantics_version: u64,
-    implementation_identity: &[u8],
-) -> u64 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"leantoken-search-semantics-v1\0");
-    hash_bytes(&mut hasher, package_version.as_bytes());
-    hasher.update(&index_content_version.to_le_bytes());
-    hasher.update(&semantics_version.to_le_bytes());
-    hash_bytes(&mut hasher, implementation_identity);
+    hasher.update(&(env!("CARGO_PKG_VERSION").len() as u64).to_le_bytes());
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(&crate::config::INDEX_CONTENT_VERSION.to_le_bytes());
+    hasher.update(&QUERY_RECEIPT_SEMANTICS_VERSION.to_le_bytes());
     let digest = hasher.finalize();
     let fingerprint = u64::from_le_bytes(digest.as_bytes()[..8].try_into().unwrap_or([0; 8]));
     fingerprint % SQLITE_POSITIVE_INTEGER_MAX + 1
@@ -330,19 +310,6 @@ mod tests {
             None
         );
         assert_eq!(receipt_id.len(), QUERY_RECEIPT_ID_RESPONSE_RESERVE.len());
-    }
-
-    #[test]
-    fn search_semantics_fingerprint_invalidates_implementation_and_semantics_changes() {
-        let first =
-            search_semantics_fingerprint_from_inputs("0.1.25", 1, 2, b"search implementation v1");
-        let implementation_changed =
-            search_semantics_fingerprint_from_inputs("0.1.25", 1, 2, b"search implementation v2");
-        let semantics_changed =
-            search_semantics_fingerprint_from_inputs("0.1.25", 1, 3, b"search implementation v1");
-
-        assert_ne!(first, implementation_changed);
-        assert_ne!(first, semantics_changed);
     }
 
     #[test]
