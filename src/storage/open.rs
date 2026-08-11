@@ -318,31 +318,26 @@ impl Storage {
     /// See issue #563: Validate and repair external-content FTS indexes
     /// instead of probing only FTS5 availability.
     pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
-        // Each (fts_table, relational_table) pair to check.
-        const FTS_PAIRS: &[(&str, &str)] = &[
-            ("chunks_fts_word", "chunks"),
-            ("chunks_fts_trigram", "chunks"),
-            ("symbols_fts_trigram", "symbols"),
-            ("symbol_refs_fts_trigram", "symbol_refs"),
+        // Use FTS5's built-in integrity-check command. For external-content
+        // tables, `SELECT count(*)` reads through the content table and always
+        // matches, even when the FTS index is corrupted. The integrity-check
+        // command verifies that the FTS index postings agree with the content
+        // table and returns one row per inconsistency (0 rows = healthy).
+        // See issue #563.
+        const FTS_TABLES: &[&str] = &[
+            "chunks_fts_word",
+            "chunks_fts_trigram",
+            "symbols_fts_trigram",
+            "symbol_refs_fts_trigram",
         ];
-        for (fts_table, relational_table) in FTS_PAIRS {
-            let fts_count: i64 =
-                conn.query_row(&format!("SELECT count(*) FROM {fts_table}"), [], |row| {
-                    row.get(0)
-                })?;
-            let relational_count: i64 = conn.query_row(
-                &format!("SELECT count(*) FROM {relational_table}"),
-                [],
-                |row| row.get(0),
-            )?;
-            if fts_count != relational_count {
-                tracing::warn!(
-                    fts_table,
-                    relational_table,
-                    fts_count,
-                    relational_count,
-                    "FTS index row count mismatch; rebuilding"
-                );
+        for fts_table in FTS_TABLES {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT 1 FROM {fts_table} WHERE {fts_table} = 'integrity-check' LIMIT 1"
+            ))?;
+            let has_errors = stmt.exists([])?;
+            drop(stmt);
+            if has_errors {
+                tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
                 conn.execute(
                     &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
                     [],
