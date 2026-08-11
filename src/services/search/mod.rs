@@ -13,10 +13,9 @@ use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled,
-    validate_glob_patterns, validate_input,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
+    validate_cursor, validate_glob_patterns, validate_input,
 };
-use validation::{make_search_cursor, parse_search_cursor};
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::query_receipt::{
@@ -74,7 +73,7 @@ impl Services {
                     .sum(),
                 shape
                     .has_more
-                    .then(|| make_search_cursor(shape.generation, shape.offset + shape.consumed, shape.request)),
+                    .then(|| make_cursor(shape.generation, shape.offset + shape.consumed)),
             ),
         };
         let mut sized = provisional(selected);

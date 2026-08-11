@@ -9,6 +9,7 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.include_paths)?;
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
+    validate_cursor(request.cursor.as_deref())?;
     Ok(())
 }
 
@@ -110,51 +111,4 @@ pub(super) fn parse_search_kind(
         SearchMode::Reference => SearchKind::Reference,
     })
 }
-
-/// Compute a binding hash for search request fields that define the result set.
-///
-/// The cursor must bind: query text, search mode, case sensitivity, and
-/// include/exclude path filters. If any of these change between pages, the
-/// cursor is stale and must be rejected. This closes the cursor replay
-/// vulnerability described in issue #489.
-pub(super) fn search_binding_hash(request: &SearchInput) -> String {
-    let mut fields: Vec<&str> = vec![
-        &request.query,
-        request.kind.mode().wire_name(),
-    ];
-    fields.push(if request.case_sensitive { "1" } else { "0" });
-    fields.push("");
-    for p in &request.include_paths {
-        fields.push(p);
-    }
-    fields.push("");
-    for p in &request.exclude_paths {
-        fields.push(p);
-    }
-    crate::services::cursor::binding_hash(&fields)
-}
-
-/// Parse a search cursor, returning the offset to resume from.
-///
-/// Validates that the cursor was produced for the same request binding
-/// and snapshot generation.
-pub(super) fn parse_search_cursor(
-    cursor: Option<&str>,
-    generation: u64,
-    request: &SearchInput,
-) -> Result<usize> {
-    let hash = search_binding_hash(request);
-    crate::services::cursor::parse_cursor(cursor, "search", generation, &hash)
-}
-
-/// Make a search cursor for the given offset.
-pub(super) fn make_search_cursor(
-    generation: u64,
-    offset: usize,
-    request: &SearchInput,
-) -> String {
-    let hash = search_binding_hash(request);
-    crate::services::cursor::encode_cursor("search", generation, &hash, offset)
-}
-
 use super::*;
