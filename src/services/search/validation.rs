@@ -9,6 +9,13 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.include_paths)?;
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
+    // Validate cursor format early so malformed cursors are rejected as
+    // static input errors before any reconciliation work begins.
+    if let Some(cursor) = &request.cursor {
+        if cursor.split(':').count() != 5 {
+            return Err(Error::StaleCursor);
+        }
+    }
     Ok(())
 }
 
