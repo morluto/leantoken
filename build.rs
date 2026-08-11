@@ -19,18 +19,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let implementation_digest =
         hash_files(manifest_directory, SEARCH_SEMANTICS_IMPLEMENTATION_PATHS)?;
     let dependency_digest = hash_files(manifest_directory, &["Cargo.lock"])?;
-    let output = Path::new(&env::var("OUT_DIR")?).join("search_semantics_identity.rs");
-    fs::write(
-        output,
-        format!(
-            "pub const SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST: [u8; 32] = {implementation_digest:?};\n\
-             pub const LOCKED_DEPENDENCIES_DIGEST: [u8; 32] = {dependency_digest:?};\n"
-        ),
-    )?;
+    println!(
+        "cargo:rustc-env=LEANTOKEN_SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST={}",
+        implementation_digest.to_hex()
+    );
+    println!(
+        "cargo:rustc-env=LEANTOKEN_LOCKED_DEPENDENCIES_DIGEST={}",
+        dependency_digest.to_hex()
+    );
     Ok(())
 }
 
-fn hash_files(root: &Path, paths: &[&str]) -> Result<[u8; 32], Box<dyn Error>> {
+fn hash_files(root: &Path, paths: &[&str]) -> Result<blake3::Hash, Box<dyn Error>> {
     let mut hasher = blake3::Hasher::new();
     for relative_path in paths {
         let path = root.join(relative_path);
@@ -41,5 +41,5 @@ fn hash_files(root: &Path, paths: &[&str]) -> Result<[u8; 32], Box<dyn Error>> {
         hasher.update(&(bytes.len() as u64).to_le_bytes());
         hasher.update(&bytes);
     }
-    Ok(*hasher.finalize().as_bytes())
+    Ok(hasher.finalize())
 }

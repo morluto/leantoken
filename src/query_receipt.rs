@@ -13,7 +13,9 @@ pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
 const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
-include!(concat!(env!("OUT_DIR"), "/search_semantics_identity.rs"));
+const SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST: &str =
+    env!("LEANTOKEN_SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST");
+const LOCKED_DEPENDENCIES_DIGEST: &str = env!("LEANTOKEN_LOCKED_DEPENDENCIES_DIGEST");
 
 /// Compute a fingerprint of the actual search semantics, derived from the
 /// algorithm configuration rather than a manually maintained integer.
@@ -33,8 +35,8 @@ pub(crate) fn search_semantics_fingerprint() -> u64 {
         env!("CARGO_PKG_VERSION"),
         crate::config::INDEX_CONTENT_VERSION,
         QUERY_RECEIPT_SEMANTICS_VERSION,
-        &SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST,
-        &LOCKED_DEPENDENCIES_DIGEST,
+        SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST.as_bytes(),
+        LOCKED_DEPENDENCIES_DIGEST.as_bytes(),
     )
 }
 
