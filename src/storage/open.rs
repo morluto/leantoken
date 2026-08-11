@@ -312,8 +312,8 @@ impl Storage {
     ///
     /// A database can pass migrations, integrity_check, and the FTS5
     /// capability probe while FTS silently omits results. This function
-    /// checks that each FTS table has a row count matching its relational
-    /// counterpart and issues a `rebuild` command if they diverge.
+    /// checks that each FTS table matches its external content and issues a
+    /// `rebuild` command if it does not.
     ///
     /// See issue #563: Validate and repair external-content FTS indexes
     /// instead of probing only FTS5 availability.
@@ -322,7 +322,7 @@ impl Storage {
         // tables, `SELECT count(*)` reads through the content table and always
         // matches, even when the FTS index is corrupted. The integrity-check
         // command verifies that the FTS index postings agree with the content
-        // table and returns one row per inconsistency (0 rows = healthy).
+        // table and fails with SQLITE_CORRUPT_VTAB when they do not.
         // See issue #563.
         const FTS_TABLES: &[&str] = &[
             "chunks_fts_word",
@@ -331,17 +331,21 @@ impl Storage {
             "symbol_refs_fts_trigram",
         ];
         for fts_table in FTS_TABLES {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT 1 FROM {fts_table} WHERE {fts_table} = 'integrity-check' LIMIT 1"
-            ))?;
-            let has_errors = stmt.exists([])?;
-            drop(stmt);
-            if has_errors {
-                tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
-                conn.execute(
-                    &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
-                    [],
-                )?;
+            match conn.execute(
+                &format!("INSERT INTO {fts_table}({fts_table}, rank) VALUES('integrity-check', 1)"),
+                [],
+            ) {
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if error.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB =>
+                {
+                    tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
+                    conn.execute(
+                        &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
+                        [],
+                    )?;
+                }
+                Err(error) => return Err(error.into()),
             }
         }
         Ok(())

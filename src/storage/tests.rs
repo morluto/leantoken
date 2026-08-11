@@ -625,6 +625,48 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
     );
 }
 
+#[test]
+pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .full_reconcile(
+            "config",
+            vec![sample_file("needle.rs", "fn repaired_fts_needle() {}\n")],
+        )
+        .expect("index fixture");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('delete-all')",
+                [],
+            )
+            .expect("remove FTS postings while retaining relational content");
+    }
+    assert!(
+        storage
+            .search_word("repaired_fts_needle", 10)
+            .expect("search damaged index")
+            .is_empty()
+    );
+    drop(storage);
+
+    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
+
+    assert_eq!(
+        reopened
+            .search_word("repaired_fts_needle", 10)
+            .expect("search rebuilt index")[0]
+            .path,
+        "needle.rs"
+    );
+}
+
 pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {
     IndexedFile {
         path: path.to_string(),
