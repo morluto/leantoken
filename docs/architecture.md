@@ -792,7 +792,7 @@ records both its check version and the index version it verified: each of the
 four external-content indexes is fully scanned at most once for an unchanged
 index generation and check version. A new generation or check version performs
 the scans in one immediate transaction, rebuilds any corrupted index before
-recording success, and then requests the same bounded startup checkpoint.
+recording success, and leaves any pre-existing WAL backlog uncheckpointed.
 Startup tracks both main-table
 row changes and the schema version while checkpointing is suspended; a real
 migration or path-projection repair explicitly requests `TRUNCATE` after the

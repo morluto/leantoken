@@ -144,7 +144,7 @@ impl Storage {
         Self::validate_fts5(&mut conn)?;
         with_auto_checkpoint_suspended(
             &mut conn,
-            AutoCheckpointCompletion::CheckpointIfMutated,
+            AutoCheckpointCompletion::RestoreOnly,
             Self::verify_fts_integrity,
         )?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
