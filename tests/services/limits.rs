@@ -654,9 +654,9 @@ async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
 
     let mut request = search_limit_request(Some(1), Some(1), Some(0));
     // Use a cursor with generation 0 (always stale) to trigger StaleCursor.
-    // The cursor format is valid (4 fields) but the generation mismatch
-    // causes rejection, which triggers reconciliation.
-    request.cursor = Some("search:0:0000000000000000:0".into());
+    // The cursor format is valid (5 fields, valid MAC) but the generation
+    // mismatch causes rejection, which triggers reconciliation.
+    request.cursor = Some(format!("search:0:0000000000000000:0:{}", "0"));
     let error = services
         .search_with_consistency_cancellable(
             request,
