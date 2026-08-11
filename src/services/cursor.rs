@@ -115,15 +115,8 @@ pub(crate) fn decode_cursor(
     expected_generation: u64,
     expected_binding_hash: &str,
 ) -> Result<usize> {
-    // Reject oversized cursors before splitting to prevent memory amplification
-    // from untrusted input containing many colons.
-    if cursor.len() > MAX_CURSOR_BYTES {
-        return Err(Error::StaleCursor);
-    }
+    validate_cursor_shape(cursor)?;
     let fields = cursor.split(':').collect::<Vec<_>>();
-    if fields.len() != 5 {
-        return Err(Error::StaleCursor);
-    }
     let kind = fields[0];
     let generation = fields[1];
     let binding_hash = fields[2];
@@ -154,6 +147,18 @@ pub(crate) fn decode_cursor(
         return Err(Error::StaleCursor);
     }
     Ok(offset)
+}
+
+/// Reject cursor input that cannot be safely parsed.
+///
+/// This runs before request reconciliation so malformed caller input cannot
+/// trigger indexing work. It deliberately avoids allocating one value per
+/// delimiter; decoding may collect the now-bounded fields afterwards.
+pub(crate) fn validate_cursor_shape(cursor: &str) -> Result<()> {
+    if cursor.len() > MAX_CURSOR_BYTES || cursor.splitn(6, ':').count() != 5 {
+        return Err(Error::StaleCursor);
+    }
+    Ok(())
 }
 
 /// Parse a cursor or return offset 0 if no cursor is provided.
@@ -248,5 +253,6 @@ mod tests {
         let hash = binding_hash(&["query"]);
         let cursor = "x".repeat(600);
         assert!(decode_cursor(&cursor, "search", 42, &hash).is_err());
+        assert!(validate_cursor_shape(&cursor).is_err());
     }
 }
