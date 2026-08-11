@@ -160,6 +160,7 @@ pub(crate) fn git_diff_hunks_with_head(
         "-c".to_owned(),
         "core.fsmonitor=false".to_owned(),
         "diff".to_owned(),
+        "--no-ext-diff".to_owned(),
         "--unified=0".to_owned(),
         "--no-renames".to_owned(),
         base_sha,
@@ -304,6 +305,7 @@ pub(crate) fn resolve_revision_sha_for_field(
     }
     let commit_revision = format!("{revision}^{{commit}}");
     let mut child = match Command::new(program)
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .args([
             "rev-parse",
             "--verify",
@@ -370,6 +372,7 @@ pub(crate) fn diff_name_only(
         "-c".to_owned(),
         "core.fsmonitor=false".to_owned(),
         "diff".to_owned(),
+        "--no-ext-diff".to_owned(),
         "--name-only".to_owned(),
         "-z".to_owned(),
         "--no-renames".to_owned(),
