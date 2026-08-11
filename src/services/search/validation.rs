@@ -15,7 +15,7 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     // format so existing cursors remain usable across the migration.
     if let Some(cursor) = &request.cursor {
         let field_count = cursor.split(':').count();
-        if field_count != 5 && field_count != 2 {
+        if field_count != 4 {
             return Err(Error::StaleCursor);
         }
     }

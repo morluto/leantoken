@@ -85,7 +85,6 @@ tree-sitter-ruby = "0.23.1"
 tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 wait-timeout = "0.2.1"
-getrandom = "0.4.3"
 
 [dev-dependencies]
 assert_cmd = "2.1.1"
