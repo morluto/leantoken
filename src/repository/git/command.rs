@@ -48,7 +48,6 @@ pub(crate) fn run_git_capture_bounded(
     // pathspec magic syntax, but Git should never treat them as patterns.
     command
         .env("GIT_LITERAL_PATHSPECS", "1")
-
         .args(args)
         .current_dir(root)
         .stdin(if input.is_some() {
