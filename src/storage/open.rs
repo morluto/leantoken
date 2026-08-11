@@ -141,6 +141,7 @@ impl Storage {
             },
         )?;
         Self::validate_fts5(&mut conn)?;
+        Self::verify_fts_integrity(&mut conn)?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         let manager = SqliteConnectionManager::file(&path)
@@ -305,6 +306,51 @@ impl Storage {
                 source: None,
             })
         }
+    }
+
+    /// Verify that persisted FTS5 indexes agree with their relational tables.
+    ///
+    /// A database can pass migrations, integrity_check, and the FTS5
+    /// capability probe while FTS silently omits results. This function
+    /// checks that each FTS table has a row count matching its relational
+    /// counterpart and issues a `rebuild` command if they diverge.
+    ///
+    /// See issue #563: Validate and repair external-content FTS indexes
+    /// instead of probing only FTS5 availability.
+    pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
+        // Each (fts_table, relational_table) pair to check.
+        const FTS_PAIRS: &[(&str, &str)] = &[
+            ("chunks_fts_word", "chunks"),
+            ("chunks_fts_trigram", "chunks"),
+            ("symbols_fts_trigram", "symbols"),
+            ("symbol_refs_fts_trigram", "symbol_refs"),
+        ];
+        for (fts_table, relational_table) in FTS_PAIRS {
+            let fts_count: i64 = conn.query_row(
+                &format!("SELECT count(*) FROM {fts_table}"),
+                [],
+                |row| row.get(0),
+            )?;
+            let relational_count: i64 = conn.query_row(
+                &format!("SELECT count(*) FROM {relational_table}"),
+                [],
+                |row| row.get(0),
+            )?;
+            if fts_count != relational_count {
+                tracing::warn!(
+                    fts_table,
+                    relational_table,
+                    fts_count,
+                    relational_count,
+                    "FTS index row count mismatch; rebuilding"
+                );
+                conn.execute(
+                    &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
