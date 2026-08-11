@@ -1,5 +1,5 @@
-use std::num::NonZeroUsize;
 use super::*;
+use std::num::NonZeroUsize;
 
 pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -93,7 +93,8 @@ pub(super) async fn run_mcp_runtime(
     // configures its own indexing workers. Log the aggregate so operators
     // know the total process-wide concurrency. See issue #565: with K
     // approved contexts the process-wide default is (1 + K) workers.
-    let process_wide_workers = config.max_index_workers
+    let process_wide_workers = config
+        .max_index_workers
         .saturating_add(approved_contexts.len());
     let cpu_capacity = std::thread::available_parallelism()
         .map(NonZeroUsize::get)
