@@ -2,7 +2,7 @@ use super::*;
 use crate::model::{SearchMode, SearchRequest};
 use crate::query_receipt::{
     ExactQueryPredicate, MAX_QUERY_RECEIPTS, QUERY_RECEIPT_SEMANTICS_VERSION,
-    QUERY_RECEIPT_TTL_MILLIS, QueryReceiptRecord,
+    QUERY_RECEIPT_TTL_MILLIS, QueryReceiptRecord, search_semantics_fingerprint,
 };
 
 fn request(query: &str) -> SearchRequest {
@@ -286,4 +286,16 @@ fn downgrade_query_receipt_schema(database: &Path, conflicting_table: bool) {
 #[test]
 fn stored_semantics_version_matches_the_code_contract() {
     assert_eq!(QUERY_RECEIPT_SEMANTICS_VERSION, 2);
+}
+
+#[test]
+fn search_semantics_fingerprint_fits_sqlite_positive_integer_range() {
+    let fingerprint = search_semantics_fingerprint();
+
+    assert!((1..=i64::MAX as u64).contains(&fingerprint));
+    let stored = u64_to_i64(fingerprint).expect("fingerprint fits SQLite INTEGER");
+    assert_eq!(
+        u64::try_from(stored).expect("positive fingerprint"),
+        fingerprint
+    );
 }

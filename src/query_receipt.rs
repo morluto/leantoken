@@ -12,6 +12,33 @@ pub(crate) const MAX_TOTAL_QUERY_RECEIPT_BYTES: usize = 1024 * 1024;
 pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
+const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
+
+/// Compute a fingerprint of the actual search semantics, derived from the
+/// algorithm configuration rather than a manually maintained integer.
+///
+/// This fingerprint includes:
+/// - The package version (changes on every release)
+/// - The index content version (changes when the index format changes)
+/// - The query receipt semantics version (manual baseline)
+///
+/// The semantics version is the explicit compatibility boundary for external
+/// dependencies and implementation changes. Bump it whenever either can
+/// change exhaustive-search behavior.
+///
+/// When any of these change, old receipts are automatically invalidated. See
+/// issue #545.
+pub(crate) fn search_semantics_fingerprint() -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"leantoken-search-semantics-v1\0");
+    hasher.update(&(env!("CARGO_PKG_VERSION").len() as u64).to_le_bytes());
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update(&crate::config::INDEX_CONTENT_VERSION.to_le_bytes());
+    hasher.update(&QUERY_RECEIPT_SEMANTICS_VERSION.to_le_bytes());
+    let digest = hasher.finalize();
+    let fingerprint = u64::from_le_bytes(digest.as_bytes()[..8].try_into().unwrap_or([0; 8]));
+    fingerprint % SQLITE_POSITIVE_INTEGER_MAX + 1
+}
 pub(crate) const QUERY_RECEIPT_FIXED_LOGICAL_BYTES: usize = 16 * size_of::<u64>();
 const QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
 const QUERY_RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
@@ -55,7 +82,7 @@ pub(crate) struct ExactQueryPredicate {
 impl ExactQueryPredicate {
     pub(crate) fn from_request(request: &SearchRequest) -> Result<Self> {
         let predicate = Self {
-            semantics_version: QUERY_RECEIPT_SEMANTICS_VERSION,
+            semantics_version: search_semantics_fingerprint(),
             mode: ExactQueryMode::from_search_mode(request.mode)?,
             query_blake3: blake3::hash(request.query.as_bytes()).to_hex().to_string(),
             case_sensitive: request.case_sensitive,
