@@ -467,7 +467,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
+pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -500,12 +500,10 @@ pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
             )
             .expect("damage path projection");
     }
-    assert!(
-        fs::metadata(wal_path(&database))
-            .expect("repair fixture WAL")
-            .len()
-            > 0
-    );
+    let wal_bytes_before = fs::metadata(wal_path(&database))
+        .expect("repair fixture WAL")
+        .len();
+    assert!(wal_bytes_before > 0);
 
     let repaired = Storage::open(&database).expect("repair storage on reopen");
 
@@ -528,12 +526,12 @@ pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
             .expect("restored auto-checkpoint policy")
             > 0
     );
+    let wal_bytes_after = fs::metadata(wal_path(&database))
+        .expect("WAL after repair")
+        .len();
     assert_eq!(
-        fs::metadata(wal_path(&database))
-            .map(|metadata| metadata.len())
-            .unwrap_or(0),
-        0,
-        "a successful startup repair should not leave its WAL for a no-change reconcile"
+        wal_bytes_after, 0,
+        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
     );
 }
 
@@ -622,6 +620,51 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
     assert_eq!(
         completed_checkpoint.wal_bytes, 0,
         "the explicit post-commit checkpoint should truncate the WAL after the reader drops"
+    );
+}
+
+#[test]
+pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .full_reconcile(
+            "config",
+            vec![sample_file("needle.rs", "fn repaired_fts_needle() {}\n")],
+        )
+        .expect("index fixture");
+    drop(storage);
+
+    let storage = Storage::open(&database).expect("initial integrity verification");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "INSERT INTO chunks_fts_word(chunks_fts_word) VALUES('delete-all')",
+                [],
+            )
+            .expect("remove FTS postings while retaining relational content");
+    }
+    assert!(
+        storage
+            .search_word("repaired_fts_needle", 10)
+            .expect("search damaged index")
+            .is_empty()
+    );
+    drop(storage);
+
+    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
+
+    assert_eq!(
+        reopened
+            .search_word("repaired_fts_needle", 10)
+            .expect("search rebuilt index")[0]
+            .path,
+        "needle.rs"
     );
 }
 

@@ -141,6 +141,11 @@ impl Storage {
             },
         )?;
         Self::validate_fts5(&mut conn)?;
+        with_auto_checkpoint_suspended(
+            &mut conn,
+            AutoCheckpointCompletion::RestoreOnly,
+            Self::verify_fts_integrity,
+        )?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
         let manager = SqliteConnectionManager::file(&path)
@@ -305,6 +310,54 @@ impl Storage {
                 source: None,
             })
         }
+    }
+
+    /// Verify persisted FTS5 indexes against their relational tables.
+    ///
+    /// A database can pass migrations, integrity_check, and the FTS5
+    /// capability probe while FTS silently omits results. This function
+    /// checks that each FTS table matches its external content and issues a
+    /// `rebuild` command if it does not. This runs on every database open:
+    /// external writers can damage an index without changing LeanToken's
+    /// generation marker.
+    ///
+    /// See issue #563: Validate and repair external-content FTS indexes
+    /// instead of probing only FTS5 availability.
+    pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
+        // Use FTS5's built-in integrity-check command. For external-content
+        // tables, `SELECT count(*)` reads through the content table and always
+        // matches, even when the FTS index is corrupted. The integrity-check
+        // command verifies that the FTS index postings agree with the content
+        // table and fails with SQLITE_CORRUPT_VTAB when they do not.
+        // See issue #563.
+        const FTS_TABLES: &[&str] = &[
+            "chunks_fts_word",
+            "chunks_fts_trigram",
+            "symbols_fts_trigram",
+            "symbol_refs_fts_trigram",
+        ];
+
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for fts_table in FTS_TABLES {
+            match tx.execute(
+                &format!("INSERT INTO {fts_table}({fts_table}, rank) VALUES('integrity-check', 1)"),
+                [],
+            ) {
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if error.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB =>
+                {
+                    tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
+                    tx.execute(
+                        &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
+                        [],
+                    )?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
