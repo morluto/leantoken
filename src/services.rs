@@ -31,6 +31,8 @@ mod concurrency_profile;
 mod context;
 mod coverage;
 pub mod cursor;
+#[cfg(test)]
+mod cursor_property_tests;
 mod execution_options;
 mod executor;
 mod files;
