@@ -1,7 +1,7 @@
 use crate::error::RetryableOperation;
 use crate::query_receipt::{
     ExactQueryPredicate, MAX_QUERY_RECEIPT_ID_BYTES, MAX_QUERY_RECEIPTS,
-    MAX_TOTAL_QUERY_RECEIPT_BYTES, QUERY_RECEIPT_SEMANTICS_VERSION,
+    MAX_TOTAL_QUERY_RECEIPT_BYTES,
     QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS, QUERY_RECEIPT_TTL_MILLIS, QueryPartition,
     QueryReceiptRecord, StoredQueryReceipt, format_query_receipt_id, parse_query_receipt_id,
 };
@@ -93,7 +93,7 @@ impl Storage {
                     repository_identity,
                     u64_to_i64(record.repository_generation)?,
                     record.config_hash,
-                    u64_to_i64(QUERY_RECEIPT_SEMANTICS_VERSION)?,
+                    u64_to_i64(crate::query_receipt::search_semantics_fingerprint())?,
                     predicate_json,
                     record.predicate_blake3,
                     record.partition.digest,
@@ -162,7 +162,7 @@ impl Storage {
                 repository_identity,
                 u64_to_i64(record.repository_generation)?,
                 record.config_hash,
-                u64_to_i64(QUERY_RECEIPT_SEMANTICS_VERSION)?,
+                u64_to_i64(crate::query_receipt::search_semantics_fingerprint())?,
                 predicate_json,
                 record.predicate_blake3,
                 record.partition.digest,
@@ -271,7 +271,7 @@ impl ReadSession {
             return Err(Error::UnknownQueryReceipt(requested_id.to_owned()));
         };
         if receipt_repository_identity != repository_identity
-            || semantics_version != QUERY_RECEIPT_SEMANTICS_VERSION
+            || semantics_version != crate::query_receipt::search_semantics_fingerprint()
             || created_unix_millis > now_unix_millis
             || last_access_unix_millis > now_unix_millis
             || expires_unix_millis <= now_unix_millis
