@@ -66,13 +66,7 @@ fn compute_mac(kind: &str, generation: u64, binding_hash: &str, offset: usize) -
     hasher.update(&(binding_hash.len() as u64).to_le_bytes());
     hasher.update(binding_hash.as_bytes());
     hasher.update(&(offset as u64).to_le_bytes());
-    hasher
-        .finalize()
-        .to_hex()
-        .as_str()
-        .split_at(16)
-        .0
-        .to_owned()
+    hasher.finalize().to_hex().as_str().split_at(16).0.to_owned()
 }
 
 /// Encode an authenticated continuation cursor.
@@ -116,7 +110,9 @@ pub(crate) fn decode_cursor(
     if kind != expected_kind {
         return Err(Error::StaleCursor);
     }
-    let cursor_generation = generation.parse::<u64>().map_err(|_| Error::StaleCursor)?;
+    let cursor_generation = generation
+        .parse::<u64>()
+        .map_err(|_| Error::StaleCursor)?;
     if cursor_generation != expected_generation {
         return Err(Error::StaleCursor);
     }
@@ -126,13 +122,10 @@ pub(crate) fn decode_cursor(
     {
         return Err(Error::StaleCursor);
     }
-    let offset = offset.parse::<usize>().map_err(|_| Error::StaleCursor)?;
-    let expected_mac = compute_mac(
-        expected_kind,
-        expected_generation,
-        expected_binding_hash,
-        offset,
-    );
+    let offset = offset
+        .parse::<usize>()
+        .map_err(|_| Error::StaleCursor)?;
+    let expected_mac = compute_mac(expected_kind, expected_generation, expected_binding_hash, offset);
     if mac != expected_mac.as_str() {
         return Err(Error::StaleCursor);
     }
@@ -169,13 +162,7 @@ pub(crate) fn binding_hash(fields: &[&str]) -> String {
         hasher.update(&(field.len() as u64).to_le_bytes());
         hasher.update(field.as_bytes());
     }
-    hasher
-        .finalize()
-        .to_hex()
-        .as_str()
-        .split_at(16)
-        .0
-        .to_owned()
+    hasher.finalize().to_hex().as_str().split_at(16).0.to_owned()
 }
 
 #[cfg(test)]
@@ -186,7 +173,8 @@ mod tests {
     fn round_trip_preserves_offset() {
         let hash = binding_hash(&["query", "text"]);
         let cursor = encode_cursor("search", 42, &hash, 100);
-        let offset = decode_cursor(&cursor, "search", 42, &hash).expect("decode should succeed");
+        let offset =
+            decode_cursor(&cursor, "search", 42, &hash).expect("decode should succeed");
         assert_eq!(offset, 100);
     }
 

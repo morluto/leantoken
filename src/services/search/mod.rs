@@ -13,9 +13,10 @@ use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, validate_glob_patterns,
-    validate_input,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled,
+    validate_glob_patterns, validate_input,
 };
+use validation::{make_search_cursor, parse_search_cursor};
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
 use crate::query_receipt::{
@@ -26,7 +27,6 @@ use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
 };
 use crate::{Error, RegexWorkDimension, Result, RetrievalLimitKind};
-use validation::{make_search_cursor, parse_search_cursor};
 
 mod hits;
 mod projection;
@@ -72,13 +72,9 @@ impl Services {
                     .iter()
                     .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
                     .sum(),
-                shape.has_more.then(|| {
-                    make_search_cursor(
-                        shape.generation,
-                        shape.offset + shape.consumed,
-                        shape.request,
-                    )
-                }),
+                shape
+                    .has_more
+                    .then(|| make_search_cursor(shape.generation, shape.offset + shape.consumed, shape.request)),
             ),
         };
         let mut sized = provisional(selected);

@@ -118,7 +118,10 @@ pub(super) fn parse_search_kind(
 /// cursor is stale and must be rejected. This closes the cursor replay
 /// vulnerability described in issue #489.
 pub(super) fn search_binding_hash(request: &SearchInput) -> String {
-    let mut fields: Vec<&str> = vec![&request.query, request.kind.mode().wire_name()];
+    let mut fields: Vec<&str> = vec![
+        &request.query,
+        request.kind.mode().wire_name(),
+    ];
     fields.push(if request.case_sensitive { "1" } else { "0" });
     fields.push("");
     for p in &request.include_paths {
@@ -145,7 +148,11 @@ pub(super) fn parse_search_cursor(
 }
 
 /// Make a search cursor for the given offset.
-pub(super) fn make_search_cursor(generation: u64, offset: usize, request: &SearchInput) -> String {
+pub(super) fn make_search_cursor(
+    generation: u64,
+    offset: usize,
+    request: &SearchInput,
+) -> String {
     let hash = search_binding_hash(request);
     crate::services::cursor::encode_cursor("search", generation, &hash, offset)
 }
