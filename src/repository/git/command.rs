@@ -41,7 +41,16 @@ pub(crate) fn run_git_capture_bounded(
     use std::time::Instant;
 
     let mut command = Command::new(program);
+    // Force Git to treat all pathspec arguments as literal filesystem
+    // paths, preventing pathspec magic (e.g. `:(literal)`, `:(exclude)`)
+    // in repository filenames from being interpreted as Git selectors.
+    // See issue #546: repository filenames can legitimately begin with
+    // pathspec magic syntax, but Git should never treat them as patterns.
     command
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env("GIT_LITERAL_PATHSPECS", "1")
         .args(args)
         .current_dir(root)
         .stdin(if input.is_some() {
