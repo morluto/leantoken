@@ -13,6 +13,7 @@ pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
 const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
+include!(concat!(env!("OUT_DIR"), "/search_semantics_identity.rs"));
 
 /// Compute a fingerprint of the actual search semantics, derived from the
 /// algorithm configuration rather than a manually maintained integer.
@@ -21,17 +22,36 @@ const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
 /// - The package version (changes on every release)
 /// - The index content version (changes when the index format changes)
 /// - The query receipt semantics version (manual baseline)
+/// - The exhaustive-search implementation sources
+/// - The locked dependency graph, including `regex-syntax`
 ///
-/// When any of these change — e.g. a regex_syntax upgrade that fixes Unicode
+/// When any of these change — e.g. a `regex-syntax` upgrade that fixes Unicode
 /// case-fold — the fingerprint changes and old receipts are automatically
 /// invalidated. See issue #545.
 pub(crate) fn search_semantics_fingerprint() -> u64 {
+    search_semantics_fingerprint_from_inputs(
+        env!("CARGO_PKG_VERSION"),
+        crate::config::INDEX_CONTENT_VERSION,
+        QUERY_RECEIPT_SEMANTICS_VERSION,
+        &SEARCH_SEMANTICS_IMPLEMENTATION_DIGEST,
+        &LOCKED_DEPENDENCIES_DIGEST,
+    )
+}
+
+fn search_semantics_fingerprint_from_inputs(
+    package_version: &str,
+    index_content_version: u32,
+    semantics_version: u64,
+    implementation_identity: &[u8],
+    dependency_identity: &[u8],
+) -> u64 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"leantoken-search-semantics-v1\0");
-    hasher.update(&(env!("CARGO_PKG_VERSION").len() as u64).to_le_bytes());
-    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
-    hasher.update(&crate::config::INDEX_CONTENT_VERSION.to_le_bytes());
-    hasher.update(&QUERY_RECEIPT_SEMANTICS_VERSION.to_le_bytes());
+    hash_bytes(&mut hasher, package_version.as_bytes());
+    hasher.update(&index_content_version.to_le_bytes());
+    hasher.update(&semantics_version.to_le_bytes());
+    hash_bytes(&mut hasher, implementation_identity);
+    hash_bytes(&mut hasher, dependency_identity);
     let digest = hasher.finalize();
     let fingerprint = u64::from_le_bytes(digest.as_bytes()[..8].try_into().unwrap_or([0; 8]));
     fingerprint % SQLITE_POSITIVE_INTEGER_MAX + 1
@@ -308,6 +328,34 @@ mod tests {
             None
         );
         assert_eq!(receipt_id.len(), QUERY_RECEIPT_ID_RESPONSE_RESERVE.len());
+    }
+
+    #[test]
+    fn search_semantics_fingerprint_invalidates_implementation_and_dependency_changes() {
+        let first = search_semantics_fingerprint_from_inputs(
+            "0.1.25",
+            1,
+            2,
+            b"search implementation v1",
+            b"regex-syntax 0.8.11",
+        );
+        let implementation_changed = search_semantics_fingerprint_from_inputs(
+            "0.1.25",
+            1,
+            2,
+            b"search implementation v2",
+            b"regex-syntax 0.8.11",
+        );
+        let dependency_changed = search_semantics_fingerprint_from_inputs(
+            "0.1.25",
+            1,
+            2,
+            b"search implementation v1",
+            b"regex-syntax 0.8.12",
+        );
+
+        assert_ne!(first, implementation_changed);
+        assert_ne!(first, dependency_changed);
     }
 
     #[test]
