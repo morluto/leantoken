@@ -138,17 +138,6 @@ pub(super) fn search_binding_hash(request: &SearchInput) -> String {
     for p in &request.exclude_paths {
         fields.push(p);
     }
-    // Bind focus_paths — they alter candidate ranking and ordering.
-    fields.push("");
-    for p in &request.focus_paths {
-        fields.push(p);
-    }
-    // Bind exhaustive mode — all_occurrences changes the result set shape.
-    fields.push(if request.kind.is_exhaustive() {
-        "1"
-    } else {
-        "0"
-    });
     crate::services::cursor::binding_hash(&fields)
 }
 
