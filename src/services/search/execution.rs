@@ -98,7 +98,7 @@ impl Services {
                 cancellation,
             );
         }
-        let offset = parse_cursor(request.cursor.as_deref(), generation)?;
+        let offset = parse_search_cursor(request.cursor.as_deref(), generation, request)?;
         let mut hits = self.collect_structural_search_hits(
             session,
             request,
@@ -678,7 +678,7 @@ impl Services {
             meta: self.meta(
                 generation,
                 emitted_tokens,
-                has_more.then(|| make_cursor(generation, offset + consumed)),
+                has_more.then(|| make_search_cursor(generation, offset + consumed, request)),
             ),
         };
         receipt.apply_meta(&mut response.meta);

@@ -30,6 +30,7 @@ mod change_receipt;
 mod concurrency_profile;
 mod context;
 mod coverage;
+pub(crate) mod cursor;
 mod execution_options;
 mod executor;
 mod files;
