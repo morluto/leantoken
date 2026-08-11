@@ -781,12 +781,19 @@ or journal, but it still acquires the writer lock and enters the ordinary
 `BEGIN IMMEDIATE` baseline-verifying publication transaction. Once that
 transaction proves there is no logical mutation, it rolls back instead of
 issuing a read-only commit: SQLite therefore cannot auto-checkpoint a
-pre-existing WAL backlog on every no-change run. Database startup schema checks
-and repository-binding telemetry also temporarily suspend the writer
-connection's auto-checkpoint threshold around their bounded transactions, then
+pre-existing WAL backlog on every no-change run. Database startup schema
+checks, FTS integrity verification, and repository-binding telemetry also
+temporarily suspend the writer connection's auto-checkpoint threshold around
+their bounded transactions, then
 restore the exact prior connection-local value before returning. This prevents
 an idempotent schema ensure or one-row last-access update from checkpointing an
-unrelated index backlog before reconcile begins. Startup tracks both main-table
+unrelated index backlog before reconcile begins. FTS integrity verification
+records both its check version and the index version it verified: each of the
+four external-content indexes is fully scanned at most once for an unchanged
+index generation and check version. A new generation or check version performs
+the scans in one immediate transaction, rebuilds any corrupted index before
+recording success, and then requests the same bounded startup checkpoint.
+Startup tracks both main-table
 row changes and the schema version while checkpointing is suspended; a real
 migration or path-projection repair explicitly requests `TRUNCATE` after the
 prior policy is restored, with SQLite's ordinary busy-reader behavior. Small

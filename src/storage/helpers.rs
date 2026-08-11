@@ -37,6 +37,8 @@ pub(crate) enum StorageColumn {
     MetaRepositoryRoot,
     MetaRepositoryIdentity,
     MetaRepositoryGeneration,
+    MetaFtsIntegrityCheckVersion,
+    MetaFtsIntegrityVerifiedIndexVersion,
     FilesSizeBytes,
     FilesLanguage,
     FilesStructurallyComplete,
@@ -48,7 +50,9 @@ impl StorageColumn {
         match self {
             Self::MetaRepositoryRoot
             | Self::MetaRepositoryIdentity
-            | Self::MetaRepositoryGeneration => StorageTable::Meta,
+            | Self::MetaRepositoryGeneration
+            | Self::MetaFtsIntegrityCheckVersion
+            | Self::MetaFtsIntegrityVerifiedIndexVersion => StorageTable::Meta,
             Self::FilesSizeBytes
             | Self::FilesLanguage
             | Self::FilesStructurallyComplete
@@ -61,6 +65,8 @@ impl StorageColumn {
             Self::MetaRepositoryRoot => "repository_root",
             Self::MetaRepositoryIdentity => "repository_identity",
             Self::MetaRepositoryGeneration => "repository_generation",
+            Self::MetaFtsIntegrityCheckVersion => "fts_integrity_check_version",
+            Self::MetaFtsIntegrityVerifiedIndexVersion => "fts_integrity_verified_index_version",
             Self::FilesSizeBytes => "size_bytes",
             Self::FilesLanguage => "language",
             Self::FilesStructurallyComplete => "structurally_complete",

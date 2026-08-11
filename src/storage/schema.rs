@@ -4,7 +4,9 @@ CREATE TABLE IF NOT EXISTS meta (
     schema_version INTEGER NOT NULL,
     index_version INTEGER NOT NULL DEFAULT 0,
     config_hash TEXT NOT NULL DEFAULT '',
-    repository_generation INTEGER NOT NULL DEFAULT 0
+    repository_generation INTEGER NOT NULL DEFAULT 0,
+    fts_integrity_check_version INTEGER NOT NULL DEFAULT 0,
+    fts_integrity_verified_index_version INTEGER NOT NULL DEFAULT -1
 );
 
 INSERT OR IGNORE INTO meta(id, schema_version, index_version, config_hash, repository_generation)
