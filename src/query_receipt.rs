@@ -21,6 +21,7 @@ const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
 /// - The package version (changes on every release)
 /// - The index content version (changes when the index format changes)
 /// - The query receipt semantics version (manual baseline)
+///
 /// The semantics version is the explicit compatibility boundary for external
 /// dependencies and implementation changes. Bump it whenever either can
 /// change exhaustive-search behavior.
