@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use super::*;
 
 pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
@@ -87,6 +88,24 @@ pub(super) async fn run_mcp_runtime(
     // handling and sibling agents unless the user made concurrency explicit.
     config.max_index_workers =
         mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
+
+    // Process-wide indexing budget: each approved context independently
+    // configures its own indexing workers. Log the aggregate so operators
+    // know the total process-wide concurrency. See issue #565: with K
+    // approved contexts the process-wide default is (1 + K) workers.
+    let process_wide_workers = config.max_index_workers
+        .saturating_add(approved_contexts.len());
+    let cpu_capacity = std::thread::available_parallelism()
+        .map(NonZeroUsize::get)
+        .unwrap_or(1);
+    if process_wide_workers > cpu_capacity {
+        tracing::warn!(
+            process_wide_indexing_workers = process_wide_workers,
+            approved_context_count = approved_contexts.len(),
+            cpu_capacity,
+            "process-wide indexing workers exceed CPU capacity; consider setting              --max-index-workers to bound total concurrency"
+        );
+    }
     let startup = tokio::task::spawn_blocking(move || {
         startup_state.configure_limits(&config)?;
         Services::open_cancellable(config, &startup_cancellation)
