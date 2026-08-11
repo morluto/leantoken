@@ -866,6 +866,15 @@ file preparation and reused afterward. Read-only followers therefore allocate
 no indexing threads, while a process that becomes leader retains its configured
 worker bound without rebuilding a pool on every reconciliation.
 
+Each approved MCP repository context owns a separate `Services` instance and
+therefore a separate pool. With `K` approved contexts, background indexing uses
+at most `1 + K` workers by default; with an explicit
+`--max-index-workers=N`, the process-wide upper bound is `(1 + K) * N`.
+Startup warns when that aggregate exceeds the host's available CPU capacity.
+Operators can reduce the number of approved contexts or lower the per-instance
+worker limit; `--max-index-workers=1` cannot reduce the default aggregate below
+one worker per active repository.
+
 The manual dependency-heavy profiler keeps production concurrency unchanged.
 Its screening matrix accepts at most 16 fresh subprocesses. The guarded
 two-worker follow-up admits only alternating `1,2,2,1` / `2,1,1,2` blocks,
