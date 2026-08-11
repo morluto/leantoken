@@ -467,7 +467,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
+pub(crate) fn startup_path_repairs_checkpoint_backlog_but_retain_fts_verification_wal() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -500,12 +500,10 @@ pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
             )
             .expect("damage path projection");
     }
-    assert!(
-        fs::metadata(wal_path(&database))
-            .expect("repair fixture WAL")
-            .len()
-            > 0
-    );
+    let wal_bytes_before = fs::metadata(wal_path(&database))
+        .expect("repair fixture WAL")
+        .len();
+    assert!(wal_bytes_before > 0);
 
     let repaired = Storage::open(&database).expect("repair storage on reopen");
 
@@ -528,12 +526,16 @@ pub(crate) fn startup_repairs_checkpoint_their_wal_after_restoring_policy() {
             .expect("restored auto-checkpoint policy")
             > 0
     );
-    assert_eq!(
-        fs::metadata(wal_path(&database))
-            .map(|metadata| metadata.len())
-            .unwrap_or(0),
-        0,
-        "a successful startup repair should not leave its WAL for a no-change reconcile"
+    let wal_bytes_after = fs::metadata(wal_path(&database))
+        .expect("WAL after repair")
+        .len();
+    assert!(
+        wal_bytes_after > 0,
+        "FTS verification records its completed generation without checkpointing"
+    );
+    assert!(
+        wal_bytes_after < wal_bytes_before,
+        "the path-projection repair should checkpoint the pre-existing backlog"
     );
 }
 
