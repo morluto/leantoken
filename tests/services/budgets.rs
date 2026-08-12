@@ -328,7 +328,14 @@ async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
         .await
         .expect("full files page");
     assert!(full.entries.len() > 10);
-    let limit = full.meta.total_response_tokens.saturating_sub(600);
+    // Keep the cap strictly below the full response but above the resumable
+    // cursor skeleton. Cursor encoding is intentionally versioned, so a fixed
+    // subtraction can otherwise turn this prefix test into a wire-size test.
+    let limit = full
+        .meta
+        .total_response_tokens
+        .saturating_sub(200)
+        .max(exact_limit);
     let bounded = services
         .files_with_options(
             request.clone(),
