@@ -540,6 +540,16 @@ fn qualified_path_evidence_excludes_dynamic_lowercase_receivers() {
 }
 
 #[test]
+fn path_scoring_preserves_case_for_class_test_roles() {
+    let task = "Fix UserService behavior";
+    assert_eq!(
+        context_path_score("src/UserServiceTests.cs", &[], task),
+        0.0
+    );
+    assert!(context_path_score("src/UserService.cs", &[], task) > 0.0);
+}
+
+#[test]
 fn fusion_requires_two_independent_query_concepts() {
     let mut fusion = HashMap::new();
     record_query_hit(&mut fusion, "one.rs", "globset::matches_all", 1.0, 0);
