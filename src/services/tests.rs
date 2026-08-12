@@ -1346,7 +1346,7 @@ async fn regex_candidate_chunk_overflow_reports_the_fts_bound() {
     services
         .storage
         .full_reconcile(
-            "hash-a",
+            &services.indexer.config_hash(),
             vec![IndexedFile {
                 path: "large.rs".into(),
                 language: Some("rust".into()),
