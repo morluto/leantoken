@@ -58,7 +58,7 @@ impl Services {
                 .iter()
                 .map(|candidate| candidate.hit.clone())
                 .collect(),
-            coverage: search_coverage(shape.all, selected),
+            coverage: search_coverage(shape.all, selected, shape.request.kind.mode()),
             occurrences_returned: selected.len(),
             occurrences_total: shape
                 .request

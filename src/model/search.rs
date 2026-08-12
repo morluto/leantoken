@@ -192,6 +192,29 @@ pub struct SearchCoverageCount {
     pub truncated: usize,
 }
 
+/// Observable capability of the structural reference channel for one search.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchReferenceCapability {
+    /// Structural reference extraction is language- and construct-dependent.
+    ///
+    /// `partial` means that a zero count is not proof that the identifier has no
+    /// callers or other occurrences.
+    pub extraction: ReferenceExtractionStatus,
+    /// Whether zero structural reference hits prove that no references exist.
+    pub zero_results_conclusive: bool,
+    /// Search modes that can recover lexical occurrences outside structural coverage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fallback_modes: Vec<SearchMode>,
+}
+
+/// Completeness of structural reference extraction.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceExtractionStatus {
+    /// The parser extracts known syntactic constructs but does not claim exhaustive references.
+    Partial,
+}
+
 /// Search coverage separated by evidence channel.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchCoverage {
@@ -201,6 +224,9 @@ pub struct SearchCoverage {
     pub references: SearchCoverageCount,
     /// Lexical text and regex hits.
     pub text_matches: SearchCoverageCount,
+    /// Machine-readable semantics when the selected mode consulted structural references.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_capability: Option<SearchReferenceCapability>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

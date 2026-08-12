@@ -21,6 +21,7 @@ pub(super) fn coverage_count(
 pub(super) fn search_coverage(
     all: &[CandidateSearchHit],
     returned: &[CandidateSearchHit],
+    mode: SearchMode,
 ) -> SearchCoverage {
     SearchCoverage {
         definitions: coverage_count(all, returned, |hit| {
@@ -32,7 +33,20 @@ pub(super) fn search_coverage(
         text_matches: coverage_count(all, returned, |hit| {
             hit_has_kind(hit, SearchHitKind::Text) || hit_has_kind(hit, SearchHitKind::Regex)
         }),
+        reference_capability: search_reference_capability(mode),
     }
+}
+
+pub(super) fn search_reference_capability(mode: SearchMode) -> Option<SearchReferenceCapability> {
+    matches!(
+        mode,
+        SearchMode::Auto | SearchMode::Identifier | SearchMode::Reference
+    )
+    .then(|| SearchReferenceCapability {
+        extraction: ReferenceExtractionStatus::Partial,
+        zero_results_conclusive: false,
+        fallback_modes: vec![SearchMode::Identifier, SearchMode::Text],
+    })
 }
 
 pub(super) fn grouped_search_key(hit: &SearchHit) -> String {
