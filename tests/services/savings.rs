@@ -329,17 +329,26 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .expect("alternate tokenizer config");
     alternate_config.tokenizer = Tokenizer::O200kBase;
     let alternate = Services::open(alternate_config).expect("alternate tokenizer services");
+    let error = alternate
+        .outline(outline_limit_request(Some(10), Some(100)))
+        .await
+        .expect_err("outline against stale tokenizer index must require refresh");
+    assert!(matches!(error, Error::RefreshRequired));
+    alternate
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("rebuild stale tokenizer index");
     alternate
         .outline(outline_limit_request(Some(10), Some(100)))
         .await
-        .expect("outline against stale tokenizer index");
+        .expect("outline against refreshed tokenizer index");
     assert_eq!(
         alternate
             .token_savings()
             .await
             .expect("alternate tokenizer savings")
             .tracked_requests,
-        0
+        1
     );
 }
 
