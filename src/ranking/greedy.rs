@@ -66,6 +66,12 @@ pub(in crate::ranking) fn greedy_select(
                     candidate.candidate.path == owner_path
                         && primary_candidate_fits(candidate, path_class)
                         && carries_specific_primary_change(&candidate.candidate)
+                        && candidate.candidate.representation == baseline.candidate.representation
+                        && carries_all_facet_values(
+                            &candidate.candidate,
+                            &baseline.candidate,
+                            "primary_change",
+                        )
                 })
             })
             .or_else(|| {
@@ -98,6 +104,12 @@ pub(in crate::ranking) fn greedy_select(
                     candidate.candidate.path == owner_path
                         && primary_candidate_fits(candidate, path_class)
                         && carries_facet(&candidate.candidate, "primary_change")
+                        && candidate.candidate.representation == baseline.candidate.representation
+                        && carries_all_facet_values(
+                            &candidate.candidate,
+                            &baseline.candidate,
+                            "primary_change",
+                        )
                 })
             })
     };

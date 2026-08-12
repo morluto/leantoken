@@ -473,6 +473,17 @@ fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
         .facet("primary_change", "projection")
         .facet("primary_change", "search")
         .exact(1.0);
+    let same_path_import = Candidate::new(
+        "src/services/search.rs",
+        10,
+        10,
+        "re-exported search surface",
+    )
+    .representation("import_symbol")
+    .facet("primary_change", "projection")
+    .facet("primary_change", "search")
+    .facet("primary_change", "surface")
+    .exact(9.75);
     let unrelated = Candidate::new("src/compiler/parse.rs", 1, 1, "compiler facets")
         .concept("compiler", 2.0)
         .facet("primary_change", "compiler")
@@ -488,9 +499,14 @@ fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
     let mut request = request_with_budget(100);
     request.max_fragments = Some(1);
 
-    let response = select(vec![generic, import_surface, unrelated, owner], &request, 1);
+    let response = select(
+        vec![generic, same_path_import, import_surface, unrelated, owner],
+        &request,
+        1,
+    );
 
     assert_eq!(response.fragments[0].path, "src/services/search.rs");
+    assert_eq!(response.fragments[0].content, "search projection");
 }
 
 #[test]

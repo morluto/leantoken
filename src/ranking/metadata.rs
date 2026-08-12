@@ -109,6 +109,9 @@ fn is_test_path(path: &str) -> bool {
         || path.contains("/spec/")
         || path.contains("/test-suite/")
         || path.starts_with("crates/test-suite/")
+        || path
+            .split('/')
+            .any(|component| component.starts_with("test_"))
         || file_name.ends_with(".test.js")
         || file_name.ends_with(".test.jsx")
         || file_name.ends_with(".test.ts")
@@ -299,6 +302,10 @@ mod tests {
         );
         assert_eq!(
             context_path_class("packages/core/spec/widget.spec.rb"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("src/test_support/helpers.rs"),
             ContextPathClass::Test
         );
         assert_eq!(
