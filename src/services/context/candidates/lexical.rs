@@ -57,6 +57,7 @@ impl Services {
                 declaration_end: hit.symbol.end_line,
                 matched_line: hit.symbol.start_line,
                 token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
+                selection_budget: request.token_budget,
             })
             .collect::<Vec<_>>();
         phases.record_adaptive_excerpts(&symbol_excerpt_requests);
@@ -161,6 +162,7 @@ impl Services {
                         request.token_budget,
                         ContextExcerptKind::Reference,
                     ),
+                    selection_budget: request.token_budget,
                 });
             }
         }
@@ -204,7 +206,16 @@ impl Services {
             .zip(fallback_excerpts)
         {
             check_cancelled(cancellation)?;
-            let excerpt = adaptive.or(fallback);
+            let excerpt = adaptive.or_else(|| {
+                fallback.and_then(|excerpt| {
+                    self.fit_context_excerpt(
+                        excerpt,
+                        hit.reference.start_line,
+                        excerpt_budget(request.token_budget, ContextExcerptKind::Reference),
+                        request.token_budget,
+                    )
+                })
+            });
             let Some(excerpt) = excerpt else {
                 continue;
             };
@@ -298,6 +309,7 @@ impl Services {
                     declaration_end: symbol.end_line,
                     matched_line: facts.matched_line,
                     token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Text),
+                    selection_budget: request.token_budget,
                 });
             }
         }
@@ -311,11 +323,19 @@ impl Services {
         }
         for ((rank, hit, facts), adaptive) in lexical_hits.into_iter().zip(adaptive_excerpts) {
             check_cancelled(cancellation)?;
-            let excerpt = adaptive.unwrap_or(StoredExcerpt {
-                content: facts.search_hit.excerpt.clone(),
-                start_line: facts.search_hit.start_line,
-                end_line: facts.search_hit.end_line,
+            let excerpt = adaptive.or_else(|| {
+                self.fit_context_excerpt(
+                    StoredExcerpt {
+                        content: facts.search_hit.excerpt.clone(),
+                        start_line: facts.search_hit.start_line,
+                        end_line: facts.search_hit.end_line,
+                    },
+                    facts.matched_line,
+                    excerpt_budget(request.token_budget, ContextExcerptKind::Text),
+                    request.token_budget,
+                )
             });
+            let Some(excerpt) = excerpt else { continue };
             if query.fuse {
                 record_query_hit(
                     query_fusion,
