@@ -139,9 +139,6 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         continuation_cursor: None,
         max_tokens: Some(100),
         expected_hash: None,
-        delta: false,
-        receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
     };
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
@@ -856,9 +853,6 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read");
@@ -873,9 +867,6 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash),
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read delta");

@@ -10,7 +10,7 @@ use leantoken::{
     ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
     ReadRequest, ReadStatus, ReceiptRebaseRequest, ReferenceRole, SearchMode,
     SearchOccurrenceOutput, SearchRequest, TokenAccountingOperation, TokenSavingsOperation,
-    TokenSavingsWindow, WorkflowEvidence,
+    TokenSavingsWindow, WorkflowEvidence, WorktreeReadRequest,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -212,9 +212,6 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         continuation_cursor: None,
         max_tokens,
         expected_hash: None,
-        delta: false,
-        receipt_id: None,
-        policy: leantoken::ReadPolicy::default(),
     }
 }
 

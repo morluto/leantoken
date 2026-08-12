@@ -22,9 +22,6 @@ async fn read_returns_the_published_generation_after_a_worktree_edit() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect("read published generation");
@@ -51,9 +48,6 @@ async fn read_returns_the_published_generation_after_a_worktree_edit() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect("read refreshed generation");
@@ -78,9 +72,6 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("indexed read");
@@ -92,7 +83,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
     .expect("change live file");
 
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "src/lib.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -125,7 +116,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
         .collect::<String>();
     let (root, services) = indexed_source("delta.rs", source.as_bytes()).await;
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "delta.rs".into(),
             start_line: None,
             end_line: None,
@@ -148,7 +139,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
     let base_hash = first.content_hash.clone();
 
     let unchanged = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "delta.rs".into(),
             start_line: None,
             end_line: None,
@@ -181,7 +172,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
     );
     std::fs::write(root.path().join("delta.rs"), changed_source).expect("edit source");
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "delta.rs".into(),
             start_line: None,
             end_line: None,
@@ -225,7 +216,7 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
         .collect::<String>();
     let (persistent_root, persistent_a) = indexed_source("restart.rs", source.as_bytes()).await;
     let (oracle_root, oracle) = indexed_source("restart.rs", source.as_bytes()).await;
-    let request = |expected_hash: Option<String>| ReadRequest {
+    let request = |expected_hash: Option<String>| WorktreeReadRequest {
         path: "restart.rs".into(),
         start_line: None,
         end_line: None,
@@ -332,7 +323,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
     );
     std::fs::write(root.path().join("dirty.rs"), &dirty_source).expect("dirty source");
     let dirty = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "dirty.rs".into(),
             start_line: None,
             end_line: None,
@@ -378,7 +369,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
     )
     .expect("restart services");
     let after_restart = reopened
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "dirty.rs".into(),
             start_line: None,
             end_line: None,
@@ -419,7 +410,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
     for path in ["ignored.rs", "unindexed.rs"] {
         assert!(
             isolated_services
-                .read_worktree(ReadRequest {
+                .read_worktree(WorktreeReadRequest {
                     path: path.into(),
                     start_line: None,
                     end_line: None,
@@ -460,7 +451,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         .observed_token_savings_snapshot(None)
         .await
         .expect("savings base");
-    let request = || ReadRequest {
+    let request = || WorktreeReadRequest {
         path: "latest.rs".into(),
         start_line: None,
         end_line: None,
@@ -606,7 +597,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
     let (_root, services) = indexed_source("truncated.rs", source.as_bytes()).await;
 
     let response = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "truncated.rs".into(),
             start_line: None,
             end_line: None,
@@ -645,7 +636,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
 async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
     let (root, services) = indexed_source("small.txt", b"alpha\n").await;
     let _first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "small.txt".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -664,7 +655,7 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
     std::fs::write(root.path().join("small.txt"), "beta\n").expect("edit small source");
 
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "small.txt".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -698,7 +689,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
     let source = b"fn target() {\n    old_behavior();\n}\n";
     let (root, services) = indexed_source("symbol.rs", source).await;
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "symbol.rs".into(),
             start_line: None,
             end_line: None,
@@ -725,7 +716,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
         .expect("reindex moved symbol");
 
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "symbol.rs".into(),
             start_line: None,
             end_line: None,
@@ -766,7 +757,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
 async fn read_receipt_does_not_suppress_changed_overlapping_content() {
     let (root, services) = indexed_source("receipt.rs", b"fn before() {}\n").await;
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "receipt.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -785,7 +776,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
     std::fs::write(root.path().join("receipt.rs"), "fn after() {}\n").expect("edit receipt");
 
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "receipt.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -811,7 +802,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
 async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
     let (_root, services) = indexed_source("receipt.rs", b"fn unchanged() {}\n").await;
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "receipt.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -828,7 +819,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
         .await
         .expect("first receipt read");
     let repeated = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "receipt.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -870,7 +861,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     let (root, services) = indexed_source("lines.txt", source).await;
 
     let exact = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(2),
             end_line: Some(3),
@@ -890,7 +881,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     assert_eq!(exact.content.as_deref(), Some("two\nthree\n"));
 
     let unchanged = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(2),
             end_line: Some(3),
@@ -911,7 +902,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     assert_eq!(unchanged.meta.source_tokens, 0);
 
     let from_second = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(2),
             end_line: None,
@@ -940,7 +931,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     );
 
     let through_third = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: None,
             end_line: Some(3),
@@ -966,7 +957,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     assert_eq!(through_third.content.as_deref(), Some("one\ntwo\nthree\n"));
 
     let whole = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: None,
             end_line: None,
@@ -983,7 +974,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
         .await
         .expect("whole file");
     let exact_whole = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(1),
             end_line: Some(5),
@@ -1007,7 +998,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     assert_eq!(exact_whole.content_hash, whole.content_hash);
 
     let through_eof = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(4),
             end_line: Some(99),
@@ -1038,7 +1029,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
     )
     .expect("edit source");
     let changed = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "lines.txt".into(),
             start_line: Some(2),
             end_line: Some(3),
@@ -1076,9 +1067,6 @@ async fn symbol_read_after_first_line_returns_the_complete_definition() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("symbol range");
@@ -1103,7 +1091,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
     let (_root, services) = indexed_source("large.rs", source.as_bytes()).await;
 
     let response = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: Some(5_000),
             end_line: None,
@@ -1133,7 +1121,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
     std::fs::write(root.path().join("malformed.rs"), b"a\xC3").expect("malformed edit");
 
     let error = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "malformed.rs".into(),
             start_line: Some(1),
             end_line: None,
@@ -1164,7 +1152,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
     std::fs::write(root.path().join("short.rs"), b"a\n").expect("short edit");
 
     let error = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "short.rs".into(),
             start_line: Some(2),
             end_line: None,
@@ -1195,7 +1183,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
     let (_root, services) = indexed_source("endings.txt", source).await;
 
     let exact = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "endings.txt".into(),
             start_line: Some(2),
             end_line: Some(3),
@@ -1212,7 +1200,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
         .await
         .expect("exact CRLF range");
     let open = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "endings.txt".into(),
             start_line: Some(2),
             end_line: None,
@@ -1235,7 +1223,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
     assert_eq!(exact.content_hash, open.content_hash);
 
     let final_line = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "endings.txt".into(),
             start_line: Some(3),
             end_line: Some(3),
@@ -1269,9 +1257,6 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("empty file");
@@ -1290,9 +1275,6 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
                 continuation_cursor: None,
                 max_tokens: Some(100),
                 expected_hash: None,
-                delta: false,
-                receipt_id: None,
-                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect_err("invalid range");
@@ -1316,9 +1298,6 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             continuation_cursor: Some("not-a-read-cursor".into()),
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("malformed cursor");
@@ -1338,9 +1317,6 @@ async fn read_validates_ranges_and_preserves_empty_file_metadata() {
             ),
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("cursor and target conflict");
@@ -1369,9 +1345,6 @@ async fn token_truncated_read_reports_the_returned_line_range() {
             continuation_cursor: None,
             max_tokens: Some(3),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("token-truncated range");
@@ -1406,7 +1379,7 @@ async fn truncated_symbol_guidance_replaces_many_tiny_pages_with_one_sized_conti
         .collect::<String>();
     let source = format!("pub fn oversized_owner(input: usize) -> usize {{\n{body}    input\n}}\n");
     let (_root, services) = indexed_source("owner.rs", source.as_bytes()).await;
-    let request = |cursor: Option<String>, max_tokens, policy| ReadRequest {
+    let request = |cursor: Option<String>, max_tokens, policy| WorktreeReadRequest {
         path: "owner.rs".into(),
         start_line: None,
         end_line: None,
@@ -1553,9 +1526,6 @@ async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
                 continuation_cursor,
                 max_tokens: Some(max_tokens),
                 expected_hash: None,
-                delta: false,
-                receipt_id: None,
-                policy: leantoken::ReadPolicy::Bounded,
             };
         let assert_budget_error = |error: &Error, boundary: &str| {
             assert!(
@@ -1644,9 +1614,6 @@ async fn bounded_open_continuation_preserves_the_unbounded_target() {
                 continuation_cursor: cursor.take(),
                 max_tokens: Some(256),
                 expected_hash: None,
-                delta: false,
-                receipt_id: None,
-                policy: leantoken::ReadPolicy::Bounded,
             })
             .await
             .expect("open bounded page");
@@ -1682,9 +1649,6 @@ async fn published_read_rejects_a_tampered_continuation_cursor() {
             continuation_cursor: None,
             max_tokens: Some(32),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect("first page");
@@ -1715,9 +1679,6 @@ async fn published_read_rejects_a_tampered_continuation_cursor() {
             continuation_cursor: Some(tampered),
             max_tokens: Some(32),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect_err("tampered cursor");
@@ -1741,9 +1702,6 @@ async fn published_read_continuation_survives_a_process_restart() {
             continuation_cursor: None,
             max_tokens: Some(32),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect("first page");
@@ -1768,9 +1726,6 @@ async fn published_read_continuation_survives_a_process_restart() {
             continuation_cursor: Some(cursor),
             max_tokens: Some(32),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::Bounded,
         })
         .await
         .expect("continue after restart");
@@ -1793,7 +1748,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     let mut pages = 0usize;
     loop {
         let response = services
-            .read_worktree(ReadRequest {
+            .read_worktree(WorktreeReadRequest {
                 path: "large.rs".into(),
                 start_line: None,
                 end_line: None,
@@ -1834,7 +1789,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     assert_eq!(reconstructed, source);
 
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: None,
             end_line: None,
@@ -1851,7 +1806,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
         .await
         .expect("first page");
     let unchanged = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: None,
             end_line: None,
@@ -1879,7 +1834,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
         .await
         .expect("advance generation");
     let stale_generation = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: None,
             end_line: None,
@@ -1898,7 +1853,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     assert!(matches!(stale_generation, Error::StaleCursor));
 
     let current = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: None,
             end_line: None,
@@ -1920,7 +1875,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     )
     .expect("change live file");
     let error = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "large.rs".into(),
             start_line: None,
             end_line: None,
@@ -1966,9 +1921,6 @@ async fn read_rejects_ignored_files() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("ignored file must not be readable");
@@ -2012,9 +1964,6 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified symbol");
@@ -2040,9 +1989,6 @@ async fn qualified_symbol_read_uses_outline_parent_and_missing_symbol_is_typed()
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("missing qualified symbol");
@@ -2080,9 +2026,6 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("late symbol read");
@@ -2120,7 +2063,7 @@ async fn bounded_read_stops_early_and_reports_unknown_index_state() {
     let (_root, services) = indexed_source("bounded.txt", source).await;
 
     let response = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "bounded.txt".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -2155,7 +2098,7 @@ async fn full_read_hashes_complete_file_and_reports_index_state() {
     let (_root, services) = indexed_source("full.txt", source).await;
 
     let response = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "full.txt".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -2194,7 +2137,7 @@ async fn full_read_reports_stale_index_state_when_live_file_diverges() {
     .expect("edit live file");
 
     let response = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "stale.txt".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -2225,7 +2168,7 @@ async fn delta_request_without_full_policy_is_rejected() {
     let (_root, services) = indexed_source("delta_policy.txt", source).await;
 
     let error = services
-        .read(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "delta_policy.txt".into(),
             start_line: None,
             end_line: None,
@@ -2258,7 +2201,7 @@ async fn bounded_continuation_cursor_rejects_full_policy_switch() {
 
     // First read with bounded policy and a tiny token limit to get a cursor.
     let first = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "cursor_switch.txt".into(),
             start_line: Some(1),
             end_line: Some(5),
@@ -2283,7 +2226,7 @@ async fn bounded_continuation_cursor_rejects_full_policy_switch() {
     // Attempting to continue with Full policy must fail because the cursor
     // was issued under Bounded policy.
     let error = services
-        .read_worktree(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "cursor_switch.txt".into(),
             start_line: None,
             end_line: None,

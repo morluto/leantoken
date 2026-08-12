@@ -633,9 +633,6 @@ fn read_request(source_path: &str) -> ReadRequest {
         continuation_cursor: None,
         max_tokens: Some(1_000),
         expected_hash: None,
-        delta: false,
-        receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
     }
 }
 

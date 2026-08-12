@@ -33,9 +33,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first read");
@@ -50,9 +47,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("conditional read");
@@ -363,9 +357,6 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("source read");

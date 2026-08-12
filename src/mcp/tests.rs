@@ -2024,15 +2024,14 @@ fn retrieval_response_budget_limits_are_validated_for_every_tool() {
 }
 
 #[test]
-fn receipt_id_maps_to_the_service_request() {
-    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+fn canonical_read_rejects_mutable_receipt_state() {
+    let error = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
         "path": "README.md",
         "receipt_id": "r0000000000000001",
         "target": {"kind": "lines", "start": 1, "end": 2}
     }))
-    .expect("read request with receipt");
-    let (request, _, _) = request.into_parts();
-    assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
+    .expect_err("canonical read must reject mutable receipt state");
+    assert!(error.to_string().contains("unknown field `receipt_id`"));
 }
 
 #[test]

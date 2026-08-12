@@ -404,9 +404,12 @@ async fn context_handoff_reports_clean_git_head_identity() {
 #[tokio::test]
 async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
     let (_root, services) = fixture().await;
-    let mut read_request = read_limit_request(Some(1_000));
+    let mut read_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
     read_request.end_line = Some(3);
-    let read = services.read(read_request).await.expect("read");
+    let read = services
+        .read_worktree(read_request)
+        .await
+        .expect("read worktree");
     let receipt_id = read.meta.receipt_id.clone().expect("read receipt");
 
     let mut outline_request = outline_limit_request(Some(100), Some(2_000));
@@ -430,15 +433,15 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
 #[tokio::test]
 async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
     let (root, services) = fixture().await;
-    let mut unknown_request = read_limit_request(Some(1_000));
+    let mut unknown_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
     unknown_request.receipt_id = Some("missing-receipt".into());
     assert!(matches!(
-        services.read(unknown_request).await,
+        services.read_worktree(unknown_request).await,
         Err(Error::UnknownReceipt(id)) if id == "missing-receipt"
     ));
 
     let first = services
-        .read(read_limit_request(Some(1_000)))
+        .read_worktree(read_limit_request(Some(1_000)).into())
         .await
         .expect("first read");
     let receipt_id = first.meta.receipt_id.expect("read receipt");
@@ -454,10 +457,10 @@ async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
         .expect("reindex");
     assert!(indexed.repository_generation > receipt_generation);
 
-    let mut stale_request = read_limit_request(Some(1_000));
+    let mut stale_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
     stale_request.receipt_id = Some(receipt_id);
     assert!(matches!(
-        services.read(stale_request).await,
+        services.read_worktree(stale_request).await,
         Err(Error::StaleReceipt {
             receipt_generation: actual_receipt,
             repository_generation
@@ -654,7 +657,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     let rebased_receipt = response.meta.receipt_id.clone().expect("rebased receipt");
 
     let unchanged = services
-        .read(line_read_request(
+        .read_worktree(line_read_request(
             "unchanged.rs",
             Some(rebased_receipt.clone()),
         ))
@@ -663,7 +666,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     assert_eq!(unchanged.status, ReadStatus::ReceiptSuppressed);
     assert_eq!(unchanged.meta.receipt_suppressed_exact, 1);
     let changed = services
-        .read(line_read_request("body.rs", Some(rebased_receipt)))
+        .read_worktree(line_read_request("body.rs", Some(rebased_receipt)))
         .await
         .expect("changed evidence is returned");
     assert_eq!(changed.status, ReadStatus::Content);
@@ -769,7 +772,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
         .await
         .expect("index restored branch");
     let error = services
-        .read(line_read_request("branch.rs", Some(rebased)))
+        .read_worktree(line_read_request("branch.rs", Some(rebased)))
         .await
         .expect_err("rebased receipt is generation bound after restart");
     assert!(matches!(error, Error::StaleReceipt { .. }));
@@ -851,8 +854,8 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
     assert_eq!(search.meta.receipt_suppressed_overlap, 0);
 }
 
-fn line_read_request(path: &str, receipt_id: Option<String>) -> ReadRequest {
-    ReadRequest {
+fn line_read_request(path: &str, receipt_id: Option<String>) -> WorktreeReadRequest {
+    WorktreeReadRequest {
         path: path.into(),
         start_line: Some(1),
         end_line: Some(1),
@@ -874,7 +877,7 @@ async fn append_line_receipt(
     receipt_id: Option<String>,
 ) -> String {
     services
-        .read(line_read_request(path, receipt_id))
+        .read_worktree(line_read_request(path, receipt_id))
         .await
         .expect("append line evidence")
         .meta

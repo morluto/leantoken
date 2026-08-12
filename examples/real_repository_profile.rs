@@ -950,9 +950,6 @@ async fn profile_reads(
                     continuation_cursor: Some(cursor),
                     max_tokens: Some(128),
                     expected_hash: None,
-                    delta: false,
-                    receipt_id: None,
-                    policy: leantoken::model::ReadPolicy::default(),
                 })
                 .await?,
         ),

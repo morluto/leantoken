@@ -1304,39 +1304,17 @@ the caller's original ceiling as a final backstop. This keeps receipt
 persistence behind the same fail-before-write service decision while bounding
 the adapter's model-visible presentation.
 
-## Live read vs index
+## Generation and worktree reads
 
-`leantoken.read` always reads the live filesystem for the returned body while
-symbol resolution and path admission use the index. Unique bare and qualified
-`parent.name` identities resolve; multiple matches fail typed instead of
-selecting the first indexed row. A complete read hashes the file and extracts
-its bounded range during one forward stream. A
-token-truncated read performs one additional full-hash verification before
-issuing a continuation cursor. Responses include:
+`leantoken.read` reconstructs source from the same immutable repository
+generation used for path admission and symbol resolution. A continuation cursor
+is bound to that repository, generation, normalized request, and byte-exact
+position, so pages cannot cross a refresh or process restart boundary.
 
-- `meta.repository_generation` — committed generation used for index lookups;
-- `meta.freshness` — `current` or `reconciling` (local activity or the shared
-  operation lock);
-- `content_hash` — hash of the returned live range;
-- `indexed_hash` — hash of the whole indexed file;
-- `index_stale` — true when the live file body differs from the indexed file.
-
-When `index_stale` is true, agents should re-outline or re-search with
-`consistency=reconcile_working_tree` if the next retrieval must include those
-edits. Pass `expected_hash` on rereads to suppress unchanged ranges. Exact
-line, symbol, and heading reads can opt into a repository-local bounded delta
-registry. It retains only complete targets and returns a unified diff only when
-the target coordinates still match and the complete delta is strictly cheaper
-than current content. With `delta=true` and no `expected_hash`, the registry
-selects the newest compatible base for the same repository and exact target by
-reverse-scanning at most its existing 128 insertion-order keys. This adds no
-unbounded index, storage, fan-out, or concurrency. An unchanged target returns
-`not_modified`; any coordinate change fails safe to full current content.
-Ordinary reads never consult or populate the registry. Continuation cursors use
-the version-three shape: their target endpoint is optional, so a bounded
-open-ended page preserves an open target instead of storing the last partially
-scanned line as an artificial EOF. Older cursor versions fail closed. Search
-and outline never invent empty successful results at generation zero.
+`Services::read_worktree` is the separately named live-filesystem operation. It
+retains weaker verification, stale-index, delta, and receipt behavior for
+callers that explicitly need dirty source. Canonical CLI and MCP retrieval do
+not invoke it. Publish edits with `refresh` before using structural retrieval.
 
 ## Concurrency design constraints
 
@@ -1619,9 +1597,9 @@ exact path and all descendants. Import resolution uses the path type's
 repository-relative join rather than glob parsing. Query-receipt and index-scope
 identity use the v2 canonicalization domain and therefore fail closed on older
 opaque evidence. Canonical paths outside the repository root are rejected.
-Symlink escapes are rejected when live content is opened. `leantoken.read`
-requires an indexed path, so ignore rules also govern which files can be read
-through the tool.
+`leantoken.read` requires an indexed path, so ignore rules govern which files
+can be read through the tool. The separate library-level `read_worktree`
+operation rejects symlink escapes when it opens live content.
 
 LeanToken is read-only with respect to repository source. It does not execute
 project commands or make network requests. Context ranking may invoke a bounded

@@ -276,7 +276,6 @@ fn cli_read_request() {
     assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
-    assert!(!request.delta);
 }
 
 #[test]

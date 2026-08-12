@@ -499,9 +499,6 @@ async fn exact_rereads(
                     continuation_cursor: None,
                     max_tokens: Some(32_000),
                     expected_hash: None,
-                    delta: false,
-                    receipt_id: None,
-                    policy: leantoken::model::ReadPolicy::default(),
                 })
                 .await?,
         );

@@ -5,7 +5,7 @@ use std::process::Command;
 
 use clap::Parser;
 use leantoken::{
-    Config, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadResponse, ReadStatus,
+    Config, ReadDeltaFallback, ReadDeltaOutcome, ReadResponse, ReadStatus, WorktreeReadRequest,
     services::Services,
 };
 use serde::Serialize;
@@ -154,7 +154,7 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
     )?)?;
     services.refresh(leantoken::IndexingMode::Rebuild).await?;
     let first = services
-        .read(request(case.target, None, case.capture_base))
+        .read_worktree(request(case.target, None, case.capture_base))
         .await?;
     fs::write(root.path().join("fixture.rs"), &case.changed)?;
     if case.reindex_after_edit {
@@ -162,11 +162,11 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
     }
     let base_hash = first.content_hash;
     let changed = services
-        .read(request(case.target, Some(base_hash.clone()), true))
+        .read_worktree(request(case.target, Some(base_hash.clone()), true))
         .await?;
     validate_case(&case, &changed)?;
     let full = services
-        .read(request(case.target, Some(base_hash), false))
+        .read_worktree(request(case.target, Some(base_hash), false))
         .await?;
     if full.status != ReadStatus::Content || full.meta.source_tokens == 0 {
         return Err(format!("{} full-response control was not content", case.name).into());
@@ -259,12 +259,12 @@ fn validate_case(case: &Case, response: &ReadResponse) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-fn request(target: Target, expected_hash: Option<String>, delta: bool) -> ReadRequest {
+fn request(target: Target, expected_hash: Option<String>, delta: bool) -> WorktreeReadRequest {
     let symbol = match target {
         Target::WholeFile => None,
         Target::Symbol(symbol) => Some(symbol.to_owned()),
     };
-    ReadRequest {
+    WorktreeReadRequest {
         path: "fixture.rs".into(),
         start_line: None,
         end_line: None,

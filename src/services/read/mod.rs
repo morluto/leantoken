@@ -38,7 +38,21 @@ pub(super) use types::{
     AdaptiveExcerptRequest, NewReadTarget, StoredExcerpt, StoredExcerptRequest,
 };
 
-fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
+fn parse_read_request(request: ReadRequest) -> Result<ReadInput> {
+    parse_read_input(request, false, None, ReadPolicy::Bounded)
+}
+
+fn parse_worktree_read_request(request: WorktreeReadRequest) -> Result<ReadInput> {
+    let (read, delta, receipt_id, policy) = request.into_read_request();
+    parse_read_input(read, delta, receipt_id, policy)
+}
+
+fn parse_read_input(
+    mut request: ReadRequest,
+    delta: bool,
+    receipt_id: Option<String>,
+    policy: ReadPolicy,
+) -> Result<ReadInput> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
     validate_relative(&request.path)?;
     // Bound caller-owned input before normalization so a large whitespace
@@ -71,19 +85,19 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
         "continuation cursor",
         MAX_CURSOR_BYTES,
     )?;
-    let mode = parse_read_mode(&request)?;
+    let mode = parse_read_mode(&request, delta, policy)?;
     request.path = normalize_relative(&request.path)?;
     Ok(ReadInput {
         path: request.path,
         mode,
         max_tokens: request.max_tokens,
         expected_hash: request.expected_hash,
-        receipt_id: request.receipt_id,
-        policy: request.policy,
+        receipt_id,
+        policy,
     })
 }
 
-fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
+fn parse_read_mode(request: &ReadRequest, delta: bool, policy: ReadPolicy) -> Result<ReadMode> {
     if request.heading_occurrence == Some(0) {
         return Err(Error::InvalidInput {
             field: "heading occurrence",
@@ -117,13 +131,13 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             reason: "must use either a continuation cursor or a new target, not both",
         });
     }
-    if request.delta && request.continuation_cursor.is_some() {
+    if delta && request.continuation_cursor.is_some() {
         return Err(Error::InvalidInput {
             field: "delta",
             reason: "is supported only for a new line, symbol, or heading target",
         });
     }
-    if request.delta && !matches!(request.policy, ReadPolicy::Full) {
+    if delta && !matches!(policy, ReadPolicy::Full) {
         return Err(Error::InvalidInput {
             field: "policy",
             reason: "delta reads require full verification",
@@ -157,7 +171,7 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             end: request.end_line,
         }
     };
-    Ok(if request.delta {
+    Ok(if delta {
         ReadMode::Delta(target)
     } else {
         ReadMode::Direct(ReadTargetInput::New(target))
@@ -166,7 +180,7 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
 
 impl Services {
     /// Read current worktree source with explicitly weaker snapshot guarantees.
-    pub async fn read_worktree(&self, request: ReadRequest) -> Result<ReadResponse> {
+    pub async fn read_worktree(&self, request: WorktreeReadRequest) -> Result<ReadResponse> {
         self.read_worktree_with_options(request, ServiceCallOptions::new())
             .await
     }
@@ -174,7 +188,7 @@ impl Services {
     /// Read current worktree source under explicit serialized-response controls.
     pub async fn read_worktree_with_options(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
         options: ServiceCallOptions,
     ) -> Result<ReadResponse> {
         self.read_worktree_execute(
@@ -187,7 +201,7 @@ impl Services {
     /// Read current worktree source with caller-owned cancellation.
     pub async fn read_worktree_cancellable(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
         self.read_worktree_execute(
@@ -200,7 +214,7 @@ impl Services {
     /// Read current worktree source under response controls and cancellation.
     pub async fn read_worktree_with_options_cancellable(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
@@ -210,11 +224,12 @@ impl Services {
 
     async fn read_worktree_execute(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
         execution: RetrievalExecution,
     ) -> Result<ReadResponse> {
         let operation = TokenAccountingOperation::Read;
-        let request = self.observe_service_result(operation, parse_read_request(request))?;
+        let request =
+            self.observe_service_result(operation, parse_worktree_read_request(request))?;
         let RetrievalExecution {
             consistency: _,
             options,
@@ -795,9 +810,6 @@ mod tests {
             continuation_cursor: None,
             max_tokens: None,
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: ReadPolicy::Bounded,
         };
 
         assert!(matches!(

@@ -101,6 +101,28 @@ pub struct ReadRequest {
     /// Hash from the same prior range; matching content returns `not_modified`.
     #[serde(default)]
     pub expected_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Input for an explicitly live worktree read.
+pub struct WorktreeReadRequest {
+    pub path: String,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub symbol: Option<String>,
+    #[serde(default)]
+    pub heading: Option<String>,
+    #[serde(default)]
+    pub heading_occurrence: Option<usize>,
+    #[serde(default)]
+    pub continuation_cursor: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub expected_hash: Option<String>,
     /// Record a bounded base and prefer a cheaper changed follow-up. Without
     /// `expected_hash`, select the latest compatible base for this exact target.
     /// Requires `policy: full`.
@@ -109,11 +131,49 @@ pub struct ReadRequest {
     /// Server-managed receipt whose previously returned evidence should be suppressed.
     #[serde(default)]
     pub receipt_id: Option<String>,
-    /// I/O and verification policy. `bounded` (default) stops after the
-    /// requested page; `full` hashes the complete live file and is required
-    /// for `delta: true`.
+    /// Live-file I/O and verification policy.
     #[serde(default)]
     pub policy: ReadPolicy,
+}
+
+impl WorktreeReadRequest {
+    pub(crate) fn into_read_request(self) -> (ReadRequest, bool, Option<String>, ReadPolicy) {
+        (
+            ReadRequest {
+                path: self.path,
+                start_line: self.start_line,
+                end_line: self.end_line,
+                symbol: self.symbol,
+                heading: self.heading,
+                heading_occurrence: self.heading_occurrence,
+                continuation_cursor: self.continuation_cursor,
+                max_tokens: self.max_tokens,
+                expected_hash: self.expected_hash,
+            },
+            self.delta,
+            self.receipt_id,
+            self.policy,
+        )
+    }
+}
+
+impl From<ReadRequest> for WorktreeReadRequest {
+    fn from(read: ReadRequest) -> Self {
+        Self {
+            path: read.path,
+            start_line: read.start_line,
+            end_line: read.end_line,
+            symbol: read.symbol,
+            heading: read.heading,
+            heading_occurrence: read.heading_occurrence,
+            continuation_cursor: read.continuation_cursor,
+            max_tokens: read.max_tokens,
+            expected_hash: read.expected_hash,
+            delta: false,
+            receipt_id: None,
+            policy: ReadPolicy::Bounded,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

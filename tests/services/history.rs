@@ -117,9 +117,6 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified live read");
@@ -166,9 +163,6 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("unqualified live symbol must not select the first match");

@@ -907,91 +907,35 @@ being presented as precise.
 
 ## `leantoken.read`
 
-Reads an exact source range.
+Reads an exact source range from one published repository generation.
 
 - `path` is required.
 - `target: {"kind":"lines","start":40,"end":90}` selects an inclusive
   one-based range.
 - `target: {"kind":"symbol","identity":{"name":"LeanTokenMcp"}}`
-  selects one indexed symbol definition. Nested definitions use
-  `{"name":"wait_for_initial_index_cancellable","parent":"Services"}`.
-  An unqualified or qualified identity that matches multiple definitions
-  returns typed `symbol_ambiguous` instead of selecting the first definition.
+  selects one indexed symbol definition. Nested definitions may include a
+  parent. Ambiguous identities fail instead of selecting an arbitrary row.
 - `target: {"kind":"heading","name":"Installation"}` selects one indexed
-  Markdown section. The exact outline signature form, such as
-  `"name":"## Installation"`, is also accepted. Add `"occurrence":2` to
-  select the second duplicate heading; occurrences are one-based and follow
-  source order.
+  document section. Duplicate headings use a one-based `occurrence`.
 - `target: {"kind":"continuation","cursor":"..."}` continues a truncated
-  response. The cursor preserves byte-exact progress even when the preceding
-  page ended in the middle of a line.
+  response without losing byte-exact progress.
 - `max_tokens` defaults to 8,000 and accepts values through 32,000.
-- `expected_hash` returns `not_modified` without source when it matches the
-  hash from the same prior target.
-- `delta: true` records a complete, non-truncated target as a bounded future
-  base. When `expected_hash` is absent, a follow-up automatically selects the
-  newest base for the same repository and exact target. Unchanged content
-  returns `status: "not_modified"`; changed content uses `status: "delta"` and
-  the `delta` field only when the complete unified diff costs fewer source
-  tokens than full current content. Pass `expected_hash` to require one
-  explicit prior hash instead.
+- `expected_hash` returns `not_modified` when it matches the same range in
+  the selected generation.
 
-`content_hash` identifies the returned range. `indexed_hash` identifies the
-whole indexed file. `index_stale` is true when the live file differs from the
-indexed version (for example after an edit that has not been reindexed yet).
-`target_start_line` and `target_end_line` describe the complete resolved target;
-`returned_start_line` and `returned_end_line` describe the current page.
-`status: "truncated"`, `truncated: true`, `next_start_line`, and
-`continuation_cursor` fail loudly whenever source remains. Continuation cursors
-are bound to the repository generation, path, and live full-file hash, so a
-stale cursor cannot combine pages from different file versions.
-`truncation_guidance` reports the complete target and remaining source-token
-cost, estimated additional pages at the current budget, a bounded recommended
-budget for the next continuation, and the minimum pages allowed by the server's
-source-token ceiling. `basis: "verified_live"` means full-file verification
-proved the pinned indexed target matches live source;
-`basis: "indexed_generation_estimate"` keeps bounded reads cheap and makes the
-snapshot-based uncertainty explicit.
-`delta_receipt` reports the stable target key, selected base and head hashes and
-generations, full and delta token counts, avoided tokens, and any explicit
-fallback reason. Missing bases, changed target coordinates, truncated or
-oversized content, and uneconomic diffs return full content. Delta state is
-in-memory and repository-local, expires after 30 minutes, and is bounded to
-128 entries, 512 KiB per entry, and 8 MiB of retained content. Latest-base
-selection scans only those 128 insertion-order keys in reverse and never
-creates an additional unbounded index. It never applies
-to ranked context fragments or continuation cursors.
+`content_hash` identifies the returned generation range. Target coordinates
+describe the complete selection; returned coordinates describe the current
+page. A truncated response includes a sealed continuation cursor bound to the
+repository, generation, normalized request, and exact byte position.
+`truncation_guidance` uses the `published_generation` basis.
 
-`status: "not_modified"` means either `expected_hash` or the automatically
-selected delta base matched. The distinct `status: "receipt_suppressed"` means
-a server-managed evidence receipt already contained the exact current content.
-Changed content in an overlapping range is returned and added to the receipt
-rather than being hidden as unchanged.
-`meta.repository_generation` is the committed index generation used for path
-and symbol lookup; `meta.freshness` is `reconciling` while an index operation
-is active on this cache.
+Canonical read does not accept live-file policy, delta, receipt, or consistency
+inputs. Run `refresh` after local edits. Library callers that deliberately need
+dirty source use the separately typed `Services::read_worktree` operation and
+accept its weaker structural guarantees.
 
-When the index has never completed a generation, retrieval tools wait for up to
-30 seconds before returning a successful retry result such as
-`{"status":"retryable","reason":"index_building","retry_after_ms":500,
-"index_progress":{"detail_available":true,"active":true,
-"current_generation":0,"attempt_id":"...","phase":"preparation",...}}`.
-Detailed progress has a fixed shape with aggregate counters only. Its phases
-distinguish discovery, hash/planning, preparation, relational staging, each FTS
-build, final commit/checkpoint, and terminal completion/failure/cancellation.
-`update_sequence`, `last_progress_unix_ms`, and aggregate counters let callers
-detect forward progress without exposing paths or source. `files_staged` is not
-queryable until the atomic generation commit completes.
-
-A follower process that cannot observe the leader's memory instead returns
-`"detail_available":false`; unavailable optional fields are omitted rather
-than reported as zero. The same `index_progress` object appears in read-only
-status while the committed generation remains zero and is omitted once an
-index is ready. Retry the same call after `retry_after_ms`. Caller cancellation
-interrupts the internal wait. After local edits, set `consistency` to
-`reconcile_working_tree` on the next MCP retrieval. An `indexed_generation`
-read may still use `index_stale` and `expected_hash` to detect or suppress live
-ranges.
+When no generation exists, retrieval waits for the bounded startup deadline and
+then returns a retryable index-building result with aggregate progress.
 
 ## `leantoken.json`
 

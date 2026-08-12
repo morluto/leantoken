@@ -129,9 +129,6 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         }
     }
 }

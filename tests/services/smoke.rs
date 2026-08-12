@@ -55,9 +55,6 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("normalized read");

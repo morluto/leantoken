@@ -7,7 +7,6 @@ use crate::text::{excerpt, line_starts};
 #[derive(serde::Serialize)]
 struct PublishedReadCursorRequest<'a> {
     path: &'a str,
-    policy: ReadPolicy,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -72,18 +71,6 @@ impl Services {
     ) -> Result<ReadResponse> {
         let operation = TokenAccountingOperation::Read;
         let request = self.observe_service_result(operation, parse_read_request(request))?;
-        if matches!(request.mode, ReadMode::Delta(_)) {
-            return Err(Error::InvalidInput {
-                field: "delta",
-                reason: "is not part of generation-backed read",
-            });
-        }
-        if request.receipt_id.is_some() {
-            return Err(Error::InvalidInput {
-                field: "receipt_id",
-                reason: "is not part of generation-backed read",
-            });
-        }
         let RetrievalExecution {
             consistency: _,
             options,
@@ -308,7 +295,6 @@ impl Services {
         });
         let cursor_request = request_digest(&PublishedReadCursorRequest {
             path: &request.path,
-            policy: request.policy,
         })?;
         let continuation_cursor = next_start_line
             .map(|next_start_line| {
@@ -373,7 +359,6 @@ fn resolve_published_read_target(
     if let ReadMode::Direct(ReadTargetInput::Continuation(token)) = &request.mode {
         let request_digest = request_digest(&PublishedReadCursorRequest {
             path: &request.path,
-            policy: request.policy,
         })?;
         let position: PublishedReadPosition =
             generation.open_cursor(token, "read", &request_digest)?;
