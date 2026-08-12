@@ -1203,20 +1203,8 @@ not indexed by default, including `node_modules`, still require the global
 inclusion can find them. Repository configuration is resolved when LeanToken
 opens the repository.
 
-An MCP server can also serve a bounded set of additional repositories when
-they are explicitly approved in the primary repository configuration:
-
-```toml
-[repository_contexts.docs]
-root = "../docs-repository"
-```
-
-Context names are request-only identifiers; retrieval calls never accept a
-filesystem root. The primary workspace is selected when `repository_context`
-is omitted, while an approved name selects the corresponding repository. A
-maximum of eight additional contexts is accepted. Each context has its own
-index, generation, cache, and admission state; unknown names fail closed, and
-receipts remain bound to the selected repository identity and generation.
+One MCP process serves one repository. Configure the host to start a separate
+LeanToken process for each additional repository.
 
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,

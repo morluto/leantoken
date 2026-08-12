@@ -113,8 +113,8 @@ fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
 }
 
 #[test]
-fn mcp_approved_repository_contexts_are_isolated() {
-    mcp_protocol::mcp_approved_repository_contexts_are_isolated();
+fn mcp_processes_isolate_repository_state() {
+    mcp_protocol::mcp_processes_isolate_repository_state();
 }
 
 #[test]

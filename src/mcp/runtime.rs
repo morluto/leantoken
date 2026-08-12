@@ -59,17 +59,10 @@ impl LeanTokenMcp {
     pub(in crate::mcp) async fn prepare_retrieval_call(
         &self,
         cancellation: CancellationToken,
-        repository_context: Option<&str>,
         validate: impl Fn(McpLimitPolicy) -> crate::Result<()>,
     ) -> Result<RetrievalPreparation, ErrorData> {
         let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let mcp_services = match self.contexts.resolve(repository_context) {
-            Ok(services) => services,
-            Err(error) => {
-                return into_tool_error(error, self.result_mode)
-                    .map(RetrievalPreparation::Unavailable);
-            }
-        };
+        let mcp_services = self.services.clone();
         let state = mcp_services.get();
         if let Err(error) = validate(state.limits()) {
             return into_tool_error(error, self.result_mode).map(RetrievalPreparation::Unavailable);

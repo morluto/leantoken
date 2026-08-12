@@ -4,7 +4,6 @@ use super::*;
 #[derive(Clone)]
 pub struct LeanTokenMcp {
     pub(in crate::mcp) services: McpServices,
-    pub(in crate::mcp) contexts: McpContextRegistry,
     pub(in crate::mcp) result_mode: McpResultMode,
     pub(in crate::mcp) request_admission: RequestAdmission,
     pub(in crate::mcp) request_dispatch: RequestAdmission,
@@ -12,15 +11,10 @@ pub struct LeanTokenMcp {
 }
 
 impl LeanTokenMcp {
-    pub fn context_registry(&self) -> McpContextRegistry {
-        self.contexts.clone()
-    }
-
     #[must_use]
     pub fn new(services: Arc<Services>) -> Self {
         let services = McpServices::ready(services);
         Self {
-            contexts: McpContextRegistry::primary(services.clone()),
             services,
             result_mode: McpResultMode::Structured,
             request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
@@ -36,7 +30,6 @@ impl LeanTokenMcp {
         (
             Self {
                 services: services.clone(),
-                contexts: McpContextRegistry::primary(services.clone()),
                 result_mode: McpResultMode::Structured,
                 request_admission: RequestAdmission::new(DEFAULT_ACTIVE_TOOL_CALL_CAPACITY),
                 request_dispatch: RequestAdmission::new(DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY),

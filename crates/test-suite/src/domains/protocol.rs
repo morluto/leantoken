@@ -632,9 +632,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert!(instructions.contains("plan_only=false"));
     assert!(instructions.contains("For a known scope"));
     assert!(instructions.contains("Use native tools for edits, builds, tests"));
-    assert!(instructions.contains("consistency=reconcile_working_tree"));
+    assert!(instructions.contains("explicitly refresh"));
     assert!(instructions.contains("status=retryable"));
-    assert!(instructions.contains("configured repository_context names"));
+    assert!(instructions.contains("this process's repository"));
     assert!(instructions.contains("Use savings for token statistics"));
 
     let tool_page = client

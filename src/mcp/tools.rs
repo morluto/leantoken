@@ -13,11 +13,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -64,11 +60,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -128,11 +120,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -183,11 +171,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -227,11 +211,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -284,11 +264,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -332,11 +308,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -396,11 +368,7 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(
-                context.ct.clone(),
-                req.repository_context.as_deref(),
-                |limits| req.validate_limits(limits),
-            )
+            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -444,11 +412,7 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let mcp_services = match self.contexts.resolve(req.repository_context.as_deref()) {
-            Ok(services) => services,
-            Err(error) => return into_tool_error(error, self.result_mode),
-        };
-        let state = mcp_services.get();
+        let state = self.services.get();
         let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),

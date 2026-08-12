@@ -6,10 +6,6 @@ use super::*;
     description = "Context cross-field relationships remain runtime-validated: strict focus constraints require focus_paths, plan_only cannot combine with receipt_id or handoff, and handoff cannot be combined with plan_only."
 )]
 pub(in crate::mcp) struct ContextMcpRequest {
-    /// Optional name of an approved repository context.
-    #[serde(default)]
-    #[schemars(schema_with = "repository_context_schema")]
-    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(length(max = 128))]

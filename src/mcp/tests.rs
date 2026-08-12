@@ -27,86 +27,6 @@ fn request_admission_has_an_exact_fail_fast_boundary() {
 }
 
 #[test]
-fn repository_context_registry_defaults_and_fails_closed() {
-    let primary = McpServices::starting_default();
-    let registry = McpContextRegistry::primary(primary.clone());
-    assert!(registry.resolve(None).is_ok());
-    assert!(registry.resolve(Some("default")).is_ok());
-    assert!(matches!(
-        registry.resolve(Some("unapproved")),
-        Err(crate::Error::InvalidInput {
-            field: "repository_context",
-            ..
-        })
-    ));
-
-    registry
-        .register("docs".into(), McpServices::starting_default())
-        .expect("valid context name");
-    assert!(registry.resolve(Some("docs")).is_ok());
-}
-
-#[test]
-fn repository_context_registry_allows_the_configured_approved_context_limit() {
-    let registry = McpContextRegistry::primary(McpServices::starting_default());
-    for index in 0..MAX_REPOSITORY_CONTEXTS {
-        registry
-            .register(format!("context-{index}"), McpServices::starting_default())
-            .expect("configured approved context capacity");
-    }
-
-    assert!(matches!(
-        registry.register("one-too-many".into(), McpServices::starting_default()),
-        Err(crate::Error::RequestLimitExceeded {
-            field: "repository_contexts",
-            requested,
-            limit: MAX_REPOSITORY_CONTEXTS,
-        }) if requested == MAX_REPOSITORY_CONTEXTS + 1
-    ));
-}
-
-#[tokio::test]
-async fn prepared_retrieval_selects_the_approved_context() {
-    let primary_root = tempfile::tempdir().expect("primary repository");
-    let docs_root = tempfile::tempdir().expect("approved repository");
-    let primary = Arc::new(
-        Services::open(
-            Config::discover(
-                primary_root.path(),
-                Some(primary_root.path().join("index.sqlite")),
-            )
-            .expect("primary config"),
-        )
-        .expect("primary services"),
-    );
-    let docs = Arc::new(
-        Services::open(
-            Config::discover(
-                docs_root.path(),
-                Some(docs_root.path().join("index.sqlite")),
-            )
-            .expect("approved config"),
-        )
-        .expect("approved services"),
-    );
-    let expected_id = docs.repository_id();
-    let server = LeanTokenMcp::new(primary);
-    server
-        .contexts
-        .register("docs".into(), McpServices::ready(docs))
-        .expect("valid context name");
-
-    let prepared = server
-        .prepare_retrieval_call(CancellationToken::new(), Some("docs"), |_| Ok(()))
-        .await
-        .expect("approved context selection");
-    let RetrievalPreparation::Ready(prepared) = prepared else {
-        panic!("approved context should be ready");
-    };
-    assert_eq!(prepared.services.repository_id(), expected_id);
-}
-
-#[test]
 fn cloned_servers_share_admission_but_separate_instances_do_not() {
     let (server, _) = LeanTokenMcp::pending();
     let clone = server.clone();
@@ -316,10 +236,7 @@ async fn savings_is_covered_by_protocol_admission() {
         .collect::<Vec<_>>();
 
     let result = server
-        .leantoken_savings(Parameters(SavingsMcpRequest {
-            repository_context: None,
-            snapshot: None,
-        }))
+        .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
         .await
         .expect("retryable savings response");
     assert_eq!(

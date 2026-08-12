@@ -3,10 +3,6 @@ use super::*;
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct HistoryMcpRequest {
-    /// Optional name of an approved repository context.
-    #[serde(default)]
-    #[schemars(schema_with = "repository_context_schema")]
-    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]

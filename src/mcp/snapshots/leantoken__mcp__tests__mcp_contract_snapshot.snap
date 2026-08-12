@@ -1,6 +1,6 @@
 ---
 source: src/mcp/tests.rs
-assertion_line: 412
+assertion_line: 329
 expression: mcp_contract()
 ---
 {
@@ -454,15 +454,6 @@ expression: mcp_contract()
               "null"
             ]
           },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "required_evidence": {
             "default": [],
             "description": "Require matching query evidence within each path-scoped contract.",
@@ -744,15 +735,6 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/FilesMcpOperation",
             "description": "Tagged path operation. Bounds and cursors live on the variant that uses them."
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -1128,15 +1110,6 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/HistoryMcpOperation",
             "description": "Git-backed symbol operation: `read_symbol`, `diff_symbol`, `diff_symbols`, or\n`symbol_log`. Use `symbol_log` to list commits that touched a symbol."
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -1494,15 +1467,6 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/JsonMcpOperation",
             "description": "Structural JSON operation."
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -1605,15 +1569,6 @@ expression: mcp_contract()
             "default": null,
             "description": "Suppress evidence already returned under this server-managed receipt.",
             "maxLength": 128,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
             "type": [
               "string",
               "null"
@@ -1821,15 +1776,6 @@ expression: mcp_contract()
             "minLength": 1,
             "type": "string"
           },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "target": {
             "$ref": "#/$defs/ReadMcpTarget",
             "description": "Exact symbol, document heading, line range, or continuation to read."
@@ -1894,15 +1840,6 @@ expression: mcp_contract()
             "maxLength": 128,
             "minLength": 1,
             "type": "string"
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
@@ -1922,15 +1859,6 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "snapshot": {
             "default": null,
             "description": "Opaque snapshot from an earlier savings response; returns aggregate deltas.",
@@ -2846,15 +2774,6 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/SearchMcpOperation",
             "description": "Search semantics and all bounds are owned by the selected tagged operation."
-          },
-          "repository_context": {
-            "default": null,
-            "description": "Optional name of an approved repository context.",
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
