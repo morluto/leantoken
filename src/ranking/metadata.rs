@@ -223,6 +223,16 @@ fn normalized_source_stem(path: &str) -> String {
         .or_else(|| stem.strip_suffix("_spec"))
         .or_else(|| stem.strip_prefix("test_"))
         .unwrap_or(stem);
+    let stem = if matches!(
+        crate::parser::language_by_path(path).as_deref(),
+        Some("csharp" | "java")
+    ) {
+        stem.strip_suffix("Tests")
+            .or_else(|| stem.strip_suffix("Test"))
+            .unwrap_or(stem)
+    } else {
+        stem
+    };
     stem.to_ascii_lowercase()
 }
 
@@ -451,6 +461,17 @@ mod tests {
         );
         assert_eq!(owner_test_path_affinity("app.go", "app_test.go"), 4);
         assert_eq!(owner_test_path_affinity("src/db.rs", "src/db_test.rs"), 4);
+        assert_eq!(
+            owner_test_path_affinity("src/UserService.cs", "src/UserServiceTests.cs"),
+            4
+        );
+        assert_eq!(
+            owner_test_path_affinity(
+                "src/main/java/UserService.java",
+                "src/main/java/UserServiceTest.java"
+            ),
+            4
+        );
         assert_eq!(
             owner_test_path_affinity("app/models/user.rb", "spec/models/user_spec.rb"),
             2
