@@ -947,7 +947,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "pub fn newly_committed_package() {}\n",
     )
     .expect("write source after initial index");
-    let reconcile_working_tree_arguments = serde_json::json!({
+    let removed_consistency_arguments = serde_json::json!({
         "operation": {
             "kind": "identifier",
             "query": "newly_committed_package",
@@ -957,18 +957,16 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         }
     })
     .as_object()
-    .expect("working-tree search arguments")
+    .expect("removed consistency arguments")
     .clone();
     let response = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("search").with_arguments(reconcile_working_tree_arguments),
+            CallToolRequestParams::new("search").with_arguments(removed_consistency_arguments),
         )
         .await
-        .expect("working-tree search");
-    assert_ne!(response.is_error, Some(true));
-    let structured = response.structured_content.expect("structured response");
-    assert_eq!(structured["hits"][0]["path"], "new_package.rs");
+        .expect("removed consistency input returns a tool result");
+    assert_eq!(response.is_error, Some(true));
 
     let invalid_arguments = serde_json::json!({
         "path": "../secret",
@@ -1326,8 +1324,32 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
 
+    let published = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("read").with_arguments(
+                serde_json::json!({
+                    "path": "escape.rs",
+                    "target": {"kind": "lines", "start": 1, "end": 1}
+                })
+                .as_object()
+                .expect("read arguments")
+                .clone(),
+            ),
+        )
+        .await
+        .expect("read published generation");
+    assert_eq!(published.is_error, Some(false));
+    let published_wire = serde_json::to_string(&published).expect("serialize published read");
+    assert!(published_wire.contains("indexed_before_escape"));
+    for marker in [
+        external_path.to_str().expect("external UTF-8"),
+        "sensitive-marker",
+    ] {
+        assert!(!published_wire.contains(marker), "leaked marker {marker}");
+    }
+
     for requested in [
-        "escape.rs",
         "/home/example/sensitive-marker.rs",
         r"C:\Users\example\sensitive-marker.rs",
     ] {
