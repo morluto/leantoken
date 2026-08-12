@@ -226,7 +226,10 @@ fn repository_services(cli: &Cli) -> Result<Arc<Services>> {
 }
 
 fn run_episode_audit(request: &episode::EpisodeAuditRequest, json: bool) -> Result<()> {
-    let report = episode::audit_episode(request)?;
+    let report = episode::audit_episode(request).map_err(|error| match error {
+        episode::Error::Io(error) => leantoken::Error::Io(error),
+        episode::Error::InvalidRequest(message) => leantoken::Error::InvalidRequest(message),
+    })?;
     if json {
         return print(&report, true);
     }

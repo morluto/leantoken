@@ -9,13 +9,14 @@ use clap::Parser;
 use leantoken::{
     Result, cache,
     cli::{AppRequest, Cli, SearchProjectionArg},
-    doctor, episode, mcp,
+    doctor, mcp,
     model::{IndexingMode, SearchOccurrenceOutput},
     services::{ServiceCallOptions, Services},
     setup::{self, SetupOperation},
     upgrade,
     watcher::{RepositoryWatcher, WatcherAction, WatcherMessage, WatcherReconciliationScheduler},
 };
+use leantoken_lab as episode;
 use serde::Serialize;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;

@@ -393,9 +393,9 @@ run them in parallel rather than starting one executable per file.
   publication, leader failover, MCP EOF shutdown, and repository-free episode
   audit behavior through the executable;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
-`src/episode.rs` owns unit coverage for versioned analyzer adapters, published
-60-run replay, exact/proxy classification boundaries, binding/privacy failure,
-resource caps, and deterministic JSON/Markdown normalization.
+- `crates/lab/src/lib.rs`: versioned analyzer adapters, published 60-run replay,
+  exact/proxy classification boundaries, binding/privacy failure, resource caps,
+  and deterministic JSON/Markdown normalization.
 
 Pure parsing, text-range, ranking, tokenization, and watcher state behavior is
 covered next to the owning module where private invariants matter.

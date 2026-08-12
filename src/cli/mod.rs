@@ -577,7 +577,7 @@ pub enum AppRequest {
     CachePrune(CachePruneRequest),
     RuntimeList,
     RuntimePrune(crate::setup::RuntimePruneRequest),
-    EpisodeAudit(crate::episode::EpisodeAuditRequest),
+    EpisodeAudit(leantoken_lab::EpisodeAuditRequest),
     Upgrade {
         check: bool,
         yes: bool,
