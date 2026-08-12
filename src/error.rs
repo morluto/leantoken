@@ -690,6 +690,27 @@ impl Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+impl From<leantoken_git::Error> for Error {
+    fn from(error: leantoken_git::Error) -> Self {
+        match error {
+            leantoken_git::Error::InvalidInput { field, reason } => {
+                Self::InvalidInput { field, reason }
+            }
+            leantoken_git::Error::RequestLimitExceeded {
+                field,
+                requested,
+                limit,
+            } => Self::RequestLimitExceeded {
+                field,
+                requested,
+                limit,
+            },
+            leantoken_git::Error::OperationFailure(message) => Self::OperationFailure(message),
+            leantoken_git::Error::Io(error) => Self::Io(error),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Error, RegexWorkDimension};

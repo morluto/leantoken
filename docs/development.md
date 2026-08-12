@@ -371,8 +371,10 @@ run them in parallel rather than starting one executable per file.
   FTS5, atomic replacement, rollback, stale-plan rejection, reopen, query-plan
   evidence, and generation behavior;
 - `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
-  safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
+  safety, public Git behavior, initial/unchanged/changed/deleted/rebuilt indexing,
   bounded chunking, targeted reconciliation, and dependency invalidation;
+- `crates/git/src/tests.rs`: bounded Git subprocess, status, name, and hunk
+  parsing invariants;
 - `crates/test-suite/src/domains/retrieval.rs`: public retrieval primitive
   compatibility plus cross-component budget, scope, known-hash omission, and
   receipt composition; detailed tokenizer and ranking behavior stays with the

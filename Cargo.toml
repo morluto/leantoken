@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [".", "crates/benchmarks", "crates/lab", "crates/test-support", "crates/test-suite", "xtask"]
+members = [".", "crates/benchmarks", "crates/git", "crates/lab", "crates/test-support", "crates/test-suite", "xtask"]
 default-members = [".", "crates/test-support", "crates/test-suite", "xtask"]
 exclude = ["benchmarks/kotlin-grammar-040", "benchmarks/swift-grammar-073"]
 
@@ -46,6 +46,7 @@ ignore = "0.4.28"
 inquire = { version = "0.9.4", default-features = false, features = ["crossterm"] }
 jmespath = "0.5.0"
 jsonc-parser = { version = "0.32.4", features = ["cst", "serde"] }
+leantoken-git = { path = "crates/git" }
 leantoken-lab = { path = "crates/lab" }
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"

@@ -1,12 +1,12 @@
-pub(crate) struct GitCaptureOptions {
-    pub(crate) timeout: Duration,
-    pub(crate) field: &'static str,
-    pub(crate) timeout_reason: &'static str,
-    pub(crate) failure_reason: &'static str,
-    pub(crate) max_output_bytes: usize,
+pub struct GitCaptureOptions {
+    pub timeout: Duration,
+    pub field: &'static str,
+    pub timeout_reason: &'static str,
+    pub failure_reason: &'static str,
+    pub max_output_bytes: usize,
 }
 
-pub(crate) fn run_git_capture(
+pub fn run_git_capture(
     root: &Path,
     program: &Path,
     args: &[String],
@@ -15,7 +15,7 @@ pub(crate) fn run_git_capture(
     run_git_capture_bounded(root, program, args, None, options)
 }
 
-pub(crate) fn run_git_capture_with_input(
+pub fn run_git_capture_with_input(
     root: &Path,
     program: &Path,
     args: &[String],
@@ -25,7 +25,7 @@ pub(crate) fn run_git_capture_with_input(
     run_git_capture_bounded(root, program, args, Some(input), options)
 }
 
-pub(crate) fn run_git_capture_bounded(
+pub fn run_git_capture_bounded(
     root: &Path,
     program: &Path,
     args: &[String],

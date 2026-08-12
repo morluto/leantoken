@@ -9,8 +9,8 @@ pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
 }
 
 /// Bounded working-tree paths plus whether `git status` completed successfully.
-pub(crate) struct GitWorkingTreeStatus {
-    pub(crate) changed_paths: HashSet<String>,
+pub struct GitWorkingTreeStatus {
+    pub changed_paths: HashSet<String>,
     state: GitWorkingTreeState,
 }
 
@@ -47,18 +47,18 @@ impl GitWorkingTreeStatus {
         }
     }
 
-    pub(crate) const fn is_available(&self) -> bool {
+    pub const fn is_available(&self) -> bool {
         matches!(self.state, GitWorkingTreeState::Available(_))
     }
 
-    pub(crate) const fn has_modified(&self) -> bool {
+    pub const fn has_modified(&self) -> bool {
         matches!(
             self.state.changes(),
             GitWorkingTreeChanges::Modified | GitWorkingTreeChanges::ModifiedAndUntracked
         )
     }
 
-    pub(crate) const fn has_untracked(&self) -> bool {
+    pub const fn has_untracked(&self) -> bool {
         matches!(
             self.state.changes(),
             GitWorkingTreeChanges::Untracked | GitWorkingTreeChanges::ModifiedAndUntracked
@@ -86,11 +86,11 @@ impl GitWorkingTreeChanges {
 }
 
 /// Observe bounded working-tree state without changing the public empty-set fallback.
-pub(crate) fn git_working_tree_status(root: &Path, max: usize) -> GitWorkingTreeStatus {
+pub fn git_working_tree_status(root: &Path, max: usize) -> GitWorkingTreeStatus {
     git_working_tree_status_with(root, max, Path::new("git"), Duration::from_millis(500))
 }
 
-pub(crate) fn git_changed_paths_with(
+pub fn git_changed_paths_with(
     root: &Path,
     max: usize,
     program: &Path,
@@ -99,7 +99,7 @@ pub(crate) fn git_changed_paths_with(
     Ok(git_working_tree_status_with(root, max, program, timeout).changed_paths)
 }
 
-pub(crate) fn git_working_tree_status_with(
+pub fn git_working_tree_status_with(
     root: &Path,
     max: usize,
     program: &Path,
@@ -138,14 +138,14 @@ pub(crate) fn git_working_tree_status_with(
     parse_git_status_observation(output.as_slice(), max, &prefix)
 }
 
-pub(crate) fn bounded_git_output(max_results: usize, bytes_per_result: usize) -> usize {
+pub fn bounded_git_output(max_results: usize, bytes_per_result: usize) -> usize {
     max_results
         .saturating_mul(bytes_per_result)
         .max(bytes_per_result)
         .min(MAX_GIT_DISCOVERY_OUTPUT_BYTES)
 }
 
-pub(crate) fn git_worktree_prefix(root: &Path) -> String {
+pub fn git_worktree_prefix(root: &Path) -> String {
     root.ancestors()
         .find(|ancestor| ancestor.join(".git").exists())
         .and_then(|worktree| root.strip_prefix(worktree).ok())
@@ -155,7 +155,7 @@ pub(crate) fn git_worktree_prefix(root: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub(crate) fn parse_git_status_observation<R: BufRead>(
+pub fn parse_git_status_observation<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
