@@ -134,7 +134,8 @@ fn is_test_path(path: &str) -> bool {
     let module_stem = file_name
         .rsplit_once('.')
         .map_or(file_name, |(stem, _)| stem);
-    path.starts_with("test/")
+    file_name == "conftest.py"
+        || path.starts_with("test/")
         || path.starts_with("tests/")
         || path.starts_with("spec/")
         || path.contains("/test/")
@@ -281,6 +282,7 @@ pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
         && !matches!(path.as_str(), "readme.md" | "agents.md" | "contributing.md");
     if path.starts_with(".agents/")
         || path.starts_with("fixtures/")
+        || path.contains("/fixtures/")
         || path.starts_with("benchmarks/reports/")
         || path.contains("/snapshots/")
         || path.ends_with(".snap")
@@ -403,6 +405,19 @@ mod tests {
         assert_eq!(
             context_path_class("Cargo.toml"),
             ContextPathClass::Supporting
+        );
+    }
+
+    #[test]
+    fn pytest_configuration_and_nested_fixtures_are_not_production() {
+        assert_eq!(context_path_class("conftest.py"), ContextPathClass::Test);
+        assert_eq!(
+            context_path_class("packages/app/conftest.py"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("packages/app/fixtures/user.ts"),
+            ContextPathClass::Auxiliary
         );
     }
 
