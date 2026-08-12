@@ -107,7 +107,7 @@ impl Services {
             Ok(storage) => storage,
             Err(error) if config.database_is_managed_cache() && is_database_corruption(&error) => {
                 tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
-                remove_database_artifacts(&config.database_path)?;
+                remove_managed_database_artifacts(config)?;
                 open_storage()?
             }
             Err(error) => return Err(error),
@@ -323,6 +323,17 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+    }
+    Ok(())
+}
+
+fn remove_managed_database_artifacts(config: &Config) -> Result<()> {
+    for database in [
+        config.database_path.clone(),
+        config.artifact_database_path(),
+        config.instrumentation_database_path(),
+    ] {
+        remove_database_artifacts(&database)?;
     }
     Ok(())
 }
@@ -549,6 +560,49 @@ mod tests {
         assert_eq!(
             fs::read(target.path()).expect("sentinel contents"),
             b"external coordination sentinel"
+        );
+    }
+
+    #[test]
+    fn managed_corruption_rebuild_discards_auxiliary_generation_databases() {
+        use crate::receipt::ReceiptEvidence;
+
+        let root = tempfile::tempdir().expect("repository");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.mark_database_as_managed_platform();
+        let artifacts_path = config.artifact_database_path();
+        let instrumentation_path = config.instrumentation_database_path();
+        let receipt_id = ArtifactStorage::open(&artifacts_path)
+            .evaluate_receipt(
+                "repository",
+                None,
+                1,
+                &[ReceiptEvidence::new(
+                    "src/lib.rs",
+                    1,
+                    2,
+                    "old-generation",
+                    Some("fn old_generation() {}"),
+                )],
+                true,
+            )
+            .expect("old receipt")
+            .receipt_id;
+        fs::write(&instrumentation_path, b"not sqlite").expect("old instrumentation");
+        fs::write(&config.database_path, b"not sqlite").expect("corrupt index");
+
+        drop(Services::open(config).expect("rebuild managed index"));
+
+        assert!(matches!(
+            ArtifactStorage::open(&artifacts_path).read_receipt(&receipt_id),
+            Err(Error::UnknownReceipt(_))
+        ));
+        assert_eq!(
+            fs::read(&instrumentation_path)
+                .expect("rebuilt instrumentation")
+                .get(..16),
+            Some(&b"SQLite format 3\0"[..])
         );
     }
 }
