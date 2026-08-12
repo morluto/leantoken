@@ -227,7 +227,7 @@ impl Services {
 
     pub(in crate::services::context) fn finalize_strict_scope_coverage(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ContextRequest,
         focus: ContextFocusPolicy,
         selected_paths: &[String],

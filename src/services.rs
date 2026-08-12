@@ -30,6 +30,7 @@ mod change_receipt;
 mod concurrency_profile;
 mod context;
 mod coverage;
+mod cursor;
 mod execution_options;
 mod executor;
 mod files;
@@ -430,14 +431,14 @@ impl Services {
 
     pub(super) fn consistent<T>(
         &self,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::RequireReady, operation)
     }
 
     fn consistent_allow_empty<T>(
         &self,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::AllowEmpty, operation)
     }
@@ -449,10 +450,10 @@ impl Services {
     fn consistent_inner<T>(
         &self,
         readiness: IndexSnapshotReadiness,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         for attempt in 0..3 {
-            let snapshot = index_read::IndexReadSnapshot::open(&self.storage);
+            let snapshot = index_read::RepositoryGeneration::open(&self.storage);
             let snapshot = match snapshot {
                 Ok(snapshot) => snapshot,
                 Err(error) if is_database_contention(&error) => {

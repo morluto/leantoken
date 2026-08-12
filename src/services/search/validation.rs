@@ -9,7 +9,7 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.include_paths)?;
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
-    validate_cursor(request.cursor.as_deref())?;
+    validate_optional_input(request.cursor.as_deref(), "cursor", MAX_CURSOR_BYTES)?;
     Ok(())
 }
 

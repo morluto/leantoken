@@ -8,13 +8,14 @@ use regex_syntax::hir::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::cursor::request_digest;
 use super::execution_options::RetrievalExecution;
-use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
+use super::index_read::{ChunkHit, ReferenceHit, RepositoryGeneration, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
-    validate_cursor, validate_glob_patterns, validate_input,
+    MAX_CURSOR_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled,
+    validate_glob_patterns, validate_input, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
@@ -53,37 +54,48 @@ impl Services {
         shape: SearchResponseShape<'_>,
         options: ServiceCallOptions,
     ) -> Result<()> {
-        let provisional = |selected: &[CandidateSearchHit]| SearchResponse {
-            hits: selected
-                .iter()
-                .map(|candidate| candidate.hit.clone())
-                .collect(),
-            coverage: search_coverage(shape.all, selected),
-            occurrences_returned: selected.len(),
-            occurrences_total: shape
-                .request
-                .kind
-                .is_exhaustive()
-                .then_some(shape.total_candidates),
-            meta: self.meta(
-                shape.generation,
-                selected
+        let provisional = |selected: &[CandidateSearchHit]| -> Result<SearchResponse> {
+            Ok(SearchResponse {
+                hits: selected
                     .iter()
-                    .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
-                    .sum(),
-                shape
-                    .has_more
-                    .then(|| make_cursor(shape.generation, shape.offset + shape.consumed)),
-            ),
+                    .map(|candidate| candidate.hit.clone())
+                    .collect(),
+                coverage: search_coverage(shape.all, selected),
+                occurrences_returned: selected.len(),
+                occurrences_total: shape
+                    .request
+                    .kind
+                    .is_exhaustive()
+                    .then_some(shape.total_candidates),
+                meta: self.meta(
+                    shape.generation.generation(),
+                    selected
+                        .iter()
+                        .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                        .sum(),
+                    shape
+                        .has_more
+                        .then(|| {
+                            shape.generation.seal_cursor(
+                                "search",
+                                shape.cursor_digest,
+                                SearchPosition {
+                                    offset: shape.offset + shape.consumed,
+                                },
+                            )
+                        })
+                        .transpose()?,
+                ),
+            })
         };
-        let mut sized = provisional(selected);
+        let mut sized = provisional(selected)?;
         if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
         for candidate in selected.iter_mut() {
             candidate.hit.score_reasons.clear();
         }
-        sized = provisional(selected);
+        sized = provisional(selected)?;
         if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }

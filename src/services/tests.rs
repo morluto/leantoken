@@ -1010,7 +1010,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+    let session = crate::services::index_read::RepositoryGeneration::open(&services.storage)
         .expect("read snapshot");
     let bounded = services
         .adaptive_context_excerpts(

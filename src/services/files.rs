@@ -9,10 +9,12 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
+use super::cursor::request_digest;
 use super::execution_options::RetrievalExecution;
-use super::index_read::{FilePathRecord, IndexReadSnapshot};
+use super::index_read::{FilePathRecord, RepositoryGeneration};
 use super::validation::{
-    MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
+    MAX_CURSOR_BYTES, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
+    validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -28,14 +30,18 @@ struct FilePage {
     next: Option<FileCursor>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum FileCursor {
+    #[serde(rename = "p")]
     Path {
-        operation: PathOperation,
+        #[serde(rename = "p")]
         path: String,
     },
+    #[serde(rename = "f")]
     Fuzzy {
+        #[serde(rename = "s")]
         score: u32,
+        #[serde(rename = "p")]
         path: String,
     },
 }
@@ -98,18 +104,13 @@ fn fuzzy_path_class(path: &str) -> FuzzyPathClass {
     FuzzyPathClass::General
 }
 
-#[derive(Clone, Copy)]
-enum PathOperation {
-    Tree,
-    Glob,
-}
-
 struct FilesInput {
     query: FilesQuery,
     max_results: Option<usize>,
-    cursor: Option<(u64, FileCursor)>,
+    cursor: Option<String>,
 }
 
+#[derive(serde::Serialize)]
 enum FilesQuery {
     Tree { root: String, depth: Option<usize> },
     Find { query: String },
@@ -130,7 +131,7 @@ impl FilesInput {
         validate_optional_input(path.as_deref(), "path", MAX_PATH_BYTES)?;
         validate_optional_input(query.as_deref(), "query", MAX_QUERY_BYTES)?;
         validate_optional_input(pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
-        let cursor = decode_files_cursor(cursor.as_deref(), &operation)?;
+        validate_optional_input(cursor.as_deref(), "cursor", MAX_CURSOR_BYTES)?;
         let query = match operation {
             FileOperation::Tree => FilesQuery::Tree {
                 root: normalize_tree_root(path.as_deref())?,
@@ -161,16 +162,6 @@ impl FilesInput {
             cursor,
         })
     }
-
-    fn cursor(&self, generation: u64) -> Result<Option<FileCursor>> {
-        let Some((cursor_generation, cursor)) = &self.cursor else {
-            return Ok(None);
-        };
-        if *cursor_generation != generation {
-            return Err(Error::StaleCursor);
-        }
-        Ok(Some(cursor.clone()))
-    }
 }
 
 impl FilesQuery {
@@ -183,25 +174,8 @@ impl FilesQuery {
     }
 }
 
-impl FileCursor {
-    fn encode(self, generation: u64) -> String {
-        match self {
-            Self::Path { operation, path } => {
-                let operation = match operation {
-                    PathOperation::Tree => "tree",
-                    PathOperation::Glob => "glob",
-                };
-                format!("{generation}:files:{operation}:{}", hex_encode(&path))
-            }
-            Self::Fuzzy { score, path } => {
-                format!("{generation}:files:find:{score}:{}", hex_encode(&path))
-            }
-        }
-    }
-}
-
 fn tree_entries(
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     root: &str,
     depth: Option<usize>,
     cursor: Option<FileCursor>,
@@ -233,7 +207,6 @@ fn tree_entries(
         .then(|| entries.last())
         .flatten()
         .map(|entry| FileCursor::Path {
-            operation: PathOperation::Tree,
             path: entry.path.clone(),
         });
     Ok(FilePage { entries, next })
@@ -250,7 +223,7 @@ fn normalize_tree_root(root: Option<&str>) -> Result<String> {
 }
 
 fn fuzzy_entries(
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     query: &str,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -310,7 +283,7 @@ fn fuzzy_entries(
 }
 
 fn glob_entries(
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     pattern: &str,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -345,7 +318,6 @@ fn glob_entries(
             .then(|| entries.last())
             .flatten()
             .map(|entry| FileCursor::Path {
-                operation: PathOperation::Glob,
                 path: entry.path.clone(),
             });
         return Ok(FilePage { entries, next });
@@ -371,7 +343,7 @@ fn glob_entries(
         }
         Ok(())
     })?;
-    Ok(finish_path_page(entries, limit, PathOperation::Glob))
+    Ok(finish_path_page(entries, limit))
 }
 
 /// Map a globset-style pattern to one or two SQLite `GLOB` patterns.
@@ -418,7 +390,7 @@ fn sql_glob_patterns(pattern: &str) -> Option<(String, Option<String>)> {
 }
 
 fn for_each_file_path(
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     cancellation: &CancellationToken,
     mut visitor: impl FnMut(FilePathRecord) -> Result<()>,
 ) -> Result<()> {
@@ -460,105 +432,31 @@ fn retain_path_entry(
     }
 }
 
-fn finish_path_page(
-    entries: BTreeMap<String, FileEntry>,
-    limit: usize,
-    operation: PathOperation,
-) -> FilePage {
+fn finish_path_page(entries: BTreeMap<String, FileEntry>, limit: usize) -> FilePage {
     let has_more = entries.len() > limit;
     let entries = entries.into_values().take(limit).collect::<Vec<_>>();
     let next = has_more
         .then(|| entries.last())
         .flatten()
         .map(|entry| FileCursor::Path {
-            operation,
             path: entry.path.clone(),
         });
     FilePage { entries, next }
 }
 
-fn decode_files_cursor(
-    cursor: Option<&str>,
-    operation: &FileOperation,
-) -> Result<Option<(u64, FileCursor)>> {
-    let Some(cursor) = cursor else {
-        return Ok(None);
-    };
-    if cursor.len() > MAX_PATH_BYTES.saturating_mul(2).saturating_add(64) {
-        return Err(Error::StaleCursor);
-    }
-    let (cursor_generation, payload) = cursor.split_once(":files:").ok_or(Error::StaleCursor)?;
-    let cursor_generation = cursor_generation
-        .parse::<u64>()
-        .map_err(|_| Error::StaleCursor)?;
-    let cursor = match operation {
-        FileOperation::Tree | FileOperation::Glob => {
-            let (operation_name, operation) = match operation {
-                FileOperation::Tree => ("tree:", PathOperation::Tree),
-                FileOperation::Glob => ("glob:", PathOperation::Glob),
-                FileOperation::Find => return Err(Error::StaleCursor),
-            };
-            let path = payload
-                .strip_prefix(operation_name)
-                .ok_or(Error::StaleCursor)?;
-            FileCursor::Path {
-                operation,
-                path: hex_decode(path)?,
-            }
-        }
-        FileOperation::Find => {
-            let payload = payload.strip_prefix("find:").ok_or(Error::StaleCursor)?;
-            let (score, path) = payload.split_once(':').ok_or(Error::StaleCursor)?;
-            FileCursor::Fuzzy {
-                score: score.parse().map_err(|_| Error::StaleCursor)?,
-                path: hex_decode(path)?,
-            }
-        }
-    };
-    Ok(Some((cursor_generation, cursor)))
-}
-
-fn hex_encode(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(value.len().saturating_mul(2));
-    for byte in value.bytes() {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
-}
-
-fn hex_decode(value: &str) -> Result<String> {
-    if !value.len().is_multiple_of(2) {
-        return Err(Error::StaleCursor);
-    }
-    let decoded = value
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| {
-            let high = hex_nibble(pair[0])?;
-            let low = hex_nibble(pair[1])?;
-            Ok((high << 4) | low)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    String::from_utf8(decoded).map_err(|_| Error::StaleCursor)
-}
-
-fn hex_nibble(value: u8) -> Result<u8> {
-    match value {
-        b'0'..=b'9' => Ok(value - b'0'),
-        b'a'..=b'f' => Ok(value - b'a' + 10),
-        _ => Err(Error::StaleCursor),
-    }
-}
-
 fn files_page(
     input: &FilesInput,
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     limit: usize,
     cancellation: &CancellationToken,
 ) -> Result<(FilePage, FileOperation)> {
-    let cursor = input.cursor(session.generation())?;
+    let cursor = input
+        .cursor
+        .as_deref()
+        .map(|cursor| {
+            session.open_cursor::<FileCursor>(cursor, "files", &request_digest(&input.query)?)
+        })
+        .transpose()?;
     let operation = input.query.operation();
     let page = match &input.query {
         FilesQuery::Tree { root, depth } => {
@@ -750,9 +648,15 @@ impl Services {
             let generation = session.generation();
             let mut response = FilesResponse {
                 entries: page.entries,
-                meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
+                meta: self.meta(
+                    generation,
+                    0,
+                    page.next
+                        .map(|next| encode_files_cursor(session, &input.query, next))
+                        .transpose()?,
+                ),
             };
-            self.fit_files_response(&mut response, operation, generation, options)?;
+            self.fit_files_response(&mut response, session, &input.query, operation, options)?;
             Ok(response)
         })?;
         self.finalize_bounded_response(&mut response, options)?;
@@ -774,9 +678,22 @@ impl Services {
             let entries = page.entries;
             let mut response = FilesPathsResponse {
                 paths: entries.iter().map(|entry| entry.path.clone()).collect(),
-                meta: self.meta(generation, 0, page.next.map(|next| next.encode(generation))),
+                meta: self.meta(
+                    generation,
+                    0,
+                    page.next
+                        .map(|next| encode_files_cursor(session, &input.query, next))
+                        .transpose()?,
+                ),
             };
-            self.fit_files_paths_response(&mut response, &entries, operation, generation, options)?;
+            self.fit_files_paths_response(
+                &mut response,
+                &entries,
+                session,
+                &input.query,
+                operation,
+                options,
+            )?;
             Ok(response)
         })?;
         self.finalize_bounded_response(&mut response, options)?;
@@ -787,8 +704,9 @@ impl Services {
     fn fit_files_response(
         &self,
         response: &mut FilesResponse,
+        generation: &RepositoryGeneration,
+        query: &FilesQuery,
         operation: FileOperation,
-        generation: u64,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
@@ -806,7 +724,14 @@ impl Services {
             candidate.meta.next_cursor = candidate
                 .entries
                 .last()
-                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+                .map(|entry| {
+                    encode_files_cursor(
+                        generation,
+                        query,
+                        files_cursor_for_entry(&operation, entry),
+                    )
+                })
+                .transpose()?;
             self.finalized_response_tokens(&candidate, options)
         })?;
         if let Some(keep) = keep.filter(|keep| *keep > 0) {
@@ -814,23 +739,28 @@ impl Services {
             response.meta.next_cursor = response
                 .entries
                 .last()
-                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+                .map(|entry| {
+                    encode_files_cursor(
+                        generation,
+                        query,
+                        files_cursor_for_entry(&operation, entry),
+                    )
+                })
+                .transpose()?;
             return Ok(());
         }
 
-        let minimum = original
-            .entries
-            .first()
-            .map(|entry| {
-                let mut minimum = original.clone();
-                minimum.entries.truncate(1);
-                if original.entries.len() > 1 {
-                    minimum.meta.next_cursor =
-                        Some(files_cursor_for_entry(&operation, entry).encode(generation));
-                }
-                minimum
-            })
-            .unwrap_or(original);
+        let mut minimum = original.clone();
+        minimum.entries.truncate(1);
+        if let Some(entry) = original.entries.first()
+            && original.entries.len() > 1
+        {
+            minimum.meta.next_cursor = Some(encode_files_cursor(
+                generation,
+                query,
+                files_cursor_for_entry(&operation, entry),
+            )?);
+        }
         Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 
@@ -838,8 +768,9 @@ impl Services {
         &self,
         response: &mut FilesPathsResponse,
         entries: &[FileEntry],
+        generation: &RepositoryGeneration,
+        query: &FilesQuery,
         operation: FileOperation,
-        generation: u64,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
@@ -856,41 +787,49 @@ impl Services {
             candidate.paths.truncate(keep);
             candidate.meta.next_cursor = entries
                 .get(keep.saturating_sub(1))
-                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+                .map(|entry| {
+                    encode_files_cursor(
+                        generation,
+                        query,
+                        files_cursor_for_entry(&operation, entry),
+                    )
+                })
+                .transpose()?;
             self.finalized_response_tokens(&candidate, options)
         })?;
         if let Some(keep) = keep.filter(|keep| *keep > 0) {
             response.paths.truncate(keep);
             response.meta.next_cursor = entries
                 .get(keep - 1)
-                .map(|entry| files_cursor_for_entry(&operation, entry).encode(generation));
+                .map(|entry| {
+                    encode_files_cursor(
+                        generation,
+                        query,
+                        files_cursor_for_entry(&operation, entry),
+                    )
+                })
+                .transpose()?;
             return Ok(());
         }
 
-        let minimum = entries
-            .first()
-            .map(|entry| {
-                let mut minimum = original.clone();
-                minimum.paths.truncate(1);
-                if original.paths.len() > 1 {
-                    minimum.meta.next_cursor =
-                        Some(files_cursor_for_entry(&operation, entry).encode(generation));
-                }
-                minimum
-            })
-            .unwrap_or(original);
+        let mut minimum = original.clone();
+        minimum.paths.truncate(1);
+        if let Some(entry) = entries.first()
+            && original.paths.len() > 1
+        {
+            minimum.meta.next_cursor = Some(encode_files_cursor(
+                generation,
+                query,
+                files_cursor_for_entry(&operation, entry),
+            )?);
+        }
         Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 }
 
 fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileCursor {
     match operation {
-        FileOperation::Tree => FileCursor::Path {
-            operation: PathOperation::Tree,
-            path: entry.path.clone(),
-        },
-        FileOperation::Glob => FileCursor::Path {
-            operation: PathOperation::Glob,
+        FileOperation::Tree | FileOperation::Glob => FileCursor::Path {
             path: entry.path.clone(),
         },
         FileOperation::Find => FileCursor::Fuzzy {
@@ -900,6 +839,14 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
             path: entry.path.clone(),
         },
     }
+}
+
+fn encode_files_cursor(
+    generation: &RepositoryGeneration,
+    query: &FilesQuery,
+    cursor: FileCursor,
+) -> Result<String> {
+    generation.seal_cursor("files", &request_digest(query)?, cursor)
 }
 
 #[cfg(test)]

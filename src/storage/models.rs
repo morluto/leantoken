@@ -9,6 +9,7 @@ pub struct MetaRecord {
     pub index_version: i64,
     pub config_hash: String,
     pub repository_generation: u64,
+    pub repository_identity: String,
 }
 
 #[derive(Debug, Clone)]

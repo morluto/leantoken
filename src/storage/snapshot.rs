@@ -8,23 +8,40 @@ use super::{
 use crate::Result;
 use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
 
-pub(crate) struct IndexSnapshot {
+/// One atomically published repository generation pinned by a SQLite read
+/// transaction for its complete lifetime.
+///
+/// Every retrieval projection must be read through this capability so source,
+/// structure, paths, and metadata cannot come from different publications.
+pub(crate) struct RepositoryGeneration {
     session: ReadSession,
     generation: u64,
+    semantics_fingerprint: String,
+    repository_identity: String,
 }
 
-impl IndexSnapshot {
+impl RepositoryGeneration {
     pub(crate) fn open(storage: &Storage) -> Result<Self> {
         let session = storage.begin_read()?;
-        let generation = session.repository_generation()?;
+        let meta = session.meta()?;
         Ok(Self {
             session,
-            generation,
+            generation: meta.repository_generation,
+            semantics_fingerprint: meta.config_hash,
+            repository_identity: meta.repository_identity,
         })
     }
 
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub(crate) fn semantics_fingerprint(&self) -> &str {
+        &self.semantics_fingerprint
+    }
+
+    pub(crate) fn repository_identity(&self) -> &str {
+        &self.repository_identity
     }
 
     pub(crate) fn meta(&self) -> Result<MetaRecord> {
@@ -127,6 +144,12 @@ impl IndexSnapshot {
         max_results: usize,
     ) -> Result<Vec<ChunkRecord>> {
         self.session.get_chunks_for_file(file_id, max_results)
+    }
+
+    /// Reconstruct exact source from the canonical non-overlapping chunks in
+    /// this published generation.
+    pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
+        self.session.file_content(file_id, expected_size)
     }
 
     pub(crate) fn get_chunks_overlapping_batch(

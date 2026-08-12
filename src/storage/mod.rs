@@ -63,7 +63,7 @@ pub(crate) use runtime::*;
 pub(crate) use rusqlite::params;
 pub(crate) use schema::*;
 pub(crate) use scoped_regex::*;
-pub(crate) use snapshot::IndexSnapshot;
+pub(crate) use snapshot::RepositoryGeneration;
 pub(crate) use staging::PreparedReconciliation;
 
 pub use diagnostics::{

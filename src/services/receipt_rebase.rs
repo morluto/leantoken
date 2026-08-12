@@ -3,7 +3,7 @@ use std::io::Read;
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
-use super::index_read::IndexReadSnapshot;
+use super::index_read::RepositoryGeneration;
 use super::read::open_live_file;
 use super::receipts::ReceiptEvidence;
 use super::validation::check_cancelled;
@@ -182,7 +182,7 @@ fn parse_rebase_request(request: ReceiptRebaseRequest) -> Result<ParsedReceiptRe
 
 fn classify_receipt(
     services: &Services,
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     generation: u64,
     source: &ReceiptRebaseSource,
     cancellation: &CancellationToken,

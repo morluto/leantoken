@@ -192,6 +192,8 @@ pub struct ReadTruncationGuidance {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadTruncationGuidanceBasis {
+    /// Counts come from the same immutable generation as the returned source.
+    PublishedGeneration,
     /// Full live-file verification proved the indexed target is current.
     VerifiedLive,
     /// Counts come from the pinned indexed generation; the bounded live page may be newer.

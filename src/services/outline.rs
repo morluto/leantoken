@@ -4,10 +4,11 @@ use std::collections::BTreeMap;
 
 use tokio_util::sync::CancellationToken;
 
+use super::cursor::request_digest;
 use super::execution_options::RetrievalExecution;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, is_lower_hex,
+    MAX_CURSOR_BYTES, MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled,
     validate_input, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
@@ -61,15 +62,15 @@ fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     }
 }
 
-struct OutlineCursor {
-    generation: u64,
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OutlinePosition {
+    #[serde(rename = "o")]
     offset: usize,
-    query_hash: String,
 }
 
 struct ParsedOutlineRequest {
     request: OutlineRequest,
-    cursor: Option<OutlineCursor>,
+    cursor: Option<String>,
     limit: usize,
     token_limit: usize,
 }
@@ -93,77 +94,37 @@ impl OutlineOutput {
     }
 }
 
-fn decode_outline_cursor(cursor: &str) -> Result<OutlineCursor> {
-    let fields = cursor.split(':').collect::<Vec<_>>();
-    let [generation, kind, offset, query_hash] = fields.as_slice() else {
-        return Err(Error::StaleCursor);
-    };
-    if *kind != "outline" || query_hash.len() != 16 || !query_hash.bytes().all(is_lower_hex) {
-        return Err(Error::StaleCursor);
-    }
-    Ok(OutlineCursor {
-        generation: generation.parse().map_err(|_| Error::StaleCursor)?,
-        offset: offset.parse().map_err(|_| Error::StaleCursor)?,
-        query_hash: (*query_hash).into(),
-    })
-}
-
-fn outline_query_hash(request: &OutlineRequest, projection: Option<&str>) -> String {
-    fn update_field(hasher: &mut blake3::Hasher, value: &str) {
-        hasher.update(&(value.len() as u64).to_le_bytes());
-        hasher.update(value.as_bytes());
-    }
-
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&(request.paths.len() as u64).to_le_bytes());
-    for path in &request.paths {
-        update_field(&mut hasher, path);
-    }
-    for value in [&request.symbol_name, &request.symbol_kind] {
-        match value {
-            Some(value) => {
-                hasher.update(&[1]);
-                update_field(&mut hasher, value);
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-    }
-    if let Some(projection) = projection {
-        hasher.update(&[2]);
-        update_field(&mut hasher, projection);
-    }
-    hasher.finalize().to_hex()[..16].to_string()
-}
-
 fn outline_cursor_offset(
-    cursor: Option<&OutlineCursor>,
-    generation: u64,
+    generation: &super::index_read::RepositoryGeneration,
+    cursor: Option<&str>,
     request: &OutlineRequest,
     projection: Option<&str>,
 ) -> Result<usize> {
     let Some(cursor) = cursor else {
         return Ok(0);
     };
-    if cursor.generation != generation
-        || cursor.query_hash != outline_query_hash(request, projection)
-    {
-        return Err(Error::StaleCursor);
-    }
-    Ok(cursor.offset)
+    let digest = outline_request_digest(request, projection)?;
+    let position: OutlinePosition = generation.open_cursor(cursor, "outline", &digest)?;
+    Ok(position.offset)
 }
 
 fn make_outline_cursor(
-    generation: u64,
+    generation: &super::index_read::RepositoryGeneration,
     offset: usize,
     request: &OutlineRequest,
     projection: Option<&str>,
-) -> String {
-    format!(
-        "{generation}:outline:{offset}:{}",
-        outline_query_hash(request, projection)
-    )
+) -> Result<String> {
+    let digest = outline_request_digest(request, projection)?;
+    generation.seal_cursor("outline", &digest, OutlinePosition { offset })
+}
+
+fn outline_request_digest(request: &OutlineRequest, projection: Option<&str>) -> Result<String> {
+    request_digest(&(
+        &request.paths,
+        &request.symbol_name,
+        &request.symbol_kind,
+        projection,
+    ))
 }
 
 fn parse_outline_input(
@@ -193,12 +154,8 @@ fn parse_outline_input(
         "symbol kind",
         MAX_PATTERN_BYTES,
     )?;
-    validate_optional_input(request.cursor.as_deref(), "cursor", 256)?;
-    let cursor = request
-        .cursor
-        .take()
-        .map(|cursor| decode_outline_cursor(&cursor))
-        .transpose()?;
+    validate_optional_input(request.cursor.as_deref(), "cursor", MAX_CURSOR_BYTES)?;
+    let cursor = request.cursor.take();
     request.paths = request
         .paths
         .iter()
@@ -444,7 +401,7 @@ impl Services {
             let generation = session.generation();
             let cursor_projection = output.cursor_projection();
             let offset =
-                outline_cursor_offset(cursor.as_ref(), generation, &request, cursor_projection)?;
+                outline_cursor_offset(session, cursor.as_deref(), &request, cursor_projection)?;
             let mut total_symbols = 0usize;
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
@@ -600,7 +557,8 @@ impl Services {
 
             let truncated_by_max_results = remaining == 0 && consumed < total_entries;
             let next_cursor = truncated_by_max_results
-                .then(|| make_outline_cursor(generation, consumed, &request, cursor_projection));
+                .then(|| make_outline_cursor(session, consumed, &request, cursor_projection))
+                .transpose()?;
             let result_complete = offset == 0
                 && returned_symbols == total_symbols
                 && returned_imports == total_imports;
@@ -731,46 +689,5 @@ impl Services {
             );
         }
         Ok(response)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn outline_cursors_bind_signature_projection_offsets() {
-        let request = OutlineRequest {
-            paths: vec!["src/lib.rs".into()],
-            symbol_name: None,
-            symbol_kind: None,
-            max_results: Some(10),
-            max_tokens: Some(1_000),
-            receipt_id: None,
-            cursor: None,
-        };
-        let full = make_outline_cursor(7, 3, &request, None);
-        let signatures = make_outline_cursor(7, 3, &request, Some("signatures"));
-        let full_cursor = decode_outline_cursor(&full).expect("decode full cursor");
-        let signatures_cursor =
-            decode_outline_cursor(&signatures).expect("decode signature cursor");
-        assert_ne!(full, signatures);
-        assert_eq!(
-            outline_cursor_offset(Some(&full_cursor), 7, &request, None).expect("full cursor"),
-            3
-        );
-        assert_eq!(
-            outline_cursor_offset(Some(&signatures_cursor), 7, &request, Some("signatures"))
-                .expect("signature cursor"),
-            3
-        );
-        assert!(matches!(
-            outline_cursor_offset(Some(&full_cursor), 7, &request, Some("signatures")),
-            Err(Error::StaleCursor)
-        ));
-        assert!(matches!(
-            outline_cursor_offset(Some(&signatures_cursor), 7, &request, None),
-            Err(Error::StaleCursor)
-        ));
     }
 }

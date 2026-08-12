@@ -1,7 +1,7 @@
 impl Services {
     pub(in crate::services::context) fn append_workflow_candidates(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ContextRequest,
         workflow: ContextWorkflow,
         cancellation: &CancellationToken,

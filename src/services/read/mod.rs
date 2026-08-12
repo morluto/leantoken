@@ -7,11 +7,12 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
-use super::index_read::IndexReadSnapshot;
+use super::index_read::RepositoryGeneration;
 use super::read_delta::ReadDeltaInput;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input, validate_optional_input,
+    MAX_CURSOR_BYTES, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
+    validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -25,6 +26,7 @@ pub(super) const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
 mod cursor;
 mod excerpts;
+mod generation;
 mod live;
 mod types;
 
@@ -67,7 +69,7 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
     validate_optional_input(
         request.continuation_cursor.as_deref(),
         "continuation cursor",
-        256,
+        MAX_CURSOR_BYTES,
     )?;
     let mode = parse_read_mode(&request)?;
     request.path = normalize_relative(&request.path)?;
@@ -129,7 +131,7 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
     }
     if let Some(cursor) = &request.continuation_cursor {
         return Ok(ReadMode::Direct(ReadTargetInput::Continuation(
-            decode_read_cursor(cursor)?,
+            cursor.clone(),
         )));
     }
     let target = if let Some(symbol) = &request.symbol {
@@ -163,66 +165,50 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
 }
 
 impl Services {
-    pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
-        self.read_with_options(request, ServiceCallOptions::new())
+    /// Read current worktree source with explicitly weaker snapshot guarantees.
+    pub async fn read_worktree(&self, request: ReadRequest) -> Result<ReadResponse> {
+        self.read_worktree_with_options(request, ServiceCallOptions::new())
             .await
     }
 
-    /// Read live source under explicit serialized-response controls.
-    pub async fn read_with_options(
+    /// Read current worktree source under explicit serialized-response controls.
+    pub async fn read_worktree_with_options(
         &self,
         request: ReadRequest,
         options: ServiceCallOptions,
     ) -> Result<ReadResponse> {
-        self.read_execute(
+        self.read_worktree_execute(
             request,
             RetrievalExecution::direct(options, CancellationToken::new()),
         )
         .await
     }
 
-    /// Read source after applying the requested index consistency boundary.
-    pub async fn read_with_consistency_cancellable(
-        &self,
-        request: ReadRequest,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<ReadResponse> {
-        self.read_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Read source under consistency and serialized-response controls.
-    pub async fn read_with_options_consistency_cancellable(
-        &self,
-        request: ReadRequest,
-        consistency: IndexConsistency,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
-    ) -> Result<ReadResponse> {
-        self.read_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
-    }
-
-    pub async fn read_cancellable(
+    /// Read current worktree source with caller-owned cancellation.
+    pub async fn read_worktree_cancellable(
         &self,
         request: ReadRequest,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
-        self.read_execute(
+        self.read_worktree_execute(
             request,
             RetrievalExecution::direct(ServiceCallOptions::new(), cancellation),
         )
         .await
     }
 
-    async fn read_execute(
+    /// Read current worktree source under response controls and cancellation.
+    pub async fn read_worktree_with_options_cancellable(
+        &self,
+        request: ReadRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        self.read_worktree_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
+    }
+
+    async fn read_worktree_execute(
         &self,
         request: ReadRequest,
         execution: RetrievalExecution,
@@ -398,7 +384,7 @@ impl Services {
 
     fn read_at_generation_with_options(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
         generation: u64,
         max_tokens: usize,
@@ -416,7 +402,7 @@ impl Services {
             return Ok(materialized);
         }
 
-        let budget_estimate = self.read_budget_estimate(session, request, generation)?;
+        let budget_estimate = self.read_budget_estimate(session, request)?;
         self.apply_read_budget_guidance(&mut materialized, budget_estimate.as_ref(), max_tokens);
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
@@ -477,14 +463,13 @@ impl Services {
 
     fn read_budget_estimate(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
-        generation: u64,
     ) -> Result<Option<ReadBudgetEstimate>> {
         let Some(indexed) = session.find_file(&request.path)? else {
             return Ok(None);
         };
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request)?;
         let target_end_line = match target.target_end_line {
             Some(end_line) => end_line,
             None => match session
@@ -554,7 +539,7 @@ impl Services {
 
     fn read_at_generation(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
         generation: u64,
         max_tokens: usize,
@@ -562,7 +547,7 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request)?;
 
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
@@ -667,22 +652,26 @@ impl Services {
                 )
             })
             .transpose()?;
-        let continuation_cursor = next_start_line.map(|next_start_line| {
-            ReadCursor {
-                generation,
-                target_start_line: target.target_start_line,
-                target_end_line: target.target_end_line,
-                next_start_line,
-                next_byte,
-                full_hash: snapshot.content_hash.clone(),
-                prefix_hash: prefix_hash.clone(),
-                policy,
-                file_size: snapshot.file_size,
-                modified_ns: snapshot.modified_ns,
-                path_hash: read_path_hash(&request.path),
-            }
-            .encode()
-        });
+        let continuation_cursor = next_start_line
+            .map(|next_start_line| {
+                seal_read_cursor(
+                    session,
+                    &request.path,
+                    policy,
+                    ReadCursor {
+                        target_start_line: target.target_start_line,
+                        target_end_line: target.target_end_line,
+                        next_start_line,
+                        next_byte,
+                        full_hash: snapshot.content_hash.clone(),
+                        prefix_hash: prefix_hash.clone(),
+                        policy,
+                        file_size: snapshot.file_size,
+                        modified_ns: snapshot.modified_ns,
+                    },
+                )
+            })
+            .transpose()?;
         let content_hash = hash(content);
         let (index_stale, indexed_hash, index_state) = if policy.is_full() {
             let live_hash = snapshot.content_hash.as_deref().unwrap_or("");

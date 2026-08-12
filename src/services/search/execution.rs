@@ -98,7 +98,17 @@ impl Services {
                 cancellation,
             );
         }
-        let offset = parse_cursor(request.cursor.as_deref(), generation)?;
+        let cursor_digest = search_cursor_digest(request, prepared, output_shape)?;
+        let offset = request
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                session
+                    .open_cursor::<SearchPosition>(cursor, "search", &cursor_digest)
+                    .map(|position| position.offset)
+            })
+            .transpose()?
+            .unwrap_or(0);
         let mut hits = self.collect_structural_search_hits(
             session,
             request,
@@ -130,7 +140,7 @@ impl Services {
 
     pub(super) fn reuse_query_receipt(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         generation: u64,
         receipt_id: &str,
         requested_predicate: &ExactQueryPredicate,
@@ -205,7 +215,7 @@ impl Services {
 
     pub(super) fn collect_structural_search_hits(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &SearchInput,
         prepared: &PreparedSearch,
         limit: usize,
@@ -493,7 +503,7 @@ impl Services {
 
     pub(super) fn hydrate_lexical_search_hits(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &SearchInput,
         prepared: &PreparedSearch,
         cancellation: &CancellationToken,
@@ -613,7 +623,8 @@ impl Services {
             SearchResponseShape {
                 all: &hits,
                 request,
-                generation,
+                generation: session,
+                cursor_digest: &search_cursor_digest(request, prepared, output_shape)?,
                 total_candidates,
                 offset,
                 consumed,
@@ -678,7 +689,17 @@ impl Services {
             meta: self.meta(
                 generation,
                 emitted_tokens,
-                has_more.then(|| make_cursor(generation, offset + consumed)),
+                has_more
+                    .then(|| {
+                        session.seal_cursor(
+                            "search",
+                            &search_cursor_digest(request, prepared, output_shape)?,
+                            SearchPosition {
+                                offset: offset + consumed,
+                            },
+                        )
+                    })
+                    .transpose()?,
             ),
         };
         receipt.apply_meta(&mut response.meta);
@@ -737,6 +758,35 @@ impl Services {
     }
 }
 
+fn search_cursor_digest(
+    request: &SearchInput,
+    prepared: &PreparedSearch,
+    output: SearchOutputShape,
+) -> Result<String> {
+    let output = match output {
+        SearchOutputShape::Full => "full",
+        SearchOutputShape::Compact => "compact",
+        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => {
+            "occurrence_excerpts"
+        }
+        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => {
+            "occurrence_coordinates"
+        }
+    };
+    request_digest(&(
+        &request.query,
+        request.kind.mode(),
+        request.kind.definition_preference().prefers_structural(),
+        request.kind.is_exhaustive(),
+        &request.include_paths,
+        &request.exclude_paths,
+        &request.focus_paths,
+        request.case_sensitive,
+        prepared.context_lines,
+        output,
+    ))
+}
+
 pub(super) fn order_search_hits(
     mut hits: Vec<CandidateSearchHit>,
     request: &SearchInput,
@@ -779,7 +829,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchSnapshot<'a> {
-    pub session: &'a IndexReadSnapshot,
+    pub session: &'a RepositoryGeneration,
     pub generation: u64,
     pub cancellation: &'a CancellationToken,
 }

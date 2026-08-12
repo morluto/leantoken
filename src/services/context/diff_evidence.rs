@@ -5,7 +5,7 @@ pub(super) enum DiffEvidenceMode {
 }
 
 pub(super) struct DiffEvidenceInput<'a> {
-    pub(super) session: &'a IndexReadSnapshot,
+    pub(super) session: &'a RepositoryGeneration,
     pub(super) request: &'a ContextRequest,
     pub(super) scope: &'a DiffScopeReceipt,
     pub(super) workflow: ContextWorkflow,

@@ -351,7 +351,7 @@ impl Services {
 
     fn context_lexical_hits(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ContextRequest,
         term: &str,
         term_regex: &regex::Regex,

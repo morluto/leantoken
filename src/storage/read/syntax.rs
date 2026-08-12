@@ -1,4 +1,41 @@
 impl ReadSession {
+    /// Reconstruct one complete file from canonical, non-overlapping chunks in
+    /// this session's pinned repository generation.
+    pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
+        let mut statement = self.conn.prepare_cached(
+            "SELECT content, start_byte, end_byte
+             FROM chunks
+             WHERE file_id = ?1
+             ORDER BY start_byte, id",
+        )?;
+        let mut rows = statement.query(params![file_id])?;
+        let mut content = String::with_capacity(expected_size);
+        let mut expected_start = 0usize;
+        while let Some(row) = rows.next()? {
+            let chunk: String = row.get(0)?;
+            let start = i64_to_usize(row.get(1)?)?;
+            let end = i64_to_usize(row.get(2)?)?;
+            if start != expected_start || end != start.saturating_add(chunk.len()) {
+                return Err(Error::OperationFailure(
+                    "indexed file chunks are not contiguous".into(),
+                ));
+            }
+            if end > expected_size {
+                return Err(Error::OperationFailure(
+                    "indexed file chunks exceed the recorded file size".into(),
+                ));
+            }
+            content.push_str(&chunk);
+            expected_start = end;
+        }
+        if content.len() != expected_size {
+            return Err(Error::OperationFailure(
+                "indexed file content does not match the recorded file size".into(),
+            ));
+        }
+        Ok(content)
+    }
+
     pub(crate) fn receipt_structural_hash_matches(
         &self,
         file_id: i64,

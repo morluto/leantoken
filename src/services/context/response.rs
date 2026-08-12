@@ -5,7 +5,7 @@ use super::super::{
     receipts::{ReceiptDecision, ReceiptEvidence},
 };
 use super::ContextPolicy;
-use super::IndexReadSnapshot;
+use super::RepositoryGeneration;
 use crate::{
     Error, Result,
     model::{ContextCoverageReceipt, ContextRequest, ContextResponse, ContextResponseProfile},
@@ -32,7 +32,7 @@ pub(super) fn effective_context_response_profile(
 }
 
 pub(super) struct ContextResponseFinalization<'a> {
-    pub(super) session: &'a IndexReadSnapshot,
+    pub(super) session: &'a RepositoryGeneration,
     pub(super) request: &'a ContextRequest,
     pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
