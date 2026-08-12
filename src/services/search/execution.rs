@@ -663,7 +663,7 @@ impl Services {
             .into_iter()
             .collect::<Vec<_>>();
         let occurrences_returned = selected.len();
-        let coverage = search_coverage(&hits, &selected);
+        let coverage = search_coverage(&hits, &selected, request.kind.mode());
         let selected = selected
             .into_iter()
             .map(|candidate| candidate.hit)

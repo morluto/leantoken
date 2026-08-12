@@ -740,7 +740,16 @@ retain the structural definition excerpt as the primary hit when channels are
 merged; merged channel and score-reason diagnostics are preserved either way.
 The response `coverage` reports `total`, current-page `returned`, and
 `truncated` counts separately for definitions, references, and text/regex
-matches. One merged hit can represent more than one channel.
+matches. One merged hit can represent more than one channel. Its
+`reference_capability` appears when the selected mode consulted the structural
+reference channel. It reports that extraction is `partial` and that zero
+structural hits are not conclusive evidence that no callers or occurrences
+exist. The advertised `identifier` and `text` fallback modes recover lexical
+evidence when a language, construct, or incomplete parse falls outside the
+structural queries. Pure text, regex, and symbol searches omit this metadata so
+their response envelope does not grow. The field describes the extraction
+mechanism without adding another repository scan or changing result membership
+and ranking.
 
 Structural symbol queries accept either a bare `name` or the canonical
 `parent.name` identity exposed by outline and search metadata. Qualified
