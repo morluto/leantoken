@@ -89,13 +89,11 @@ pub(super) struct ContextPathScorer {
     pub(super) languages: [bool; 5],
     pub(super) mcp_repository_intent: bool,
     pub(super) owner_intent: bool,
-    pub(super) call_edge_intent: bool,
 }
 
 impl ContextPathScorer {
     pub(super) fn new(terms: &[String], task: &str) -> Self {
         let primary_task = facets::primary_task_text(task);
-        let primary_lower = primary_task.to_ascii_lowercase();
         let code_token_parts = facets::code_tokens(task)
             .into_iter()
             .filter(|token| {
@@ -126,9 +124,6 @@ impl ContextPathScorer {
             ],
             mcp_repository_intent: mcp_repository_intent(&[], &primary_task),
             owner_intent: !primary_task.is_empty(),
-            call_edge_intent: ["trace", "owner", "request path", "dispatch", "caller"]
-                .iter()
-                .any(|term| primary_lower.contains(term)),
         }
     }
 
@@ -186,7 +181,7 @@ impl ContextPathScorer {
             }
         }
         if self.owner_intent {
-            score += ranking::owner_path_prior(&path, self.call_edge_intent);
+            score += ranking::owner_path_prior(&path);
         }
         score
     }

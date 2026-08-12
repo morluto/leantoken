@@ -410,15 +410,10 @@ fn concept_allocation_keeps_independent_task_evidence() {
 
 #[test]
 fn broad_allocation_reserves_exact_owner_test_and_preservation_evidence() {
-    let generic = Candidate::new(
-        "src/services/json/projection.rs",
-        1,
-        1,
-        "generic projection",
-    )
-    .concept("projection", 2.0)
-    .facet("primary_change", "projection")
-    .exact(10.0);
+    let generic = Candidate::new("docs/projection.md", 1, 1, "generic projection")
+        .concept("projection", 2.0)
+        .facet("primary_change", "projection")
+        .exact(10.0);
     let owner = Candidate::new("src/services/search.rs", 1, 1, "compact owner")
         .concept("search_compact_response", 2.0)
         .facet("primary_change", "search_compact_response")
@@ -485,6 +480,90 @@ fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
     let response = select(vec![generic, owner], &request, 1);
 
     assert_eq!(response.fragments[0].path, "src/services/search.rs");
+}
+
+#[test]
+fn broad_allocation_falls_back_to_a_supporting_owner_when_no_source_candidate_exists() {
+    let documentation = Candidate::new("README.md", 1, 1, "generic documentation")
+        .concept("docs", 2.0)
+        .facet("primary_change", "docs")
+        .exact(10.0);
+    let owner = Candidate::new("Cargo.toml", 1, 1, "feature configuration")
+        .concept("feature", 2.0)
+        .concept("configuration", 2.0)
+        .facet("primary_change", "feature")
+        .facet("primary_change", "configuration")
+        .exact(1.0);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(1);
+
+    let response = select(vec![documentation, owner], &request, 1);
+
+    assert_eq!(response.fragments[0].path, "Cargo.toml");
+}
+
+#[test]
+fn broad_allocation_pairs_generic_layout_owners_with_their_tests() {
+    let adjacent_definition = Candidate::new("context.go", 1, 1, "Context.Errors")
+        .concept("errors", 2.0)
+        .facet("primary_change", "errors")
+        .facet("exact_atom", "Context.Errors")
+        .exact(1.0);
+    let owner = Candidate::new("recovery.go", 1, 1, "recover the panic")
+        .concept("recovery", 2.0)
+        .facet("primary_change", "recovery")
+        .exact(10.0);
+    let unrelated_test = Candidate::new("benchmarks_test.go", 1, 1, "benchmark errors")
+        .concept("errors", 2.0)
+        .facet("exact_atom", "Context.Errors")
+        .exact(9.0);
+    let owner_test = Candidate::new("recovery_test.go", 1, 1, "recovery regression")
+        .concept("panic-regression", 2.0)
+        .exact(0.5);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(2);
+
+    let response = select(
+        vec![adjacent_definition, unrelated_test, owner_test, owner],
+        &request,
+        1,
+    );
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(paths, vec!["recovery.go", "recovery_test.go"]);
+}
+
+#[test]
+fn broad_allocation_uses_task_atoms_to_choose_between_generic_tests() {
+    let owner = Candidate::new("powershell_completions.go", 1, 1, "completion owner")
+        .concept("completion", 2.0)
+        .facet("primary_change", "completion")
+        .exact(10.0);
+    let generic_test = Candidate::new("bash_completions_test.go", 1, 1, "generic test")
+        .concept("completion", 2.0)
+        .exact(9.0);
+    let task_test = Candidate::new("completions_test.go", 1, 1, "os.Args test")
+        .concept("os.args", 2.0)
+        .facet("exact_atom", "os.args")
+        .exact(0.5);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(2);
+
+    let response = select(vec![generic_test, task_test, owner], &request, 1);
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec!["powershell_completions.go", "completions_test.go"]
+    );
 }
 
 #[test]
