@@ -35,14 +35,68 @@ pub(in crate::ranking) fn greedy_select(
             )
     };
     let primary_position_for = |path_class| {
-        pool.iter()
-            .position(|candidate| {
-                primary_candidate_fits(candidate, path_class)
-                    && carries_specific_primary_change(&candidate.candidate)
+        let specific_baseline = pool.iter().find(|candidate| {
+            primary_candidate_fits(candidate, path_class)
+                && carries_specific_primary_change(&candidate.candidate)
+        });
+        specific_baseline
+            .and_then(|baseline| {
+                let owner_path = pool
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        primary_candidate_fits(candidate, path_class)
+                            && carries_specific_primary_change(&candidate.candidate)
+                            && candidate.candidate.representation
+                                == baseline.candidate.representation
+                            && carries_all_facet_values(
+                                &candidate.candidate,
+                                &baseline.candidate,
+                                "primary_change",
+                            )
+                    })
+                    .max_by_key(|(position, candidate)| {
+                        (
+                            facet_value_count(&candidate.candidate, "primary_change"),
+                            std::cmp::Reverse(*position),
+                        )
+                    })
+                    .map(|(_, candidate)| candidate.candidate.path.as_str())?;
+                pool.iter().position(|candidate| {
+                    candidate.candidate.path == owner_path
+                        && primary_candidate_fits(candidate, path_class)
+                        && carries_specific_primary_change(&candidate.candidate)
+                })
             })
             .or_else(|| {
-                pool.iter().position(|candidate| {
+                let baseline = pool.iter().find(|candidate| {
                     primary_candidate_fits(candidate, path_class)
+                        && carries_facet(&candidate.candidate, "primary_change")
+                })?;
+                let owner_path = pool
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, candidate)| {
+                        primary_candidate_fits(candidate, path_class)
+                            && carries_facet(&candidate.candidate, "primary_change")
+                            && candidate.candidate.representation
+                                == baseline.candidate.representation
+                            && carries_all_facet_values(
+                                &candidate.candidate,
+                                &baseline.candidate,
+                                "primary_change",
+                            )
+                    })
+                    .max_by_key(|(position, candidate)| {
+                        (
+                            facet_value_count(&candidate.candidate, "primary_change"),
+                            std::cmp::Reverse(*position),
+                        )
+                    })
+                    .map(|(_, candidate)| candidate.candidate.path.as_str())?;
+                pool.iter().position(|candidate| {
+                    candidate.candidate.path == owner_path
+                        && primary_candidate_fits(candidate, path_class)
                         && carries_facet(&candidate.candidate, "primary_change")
                 })
             })

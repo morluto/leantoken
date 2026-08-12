@@ -464,20 +464,31 @@ fn broad_allocation_does_not_treat_surface_acronyms_as_exact_owners() {
 
 #[test]
 fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
-    let generic = Candidate::new("src/main/dispatch.rs", 1, 1, "generic adapter")
-        .concept("mcp", 2.0)
-        .facet("primary_change", "mcp")
+    let generic = Candidate::new("src/main/dispatch.rs", 1, 1, "generic projection")
+        .concept("projection", 2.0)
+        .facet("primary_change", "projection")
         .exact(10.0);
-    let owner = Candidate::new("src/services/search.rs", 1, 1, "compact search projection")
-        .concept("compact", 2.0)
+    let owner = Candidate::new("src/services/search.rs", 1, 1, "search projection")
         .concept("search", 2.0)
-        .facet("primary_change", "compact")
+        .facet("primary_change", "projection")
         .facet("primary_change", "search")
         .exact(1.0);
+    let unrelated = Candidate::new("src/compiler/parse.rs", 1, 1, "compiler facets")
+        .concept("compiler", 2.0)
+        .facet("primary_change", "compiler")
+        .facet("primary_change", "template")
+        .facet("primary_change", "transform")
+        .exact(9.0);
+    let import_surface = Candidate::new("src/lib.rs", 1, 1, "re-exported projection search")
+        .representation("import_symbol")
+        .facet("primary_change", "projection")
+        .facet("primary_change", "search")
+        .facet("primary_change", "surface")
+        .exact(9.5);
     let mut request = request_with_budget(100);
     request.max_fragments = Some(1);
 
-    let response = select(vec![generic, owner], &request, 1);
+    let response = select(vec![generic, import_surface, unrelated, owner], &request, 1);
 
     assert_eq!(response.fragments[0].path, "src/services/search.rs");
 }
@@ -563,6 +574,35 @@ fn broad_allocation_uses_task_atoms_to_choose_between_generic_tests() {
     assert_eq!(
         paths,
         vec!["powershell_completions.go", "completions_test.go"]
+    );
+}
+
+#[test]
+fn broad_allocation_does_not_pair_same_stem_tests_from_another_package() {
+    let owner = Candidate::new("packages/a/index.ts", 1, 1, "package entrypoint")
+        .concept("entrypoint", 2.0)
+        .facet("primary_change", "entrypoint")
+        .exact(10.0);
+    let unrelated_test =
+        Candidate::new("packages/b/index.test.ts", 1, 1, "other package regression")
+            .concept("entrypoint", 2.0)
+            .exact(9.0);
+    let owner_test = Candidate::new("packages/a/index.spec.ts", 1, 1, "owner package regression")
+        .concept("entrypoint", 2.0)
+        .exact(0.5);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(2);
+
+    let response = select(vec![unrelated_test, owner_test, owner], &request, 1);
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec!["packages/a/index.ts", "packages/a/index.spec.ts"]
     );
 }
 

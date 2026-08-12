@@ -74,6 +74,28 @@ pub(in crate::ranking) fn carries_specific_primary_change(candidate: &Candidate)
     })
 }
 
+pub(in crate::ranking) fn facet_value_count(candidate: &Candidate, facet: &str) -> usize {
+    let prefix = format!("{FACET_PREFIX}{facet}:");
+    candidate
+        .match_kinds
+        .iter()
+        .filter(|kind| kind.starts_with(&prefix))
+        .count()
+}
+
+pub(in crate::ranking) fn carries_all_facet_values(
+    candidate: &Candidate,
+    baseline: &Candidate,
+    facet: &str,
+) -> bool {
+    let prefix = format!("{FACET_PREFIX}{facet}:");
+    baseline
+        .match_kinds
+        .iter()
+        .filter(|kind| kind.starts_with(&prefix))
+        .all(|kind| candidate.match_kinds.contains(kind))
+}
+
 fn is_test_path(path: &str) -> bool {
     let file_name = path.rsplit('/').next().unwrap_or(path);
     let stem = file_name
@@ -81,8 +103,10 @@ fn is_test_path(path: &str) -> bool {
         .map_or(file_name, |(stem, _)| stem);
     path.starts_with("test/")
         || path.starts_with("tests/")
+        || path.starts_with("spec/")
         || path.contains("/test/")
         || path.contains("/tests/")
+        || path.contains("/spec/")
         || path.contains("/test-suite/")
         || path.starts_with("crates/test-suite/")
         || file_name.ends_with(".test.js")
@@ -94,6 +118,8 @@ fn is_test_path(path: &str) -> bool {
         || file_name.ends_with(".spec.ts")
         || file_name.ends_with(".spec.tsx")
         || matches!(stem, "test" | "tests")
+        || file_name.ends_with("_spec.rb")
+        || file_name.ends_with(".spec.rb")
         || stem.ends_with("_test")
         || stem.ends_with("_tests")
         || stem.starts_with("test_")
@@ -155,21 +181,21 @@ fn normalized_source_stem(path: &str) -> String {
 }
 
 pub(in crate::ranking) fn owner_test_path_affinity(owner: &str, test: &str) -> usize {
-    let owner_parent = owner.rsplit_once('/').map(|(parent, _)| parent);
-    let test_parent = test.rsplit_once('/').map(|(parent, _)| parent);
-    let same_parent = owner_parent
-        .zip(test_parent)
-        .is_some_and(|(owner_parent, test_parent)| owner_parent == test_parent);
+    let owner_parent = owner.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let test_parent = test.rsplit_once('/').map_or("", |(parent, _)| parent);
+    let same_parent = owner_parent == test_parent;
     let owner_stem = normalized_source_stem(owner);
     let test_stem = normalized_source_stem(test);
     let directory_module_test = same_parent
+        && (!owner_parent.is_empty())
         && owner_parent
-            .and_then(|parent| parent.rsplit('/').next())
+            .rsplit('/')
+            .next()
             .is_some_and(|parent| parent.eq_ignore_ascii_case(&test_stem));
     if owner_stem.chars().count() < 4 || test_stem.chars().count() < 4 {
         0
     } else if owner_stem == test_stem {
-        usize::from(same_parent) + 3
+        if same_parent { 4 } else { 2 }
     } else if directory_module_test {
         4
     } else if owner_stem.starts_with(&test_stem) || test_stem.starts_with(&owner_stem) {
@@ -268,6 +294,22 @@ mod tests {
             ContextPathClass::Test
         );
         assert_eq!(
+            context_path_class("spec/models/user.rb"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("packages/core/spec/widget.spec.rb"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("app/models/user_spec.rb"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("app/models/widget.spec.rb"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
             context_path_class("examples/route-separation/index.js"),
             ContextPathClass::Supporting
         );
@@ -301,7 +343,7 @@ mod tests {
     fn owner_test_affinity_is_layout_independent_and_name_specific() {
         assert_eq!(
             owner_test_path_affinity("recovery.go", "recovery_test.go"),
-            3
+            4
         );
         assert_eq!(
             owner_test_path_affinity(
@@ -324,11 +366,15 @@ mod tests {
         );
         assert_eq!(
             owner_test_path_affinity("render/json.go", "binding/json_test.go"),
-            3
+            2
         );
         assert_eq!(
             owner_test_path_affinity("render/json.go", "render/reader_test.go"),
             0
+        );
+        assert_eq!(
+            owner_test_path_affinity("packages/a/index.ts", "packages/b/index.test.ts"),
+            2
         );
     }
 }
