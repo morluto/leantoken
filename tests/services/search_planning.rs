@@ -13,7 +13,7 @@ async fn search_applies_path_filters_before_candidate_limits() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -82,7 +82,7 @@ async fn exhaustive_text_search_returns_each_occurrence_with_exact_total_and_pag
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let request = SearchRequest {
@@ -195,7 +195,7 @@ async fn exhaustive_long_identifier_plan_matches_full_scan_across_case_fold_vari
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -278,7 +278,7 @@ async fn exhaustive_identifier_with_over_bound_case_variants_keeps_full_scan() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -332,7 +332,7 @@ async fn compact_search_preserves_ranked_hits_and_removes_source_metadata() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let request = SearchRequest {
@@ -416,7 +416,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let request = SearchRequest {
@@ -559,7 +559,7 @@ async fn identifier_search_merges_definition_channels_and_reports_coverage() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -615,7 +615,7 @@ async fn exhaustive_regex_search_counts_repeated_matches_in_one_chunk() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let response = services
@@ -668,7 +668,7 @@ async fn regex_candidate_plans_match_full_scan_and_report_fallback_selection() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -813,7 +813,7 @@ async fn regex_planner_reports_privacy_safe_fallback_reasons_and_budgets() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -900,7 +900,7 @@ async fn regex_candidate_plan_preserves_candidate_limit_errors() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let request = SearchRequest {
@@ -950,7 +950,7 @@ async fn regex_full_scan_reports_the_path_blocking_the_per_file_chunk_bound() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let request = SearchRequest {
@@ -1000,7 +1000,7 @@ async fn regex_candidate_plan_applies_path_scope_before_candidate_limit() {
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -1091,7 +1091,7 @@ async fn regex_candidate_plan_bypasses_only_the_full_scan_file_bound() {
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 

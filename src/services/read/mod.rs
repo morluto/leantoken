@@ -216,26 +216,12 @@ impl Services {
         let operation = TokenAccountingOperation::Read;
         let request = self.observe_service_result(operation, parse_read_request(request))?;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        if let Some(consistency) = consistency {
-            self.observe_service_result(
-                operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
-            )?;
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor

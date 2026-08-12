@@ -411,7 +411,7 @@ impl Cli {
     #[must_use]
     pub fn app_request(&self) -> AppRequest {
         match &self.command {
-            Commands::Index { rebuild } => AppRequest::Index {
+            Commands::Refresh { rebuild } => AppRequest::Refresh {
                 mode: IndexingMode::from_rebuild_flag(*rebuild),
             },
             Commands::Status => AppRequest::Status,
@@ -423,44 +423,36 @@ impl Cli {
                     snapshot,
                 }),
             Commands::Files(args) => {
-                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
                 let request: FilesRequest = args.clone().into();
                 AppRequest::Files {
                     request,
-                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::Search(args) => {
-                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
                 let projection = args.projection;
                 let request: SearchRequest = args.clone().into();
                 AppRequest::Search {
                     request,
-                    consistency,
                     max_response_tokens,
                     projection,
                 }
             }
             Commands::Outline(args) => {
-                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
                 let request: OutlineRequest = args.clone().into();
                 AppRequest::Outline {
                     request,
-                    consistency,
                     max_response_tokens,
                 }
             }
             Commands::Read(args) => {
-                let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
                 let request: ReadRequest = args.clone().into();
                 AppRequest::Read {
                     request,
-                    consistency,
                     max_response_tokens,
                 }
             }
@@ -529,7 +521,7 @@ impl Cli {
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum AppRequest {
-    Index {
+    Refresh {
         mode: IndexingMode,
     },
     Status,
@@ -540,23 +532,19 @@ pub enum AppRequest {
     },
     Files {
         request: FilesRequest,
-        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Search {
         request: SearchRequest,
-        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
         projection: SearchProjectionArg,
     },
     Outline {
         request: OutlineRequest,
-        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Read {
         request: ReadRequest,
-        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     History {
@@ -609,9 +597,9 @@ pub struct ContextAppRequest {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
-    /// Index the repository.
-    Index {
-        /// Rebuild the index from scratch.
+    /// Acquire repository files and atomically publish a generation.
+    Refresh {
+        /// Rebuild every derived projection from scratch.
         #[arg(long)]
         rebuild: bool,
     },

@@ -27,7 +27,7 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -278,7 +278,7 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -389,7 +389,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -762,7 +762,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let ordinary_target = |symbol: &str| DiffSymbolsTarget {
@@ -992,7 +992,7 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 

@@ -1656,52 +1656,37 @@ fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
 }
 
 #[test]
-fn retrieval_tools_expose_consistency_boundary() {
-    for tool in LeanTokenMcp::tool_router()
-        .list_all()
-        .into_iter()
-        .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
+fn core_retrieval_tools_are_generation_backed() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    for tool in tools
+        .iter()
+        .filter(|tool| matches!(tool.name.as_ref(), "files" | "search" | "outline" | "read"))
     {
         let schema = serde_json::Value::Object((*tool.input_schema).clone());
         let consistency = schema
             .pointer("/properties/consistency")
             .or_else(|| schema.pointer("/$defs/FilesMcpOperation/oneOf/0/properties/consistency"))
-            .or_else(|| schema.pointer("/$defs/SearchMcpOperation/oneOf/0/properties/consistency"))
-            .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
-        assert_eq!(
-            consistency.get("default"),
-            Some(&serde_json::json!("indexed_generation"))
-        );
-        assert_eq!(
-            consistency.get("enum"),
-            Some(&serde_json::json!([
-                "indexed_generation",
-                "reconcile_working_tree"
-            ]))
-        );
+            .or_else(|| schema.pointer("/$defs/SearchMcpOperation/oneOf/0/properties/consistency"));
         assert!(
-            consistency
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|description| {
-                    description.contains("reconcile_working_tree") && description.contains("edits")
-                }),
-            "{}.consistency must tell agents when to synchronize",
+            consistency.is_none(),
+            "{}.consistency would make canonical retrieval ambiguous",
             tool.name
         );
     }
-    let history = LeanTokenMcp::tool_router()
-        .list_all()
-        .into_iter()
-        .find(|tool| tool.name == "history")
-        .expect("history tool");
-    assert!(
-        history
-            .input_schema
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .is_none_or(|properties| !properties.contains_key("consistency"))
-    );
+
+    for name in ["context", "receipt_rebase"] {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .unwrap_or_else(|| panic!("{name} tool"));
+        assert!(
+            tool.input_schema
+                .get("properties")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|properties| properties.contains_key("consistency")),
+            "{name} retains its orchestration-specific consistency contract until it leaves the kernel"
+        );
+    }
 }
 
 #[test]
@@ -1859,7 +1844,7 @@ fn assert_read_target_shapes() {
         "target": {"kind": "lines", "start": 10, "end": 20}
     }))
     .expect("canonical line-range target");
-    let (request, _, _, _) = request.into_parts();
+    let (request, _, _) = request.into_parts();
     assert_eq!(request.start_line, Some(10));
     assert_eq!(request.end_line, Some(20));
     for target in [
@@ -1880,7 +1865,7 @@ fn assert_read_target_shapes() {
     }))
     .expect("Markdown heading target");
     assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
-    let (heading, _, _, _) = heading.into_parts();
+    let (heading, _, _) = heading.into_parts();
     assert_eq!(heading.heading.as_deref(), Some("Installation"));
     assert_eq!(heading.heading_occurrence, Some(2));
     assert!(heading.symbol.is_none());
@@ -1899,7 +1884,7 @@ fn assert_read_target_shapes() {
         "target": {"kind": "continuation", "cursor": "opaque"}
     }))
     .expect("continuation target");
-    let (continuation, _, _, _) = continuation.into_parts();
+    let (continuation, _, _) = continuation.into_parts();
     assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
     assert!(continuation.symbol.is_none());
     assert!(continuation.heading.is_none());
@@ -2046,7 +2031,7 @@ fn receipt_id_maps_to_the_service_request() {
         "target": {"kind": "lines", "start": 1, "end": 2}
     }))
     .expect("read request with receipt");
-    let (request, _, _, _) = request.into_parts();
+    let (request, _, _) = request.into_parts();
     assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
 }
 
@@ -2248,7 +2233,7 @@ fn outline_cursor_maps_to_the_service_request() {
         "cursor": "12:outline:34:0000000000000000"
     }))
     .expect("outline request");
-    let (request, _, _, _, _) = request.into_parts();
+    let (request, _, _, _) = request.into_parts();
 
     assert_eq!(
         request.cursor.as_deref(),
@@ -2262,28 +2247,28 @@ fn compact_projections_map_to_service_requests() {
         "operation": {"kind": "tree"}
     }))
     .expect("default files projection");
-    let (_, projection, _, _, _) = files.into_parts();
+    let (_, projection, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Full);
 
     let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
         "operation": {"kind": "find", "query": "service", "projection": "paths"}
     }))
     .expect("path projection");
-    let (_, projection, _, _, _) = files.into_parts();
+    let (_, projection, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Paths);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "auto", "query": "Services"}
     }))
     .expect("default search projection");
-    let (_, output, _, _, _) = search.into_parts();
+    let (_, output, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Full);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "auto", "query": "Services", "projection": "grouped"}
     }))
     .expect("grouped projection");
-    let (_, output, _, _, _) = search.into_parts();
+    let (_, output, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Grouped);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
@@ -2293,7 +2278,7 @@ fn compact_projections_map_to_service_requests() {
     search
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("valid compact projection");
-    let (_, output, _, _, _) = search.into_parts();
+    let (_, output, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Compact);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
@@ -2308,7 +2293,7 @@ fn compact_projections_map_to_service_requests() {
     search
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("valid occurrence projection");
-    let (_, output, _, _, _) = search.into_parts();
+    let (_, output, _, _) = search.into_parts();
     assert_eq!(
         output,
         SearchMcpOutput::Occurrences(SearchOccurrenceOutput::Coordinates)
@@ -2355,7 +2340,7 @@ fn compact_projections_map_to_service_requests() {
         "paths": ["src/services.rs"]
     }))
     .expect("default outline projection");
-    let (_, projection, _, _, _) = outline.into_parts();
+    let (_, projection, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Full);
 
     let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
@@ -2363,7 +2348,7 @@ fn compact_projections_map_to_service_requests() {
         "projection": "signatures"
     }))
     .expect("signature projection");
-    let (_, projection, _, _, _) = outline.into_parts();
+    let (_, projection, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Signatures);
 }
 
@@ -2440,7 +2425,7 @@ fn search_query_preserves_significant_whitespace() {
         "operation": {"kind": "text", "query": "  exact text  "}
     }))
     .expect("whitespace-surrounded search query");
-    let (request, _, _, _, _) = request.into_parts();
+    let (request, _, _, _) = request.into_parts();
 
     assert_eq!(request.query, "  exact text  ");
 }

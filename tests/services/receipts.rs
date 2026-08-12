@@ -449,7 +449,7 @@ async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
     )
     .expect("update fixture");
     let indexed = services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("reindex");
     assert!(indexed.repository_generation > receipt_generation);
@@ -487,7 +487,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
 
@@ -542,7 +542,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
         .expect("unrelated edit");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish edits");
     let current_generation = services
@@ -709,7 +709,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
     let source_receipt = append_line_receipt(&services, "branch.rs", None).await;
@@ -741,7 +741,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database.clone())).expect("reopen config");
     let services = Services::open(config).expect("reopened services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index branch switch");
     let response = services
@@ -765,7 +765,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database)).expect("third config");
     let services = Services::open(config).expect("third services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index restored branch");
     let error = services
@@ -787,7 +787,7 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
     let request = OutlineRequest {
@@ -811,7 +811,7 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
     )
     .expect("change body without changing the outline signature");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish body edit");
 

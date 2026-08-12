@@ -93,7 +93,7 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
     .expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index working tree");
     let mut request = context_limit_request(500);
@@ -229,7 +229,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
         Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index working tree");
     let response = services
@@ -445,7 +445,7 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
         Config::discover(root.path(), Some(database.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index head");
     let mut request = context_limit_request(2_000);

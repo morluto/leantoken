@@ -414,7 +414,7 @@ async fn text_search_reports_enclosing_symbols_across_languages() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -470,7 +470,7 @@ async fn text_search_preserves_multiline_matches_without_a_single_matching_line(
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -569,7 +569,7 @@ async fn case_insensitive_search_uses_the_verifier_unicode_case_folding() {
     )
     .expect("write plain-text Unicode fixture");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index plain-text Unicode fixture");
     let context = services

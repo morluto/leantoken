@@ -330,7 +330,7 @@ async fn fixture() -> AnyResult<(tempfile::TempDir, Services)> {
         Some(temporary.path().join("cache/index.sqlite")),
     )?;
     let services = Services::open(config)?;
-    services.index(leantoken::IndexingMode::Reconcile).await?;
+    services.refresh(leantoken::IndexingMode::Reconcile).await?;
     Ok((temporary, services))
 }
 

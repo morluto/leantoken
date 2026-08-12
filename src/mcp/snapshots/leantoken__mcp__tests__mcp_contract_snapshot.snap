@@ -1,6 +1,6 @@
 ---
 source: src/mcp/tests.rs
-assertion_line: 401
+assertion_line: 412
 expression: mcp_contract()
 ---
 {
@@ -543,15 +543,6 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -617,15 +608,6 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -679,15 +661,6 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -1562,15 +1535,6 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "consistency": {
-            "default": "indexed_generation",
-            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
-            "enum": [
-              "indexed_generation",
-              "reconcile_working_tree"
-            ],
-            "type": "string"
-          },
           "cursor": {
             "default": null,
             "description": "Opaque cursor from a result-limited outline response.",
@@ -1826,15 +1790,6 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "consistency": {
-            "default": "indexed_generation",
-            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
-            "enum": [
-              "indexed_generation",
-              "reconcile_working_tree"
-            ],
-            "type": "string"
-          },
           "delta": {
             "default": false,
             "description": "Record this target and prefer a cheaper follow-up. Without `expected_hash`,\nselect the latest compatible base for this exact target.",
@@ -2081,15 +2036,6 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2227,15 +2173,6 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
-                  },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,
@@ -2375,15 +2312,6 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2521,15 +2449,6 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
-                  },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,
@@ -2669,15 +2588,6 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
-                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2815,15 +2725,6 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
-                  },
-                  "consistency": {
-                    "default": "indexed_generation",
-                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
-                    "enum": [
-                      "indexed_generation",
-                      "reconcile_working_tree"
-                    ],
-                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,

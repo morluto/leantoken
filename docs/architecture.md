@@ -866,7 +866,7 @@ receive caller-owned cancellation and are joined during shutdown.
 Each `Services`/`Indexer` instance can own one Rayon worker pool sized from that
 instance's `max_index_workers`. MCP background indexing defaults to one worker
 so protocol handling and sibling agents retain CPU capacity; an explicit
-`--max-index-workers` value is preserved. Direct `index` commands retain the
+`--max-index-workers` value is preserved. Direct `refresh` commands retain the
 normal bounded default. The pool is built lazily on the first non-empty
 file preparation and reused afterward. Read-only followers therefore allocate
 no indexing threads, while a process that becomes leader retains its configured

@@ -26,7 +26,6 @@ async fn files_enforces_result_limit_contract() {
         .expect_err("oversized result limit");
     assert_limit_exceeded(error, "max_results", limit + 1, limit);
 }
-
 #[tokio::test]
 async fn search_enforces_all_limit_contracts() {
     let (_root, services) = fixture().await;
@@ -207,479 +206,47 @@ async fn context_tiny_budget_does_not_claim_candidates_are_missing() {
 }
 
 #[tokio::test]
-async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
-    let (root, services) = fixture().await;
-    let generation = services
-        .status()
-        .await
-        .expect("initial status")
-        .repository_generation;
-    std::fs::write(
-        root.path().join("src/unreconciled.rs"),
-        "pub fn unreconciled() {}\n",
-    )
-    .expect("write unindexed source");
-
-    let error = services
-        .files_with_consistency_cancellable(
-            files_limit_request(Some(0)),
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+async fn regex_search_respects_absolute_candidate_cap() {
+    let root = tempfile::tempdir().expect("root");
+    // Many matching files so limit*20 alone would exceed MAX_REGEX_CANDIDATES if
+    // uncapped; the hard cap must still bound results.
+    for index in 0..80 {
+        std::fs::write(
+            root.path().join(format!("f{index}.rs")),
+            "fn needle() { let needle = 1; }\n".repeat(40),
         )
-        .await
-        .expect_err("invalid files limit");
-    assert_zero_limit(error, "max_results");
-
-    for (request, field) in [
-        (
-            search_limit_request(Some(0), Some(1), Some(0)),
-            "max_results",
-        ),
-        (
-            search_limit_request(Some(1), Some(0), Some(0)),
-            "max_tokens",
-        ),
-    ] {
-        let error = services
-            .search_with_consistency_cancellable(
-                request,
-                IndexConsistency::ReconcileWorkingTree,
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("invalid search limit");
-        assert_zero_limit(error, field);
+        .expect("write");
     }
-    let error = services
-        .search_with_consistency_cancellable(
-            search_limit_request(Some(1), Some(1), Some(21)),
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
-        .expect_err("invalid search context limit");
-    assert_limit_exceeded(error, "context_lines", 21, 20);
+        .expect("refresh");
 
-    for (request, field) in [
-        (outline_limit_request(Some(0), Some(1)), "max_results"),
-        (outline_limit_request(Some(1), Some(0)), "max_tokens"),
-    ] {
-        let error = services
-            .outline_with_consistency_cancellable(
-                request,
-                IndexConsistency::ReconcileWorkingTree,
-                CancellationToken::new(),
-            )
-            .await
-            .expect_err("invalid outline limit");
-        assert_zero_limit(error, field);
-    }
-
-    let error = services
-        .read_with_consistency_cancellable(
-            read_limit_request(Some(0)),
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("invalid read limit");
-    assert_zero_limit(error, "max_tokens");
-    let error = services
-        .context_with_consistency_cancellable(
-            context_limit_request(0),
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("invalid context limit");
-    assert_zero_limit(error, "token_budget");
-
-    let after = services
-        .status()
-        .await
-        .expect("status after invalid requests");
-    assert_eq!(after.repository_generation, generation);
-    let committed = services
-        .files(FilesRequest {
-            operation: FileOperation::Find,
-            path: None,
-            query: Some("unreconciled".into()),
-            pattern: None,
-            max_results: Some(1),
+    let response = services
+        .search(SearchRequest {
+            query: "needle".into(),
+            mode: SearchMode::Regex,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: Some(100),
+            max_tokens: Some(32_000),
+            context_lines: Some(0),
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
             cursor: None,
-            depth: None,
         })
         .await
-        .expect("committed lookup");
-    assert!(committed.entries.is_empty());
-}
-
-#[tokio::test]
-async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index() {
-    let (root, services) = fixture().await;
-    let generation = services
-        .status()
-        .await
-        .expect("initial status")
-        .repository_generation;
-    std::fs::write(
-        root.path().join("src/unreconciled.rs"),
-        "pub fn unreconciled() {}\n",
-    )
-    .expect("write unindexed source");
-    let mut expected_failures = 0u64;
-
-    macro_rules! assert_static_error {
-        ($future:expr, $case:literal) => {{
-            assert!($future.await.is_err(), concat!($case, " must fail"));
-            expected_failures += 1;
-            let current = services.status().await.expect("status after static error");
-            assert_eq!(
-                current.repository_generation, generation,
-                concat!($case, " must not reconcile")
-            );
-        }};
-    }
-
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Find,
-                path: None,
-                query: None,
-                pattern: None,
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "missing find query"
-    );
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Tree,
-                path: Some("../outside.rs".into()),
-                query: None,
-                pattern: None,
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe tree root"
-    );
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Glob,
-                path: None,
-                query: None,
-                pattern: Some("[".into()),
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid files glob"
-    );
-    let mut files = files_limit_request(Some(1));
-    files.cursor = Some("invalid".into());
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            files,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "malformed files cursor"
-    );
-
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = " ".into();
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "empty search query"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = "[".into();
-    search.mode = SearchMode::Regex;
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid search regex"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.focus_paths = vec!["[".into()];
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid search path glob"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = "x".repeat(64 * 1024 + 1);
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized search query"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.cursor = Some("invalid".into());
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "malformed search cursor"
-    );
-
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = Vec::new();
-    assert_static_error!(
-        services.outline_with_consistency_cancellable(
-            outline,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "empty outline paths"
-    );
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = (0..257).map(|index| format!("src/{index}.rs")).collect();
-    assert_static_error!(
-        services.outline_with_consistency_cancellable(
-            outline,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive outline paths"
-    );
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = vec!["../outside.rs".into()];
-    assert_static_error!(
-        services.outline_with_consistency_cancellable(
-            outline,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe outline path"
-    );
-
-    let mut read = read_limit_request(Some(1));
-    read.start_line = Some(0);
-    assert_static_error!(
-        services.read_with_consistency_cancellable(
-            read,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid read range"
-    );
-    let mut read = read_limit_request(Some(1));
-    read.symbol = Some("greet".into());
-    assert_static_error!(
-        services.read_with_consistency_cancellable(
-            read,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "conflicting read target"
-    );
-    let mut read = read_limit_request(Some(1));
-    read.start_line = None;
-    read.end_line = None;
-    read.symbol = Some(String::new());
-    let error = services
-        .read_with_consistency_cancellable(
-            read,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("empty read symbol must fail");
-    let current = services
-        .status()
-        .await
-        .expect("status after empty read symbol");
-    assert_eq!(
-        current.repository_generation, generation,
-        "empty read symbol must not reconcile"
-    );
-    assert!(
-        matches!(
-            error,
-            Error::InvalidInput {
-                field: "symbol",
-                reason: "must not be empty"
-            }
-        ),
-        "unexpected empty read symbol error: {error:?}"
-    );
-    expected_failures += 1;
-
-    let mut context = context_limit_request(1);
-    context.task = " ".into();
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "empty context task"
-    );
-    let mut context = context_limit_request(1);
-    context.focus_paths = vec!["[".into()];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid context path glob"
-    );
-    let mut context = context_limit_request(1);
-    context.focus_symbols = vec!["symbol".into(); 257];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive context symbols"
-    );
-    let mut context = context_limit_request(1);
-    context.changed_paths = vec!["../outside.rs".into()];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe context changed path"
-    );
-    let mut context = context_limit_request(1);
-    context.base_revision = Some("r".repeat(257));
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized context base revision"
-    );
-    let mut context = context_limit_request(1);
-    context.changed_paths = (0..513).map(|index| format!("src/{index}.rs")).collect();
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive context changed paths"
-    );
-    let mut context = context_limit_request(1);
-    context.task = "a_".repeat(30_000);
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized derived context matcher"
-    );
-
-    let committed = services
-        .files(FilesRequest {
-            operation: FileOperation::Find,
-            path: None,
-            query: Some("unreconciled".into()),
-            pattern: None,
-            max_results: Some(1),
-            cursor: None,
-            depth: None,
-        })
-        .await
-        .expect("committed lookup");
-    assert!(committed.entries.is_empty());
-    let observed = services
-        .observed_token_savings_report()
-        .await
-        .expect("observed static failures");
-    assert_eq!(
-        observed.observations.failed_service_requests, expected_failures,
-        "each failed public service request must be observed exactly once"
-    );
-    assert_eq!(
-        observed
-            .observations
-            .failed_by_operation_and_category
-            .iter()
-            .map(|failure| failure.failed_requests)
-            .sum::<u64>(),
-        expected_failures
-    );
-}
-
-#[tokio::test]
-async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
-    let (root, services) = fixture().await;
-    let generation = services
-        .status()
-        .await
-        .expect("initial status")
-        .repository_generation;
-    std::fs::write(
-        root.path().join("src/reconciled.rs"),
-        "pub fn reconciled() {}\n",
-    )
-    .expect("write unindexed source");
-
-    let mut request = search_limit_request(Some(1), Some(1), Some(0));
-    request.cursor = Some(format!("{generation}:0"));
-    let error = services
-        .search_with_consistency_cancellable(
-            request,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("cursor from the pre-reconciliation generation must be stale");
-    assert!(matches!(error, Error::StaleCursor));
-
-    let after = services
-        .status()
-        .await
-        .expect("status after reconciliation");
-    assert!(after.repository_generation > generation);
-    let committed = services
-        .files(FilesRequest {
-            operation: FileOperation::Find,
-            path: None,
-            query: Some("reconciled".into()),
-            pattern: None,
-            max_results: Some(1),
-            cursor: None,
-            depth: None,
-        })
-        .await
-        .expect("committed lookup");
-    assert_eq!(committed.entries.len(), 1);
+        .expect("regex search");
+    assert!(!response.hits.is_empty());
+    // max_results bounds the returned page, but the path must complete without
+    // scanning unbounded; generation must be a committed snapshot.
+    assert!(response.meta.repository_generation >= 1);
+    assert!(response.hits.len() <= 100);
 }

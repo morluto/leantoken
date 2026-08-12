@@ -2,31 +2,32 @@ use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
 
 impl Services {
-    pub async fn index(&self, mode: IndexingMode) -> Result<IndexResponse> {
-        self.index_report(mode)
+    /// Acquire repository files and atomically publish one new generation.
+    pub async fn refresh(&self, mode: IndexingMode) -> Result<IndexResponse> {
+        self.refresh_report(mode)
             .await
             .map(IndexReport::into_response)
     }
 
-    /// Reconcile repository files and include bounded preparation skip reasons.
-    pub async fn index_report(&self, mode: IndexingMode) -> Result<IndexReport> {
-        self.index_cancellable_report(mode, CancellationToken::new())
+    /// Refresh the repository and include bounded preparation skip reasons.
+    pub async fn refresh_report(&self, mode: IndexingMode) -> Result<IndexReport> {
+        self.refresh_cancellable_report(mode, CancellationToken::new())
             .await
     }
 
-    /// Reconcile repository files while honoring caller-owned cancellation.
-    pub async fn index_cancellable(
+    /// Refresh the repository while honoring caller-owned cancellation.
+    pub async fn refresh_cancellable(
         &self,
         mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexResponse> {
-        self.index_cancellable_report(mode, cancellation)
+        self.refresh_cancellable_report(mode, cancellation)
             .await
             .map(IndexReport::into_response)
     }
 
-    /// Reconcile with cancellation and include bounded preparation skip reasons.
-    pub async fn index_cancellable_report(
+    /// Refresh with cancellation and include bounded preparation skip reasons.
+    pub async fn refresh_cancellable_report(
         &self,
         mode: IndexingMode,
         cancellation: CancellationToken,
@@ -44,56 +45,6 @@ impl Services {
             let result = this
                 .indexer
                 .reconcile_cancellable_report(mode, &cancellation);
-            operation.release()?;
-            result
-        })
-        .await?
-    }
-
-    /// Reconcile watcher-reported paths, falling back internally when a
-    /// repository-wide scan is required for correctness.
-    pub async fn index_paths(&self, paths: Vec<String>) -> Result<IndexResponse> {
-        self.index_paths_report(paths)
-            .await
-            .map(IndexReport::into_response)
-    }
-
-    /// Reconcile watcher paths and include bounded preparation skip reasons.
-    pub async fn index_paths_report(&self, paths: Vec<String>) -> Result<IndexReport> {
-        self.index_paths_cancellable_report(paths, CancellationToken::new())
-            .await
-    }
-
-    /// Reconcile watcher-reported paths while honoring caller-owned cancellation.
-    pub async fn index_paths_cancellable(
-        &self,
-        paths: Vec<String>,
-        cancellation: CancellationToken,
-    ) -> Result<IndexResponse> {
-        self.index_paths_cancellable_report(paths, cancellation)
-            .await
-            .map(IndexReport::into_response)
-    }
-
-    /// Reconcile watcher paths with cancellation and preparation skip reasons.
-    pub async fn index_paths_cancellable_report(
-        &self,
-        paths: Vec<String>,
-        cancellation: CancellationToken,
-    ) -> Result<IndexReport> {
-        let this = self.clone();
-        let active_reconciliations = Arc::clone(&self.active_reconciliations);
-        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
-        active_reconciliations.fetch_add(1, Ordering::AcqRel);
-        tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation {
-                count: active_reconciliations,
-                changed: reconciliation_changed,
-            };
-            let operation = this.coordination.acquire_operation(&cancellation)?;
-            let result = this
-                .indexer
-                .reconcile_paths_cancellable_report(&paths, &cancellation);
             operation.release()?;
             result
         })

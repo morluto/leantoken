@@ -109,22 +109,6 @@ impl Services {
         )?)
     }
 
-    async fn apply_search_consistency(
-        &self,
-        consistency: Option<IndexConsistency>,
-        deadline: Option<tokio::time::Instant>,
-        cancellation: &CancellationToken,
-    ) -> Result<()> {
-        let Some(consistency) = consistency else {
-            return Ok(());
-        };
-        let operation = TokenAccountingOperation::Search;
-        let consistency_result = self
-            .apply_consistency_with_initial_deadline(consistency, cancellation.clone(), deadline)
-            .await;
-        self.observe_service_result(operation, consistency_result)
-    }
-
     /// Search indexed lexical and structural evidence.
     pub async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
         self.search_with_options(request, ServiceCallOptions::new())
@@ -144,33 +128,14 @@ impl Services {
         .await
     }
 
-    /// Search after applying a cancellable index consistency boundary.
-    pub async fn search_with_consistency_cancellable(
+    pub async fn search_with_options_cancellable(
         &self,
         request: SearchRequest,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<SearchResponse> {
-        self.search_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Search under consistency and serialized-response controls.
-    pub async fn search_with_options_consistency_cancellable(
-        &self,
-        request: SearchRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.search_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.search_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     pub async fn search_cancellable(
@@ -192,7 +157,7 @@ impl Services {
     ) -> Result<SearchResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -201,12 +166,6 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
-        self.apply_search_consistency(
-            consistency,
-            options.initial_reconciliation_deadline(),
-            &cancellation,
-        )
-        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -246,19 +205,14 @@ impl Services {
         .await
     }
 
-    /// Search with source-free ranked hits after applying a consistency boundary.
-    pub async fn search_compact_with_options_consistency_cancellable(
+    pub async fn search_compact_with_options_cancellable(
         &self,
         request: SearchRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchCompactResponse> {
-        self.search_compact_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.search_compact_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     async fn search_compact_execute(
@@ -268,7 +222,7 @@ impl Services {
     ) -> Result<SearchCompactResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -277,12 +231,6 @@ impl Services {
         let output_shape = SearchOutputShape::Compact;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
-        self.apply_search_consistency(
-            consistency,
-            options.initial_reconciliation_deadline(),
-            &cancellation,
-        )
-        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -338,19 +286,14 @@ impl Services {
         .await
     }
 
-    /// Search with grouped output after applying the requested consistency boundary.
-    pub async fn search_grouped_with_options_consistency_cancellable(
+    pub async fn search_grouped_with_options_cancellable(
         &self,
         request: SearchRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchGroupedResponse> {
-        self.search_grouped_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.search_grouped_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     async fn search_grouped_execute(
@@ -360,7 +303,7 @@ impl Services {
     ) -> Result<SearchGroupedResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -369,12 +312,6 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
-        self.apply_search_consistency(
-            consistency,
-            options.initial_reconciliation_deadline(),
-            &cancellation,
-        )
-        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -442,19 +379,17 @@ impl Services {
         .await
     }
 
-    /// Search grouped occurrences after applying the requested consistency boundary.
-    pub async fn search_occurrences_with_options_consistency_cancellable(
+    pub async fn search_occurrences_with_options_cancellable(
         &self,
         request: SearchRequest,
         output: SearchOccurrenceOutput,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchOccurrencesResponse> {
         self.search_occurrences_execute(
             request,
             output,
-            RetrievalExecution::consistent(consistency, options, cancellation),
+            RetrievalExecution::direct(options, cancellation),
         )
         .await
     }
@@ -467,7 +402,7 @@ impl Services {
     ) -> Result<SearchOccurrencesResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -476,12 +411,6 @@ impl Services {
         let output_shape = SearchOutputShape::OccurrenceGroups(output);
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
-        self.apply_search_consistency(
-            consistency,
-            options.initial_reconciliation_deadline(),
-            &cancellation,
-        )
-        .await?;
         let this = self.clone();
         let result = self
             .blocking_executor

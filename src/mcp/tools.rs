@@ -24,7 +24,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -39,21 +39,11 @@ impl LeanTokenMcp {
                 async move {
                     match projection {
                         FilesMcpProjection::Full => services
-                            .files_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .files_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                         FilesMcpProjection::Paths => services
-                            .files_paths_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .files_paths_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                     }
@@ -85,7 +75,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (request, output, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, output, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -100,37 +90,21 @@ impl LeanTokenMcp {
                 async move {
                     match output {
                         SearchMcpOutput::Full => services
-                            .search_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .search_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Compact => services
-                            .search_compact_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .search_compact_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Grouped => services
-                            .search_grouped_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .search_grouped_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Occurrences(output) => services
-                            .search_occurrences_with_options_consistency_cancellable(
+                            .search_occurrences_with_options_cancellable(
                                 request,
                                 output,
-                                consistency,
                                 options,
                                 cancellation,
                             )
@@ -165,7 +139,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens;
-        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, projection, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -180,18 +154,12 @@ impl LeanTokenMcp {
                 async move {
                     match projection {
                         OutlineMcpProjection::Full => services
-                            .outline_with_options_consistency_cancellable(
-                                request,
-                                consistency,
-                                options,
-                                cancellation,
-                            )
+                            .outline_with_options_cancellable(request, options, cancellation)
                             .await
                             .and_then(serialized_response),
                         OutlineMcpProjection::Signatures => services
-                            .outline_signatures_with_options_consistency_cancellable(
+                            .outline_signatures_with_options_cancellable(
                                 request,
-                                consistency,
                                 options,
                                 cancellation,
                             )
@@ -226,7 +194,7 @@ impl LeanTokenMcp {
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens;
-        let (request, consistency, options, expected_repository_id) = req.into_parts();
+        let (request, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -240,12 +208,7 @@ impl LeanTokenMcp {
                 let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     services
-                        .read_with_options_consistency_cancellable(
-                            request,
-                            consistency,
-                            options,
-                            cancellation,
-                        )
+                        .read_with_options_cancellable(request, options, cancellation)
                         .await
                 }
             },

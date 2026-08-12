@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use leantoken::{
     Config, ContextFocusCapacityBlocker, ContextFocusSuppressionBoundary, ContextRequest,
     ContextRequiredEvidence, ContextResponseProfile, ContextSignalPolicy, ContextWorkflow,
@@ -67,14 +65,13 @@ async fn fixture() -> (tempfile::TempDir, Services) {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     (root, services)
 }
 
 mod budgets;
-mod consistency;
 mod context_planning;
 mod context_regressions;
 mod context_signals;
@@ -289,7 +286,7 @@ async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Servi
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index source");
     (root, services)

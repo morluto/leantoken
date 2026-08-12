@@ -53,10 +53,6 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256))]
     pub(in crate::mcp) cursor: Option<String>,
-    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
-    #[serde(default)]
-    #[schemars(schema_with = "index_consistency_schema")]
-    pub(in crate::mcp) consistency: IndexConsistency,
     /// Response shape: `full` definitions (default) or compact `signatures`.
     #[serde(default)]
     pub(in crate::mcp) projection: OutlineMcpProjection,
@@ -78,7 +74,6 @@ impl OutlineMcpRequest {
     ) -> (
         OutlineRequest,
         OutlineMcpProjection,
-        IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
@@ -97,7 +92,6 @@ impl OutlineMcpRequest {
                 cursor: self.cursor,
             },
             self.projection,
-            self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )

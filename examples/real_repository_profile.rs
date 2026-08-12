@@ -1119,7 +1119,7 @@ mod tests {
         );
         let services = Services::open(config).expect("services");
         services
-            .index(leantoken::IndexingMode::Reconcile)
+            .refresh(leantoken::IndexingMode::Reconcile)
             .await
             .expect("index");
 

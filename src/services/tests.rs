@@ -72,23 +72,11 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("initial index");
     services.reconciliation.reset_diagnostics();
     (root, services)
-}
-
-fn root_files_request() -> FilesRequest {
-    FilesRequest {
-        operation: FileOperation::Tree,
-        path: None,
-        query: None,
-        pattern: None,
-        max_results: Some(10),
-        cursor: None,
-        depth: Some(0),
-    }
 }
 
 #[tokio::test]
@@ -567,83 +555,6 @@ async fn caller_after_a_cancelled_waiting_wave_uses_a_fresh_wave() {
 }
 
 #[tokio::test]
-async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval() {
-    let root = tempfile::tempdir().expect("root");
-    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-    let held_operation = services
-        .coordination
-        .acquire_operation(&CancellationToken::new())
-        .expect("hold operation lock");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-    let call_services = services.clone();
-    let call = tokio::spawn(async move {
-        call_services
-            .files_with_options_consistency_cancellable(
-                root_files_request(),
-                IndexConsistency::ReconcileWorkingTree,
-                ServiceCallOptions::new().with_initial_reconciliation_deadline(deadline),
-                CancellationToken::new(),
-            )
-            .await
-    });
-    wait_until_with_timer(|| {
-        let diagnostics = services.reconciliation.diagnostics();
-        diagnostics.requests == 1 && diagnostics.active_waves == 1
-    })
-    .await;
-
-    tokio::time::pause();
-    tokio::time::advance(std::time::Duration::from_secs(30)).await;
-    assert!(matches!(
-        call.await.expect("join timed-out retrieval"),
-        Err(Error::IndexNotReady)
-    ));
-    assert_eq!(
-        services
-            .storage
-            .repository_generation()
-            .expect("generation after timeout"),
-        0
-    );
-
-    tokio::time::resume();
-    held_operation.release().expect("release operation lock");
-    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
-    let diagnostics = services.reconciliation.diagnostics();
-    assert_eq!(diagnostics.pending_waiters, 0);
-    assert_eq!(diagnostics.timed_out_waiters, 1);
-    assert_eq!(diagnostics.cancelled_waiters, 0);
-    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
-}
-
-#[tokio::test]
-async fn generation_zero_reconciliation_can_complete_before_its_deadline() {
-    let root = tempfile::tempdir().expect("root");
-    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-
-    let response = services
-        .files_with_options_consistency_cancellable(
-            root_files_request(),
-            IndexConsistency::ReconcileWorkingTree,
-            ServiceCallOptions::new().with_initial_reconciliation_deadline(
-                tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("cold reconciliation before deadline");
-
-    assert_eq!(response.meta.repository_generation, 1);
-    assert_eq!(services.reconciliation.diagnostics().timed_out_waiters, 0);
-}
-
-#[tokio::test]
 async fn committed_generation_reconciliation_keeps_waiting_past_cold_deadline() {
     let (_root, services) = indexed_services().await;
     let held_operation = services
@@ -908,7 +819,7 @@ async fn index_search_read_and_hash_delta() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -986,7 +897,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
     let file = services
@@ -1072,7 +983,7 @@ async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -1162,7 +1073,7 @@ async fn cancellable_service_stops_before_blocking_work() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 

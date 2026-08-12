@@ -42,33 +42,15 @@ impl Services {
         .await
     }
 
-    /// Read published source after applying the requested consistency boundary.
-    pub async fn read_with_consistency_cancellable(
+    /// Read published source under response controls and cancellation.
+    pub async fn read_with_options_cancellable(
         &self,
         request: ReadRequest,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<ReadResponse> {
-        self.read_generation_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Read published source under consistency, response controls, and cancellation.
-    pub async fn read_with_options_consistency_cancellable(
-        &self,
-        request: ReadRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
-        self.read_generation_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.read_generation_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     pub async fn read_cancellable(
@@ -103,25 +85,11 @@ impl Services {
             });
         }
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        if let Some(consistency) = consistency {
-            self.observe_service_result(
-                operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
-            )?;
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor

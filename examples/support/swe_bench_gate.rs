@@ -948,7 +948,7 @@ fn run_prediction_task(
         runtime_binary,
         worktree.path(),
         &database,
-        ["index", "--rebuild"],
+        ["refresh", "--rebuild"],
         timeout,
         "index task repository",
     )?;

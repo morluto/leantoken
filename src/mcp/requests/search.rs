@@ -188,9 +188,6 @@ pub(in crate::mcp) struct SearchMcpOptions {
     #[schemars(length(max = 4096))]
     pub(in crate::mcp) cursor: Option<String>,
     #[serde(default)]
-    #[schemars(schema_with = "index_consistency_schema")]
-    pub(in crate::mcp) consistency: IndexConsistency,
-    #[serde(default)]
     pub(in crate::mcp) projection: SearchMcpProjection,
 }
 
@@ -316,7 +313,6 @@ impl SearchMcpRequest {
     ) -> (
         SearchRequest,
         SearchMcpOutput,
-        IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
@@ -366,7 +362,6 @@ impl SearchMcpRequest {
                 cursor: options.cursor,
             },
             output,
-            options.consistency,
             if receipt_resource {
                 service_call_options_with_receipt(options.max_response_tokens)
             } else {

@@ -14,7 +14,7 @@ async fn file_operations_page_without_duplicates() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -99,7 +99,7 @@ async fn fuzzy_find_ties_prioritize_production_source_and_preserve_pagination() 
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
     let request = |cursor, max_results| FilesRequest {
@@ -175,7 +175,7 @@ async fn files_glob_selective_pattern_returns_only_matching_paths() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -210,7 +210,7 @@ async fn file_tree_projection_respects_root_depth_and_removes_empty_directories(
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -236,9 +236,9 @@ async fn file_tree_projection_respects_root_depth_and_removes_empty_directories(
 
     std::fs::remove_file(root.path().join("src/deep/lib.rs")).expect("delete deep source");
     services
-        .index_paths(vec!["src/deep/lib.rs".into()])
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
-        .expect("reconcile deletion");
+        .expect("refresh deletion");
     let after = services
         .files(FilesRequest {
             operation: FileOperation::Tree,
@@ -267,7 +267,7 @@ async fn file_tree_normalizes_equivalent_roots_before_query_and_pagination() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 

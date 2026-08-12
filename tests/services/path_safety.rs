@@ -22,7 +22,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -71,7 +71,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -147,11 +147,11 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
     )
     .expect("linked services");
     base_services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index base");
     linked_services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index linked");
 

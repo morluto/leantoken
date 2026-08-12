@@ -189,33 +189,15 @@ impl Services {
         .await
     }
 
-    /// Outline files after applying the requested index consistency boundary.
-    pub async fn outline_with_consistency_cancellable(
+    /// Outline files under response controls and cancellation.
+    pub async fn outline_with_options_cancellable(
         &self,
         request: OutlineRequest,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<OutlineResponse> {
-        self.outline_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Outline files under consistency and serialized-response controls.
-    pub async fn outline_with_options_consistency_cancellable(
-        &self,
-        request: OutlineRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
-        self.outline_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.outline_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     pub async fn outline_cancellable(
@@ -237,23 +219,13 @@ impl Services {
     ) -> Result<OutlineResponse> {
         let operation = TokenAccountingOperation::Outline;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
-        if let Some(consistency) = consistency {
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -286,19 +258,15 @@ impl Services {
         .await
     }
 
-    /// Outline signatures after applying the requested consistency boundary.
-    pub async fn outline_signatures_with_options_consistency_cancellable(
+    /// Outline signatures under response controls and cancellation.
+    pub async fn outline_signatures_with_options_cancellable(
         &self,
         request: OutlineRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineSignaturesResponse> {
-        self.outline_signatures_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.outline_signatures_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     async fn outline_signatures_execute(
@@ -308,22 +276,12 @@ impl Services {
     ) -> Result<OutlineSignaturesResponse> {
         let operation = TokenAccountingOperation::Outline;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
-        if let Some(consistency) = consistency {
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor

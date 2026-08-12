@@ -178,7 +178,7 @@ async fn run_profile(args: &Args) -> AnyResult<Report> {
     let config = Config::discover(&snapshot.root, Some(snapshot.database.clone()))?;
     let services = Services::open(config)?;
     let index_start = Instant::now();
-    services.index(leantoken::IndexingMode::Rebuild).await?;
+    services.refresh(leantoken::IndexingMode::Rebuild).await?;
     let initial_index_ms = index_start.elapsed().as_secs_f64() * 1_000.0;
 
     let targets = read_targets(&snapshot.root)?;
@@ -469,9 +469,7 @@ async fn verify_live_change(
             "live read did not preserve generation while reporting stale content",
         ));
     }
-    services
-        .index_paths(vec![target.relative_path.clone()])
-        .await?;
+    services.refresh(leantoken::IndexingMode::Reconcile).await?;
     let current = services.read(read_request(target, max_tokens)).await?;
     if current.index_stale
         || current.meta.repository_generation <= before.meta.repository_generation

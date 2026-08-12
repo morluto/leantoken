@@ -35,6 +35,33 @@ async fn read_returns_the_published_generation_after_a_worktree_edit() {
     );
     assert_eq!(response.content_hash, leantoken::text::hash_bytes(indexed));
     assert!(!response.index_stale);
+
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish worktree edit");
+    let refreshed = services
+        .read(ReadRequest {
+            path: "generation.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(1_000),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Bounded,
+        })
+        .await
+        .expect("read refreshed generation");
+    assert_eq!(
+        refreshed.content.as_deref(),
+        Some("pub fn unpublished() -> bool { false }\n")
+    );
+    assert!(refreshed.meta.repository_generation > response.meta.repository_generation);
 }
 
 #[tokio::test]
@@ -384,7 +411,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             .expect("isolated config");
     let isolated_services = Services::open(isolated_config).expect("isolated services");
     isolated_services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index isolated repository");
     std::fs::write(isolated.path().join("unindexed.rs"), "fn new_file() {}\n")
@@ -693,7 +720,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
     )
     .expect("move and edit symbol");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("reindex moved symbol");
 
@@ -1511,7 +1538,7 @@ async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
         config.tokenizer = tokenizer;
         let services = Services::open(config).expect("services");
         services
-            .index(leantoken::IndexingMode::Reconcile)
+            .refresh(leantoken::IndexingMode::Reconcile)
             .await
             .expect("index source");
 
@@ -1848,7 +1875,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
 
     std::fs::write(root.path().join("other.rs"), "fn other() {}\n").expect("write unrelated file");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("advance generation");
     let stale_generation = services
@@ -1924,7 +1951,7 @@ async fn read_rejects_ignored_files() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -2038,7 +2065,7 @@ async fn symbol_reads_and_outline_filters_search_beyond_result_caps() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 

@@ -20,7 +20,7 @@ async fn required_evidence_does_not_transfer_to_overlapping_content() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -66,7 +66,6 @@ async fn required_evidence_does_not_transfer_to_overlapping_content() {
         ["EVIDENCE_ONLY_LITERAL"]
     );
 }
-
 #[tokio::test]
 async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
     let root = tempfile::tempdir().expect("temporary repository");
@@ -132,7 +131,7 @@ async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(1_200);
@@ -237,4 +236,118 @@ async fn broad_context_reserves_primary_owner_before_auxiliary_facets() {
         (1..=2).contains(&selected_preservation),
         "preservation reservation or quota failed: {paths:?}"
     );
+}
+
+#[tokio::test]
+async fn context_declaration_excerpt_retains_long_body_across_chunks() {
+    let root = tempfile::tempdir().expect("root");
+    let body = (1..=48)
+        .map(|line| format!("    let value_{line} = {line};\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!("fn target_symbol() {{\n{body}    consume(value_48);\n}}\n"),
+    )
+    .expect("source");
+    let mut config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    config.chunk_lines = 3;
+    let services = Services::open(config).expect("services");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("refresh");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix target_symbol".into(),
+            token_budget: 600,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
+        })
+        .await
+        .expect("context");
+    let declaration = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.path == "lib.rs" && fragment.start_line == 1)
+        .expect("declaration fragment");
+
+    assert_eq!(declaration.end_line, 51);
+    assert!(declaration.content.contains("consume(value_48)"));
+}
+
+#[tokio::test]
+async fn context_text_hits_use_bounded_declaration_excerpts() {
+    let root = tempfile::tempdir().expect("root");
+    let body = (1..=160)
+        .map(|line| format!("    let filler_{line} = {line};\n"))
+        .collect::<String>();
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!(
+            "fn very_large_handler() {{\n{body}    let rare_runtime_marker = filler_160;\n    consume(rare_runtime_marker);\n}}\n"
+        ),
+    )
+    .expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("refresh");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix rare_runtime_marker behavior".into(),
+            token_budget: 1200,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
+        })
+        .await
+        .expect("context");
+    let text_fragment = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.path == "lib.rs" && fragment.reason.contains("text"))
+        .expect("text fragment");
+
+    assert!(
+        text_fragment.token_count <= 320,
+        "oversized text fragment: {text_fragment:?}"
+    );
+    assert!(text_fragment.content.contains("rare_runtime_marker"));
 }

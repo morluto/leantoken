@@ -60,7 +60,7 @@ impl WatcherReconciliationScheduler {
         if let Some(retry_not_before) = self.retry_not_before {
             deadline = deadline.max(retry_not_before);
         }
-        if matches!(self.pending, Some(PendingReconciliation::Full))
+        if self.pending.is_some()
             && let Some(next_full_not_before) = self.next_full_not_before
         {
             deadline = deadline.max(next_full_not_before);
@@ -75,34 +75,27 @@ impl WatcherReconciliationScheduler {
         }
         self.quiet_until = None;
         self.retry_not_before = None;
-        match self.pending.take()? {
-            PendingReconciliation::Paths(paths) => {
-                Some(WatcherAction::Paths(paths.into_iter().collect()))
-            }
-            PendingReconciliation::Full => Some(WatcherAction::Full),
-        }
+        self.pending.take()?;
+        Some(WatcherAction::Refresh)
     }
 
     /// Record a successful action and apply full-rescan cooldown when needed.
     pub fn finish_success(&mut self, action: &WatcherAction, now: Instant) {
         self.retry_delay = self.policy.retry_initial_delay;
         self.retry_not_before = None;
-        if matches!(action, WatcherAction::Full) {
-            self.last_full_completed = Some(now);
-            self.next_full_not_before = Some(now + self.full_delay);
-            self.full_delay = self
-                .full_delay
-                .saturating_mul(2)
-                .min(self.policy.full_max_delay);
-        }
+        let WatcherAction::Refresh = action;
+        self.last_full_completed = Some(now);
+        self.next_full_not_before = Some(now + self.full_delay);
+        self.full_delay = self
+            .full_delay
+            .saturating_mul(2)
+            .min(self.policy.full_max_delay);
     }
 
     /// Retain a failed action and schedule it under capped exponential retry.
     pub fn finish_failure(&mut self, action: WatcherAction, now: Instant) {
-        match action {
-            WatcherAction::Paths(paths) => self.merge_paths(paths),
-            WatcherAction::Full => self.pending = Some(PendingReconciliation::Full),
-        }
+        let WatcherAction::Refresh = action;
+        self.pending = Some(PendingReconciliation::Full);
         self.quiet_until = Some(now);
         self.retry_not_before = Some(now + self.retry_delay);
         self.retry_delay = self

@@ -490,33 +490,15 @@ impl Services {
         .await
     }
 
-    /// Discover paths after applying the requested index consistency boundary.
-    pub async fn files_with_consistency_cancellable(
+    /// Discover paths under response controls and cancellation.
+    pub async fn files_with_options_cancellable(
         &self,
         request: FilesRequest,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<FilesResponse> {
-        self.files_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Discover paths under consistency and serialized-response controls.
-    pub async fn files_with_options_consistency_cancellable(
-        &self,
-        request: FilesRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.files_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.files_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     pub async fn files_cancellable(
@@ -550,19 +532,15 @@ impl Services {
         .await
     }
 
-    /// Discover path-only results after applying the requested consistency boundary.
-    pub async fn files_paths_with_options_consistency_cancellable(
+    /// Discover path-only results under response controls and cancellation.
+    pub async fn files_paths_with_options_cancellable(
         &self,
         request: FilesRequest,
-        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesPathsResponse> {
-        self.files_paths_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
+        self.files_paths_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
     }
 
     async fn files_paths_execute(
@@ -572,7 +550,7 @@ impl Services {
     ) -> Result<FilesPathsResponse> {
         let operation = TokenAccountingOperation::Files;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -580,16 +558,6 @@ impl Services {
         self.observe_service_result(operation, check_cancelled(&cancellation))?;
         let input = self.observe_service_result(operation, FilesInput::parse(request))?;
         let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
-        if let Some(consistency) = consistency {
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -607,7 +575,7 @@ impl Services {
     ) -> Result<FilesResponse> {
         let operation = TokenAccountingOperation::Files;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
@@ -615,16 +583,6 @@ impl Services {
         self.observe_service_result(operation, check_cancelled(&cancellation))?;
         let input = self.observe_service_result(operation, FilesInput::parse(request))?;
         let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
-        if let Some(consistency) = consistency {
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor

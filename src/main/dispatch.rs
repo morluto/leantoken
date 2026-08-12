@@ -45,9 +45,9 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             doctor::print_report(&report, json)
         }
         AppRequest::Status => print(&Services::status_without_initializing(cli.config()?)?, json),
-        AppRequest::Index { mode } => {
+        AppRequest::Refresh { mode } => {
             let services = repository_services(&cli)?;
-            print(&services.index_report(mode).await?, json)
+            print(&services.refresh_report(mode).await?, json)
         }
         AppRequest::Coverage => {
             let services = repository_services(&cli)?;
@@ -68,16 +68,13 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         }
         AppRequest::Files {
             request,
-            consistency,
             max_response_tokens,
         } => {
             let services = repository_services(&cli)?;
-            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             print(
                 &services
-                    .files_with_options_consistency_cancellable(
+                    .files_with_options_cancellable(
                         request,
-                        consistency,
                         service_call_options(max_response_tokens),
                         CancellationToken::new(),
                     )
@@ -87,18 +84,15 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         }
         AppRequest::Search {
             request,
-            consistency,
             max_response_tokens,
             projection,
         } => {
             let services = repository_services(&cli)?;
-            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             match projection {
                 SearchProjectionArg::Full => print(
                     &services
-                        .search_with_options_consistency_cancellable(
+                        .search_with_options_cancellable(
                             request,
-                            consistency,
                             service_call_options(max_response_tokens),
                             CancellationToken::new(),
                         )
@@ -107,9 +101,8 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                 ),
                 SearchProjectionArg::Compact => print(
                     &services
-                        .search_compact_with_options_consistency_cancellable(
+                        .search_compact_with_options_cancellable(
                             request,
-                            consistency,
                             service_call_options(max_response_tokens),
                             CancellationToken::new(),
                         )
@@ -118,10 +111,9 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                 ),
                 SearchProjectionArg::Occurrences => print(
                     &services
-                        .search_occurrences_with_options_consistency_cancellable(
+                        .search_occurrences_with_options_cancellable(
                             request,
                             SearchOccurrenceOutput::Excerpts,
-                            consistency,
                             service_call_options(max_response_tokens),
                             CancellationToken::new(),
                         )
@@ -130,10 +122,9 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                 ),
                 SearchProjectionArg::Coordinates => print(
                     &services
-                        .search_occurrences_with_options_consistency_cancellable(
+                        .search_occurrences_with_options_cancellable(
                             request,
                             SearchOccurrenceOutput::Coordinates,
-                            consistency,
                             service_call_options(max_response_tokens),
                             CancellationToken::new(),
                         )
@@ -144,16 +135,13 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         }
         AppRequest::Outline {
             request,
-            consistency,
             max_response_tokens,
         } => {
             let services = repository_services(&cli)?;
-            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             print(
                 &services
-                    .outline_with_options_consistency_cancellable(
+                    .outline_with_options_cancellable(
                         request,
-                        consistency,
                         service_call_options(max_response_tokens),
                         CancellationToken::new(),
                     )
@@ -163,16 +151,13 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
         }
         AppRequest::Read {
             request,
-            consistency,
             max_response_tokens,
         } => {
             let services = repository_services(&cli)?;
-            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             print(
                 &services
-                    .read_with_options_consistency_cancellable(
+                    .read_with_options_cancellable(
                         request,
-                        consistency,
                         service_call_options(max_response_tokens),
                         CancellationToken::new(),
                     )
@@ -214,7 +199,6 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             response_profile,
         } => {
             let services = repository_services(&cli)?;
-            let consistency = resolve_retrieval_consistency(&services, consistency).await?;
             let mut options = service_call_options(max_response_tokens);
             if let Some(profile) = response_profile {
                 options = options.with_context_response_profile(profile);
@@ -281,16 +265,4 @@ fn run_integration(
         (false, false, true) => "MCP launcher verification failed",
     };
     Err(leantoken::Error::SetupFailure(message.into()))
-}
-
-async fn resolve_retrieval_consistency(
-    services: &Services,
-    requested: IndexConsistency,
-) -> Result<IndexConsistency> {
-    if requested == IndexConsistency::ReconcileWorkingTree
-        && services.status().await?.index_state == IndexState::Uninitialized
-    {
-        return Ok(IndexConsistency::IndexedGeneration);
-    }
-    Ok(requested)
 }

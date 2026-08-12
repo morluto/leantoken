@@ -14,7 +14,7 @@ async fn context_required_evidence_reports_bounded_path_inspection() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(500);

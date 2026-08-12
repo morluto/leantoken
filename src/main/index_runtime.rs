@@ -49,7 +49,7 @@ pub(super) async fn run_index_leader_until_shutdown(
     // The watcher is registered before the scan. Events queued during the scan
     // are applied afterward, closing the startup gap without a second walk.
     let indexed = services
-        .index_cancellable(IndexingMode::Reconcile, cancellation.clone())
+        .refresh_cancellable(IndexingMode::Reconcile, cancellation.clone())
         .await;
     let indexed = match indexed {
         Ok(indexed) => indexed,
@@ -69,42 +69,49 @@ pub(super) async fn run_watcher_reconciliations(
     cancellation: CancellationToken,
 ) -> Result<()> {
     let mut scheduler = WatcherReconciliationScheduler::new(services.config().watcher_debounce);
+    let mut periodic_refresh = tokio::time::interval(REPOSITORY_REFRESH_INTERVAL);
+    periodic_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    periodic_refresh.tick().await;
 
     loop {
         let changes_open = drain_watcher_messages(&mut scheduler, &services, &mut changes);
 
-        let Some(deadline) = scheduler.next_deadline() else {
-            if !changes_open {
-                break;
-            }
+        if let Some(deadline) = scheduler.next_deadline() {
             tokio::select! {
                 _ = cancellation.cancelled() => break,
-                message = changes.recv() => match message {
-                    Some(message) => schedule_watcher_message(&mut scheduler, &services, message),
-                    None => break,
+                message = changes.recv(), if changes_open => {
+                    if let Some(message) = message {
+                        schedule_watcher_message(&mut scheduler, &services, message);
+                    }
+                },
+                _ = periodic_refresh.tick() => {
+                    scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+                },
+                _ = tokio::time::sleep_until(deadline) => {
+                    let Some(action) = scheduler.take_ready(Instant::now()) else {
+                        continue;
+                    };
+                    if !execute_watcher_action(
+                        &mut scheduler,
+                        Arc::clone(&services),
+                        action,
+                        cancellation.clone(),
+                    ).await? {
+                        break;
+                    }
                 }
             }
-            continue;
-        };
-
-        tokio::select! {
-            _ = cancellation.cancelled() => break,
-            message = changes.recv(), if changes_open => match message {
-                Some(message) => schedule_watcher_message(&mut scheduler, &services, message),
-                None => continue,
-            },
-            _ = tokio::time::sleep_until(deadline) => {
-                let Some(action) = scheduler.take_ready(Instant::now()) else {
-                    continue;
-                };
-                if !execute_watcher_action(
-                    &mut scheduler,
-                    Arc::clone(&services),
-                    action,
-                    cancellation.clone(),
-                ).await? {
-                    break;
-                }
+        } else {
+            tokio::select! {
+                _ = cancellation.cancelled() => break,
+                message = changes.recv(), if changes_open => {
+                    if let Some(message) = message {
+                        schedule_watcher_message(&mut scheduler, &services, message);
+                    }
+                },
+                _ = periodic_refresh.tick() => {
+                    scheduler.enqueue(WatcherMessage::ReconcileRequired, Instant::now());
+                },
             }
         }
     }
@@ -193,18 +200,9 @@ pub(super) async fn reconcile_watcher_action(
     action: &WatcherAction,
     cancellation: CancellationToken,
 ) -> Result<leantoken::model::IndexResponse> {
-    match action {
-        WatcherAction::Paths(paths) => {
-            tracing::debug!(changed_paths = paths.len(), "repository change detected");
-            services
-                .index_paths_cancellable(paths.clone(), cancellation)
-                .await
-        }
-        WatcherAction::Full => {
-            tracing::warn!("watcher scheduled bounded full reconciliation");
-            services
-                .index_cancellable(IndexingMode::Reconcile, cancellation)
-                .await
-        }
-    }
+    let WatcherAction::Refresh = action;
+    tracing::debug!("watcher or periodic adapter requested repository refresh");
+    services
+        .refresh_cancellable(IndexingMode::Reconcile, cancellation)
+        .await
 }

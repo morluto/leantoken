@@ -150,7 +150,7 @@ async fn main() -> AnyResult<()> {
     }
     let tokenizer = config.tokenizer;
     let services = Services::open(config)?;
-    services.index(leantoken::IndexingMode::Rebuild).await?;
+    services.refresh(leantoken::IndexingMode::Rebuild).await?;
 
     let files_request = FilesRequest {
         operation: FileOperation::Tree,

@@ -15,9 +15,11 @@ pub(super) fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
 pub(super) fn cli_error_message(error: &leantoken::Error) -> String {
     let error = error.reconciliation_cause();
     match error {
-        leantoken::Error::IndexNotReady => "repository index is not ready; run `leantoken index` \
+        leantoken::Error::IndexNotReady => {
+            "repository index is not ready; run `leantoken refresh` \
             for direct CLI use or `leantoken doctor` to verify MCP readiness"
-            .into(),
+                .into()
+        }
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
             format!("{error}; {}", kind.guidance())
         }

@@ -37,10 +37,6 @@ pub(in crate::mcp) struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 128))]
     pub(in crate::mcp) receipt_id: Option<String>,
-    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
-    #[serde(default)]
-    #[schemars(schema_with = "index_consistency_schema")]
-    pub(in crate::mcp) consistency: IndexConsistency,
     /// I/O and verification policy. `bounded` (default) stops after the
     /// requested page and reports `index_state: unknown`. `full` hashes the
     /// complete live file, reports current/stale with indexed hashes, and is
@@ -109,14 +105,7 @@ impl ReadMcpRequest {
         Ok(())
     }
 
-    pub(in crate::mcp) fn into_parts(
-        self,
-    ) -> (
-        ReadRequest,
-        IndexConsistency,
-        ServiceCallOptions,
-        Option<String>,
-    ) {
+    pub(in crate::mcp) fn into_parts(self) -> (ReadRequest, ServiceCallOptions, Option<String>) {
         let receipt_resource = self.receipt_id.is_some();
         let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
             match self.target {
@@ -153,7 +142,6 @@ impl ReadMcpRequest {
                 receipt_id: self.receipt_id,
                 policy: self.policy,
             },
-            self.consistency,
             if receipt_resource {
                 service_call_options_with_receipt(self.max_response_tokens)
             } else {

@@ -28,15 +28,15 @@ responses are bounded.
 ## CLI commands
 
 ```text
-leantoken index [--rebuild]
+leantoken refresh [--rebuild]
 leantoken status
 leantoken coverage
 leantoken savings
 leantoken doctor [--client CLIENT] [--ready-timeout-seconds SECONDS]
-leantoken files <tree|find|glob> [options] [--consistency <mode>]
-leantoken search <query> [options] [--consistency <mode>]
-leantoken outline <path>... [--consistency <mode>]
-leantoken read <path> [--lines START:END] [--symbol NAME] [--consistency <mode>]
+leantoken files <tree|find|glob> [options]
+leantoken search <query> [options]
+leantoken outline <path>...
+leantoken read <path> [--lines START:END] [--symbol NAME]
 leantoken history <operation> ... [options]
 leantoken json <path> [options]
 leantoken context --task <text> --budget <tokens> [--consistency <mode>]
@@ -117,7 +117,7 @@ operation is active, so a cold idle repository reports
 `uninitialized`/`current`. Status is deliberately read-only and reports
 `working_tree_checked: false`; `current` describes reconciliation activity, not
 a filesystem scan. Before the first generation, direct CLI retrieval exits with
-guidance to run `leantoken index`; use `leantoken doctor` to verify the complete
+guidance to run `leantoken refresh`; use `leantoken doctor` to verify the complete
 MCP startup and first-retrieval flow. Status also reports SQLite main/WAL/SHM
 bytes, indexed source bytes, their amplification ratio, and current process RSS
 when the platform exposes it. RSS is per process, not a claim about all clients
@@ -607,27 +607,12 @@ known file, unknown range -> outline -> read
 unknown path -> files
 ```
 
-Index-backed MCP retrieval tools, including `receipt_rebase`, accept an
-optional `consistency` input:
-
-- `indexed_generation` (default) queries the latest completed index generation
-  without scanning or waiting for filesystem changes. It does not mean Git
-  HEAD and may include files indexed from an earlier working-tree state;
-- `reconcile_working_tree` first reconciles the current working tree, then
-  queries the resulting completed generation.
-
-Use `reconcile_working_tree` when edits, generated files, branch changes, or
-external commits must be visible to the current call. Reconciliation uses the
-same ignore rules and cross-process operation lock as automatic indexing, and
-the request remains cancellable. Concurrent requests on one server share a
-reconciliation wave when no scan has started yet. Requests arriving after a
-scan starts wait for the next wave so they cannot inherit an older freshness
-boundary. Cancelling one caller does not cancel shared work already running.
-If that work fails, every coalesced caller receives the shared typed cause;
-LeanToken does not automatically rerun the same failed scan for each caller.
-Writes that begin concurrently with the call may require another
-`reconcile_working_tree` request. CLI users can run `leantoken index`
-immediately before retrieval when they need to reconcile first.
+`files`, `search`, `outline`, and `read` always query one completed repository
+generation. They never scan or reconcile the working tree during retrieval.
+Run `leantoken refresh` when edits, generated files, branch changes, or external
+commits must be published for subsequent queries. `context` and
+`receipt_rebase` temporarily retain their orchestration-specific consistency
+input while those workflows are separated from the retrieval kernel.
 
 Numeric retrieval limits are inclusive and validated uniformly by the CLI,
 MCP, and direct service APIs. `max_results` must be in `1..=100`; the active
