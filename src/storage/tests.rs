@@ -1,5 +1,8 @@
 use super::*;
 
+mod artifacts;
+mod instrumentation;
+
 #[test]
 pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
     let root = tempfile::tempdir().expect("root");

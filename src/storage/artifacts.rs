@@ -29,7 +29,7 @@ ON artifacts(repository_identity, repository_generation, kind, id);
 
 #[derive(Clone)]
 pub(crate) struct ArtifactStorage {
-    writer: Arc<Mutex<Connection>>,
+    pub(super) writer: Arc<Mutex<Connection>>,
 }
 
 impl fmt::Debug for ArtifactStorage {
@@ -463,7 +463,3 @@ fn valid_artifact_id(id: &str, prefix: char) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
-
-#[cfg(test)]
-#[path = "artifacts/tests.rs"]
-mod tests;

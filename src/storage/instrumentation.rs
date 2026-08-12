@@ -169,7 +169,3 @@ fn query_service_failures(
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
-
-#[cfg(test)]
-#[path = "instrumentation/tests.rs"]
-mod tests;

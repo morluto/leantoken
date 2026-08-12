@@ -1,4 +1,5 @@
-use super::*;
+use super::super::*;
+use crate::receipt::{ReceiptDecision, ReceiptEvidence};
 
 fn evidence(hash: &str) -> ReceiptEvidence {
     ReceiptEvidence::new("src/lib.rs", 1, 2, hash, Some("fn example() {}"))

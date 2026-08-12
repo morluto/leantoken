@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 use crate::model::{Freshness, IndexScopeMode, ResponseMeta};
 
 fn response_meta() -> ResponseMeta {
