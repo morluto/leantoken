@@ -136,7 +136,7 @@ impl Storage {
             AutoCheckpointCompletion::CheckpointIfMutated,
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
-                Self::ensure_token_savings_schema(conn)?;
+                Self::ensure_source_accounting_columns(conn)?;
                 Self::ensure_path_projection(conn)
             },
         )?;
@@ -384,7 +384,7 @@ impl Storage {
         Ok(())
     }
 
-    pub(crate) fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
+    pub(crate) fn ensure_source_accounting_columns(conn: &mut Connection) -> Result<()> {
         // These additive fields are intentionally outside the numbered cache
         // schema so older LeanToken versions can still open and rebuild it.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -403,79 +403,6 @@ impl Storage {
                 "ALTER TABLE files ADD COLUMN source_tokenizer TEXT NOT NULL DEFAULT '';",
             )?;
         }
-        tx.execute_batch(TOKEN_SAVINGS_TABLE_SQL)?;
-        let savings_columns = {
-            let mut stmt = tx.prepare("PRAGMA table_info(token_savings)")?;
-            stmt.query_map([], |row| row.get::<_, String>(1))?
-                .collect::<std::result::Result<HashSet<_>, _>>()?
-        };
-        for (column, statement) in [
-            (
-                "response_tracked_requests",
-                "ALTER TABLE token_savings ADD COLUMN response_tracked_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "response_baseline_requests",
-                "ALTER TABLE token_savings ADD COLUMN response_baseline_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "response_baseline_source_tokens",
-                "ALTER TABLE token_savings ADD COLUMN response_baseline_source_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "response_source_tokens",
-                "ALTER TABLE token_savings ADD COLUMN response_source_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "path_and_metadata_tokens",
-                "ALTER TABLE token_savings ADD COLUMN path_and_metadata_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "protocol_tokens",
-                "ALTER TABLE token_savings ADD COLUMN protocol_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "total_response_tokens",
-                "ALTER TABLE token_savings ADD COLUMN total_response_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "receipt_suppressed_exact",
-                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "receipt_suppressed_overlap",
-                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "expected_hash_not_modified_responses",
-                "ALTER TABLE token_savings ADD COLUMN expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "expected_hash_suppressed_source_tokens",
-                "ALTER TABLE token_savings ADD COLUMN expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "useful_requests",
-                "ALTER TABLE token_savings ADD COLUMN useful_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "incomplete_requests",
-                "ALTER TABLE token_savings ADD COLUMN incomplete_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "unsupported_requests",
-                "ALTER TABLE token_savings ADD COLUMN unsupported_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-            (
-                "hash_suppressed_requests",
-                "ALTER TABLE token_savings ADD COLUMN hash_suppressed_requests INTEGER NOT NULL DEFAULT 0;",
-            ),
-        ] {
-            if !savings_columns.contains(column) {
-                tx.execute_batch(statement)?;
-            }
-        }
-        tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
         tx.commit()?;
         Ok(())
     }

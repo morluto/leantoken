@@ -28,6 +28,7 @@ mod accounting;
 mod api;
 mod diagnostics;
 mod helpers;
+mod instrumentation;
 mod mapping;
 mod models;
 mod open;
@@ -57,6 +58,7 @@ mod writer;
 
 pub(crate) use diagnostics::*;
 pub(crate) use helpers::*;
+pub(crate) use instrumentation::InstrumentationStorage;
 pub(crate) use models::*;
 pub(crate) use receipts::*;
 pub(crate) use runtime::*;

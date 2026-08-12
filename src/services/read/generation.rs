@@ -95,11 +95,35 @@ impl Services {
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let mut response = self.consistent(|generation| {
+        let (mut response, baseline_source_tokens) = self.consistent(|generation| {
             check_cancelled(cancellation)?;
-            self.read_published_with_options(generation, &request, max_tokens, options)
+            let baseline_source_tokens = self
+                .published_read_budget_estimate(generation, &request)?
+                .map(|estimate| estimate.target_source_tokens);
+            let response =
+                self.read_published_with_options(generation, &request, max_tokens, options)?;
+            Ok((response, baseline_source_tokens))
         })?;
         self.finalize_bounded_response(&mut response, options)?;
+        let expected_hash_not_modified = request.expected_hash.is_some() && response.not_modified;
+        self.record_token_savings_with_expected_hash(
+            TokenAccountingOperation::Read,
+            baseline_source_tokens,
+            &response.meta,
+            if response.not_modified {
+                TokenSavingsRequestClass::HashSuppressed
+            } else if response.truncated {
+                TokenSavingsRequestClass::Incomplete
+            } else {
+                TokenSavingsRequestClass::Useful
+            },
+            expected_hash_not_modified,
+            if expected_hash_not_modified {
+                baseline_source_tokens.unwrap_or(0)
+            } else {
+                0
+            },
+        );
         Ok(response)
     }
 

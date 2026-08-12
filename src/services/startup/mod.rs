@@ -117,6 +117,7 @@ impl Services {
 
     fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let tokenizer = config.tokenizer;
+        let instrumentation = InstrumentationStorage::open(&config.instrumentation_database_path());
         let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let repository_root = indexer.repository_root();
@@ -129,10 +130,11 @@ impl Services {
             Arc::clone(&active_reconciliations),
             Arc::clone(&reconciliation_changed),
         );
-        let observer = observer::ServiceObserver::new(storage.clone(), tokenizer);
+        let observer = observer::ServiceObserver::new(instrumentation.clone(), tokenizer);
         Ok(Self {
             config,
             storage,
+            instrumentation,
             indexer,
             repository_root,
             coordination,
@@ -153,13 +155,21 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
     if !config.database_is_managed_cache() {
         return Ok(());
     }
-    for suffix in ["", "-wal", "-shm", "-journal"]
-        .into_iter()
-        .chain(crate::coordination::COORDINATION_LOCK_SUFFIXES)
-    {
+    let instrumentation = config.instrumentation_database_path();
+    let databases = [config.database_path.as_path(), instrumentation.as_path()];
+    let database_artifacts = databases.into_iter().flat_map(|database| {
+        ["", "-wal", "-shm", "-journal"].map(move |suffix| {
+            let mut path = database.as_os_str().to_os_string();
+            path.push(suffix);
+            std::path::PathBuf::from(path)
+        })
+    });
+    let coordination_artifacts = crate::coordination::COORDINATION_LOCK_SUFFIXES.map(|suffix| {
         let mut path = config.database_path.as_os_str().to_os_string();
         path.push(suffix);
-        let path = std::path::PathBuf::from(path);
+        std::path::PathBuf::from(path)
+    });
+    for path in database_artifacts.chain(coordination_artifacts) {
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -167,7 +177,7 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
         };
         if metadata.file_type().is_symlink() {
             return Err(Error::InvalidConfiguration(
-                "managed index database and coordination artifacts must not be symlinks".into(),
+                "managed database and coordination artifacts must not be symlinks".into(),
             ));
         }
     }
@@ -467,6 +477,28 @@ mod tests {
         assert_eq!(
             fs::read(target.path()).expect("sentinel contents"),
             b"external journal sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_instrumentation_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external instrumentation sentinel").expect("sentinel");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let instrumentation = config.instrumentation_database_path();
+        symlink(target.path(), instrumentation).expect("instrumentation symlink");
+        config.mark_database_as_managed_platform();
+
+        let error = Services::open(config).expect_err("managed instrumentation symlink rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external instrumentation sentinel"
         );
     }
 

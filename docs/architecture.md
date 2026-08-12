@@ -9,19 +9,23 @@ repository files
       v
 ignore-aware discovery -> chunking -> tree-sitter extraction
       |                                  |
-      +-----------> SQLite <-------------+
+      +-----> repository-generation SQLite
                  files + FTS5
                  symbols + imports
                         |
                retrieval services
                   /             \
                 CLI             MCP
+
+best-effort observations ------> instrumentation SQLite
 ```
 
 ## Ownership boundaries
 
 - Repository files are the source of truth.
-- SQLite is the only derived-state store and can be deleted and rebuilt.
+- The repository-generation SQLite database is disposable derived state and
+  can be deleted and rebuilt. Best-effort instrumentation has a separate
+  failure domain and is never part of a retrieval snapshot.
 - The indexing layer owns discovery, text preparation, syntax extraction, and
   conservative import resolution.
 - The storage layer owns migrations, transactions, generations, and FTS5.
@@ -71,17 +75,19 @@ reader does not provide.
 
 ## Storage
 
-SQLite stores repository metadata, files, text chunks, definitions, syntactic
+The repository-generation database stores repository metadata, files, text
+chunks, definitions, syntactic
 references, imports, reverse import candidates, an ordinary relational path
-projection, represented-source response comparisons, and cumulative observed
-service accounting. It also stores bounded retrieval receipt headers and
-evidence metadata for cross-process suppression. External-content
+projection, and represented-source response comparisons. It also currently
+stores bounded retrieval receipt headers and evidence metadata for
+cross-process suppression. External-content
 FTS5 tables provide word and trigram indexes over chunks.
 
-Savings data uses additive tables and file columns without advancing the core
-cache schema version. Older LeanToken releases ignore those fields and can
-still open or rebuild the cache; the current release repopulates exact
-whole-file token metadata on its next reconciliation.
+The separate instrumentation database stores cumulative token accounting and
+finite-category service-failure counters. Failure to open it falls back to
+process-local memory, so observation cannot prevent refresh, search, outline,
+or read. Exact whole-file token metadata remains part of the published
+repository generation because retrieval uses it directly.
 
 Successful retrieval accounting has one row per tokenizer and each of the
 nine fixed retrieval operations. A finalized response performs at most one
@@ -104,8 +110,8 @@ boundary.
 
 Both accounting writes use a zero-timeout local writer attempt. A busy or
 locked writer skips the observation and never delays or fails retrieval. The
-combined savings report reads success and failure tables through one pinned
-`ReadSession`, preserving request snapshot consistency. Failure reporting is a
+combined savings report reads success and failure tables through one
+instrumentation transaction. Failure reporting is a
 primary-key range query on tokenizer, ordered by operation and category; a
 checked query-plan test prevents a table scan or temporary sort from entering
 this path. The successful-accounting read has matching query-plan evidence for

@@ -235,13 +235,13 @@ fn query_receipt_migration_preserves_existing_index_and_rolls_back_conflicts() {
             before.languages.clone()
         )
     );
-    assert_eq!(migrated.meta().expect("migrated meta").schema_version, 10);
+    assert_eq!(migrated.meta().expect("migrated meta").schema_version, 11);
     let connection = Connection::open(&database).expect("inspect migration");
     assert_eq!(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .expect("migration version"),
-        11
+        CURRENT_MIGRATION_VERSION
     );
     drop(connection);
     drop(migrated);

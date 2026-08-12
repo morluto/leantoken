@@ -129,7 +129,7 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
 #[tokio::test]
 async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
     let (_root, services) = indexed_services().await;
-    let request = ReadRequest {
+    let request: WorktreeReadRequest = ReadRequest {
         path: "lib.rs".into(),
         start_line: Some(1),
         end_line: Some(1),
@@ -139,14 +139,15 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         continuation_cursor: None,
         max_tokens: Some(100),
         expected_hash: None,
-    };
+    }
+    .into();
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
         protocol: crate::tokens::McpProtocolShape::Modern,
     };
     let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
     let successful = services
-        .read_with_options(request.clone(), shaped_options)
+        .read_worktree_with_options(request.clone(), shaped_options)
         .await
         .expect("unbounded MCP-shaped read");
     let visible_tokens = services
@@ -186,7 +187,7 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         .expect("savings before rejected call")
         .tracked_requests;
     let error = services
-        .read_with_options(request, shaped_options.with_max_response_tokens(limit))
+        .read_worktree_with_options(request, shaped_options.with_max_response_tokens(limit))
         .await
         .expect_err("MCP wrapper must be reserved before receipt persistence");
     match error {

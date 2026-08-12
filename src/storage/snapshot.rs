@@ -2,8 +2,8 @@
 
 use super::{
     ChunkHit, ChunkRecord, FilePathRecord, FileRecord, ImportRecord, ImportSymbolTarget,
-    MetaRecord, ParserCoverageRows, PathRecord, ReadSession, ReferenceHit, ServiceFailureRecord,
-    Storage, StorageCounts, SymbolHit, SymbolRecord, TokenSavingsRecord,
+    MetaRecord, ParserCoverageRows, PathRecord, ReadSession, ReferenceHit, Storage, StorageCounts,
+    SymbolHit, SymbolRecord,
 };
 use crate::Result;
 use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
@@ -57,17 +57,6 @@ impl RepositoryGeneration {
         classify_extension: impl FnMut(&str) -> String,
     ) -> Result<ParserCoverageRows> {
         self.session.parser_coverage_rows(classify_extension)
-    }
-
-    pub(crate) fn service_failures(&self, tokenizer: &str) -> Result<Vec<ServiceFailureRecord>> {
-        self.session.service_failures(tokenizer)
-    }
-
-    pub(crate) fn token_savings(
-        &self,
-        tokenizer: &str,
-    ) -> Result<std::collections::HashMap<String, TokenSavingsRecord>> {
-        self.session.token_savings(tokenizer)
     }
 
     pub(crate) fn whole_file_source_tokens(

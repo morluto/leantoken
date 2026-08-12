@@ -1,5 +1,5 @@
 use super::*;
-use leantoken::{ObservedTokenSavingsReport, TaskSavingsObservationStatus};
+use leantoken::{ObservedTokenSavingsReport, ReadPolicy, TaskSavingsObservationStatus};
 
 #[tokio::test]
 async fn token_savings_tracks_successful_source_retrievals_by_operation() {
@@ -347,7 +347,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
 async fn receipt_rebase_records_success_and_failure_accounting() {
     let (root, services) = fixture().await;
     let source = services
-        .read(ReadRequest {
+        .read_worktree(WorktreeReadRequest {
             path: "src/lib.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -357,6 +357,9 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: ReadPolicy::Bounded,
         })
         .await
         .expect("source read");

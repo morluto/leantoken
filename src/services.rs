@@ -19,8 +19,8 @@ use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::storage::{
-    ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
-    TokenSavingsRecord,
+    InstrumentationStorage, ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts,
+    TokenSavingsObservation, TokenSavingsRecord,
 };
 use crate::{Config, Error, Result};
 
@@ -115,6 +115,7 @@ pub(crate) fn validate_request_limit(
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
+    instrumentation: InstrumentationStorage,
     indexer: Indexer,
     repository_root: Arc<Dir>,
     coordination: IndexCoordination,

@@ -1,5 +1,5 @@
 use crate::model::TokenAccountingOperation;
-use crate::storage::Storage;
+use crate::storage::InstrumentationStorage;
 use crate::tokens::Tokenizer;
 use crate::{Error, Result};
 
@@ -8,12 +8,12 @@ use crate::{Error, Result};
 /// type owns classification and the bounded storage write.
 #[derive(Debug, Clone)]
 pub(super) struct ServiceObserver {
-    storage: Storage,
+    storage: InstrumentationStorage,
     tokenizer: Tokenizer,
 }
 
 impl ServiceObserver {
-    pub(super) fn new(storage: Storage, tokenizer: Tokenizer) -> Self {
+    pub(super) fn new(storage: InstrumentationStorage, tokenizer: Tokenizer) -> Self {
         Self { storage, tokenizer }
     }
 
