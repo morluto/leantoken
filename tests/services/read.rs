@@ -62,6 +62,47 @@ async fn read_returns_the_published_generation_after_a_worktree_edit() {
 }
 
 #[tokio::test]
+async fn published_read_guidance_advances_after_a_hash_suppressed_page() {
+    let source = (1..=80)
+        .map(|line| format!("let published_{line} = {line};\n"))
+        .collect::<String>();
+    let (_root, services) = indexed_source("published.rs", source.as_bytes()).await;
+    let request = |expected_hash| ReadRequest {
+        path: "published.rs".into(),
+        start_line: None,
+        end_line: None,
+        symbol: None,
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: None,
+        max_tokens: Some(5),
+        expected_hash,
+    };
+    let first = services
+        .read(request(None))
+        .await
+        .expect("first truncated page");
+    assert!(first.truncated);
+    let first_content = first.content.as_deref().expect("first page content");
+
+    let suppressed = services
+        .read(request(Some(first.content_hash.clone())))
+        .await
+        .expect("hash-suppressed truncated page");
+    assert!(suppressed.truncated);
+    assert!(suppressed.not_modified);
+    assert!(suppressed.content.is_none());
+    let guidance = suppressed
+        .truncation_guidance
+        .as_ref()
+        .expect("remaining generation guidance");
+    assert_eq!(
+        guidance.remaining_source_tokens,
+        Tokenizer::Cl100kBase.count(&source[first_content.len()..])
+    );
+}
+
+#[tokio::test]
 async fn read_reports_live_content_that_differs_from_the_index() {
     let (root, services) = fixture().await;
     let first = services

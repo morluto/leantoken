@@ -21,6 +21,15 @@ struct PublishedReadPosition {
     next_byte: usize,
 }
 
+struct PublishedReadMaterialization {
+    generation: u64,
+    indexed_hash: String,
+    target: ResolvedReadTarget,
+    target_end_line: usize,
+    target_content: String,
+    target_source_tokens: usize,
+}
+
 impl Services {
     /// Read source from one published repository generation.
     pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
@@ -97,10 +106,7 @@ impl Services {
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
         let (mut response, baseline_source_tokens) = self.consistent(|generation| {
             check_cancelled(cancellation)?;
-            let baseline_source_tokens = self
-                .published_read_budget_estimate(generation, &request)?
-                .map(|estimate| estimate.target_source_tokens);
-            let response =
+            let (response, baseline_source_tokens) =
                 self.read_published_with_options(generation, &request, max_tokens, options)?;
             Ok((response, baseline_source_tokens))
         })?;
@@ -133,16 +139,18 @@ impl Services {
         request: &ReadInput,
         max_tokens: usize,
         options: ServiceCallOptions,
-    ) -> Result<ReadResponse> {
-        let (mut response, minimum_progress_tokens) =
-            self.read_published(generation, request, max_tokens)?;
+    ) -> Result<(ReadResponse, Option<usize>)> {
+        let materialized = self.materialize_published_read(generation, request)?;
+        let baseline_source_tokens = Some(materialized.target_source_tokens);
+        let (mut response, minimum_progress_tokens, page_end_byte) =
+            self.read_published(generation, request, &materialized, max_tokens)?;
         if self.response_fits(&response, options)? && !response.truncated {
-            return Ok(response);
+            return Ok((response, baseline_source_tokens));
         }
 
-        self.apply_published_read_guidance(generation, request, &mut response, max_tokens)?;
+        self.apply_published_read_guidance(&materialized, &mut response, page_end_byte, max_tokens);
         if self.response_fits(&response, options)? {
-            return Ok(response);
+            return Ok((response, baseline_source_tokens));
         }
 
         let max_response_tokens = options
@@ -152,104 +160,74 @@ impl Services {
         let additional_tokens = max_tokens.saturating_sub(minimum_progress_tokens);
         let keep = budget.largest_fitting_prefix(additional_tokens, |additional_tokens| {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
-            let (mut candidate, _) = self.read_published(generation, request, candidate_limit)?;
+            let (mut candidate, _, page_end_byte) =
+                self.read_published(generation, request, &materialized, candidate_limit)?;
             self.apply_published_read_guidance(
-                generation,
-                request,
+                &materialized,
                 &mut candidate,
+                page_end_byte,
                 candidate_limit,
-            )?;
+            );
             self.finalized_response_tokens(&candidate, options)
         })?;
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
-            let (mut candidate, _) = self.read_published(generation, request, candidate_limit)?;
+            let (mut candidate, _, page_end_byte) =
+                self.read_published(generation, request, &materialized, candidate_limit)?;
             self.apply_published_read_guidance(
-                generation,
-                request,
+                &materialized,
                 &mut candidate,
+                page_end_byte,
                 candidate_limit,
-            )?;
-            return Ok(candidate);
+            );
+            return Ok((candidate, baseline_source_tokens));
         }
 
-        let (mut minimum, _) = self.read_published(generation, request, minimum_progress_tokens)?;
+        let (mut minimum, _, page_end_byte) =
+            self.read_published(generation, request, &materialized, minimum_progress_tokens)?;
         self.apply_published_read_guidance(
-            generation,
-            request,
+            &materialized,
             &mut minimum,
+            page_end_byte,
             minimum_progress_tokens,
-        )?;
+        );
         Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 
     fn apply_published_read_guidance(
         &self,
-        generation: &RepositoryGeneration,
-        request: &ReadInput,
+        materialized: &PublishedReadMaterialization,
         response: &mut ReadResponse,
+        page_end_byte: usize,
         current_max_tokens: usize,
-    ) -> Result<()> {
+    ) {
         response.truncation_guidance = None;
         if !response.truncated {
-            return Ok(());
-        }
-        let Some(estimate) = self.published_read_budget_estimate(generation, request)? else {
-            return Ok(());
+            return;
         };
-        let progress_bytes = estimate
-            .page_start_byte
-            .saturating_add(response.content.as_deref().map_or(0, str::len));
-        let Some(remaining) = estimate.indexed_content.get(progress_bytes..) else {
-            return Ok(());
+        let Some(remaining) = materialized.target_content.get(page_end_byte..) else {
+            return;
         };
         let remaining_source_tokens = self.config.tokenizer.count(remaining);
         if remaining_source_tokens == 0 {
-            return Ok(());
+            return;
         }
         response.truncation_guidance = Some(ReadTruncationGuidance {
             basis: ReadTruncationGuidanceBasis::PublishedGeneration,
-            target_source_tokens: estimate.target_source_tokens,
+            target_source_tokens: materialized.target_source_tokens,
             remaining_source_tokens,
             remaining_pages_at_current_budget: remaining_source_tokens.div_ceil(current_max_tokens),
             recommended_next_max_tokens: remaining_source_tokens.min(self.config.max_output_tokens),
             minimum_remaining_pages: remaining_source_tokens
                 .div_ceil(self.config.max_output_tokens),
         });
-        Ok(())
     }
 
-    fn published_read_budget_estimate(
+    fn materialize_published_read(
         &self,
         generation: &RepositoryGeneration,
         request: &ReadInput,
-    ) -> Result<Option<ReadBudgetEstimate>> {
-        let Some(indexed) = generation.find_file(&request.path)? else {
-            return Ok(None);
-        };
-        let target = resolve_published_read_target(generation, indexed.id, request)?;
-        let expected_size = usize::try_from(indexed.size_bytes).map_err(|_| {
-            Error::OperationFailure("indexed file size exceeds this platform".into())
-        })?;
-        let content = generation.file_content(indexed.id, expected_size)?;
-        let end_line = target
-            .target_end_line
-            .unwrap_or_else(|| line_starts(&content).len().max(1));
-        let indexed_content = excerpt(&content, target.target_start_line, end_line);
-        Ok(Some(ReadBudgetEstimate {
-            target_source_tokens: self.config.tokenizer.count(&indexed_content),
-            indexed_content: indexed_content.to_owned(),
-            page_start_byte: target.page_start_byte,
-        }))
-    }
-
-    fn read_published(
-        &self,
-        generation: &RepositoryGeneration,
-        request: &ReadInput,
-        max_tokens: usize,
-    ) -> Result<(ReadResponse, usize)> {
-        let generation_id = generation.generation();
+    ) -> Result<PublishedReadMaterialization> {
         let indexed = generation
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
@@ -273,7 +251,6 @@ impl Services {
         {
             return Err(Error::StaleCursor);
         }
-
         let indexed_end_line = line_starts(&indexed_content).len().max(1);
         let target_end_line = target
             .target_end_line
@@ -282,7 +259,8 @@ impl Services {
         if target.target_start_line > target_end_line || target.page_start_line > target_end_line {
             return Err(invalid_line_range());
         }
-        let target_content = excerpt(&indexed_content, target.target_start_line, target_end_line);
+        let target_content =
+            excerpt(&indexed_content, target.target_start_line, target_end_line).to_owned();
         if target.page_start_byte > target_content.len()
             || !target_content.is_char_boundary(target.page_start_byte)
         {
@@ -293,15 +271,32 @@ impl Services {
         {
             return Err(Error::StaleCursor);
         }
+        Ok(PublishedReadMaterialization {
+            generation: generation.generation(),
+            indexed_hash: indexed.content_hash,
+            target,
+            target_end_line,
+            target_source_tokens: self.config.tokenizer.count(&target_content),
+            target_content,
+        })
+    }
 
-        let remaining = &target_content[target.page_start_byte..];
+    fn read_published(
+        &self,
+        generation: &RepositoryGeneration,
+        request: &ReadInput,
+        materialized: &PublishedReadMaterialization,
+        max_tokens: usize,
+    ) -> Result<(ReadResponse, usize, usize)> {
+        let target = &materialized.target;
+        let remaining = &materialized.target_content[target.page_start_byte..];
         let (content, emitted_tokens, minimum_progress_tokens) = self
             .config
             .tokenizer
             .truncate_for_read(remaining, max_tokens);
         let minimum_progress_tokens = minimum_progress_tokens.unwrap_or(1);
         let next_byte = target.page_start_byte.saturating_add(content.len());
-        let truncated = next_byte < target_content.len();
+        let truncated = next_byte < materialized.target_content.len();
         if truncated && next_byte == target.page_start_byte {
             return Err(Error::InvalidInput {
                 field: "max_tokens",
@@ -349,7 +344,7 @@ impl Services {
                 status,
                 source: ReadSource::PublishedGeneration,
                 target_start_line: target.target_start_line,
-                target_end_line,
+                target_end_line: materialized.target_end_line,
                 returned_start_line,
                 returned_end_line,
                 truncated,
@@ -361,17 +356,18 @@ impl Services {
                 delta: None,
                 delta_receipt: None,
                 content_hash,
-                indexed_hash: Some(indexed.content_hash),
+                indexed_hash: Some(materialized.indexed_hash.clone()),
                 index_stale: false,
                 index_state: ReadIndexState::Unknown,
                 live_bytes_read: 0,
                 meta: self.meta(
-                    generation_id,
+                    materialized.generation,
                     if not_modified { 0 } else { emitted_tokens },
                     None,
                 ),
             },
             minimum_progress_tokens,
+            next_byte,
         ))
     }
 }
