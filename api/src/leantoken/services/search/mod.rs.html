@@ -58,7 +58,7 @@
 <a href=#58 id=58 data-nosnippet>58</a>                .iter()
 <a href=#59 id=59 data-nosnippet>59</a>                .map(|candidate| candidate.hit.clone())
 <a href=#60 id=60 data-nosnippet>60</a>                .collect(),
-<a href=#61 id=61 data-nosnippet>61</a>            coverage: search_coverage(shape.all, selected),
+<a href=#61 id=61 data-nosnippet>61</a>            coverage: search_coverage(shape.all, selected, shape.request.kind.mode()),
 <a href=#62 id=62 data-nosnippet>62</a>            occurrences_returned: selected.len(),
 <a href=#63 id=63 data-nosnippet>63</a>            occurrences_total: shape
 <a href=#64 id=64 data-nosnippet>64</a>                .request

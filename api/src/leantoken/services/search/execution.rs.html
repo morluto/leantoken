@@ -663,7 +663,7 @@
 <a href=#663 id=663 data-nosnippet>663</a>            .into_iter()
 <a href=#664 id=664 data-nosnippet>664</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#665 id=665 data-nosnippet>665</a>        <span class="kw">let </span>occurrences_returned = selected.len();
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>coverage = search_coverage(<span class="kw-2">&amp;</span>hits, <span class="kw-2">&amp;</span>selected);
+<a href=#666 id=666 data-nosnippet>666</a>        <span class="kw">let </span>coverage = search_coverage(<span class="kw-2">&amp;</span>hits, <span class="kw-2">&amp;</span>selected, request.kind.mode());
 <a href=#667 id=667 data-nosnippet>667</a>        <span class="kw">let </span>selected = selected
 <a href=#668 id=668 data-nosnippet>668</a>            .into_iter()
 <a href=#669 id=669 data-nosnippet>669</a>            .map(|candidate| candidate.hit)
