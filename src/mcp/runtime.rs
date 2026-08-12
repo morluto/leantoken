@@ -149,16 +149,14 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         match result {
             Ok(value) => self.result(value),
-            Err(error) if matches!(error.reconciliation_cause(), crate::Error::IndexNotReady) => {
-                Ok(self.retryable_result(
-                    RetryableToolResponse::new(
-                        "index_building",
-                        "repository index is being built; retry the same call shortly",
-                        500,
-                    )
-                    .with_index_progress(index_progress),
-                ))
-            }
+            Err(error) if waiting_for_initial_projection(&error) => Ok(self.retryable_result(
+                RetryableToolResponse::new(
+                    "index_building",
+                    "repository index is being built; retry the same call shortly",
+                    500,
+                )
+                .with_index_progress(index_progress),
+            )),
             Err(error)
                 if matches!(
                     error.reconciliation_cause(),
@@ -244,9 +242,7 @@ impl LeanTokenMcp {
         let index_progress = result
             .as_ref()
             .err()
-            .is_some_and(|error| {
-                matches!(error.reconciliation_cause(), crate::Error::IndexNotReady)
-            })
+            .is_some_and(waiting_for_initial_projection)
             .then(|| progress_services.index_progress_for_retry());
         match result {
             Ok(value) => {
@@ -303,7 +299,7 @@ where
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + wait;
     let result = operation().await;
-    if !matches!(result, Err(crate::Error::IndexNotReady)) {
+    if !result.as_ref().is_err_and(waiting_for_initial_projection) {
         return result;
     }
 
@@ -348,7 +344,7 @@ where
                 tracing::debug!(
                     tool,
                     waited_ms = started.elapsed().as_millis(),
-                    ready = !matches!(result, Err(crate::Error::IndexNotReady)),
+                    ready = !result.as_ref().is_err_and(waiting_for_initial_projection),
                     "MCP retrieval waited for the first index generation"
                 );
                 return result;
@@ -374,4 +370,11 @@ where
             return Err(crate::Error::McpRuntimeStopped);
         }
     }
+}
+
+fn waiting_for_initial_projection(error: &crate::Error) -> bool {
+    matches!(
+        error.reconciliation_cause(),
+        crate::Error::IndexNotReady | crate::Error::RefreshRequired
+    )
 }

@@ -355,7 +355,7 @@ impl Services {
             limit,
             token_limit,
         } = parsed;
-        let (mut response, baseline_source_tokens) = self.consistent(|session| {
+        let outcome = self.consistent(|session| {
             let generation = session.generation();
             let cursor_projection = output.cursor_projection();
             let offset =
@@ -542,8 +542,10 @@ impl Services {
                     meta: self.meta(generation, emitted_tokens, next_cursor),
                 },
                 baseline_source_tokens,
+                session.database_incarnation_id().to_owned(),
             ))
         })?;
+        let (mut response, baseline_source_tokens, database_incarnation_id) = outcome;
         let returned_entries = response
             .returned_symbols
             .saturating_add(response.returned_imports);
@@ -586,6 +588,7 @@ impl Services {
         let receipt = self.evaluate_receipt(
             request.receipt_id.as_deref(),
             response.meta.repository_generation,
+            &database_incarnation_id,
             &receipt_candidates,
         )?;
         let mut decision_index = 0usize;

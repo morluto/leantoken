@@ -258,11 +258,15 @@ impl Services {
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let database_incarnation_id = self.storage.meta()?.database_incarnation_id;
-        let materialized = self.consistent(|session| {
+        let (materialized, database_incarnation_id) = self.consistent(|session| {
             let generation = session.generation();
             check_cancelled(cancellation)?;
-            self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
+            Ok((
+                self.read_at_generation_with_options(
+                    session, &request, generation, max_tokens, options,
+                )?,
+                session.database_incarnation_id().to_owned(),
+            ))
         })?;
         let mut response = materialized.response;
         let direct_response = response.clone();
@@ -343,6 +347,7 @@ impl Services {
         let receipt = self.evaluate_read_receipt(
             request.receipt_id.as_deref(),
             response.meta.repository_generation,
+            &database_incarnation_id,
             &receipt_candidates,
         )?;
         if receipt

@@ -77,11 +77,13 @@ impl Services {
                 let Some(operation) = this.coordination.try_acquire_operation()? else {
                     return Ok(None);
                 };
-                let generation = this.storage.repository_generation();
+                let readiness = this.storage.meta().map(|meta| {
+                    meta.repository_generation > 0 && meta.config_hash == this.indexer.config_hash()
+                });
                 operation.release()?;
-                generation.map(Some)
+                readiness.map(Some)
             });
-            let generation = tokio::select! {
+            let readiness = tokio::select! {
                 _ = cancellation.cancelled() => return Err(Error::Cancelled),
                 _ = &mut changed => {
                     idle_deadline = None;
@@ -89,10 +91,10 @@ impl Services {
                 },
                 result = probe => result??,
             };
-            if generation.is_some_and(|generation| generation > 0) {
+            if readiness == Some(true) {
                 return Ok(());
             }
-            let delay = if generation.is_none() {
+            let delay = if readiness.is_none() {
                 idle_deadline = None;
                 INITIAL_INDEX_PROBE_INTERVAL
             } else {

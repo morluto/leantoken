@@ -733,7 +733,7 @@ async fn initial_index_wait_returns_after_publication_lock_releases() {
     let publisher = tokio::task::spawn_blocking(move || {
         publisher_services
             .storage
-            .full_reconcile("published", Vec::new())
+            .full_reconcile(&publisher_services.indexer.config_hash(), Vec::new())
             .expect("publish generation");
         published_tx.send(()).expect("announce publication");
         release_rx.recv().expect("release permission");
@@ -802,6 +802,27 @@ async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
     .await
     .expect("idle generation-zero wait must be bounded")
     .expect_err("idle generation zero remains unready");
+    assert!(matches!(result, Error::IndexNotReady));
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_index_wait_treats_an_incompatible_generation_as_unready() {
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .storage
+        .full_reconcile("obsolete-projection", Vec::new())
+        .expect("obsolete generation");
+
+    let result = tokio::time::timeout(
+        INITIAL_INDEX_IDLE_GRACE + INITIAL_INDEX_PROBE_INTERVAL,
+        services.wait_for_initial_index_cancellable(CancellationToken::new()),
+    )
+    .await
+    .expect("incompatible generation wait must be bounded")
+    .expect_err("incompatible generation remains unready without a refresh");
     assert!(matches!(result, Error::IndexNotReady));
 }
 

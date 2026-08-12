@@ -76,6 +76,65 @@ fn corrupt_instrumentation_falls_back_without_touching_the_index() {
 }
 
 #[test]
+fn legacy_primary_accounting_is_copied_before_the_tables_are_removed() {
+    let directory = tempfile::tempdir().expect("directory");
+    let index_path = directory.path().join("index.sqlite");
+    let instrumentation_path = directory.path().join("instrumentation.sqlite");
+    let index = Storage::open(&index_path).expect("index storage");
+    {
+        let writer = index
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute_batch(super::super::instrumentation::INSTRUMENTATION_SCHEMA)
+            .expect("legacy accounting tables");
+        writer
+            .execute(
+                "INSERT INTO token_savings(tokenizer, operation, tracked_requests)
+                 VALUES ('cl100k_base', 'search', 7)",
+                [],
+            )
+            .expect("legacy token savings");
+        writer
+            .execute(
+                "INSERT INTO service_failures(tokenizer, operation, error_category, failed_requests)
+                 VALUES ('cl100k_base', 'search', 'fixture', 3)",
+                [],
+            )
+            .expect("legacy service failures");
+    }
+    drop(index);
+
+    let instrumentation = InstrumentationStorage::open(&instrumentation_path);
+    instrumentation
+        .migrate_legacy_primary(&index_path)
+        .expect("copy legacy accounting");
+    instrumentation
+        .migrate_legacy_primary(&index_path)
+        .expect("idempotent legacy accounting copy");
+
+    let (savings, failures) = instrumentation
+        .snapshot("cl100k_base")
+        .expect("migrated accounting");
+    assert_eq!(
+        savings
+            .get("search")
+            .expect("search savings")
+            .tracked_requests,
+        7
+    );
+    assert_eq!(
+        failures,
+        vec![ServiceFailureRecord {
+            operation: "search".into(),
+            error_category: "fixture".into(),
+            failed_requests: 3,
+        }]
+    );
+}
+
+#[test]
 fn accounting_skips_a_busy_local_writer() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = InstrumentationStorage::open(&directory.path().join("instrumentation.sqlite"));

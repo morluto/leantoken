@@ -656,6 +656,7 @@ impl Services {
             .then_some(request.receipt_id.as_deref())
             .flatten(),
             generation,
+            session.database_incarnation_id(),
             &receipt_candidates,
         )?;
         selected = selected

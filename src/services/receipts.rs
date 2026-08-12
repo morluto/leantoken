@@ -9,11 +9,12 @@ impl Services {
         &self,
         requested_id: Option<&str>,
         generation: u64,
+        database_incarnation_id: &str,
         candidates: &[ReceiptEvidence],
     ) -> Result<ReceiptEvaluation> {
         self.artifacts.evaluate_receipt(
             &self.repository_id(),
-            &self.storage.meta()?.database_incarnation_id,
+            database_incarnation_id,
             requested_id,
             generation,
             candidates,
@@ -25,11 +26,12 @@ impl Services {
         &self,
         requested_id: Option<&str>,
         generation: u64,
+        database_incarnation_id: &str,
         candidates: &[ReceiptEvidence],
     ) -> Result<ReceiptEvaluation> {
         self.artifacts.evaluate_receipt(
             &self.repository_id(),
-            &self.storage.meta()?.database_incarnation_id,
+            database_incarnation_id,
             requested_id,
             generation,
             candidates,

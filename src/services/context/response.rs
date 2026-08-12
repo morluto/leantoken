@@ -225,8 +225,12 @@ impl Services {
                     )
                 })
                 .collect::<Vec<_>>();
-            let receipt =
-                self.evaluate_receipt(policy.receipt_id(), generation, &receipt_candidates)?;
+            let receipt = self.evaluate_receipt(
+                policy.receipt_id(),
+                generation,
+                session.database_incarnation_id(),
+                &receipt_candidates,
+            )?;
             response.fragments = response
                 .fragments
                 .drain(..)

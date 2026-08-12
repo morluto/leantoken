@@ -90,6 +90,14 @@ impl Services {
         cache_lease: CacheLease,
     ) -> Result<Self> {
         reject_symlinked_managed_database_artifacts(config)?;
+        // Migration 12 moves these best-effort counters out of the generation
+        // database. Preserve them before Storage runs that destructive step.
+        let instrumentation = InstrumentationStorage::open(&config.instrumentation_database_path());
+        if let Err(error) = instrumentation.migrate_legacy_primary(&config.database_path)
+            && !(config.database_is_managed_cache() && is_database_corruption(&error))
+        {
+            return Err(error);
+        }
         let open_storage = || match startup_timeout {
             Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
                 &config.database_path,

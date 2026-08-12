@@ -734,6 +734,51 @@ async fn initial_index_retry_returns_first_published_result() {
     assert_eq!(calls.load(Ordering::Acquire), 2);
 }
 
+#[tokio::test(start_paused = true)]
+async fn initial_index_retry_waits_for_an_incompatible_projection() {
+    let (_server, mcp_services) = LeanTokenMcp::pending();
+    let ready = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let operation_ready = Arc::clone(&ready);
+    let operation_calls = Arc::clone(&calls);
+    let waiting = tokio::spawn(async move {
+        retry_after_initial_index_with_policy(
+            "files",
+            &mcp_services,
+            CancellationToken::new(),
+            Duration::from_secs(1),
+            |_| async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(())
+            },
+            move || {
+                operation_calls.fetch_add(1, Ordering::AcqRel);
+                let result = if operation_ready.load(Ordering::Acquire) {
+                    Ok(42)
+                } else {
+                    Err(crate::Error::RefreshRequired)
+                };
+                std::future::ready(result)
+            },
+        )
+        .await
+    });
+    tokio::task::yield_now().await;
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+
+    ready.store(true, Ordering::Release);
+    tokio::time::advance(Duration::from_millis(100)).await;
+
+    assert_eq!(
+        waiting
+            .await
+            .expect("join readiness retry")
+            .expect("published result"),
+        42
+    );
+    assert_eq!(calls.load(Ordering::Acquire), 2);
+}
+
 #[tokio::test]
 async fn initial_index_retry_honors_cancellation() {
     let (_server, mcp_services) = LeanTokenMcp::pending();
