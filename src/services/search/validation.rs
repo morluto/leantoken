@@ -9,7 +9,7 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
     validate_glob_patterns(&request.include_paths)?;
     validate_glob_patterns(&request.exclude_paths)?;
     validate_glob_patterns(&request.focus_paths)?;
-    validate_optional_input(request.cursor.as_deref(), "cursor", 2 * 1024)?;
+    validate_cursor(request.cursor.as_deref())?;
     Ok(())
 }
 
@@ -36,11 +36,39 @@ pub(super) fn parse_search_kind(
             reason: "requires auto or identifier mode",
         });
     }
-    if request.query_receipt.is_some() || request.receipt_id.is_some() {
-        return Err(Error::InvalidInput {
-            field: "receipt",
-            reason: "server-managed retrieval receipts have been removed",
-        });
+    if request.query_receipt.is_some() {
+        if !request.all_occurrences || !matches!(request.mode, SearchMode::Text | SearchMode::Regex)
+        {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires all_occurrences=true with text or regex mode",
+            });
+        }
+        if !request.focus_paths.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "does not allow focus_paths",
+            });
+        }
+        if request.receipt_id.is_some() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "cannot be combined with evidence receipt_id",
+            });
+        }
+        if request.cursor.is_some() {
+            return Err(Error::InvalidInput {
+                field: "query_receipt",
+                reason: "does not allow a cursor",
+            });
+        }
+        if let Some(QueryReceiptAction::Reuse { receipt_id }) = &request.query_receipt {
+            validate_input(
+                receipt_id,
+                "query receipt_id",
+                crate::query_receipt::MAX_QUERY_RECEIPT_ID_BYTES,
+            )?;
+        }
     }
     if matches!(output_shape, SearchOutputShape::OccurrenceGroups(_)) && !request.all_occurrences {
         return Err(Error::InvalidInput {
@@ -48,9 +76,31 @@ pub(super) fn parse_search_kind(
             reason: "requires all_occurrences=true",
         });
     }
+    if request.query_receipt.is_some()
+        && !matches!(output_shape, SearchOutputShape::OccurrenceGroups(_))
+    {
+        return Err(Error::InvalidInput {
+            field: "query_receipt",
+            reason: "requires the occurrences projection",
+        });
+    }
+
     let preference = DefinitionPreference::from_prefer_structural(request.prefer_structural);
+    let query_receipt = match &request.query_receipt {
+        None => PreparedQueryReceipt::None,
+        Some(QueryReceiptAction::Record) => {
+            PreparedQueryReceipt::Record(ExactQueryPredicate::from_request(request)?)
+        }
+        Some(QueryReceiptAction::Reuse { receipt_id }) => PreparedQueryReceipt::Reuse {
+            receipt_id: receipt_id.clone(),
+            predicate: ExactQueryPredicate::from_request(request)?,
+        },
+    };
     if let Some(mode) = exhaustive_mode {
-        return Ok(SearchKind::Exhaustive { mode });
+        return Ok(SearchKind::Exhaustive {
+            mode,
+            query_receipt,
+        });
     }
     Ok(match request.mode {
         SearchMode::Auto => SearchKind::Auto(preference),

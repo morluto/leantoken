@@ -87,7 +87,7 @@ impl Indexer {
                 })?;
                 let mut batch = Vec::with_capacity(profiled.len());
                 for (prepared, detail) in profiled {
-                    if let PreparedFile::Indexed(file, _) = &prepared {
+                    if let PreparedFile::Indexed(file, _, _) = &prepared {
                         let language = file.language.as_deref().unwrap_or("<unknown>");
                         metrics
                             .detail_by_language

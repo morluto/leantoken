@@ -1,0 +1,208 @@
+//! Plumbing-only adapter for validating the model A/B harness without credentials.
+
+#[allow(dead_code)]
+#[path = "support/model_ab_artifacts.rs"]
+mod model_ab_artifacts;
+
+use std::error::Error;
+use std::fs;
+use std::io::{self, Read};
+use std::path::PathBuf;
+
+use model_ab_artifacts::{
+    ARTIFACT_SCHEMA_V1, OrientationCapsule, PREWALK_HANDOFF_FILE, PROVIDER_USAGE_FILE,
+    PrewalkHandoff, ProviderUsage, ProviderUsageReceipt, RunBinding, TOOL_TRACE_FILE,
+    TRAJECTORY_FILE, ToolCall, ToolOutcome, ToolTrace, Trajectory, ValidatedEdit,
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize)]
+struct AdapterRequest {
+    schema_version: u32,
+    experiment_id: String,
+    manifest_blake3: String,
+    random_seed: u64,
+    repetition: usize,
+    arm_order_index: usize,
+    arm: String,
+    primary_model: String,
+    executor_model: Option<String>,
+    task_id: String,
+    #[serde(default)]
+    orientation_capsule: Option<OrientationCapsule>,
+    artifacts_directory: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+struct AdapterResult {
+    schema_version: u32,
+    task_success: bool,
+    total_input_tokens: Option<u64>,
+    total_output_tokens: Option<u64>,
+    provider_reported_cost_usd: Option<f64>,
+    tool_calls: usize,
+    rereads: usize,
+    reread_tokens: u64,
+    failed_tool_calls: usize,
+    failed_searches: usize,
+    dead_end_reads: usize,
+    provider_usage: ProviderUsage,
+    evidence_receipt: Option<serde_json::Value>,
+    repository_generation: Option<u64>,
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let request: AdapterRequest = serde_json::from_str(&input)?;
+    if request.schema_version != 4 {
+        return Err("unsupported model A/B adapter request schema".into());
+    }
+    let binding = RunBinding {
+        experiment_id: request.experiment_id.clone(),
+        manifest_blake3: request.manifest_blake3.clone(),
+        task_id: request.task_id.clone(),
+        repetition: request.repetition,
+        arm: request.arm.clone(),
+    };
+    let provider_usage = ProviderUsage {
+        uncached_input_tokens: Some(0),
+        cache_creation_input_tokens: Some(0),
+        cache_read_input_tokens: Some(0),
+        output_tokens: Some(0),
+        reasoning_tokens: Some(0),
+    };
+    let (calls, events) = dry_run_trace(&request, &binding)?;
+    write_json(
+        request.artifacts_directory.join(TOOL_TRACE_FILE),
+        &ToolTrace {
+            schema_version: ARTIFACT_SCHEMA_V1,
+            binding: binding.clone(),
+            calls: calls.clone(),
+        },
+    )?;
+    write_json(
+        request.artifacts_directory.join(TRAJECTORY_FILE),
+        &Trajectory {
+            schema_version: ARTIFACT_SCHEMA_V1,
+            binding: binding.clone(),
+            events,
+        },
+    )?;
+    write_json(
+        request.artifacts_directory.join(PROVIDER_USAGE_FILE),
+        &ProviderUsageReceipt {
+            schema_version: ARTIFACT_SCHEMA_V1,
+            binding,
+            usage: provider_usage.clone(),
+            raw_receipt: serde_json::json!({
+                "kind": "dry_run",
+                "request_schema_version": request.schema_version,
+                "random_seed": request.random_seed,
+                "arm_order_index": request.arm_order_index
+            }),
+        },
+    )?;
+    let result = AdapterResult {
+        schema_version: 4,
+        task_success: false,
+        total_input_tokens: Some(0),
+        total_output_tokens: Some(0),
+        provider_reported_cost_usd: None,
+        tool_calls: calls.len(),
+        rereads: 0,
+        reread_tokens: 0,
+        failed_tool_calls: 0,
+        failed_searches: 0,
+        dead_end_reads: 0,
+        provider_usage,
+        evidence_receipt: None,
+        repository_generation: None,
+    };
+    serde_json::to_writer(io::stdout(), &result)?;
+    Ok(())
+}
+
+fn dry_run_trace(
+    request: &AdapterRequest,
+    binding: &RunBinding,
+) -> Result<(Vec<ToolCall>, Vec<serde_json::Value>), Box<dyn Error>> {
+    if !matches!(request.arm.as_str(), "prewalk" | "prewalk_capsule") {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let executor_model = request
+        .executor_model
+        .clone()
+        .filter(|model| !model.trim().is_empty())
+        .ok_or("prewalk dry run is missing executor_model")?;
+    if request.primary_model.trim().is_empty() || request.primary_model == executor_model {
+        return Err("prewalk dry run has invalid model separation".into());
+    }
+    let calls = vec![
+        ToolCall {
+            sequence: 0,
+            tool_name: "leantoken".to_owned(),
+            call_id: "prewalk:dry-evidence".to_owned(),
+            result_id: "prewalk:dry-evidence-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 1,
+            reread: false,
+            ranges: Vec::new(),
+        },
+        ToolCall {
+            sequence: 1,
+            tool_name: "edit".to_owned(),
+            call_id: "prewalk:dry-edit".to_owned(),
+            result_id: "prewalk:dry-edit-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 0,
+            reread: false,
+            ranges: Vec::new(),
+        },
+        ToolCall {
+            sequence: 2,
+            tool_name: "shell".to_owned(),
+            call_id: "prewalk:dry-validation".to_owned(),
+            result_id: "prewalk:dry-validation-result".to_owned(),
+            outcome: ToolOutcome::Success,
+            result_source_tokens: 0,
+            reread: false,
+            ranges: Vec::new(),
+        },
+    ];
+    let todo = serde_json::json!({
+        "type": "item.completed",
+        "item": {
+            "id": "prewalk:dry-todo",
+            "type": "agent_message",
+            "text": serde_json::json!({
+                "summary": "synthetic dry-run plumbing",
+                "todo": [{"step": "finish synthetic task", "status": "pending"}]
+            }).to_string()
+        }
+    });
+    write_json(
+        request.artifacts_directory.join(PREWALK_HANDOFF_FILE),
+        &PrewalkHandoff {
+            schema_version: ARTIFACT_SCHEMA_V1,
+            binding: binding.clone(),
+            primary_model: request.primary_model.clone(),
+            executor_model,
+            trajectory_events: vec![todo.clone()],
+            todo_events: vec![todo.clone()],
+            evidence_calls: vec![calls[0].clone()],
+            worktree_patch: "synthetic dry-run patch; no worktree mutation".to_owned(),
+            first_validated_edit: ValidatedEdit {
+                edit_sequence: 1,
+                validation_sequence: 2,
+            },
+            orientation_capsule: request.orientation_capsule.clone(),
+        },
+    )?;
+    Ok((calls, vec![todo]))
+}
+
+fn write_json(path: PathBuf, value: &impl Serialize) -> Result<(), Box<dyn Error>> {
+    fs::write(path, serde_json::to_vec_pretty(value)?)?;
+    Ok(())
+}

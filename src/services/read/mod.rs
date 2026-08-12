@@ -1,29 +1,36 @@
-//! Bounded reads from one immutable indexed generation.
+//! Bounded live reads and index-backed excerpts.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
 use super::index_read::IndexReadSnapshot;
+use super::read_delta::ReadDeltaInput;
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
-use crate::repository::{normalize_relative, validate_relative};
-use crate::text::{anchored_line_window, excerpt, hash, line_starts};
+use crate::repository::{normalize_relative, resolve_existing, validate_relative};
+use crate::text::{anchored_line_window, hash};
 use crate::tokens::ResponseBudget;
 use crate::{Error, Result};
 
 pub(super) const MIN_CONTEXT_RANGE_LINES: usize = 12;
 pub(super) const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
+mod cursor;
 mod excerpts;
 mod live;
 mod types;
 
-use live::{invalid_line_range, resolve_read_target};
+use cursor::*;
+pub(super) use live::open_live_file;
+use live::*;
 use types::*;
 pub(super) use types::{
     AdaptiveExcerptRequest, NewReadTarget, StoredExcerpt, StoredExcerptRequest,
@@ -60,7 +67,7 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
     validate_optional_input(
         request.continuation_cursor.as_deref(),
         "continuation cursor",
-        2 * 1024,
+        256,
     )?;
     let mode = parse_read_mode(&request)?;
     request.path = normalize_relative(&request.path)?;
@@ -69,6 +76,7 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
         mode,
         max_tokens: request.max_tokens,
         expected_hash: request.expected_hash,
+        receipt_id: request.receipt_id,
         policy: request.policy,
     })
 }
@@ -107,15 +115,21 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             reason: "must use either a continuation cursor or a new target, not both",
         });
     }
-    if request.delta {
+    if request.delta && request.continuation_cursor.is_some() {
         return Err(Error::InvalidInput {
             field: "delta",
-            reason: "has been removed; clients should send known content hashes",
+            reason: "is supported only for a new line, symbol, or heading target",
+        });
+    }
+    if request.delta && !matches!(request.policy, ReadPolicy::Full) {
+        return Err(Error::InvalidInput {
+            field: "policy",
+            reason: "delta reads require full verification",
         });
     }
     if let Some(cursor) = &request.continuation_cursor {
         return Ok(ReadMode::Direct(ReadTargetInput::Continuation(
-            cursor.clone(),
+            decode_read_cursor(cursor)?,
         )));
     }
     let target = if let Some(symbol) = &request.symbol {
@@ -141,7 +155,11 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             end: request.end_line,
         }
     };
-    Ok(ReadMode::Direct(ReadTargetInput::New(target)))
+    Ok(if request.delta {
+        ReadMode::Delta(target)
+    } else {
+        ReadMode::Direct(ReadTargetInput::New(target))
+    })
 }
 
 impl Services {
@@ -150,8 +168,7 @@ impl Services {
             .await
     }
 
-    /// Read source from one immutable indexed generation under explicit
-    /// serialized-response controls.
+    /// Read live source under explicit serialized-response controls.
     pub async fn read_with_options(
         &self,
         request: ReadRequest,
@@ -217,6 +234,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         if let Some(consistency) = consistency {
             self.observe_service_result(
@@ -234,7 +252,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
-            .process_budget
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.read_sync(request, options, cancellation)
             })
@@ -256,14 +274,125 @@ impl Services {
             self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
         })?;
         let mut response = materialized.response;
-        let returned_items = usize::from(!response.not_modified);
-        if let Some(limit) = options.max_response_tokens()
-            && self.finalized_response_tokens(&response, options)? > limit
-        {
-            return Err(self.response_budget_error(&response, limit, options)?);
+        let direct_response = response.clone();
+        if let ReadMode::Delta(target) = &request.mode {
+            let evaluation = self.read_deltas.evaluate(ReadDeltaInput {
+                repository_id: &response.meta.repository_id,
+                storage: &self.storage,
+                path: &request.path,
+                target,
+                expected_hash: request.expected_hash.as_deref(),
+                response: &response,
+                current_content: &materialized.current_content,
+                full_tokens: materialized.current_tokens,
+                tokenizer: self.config.tokenizer,
+            })?;
+            if evaluation.receipt.outcome == ReadDeltaOutcome::NotModified {
+                response.status = ReadStatus::NotModified;
+                response.not_modified = true;
+                response.content = None;
+                response.delta = None;
+                response.meta.source_tokens = 0;
+            } else if let Some(delta) = evaluation.delta {
+                let emitted_tokens = evaluation
+                    .receipt
+                    .delta_tokens
+                    .expect("delta evaluation reports its token count");
+                response.status = ReadStatus::Delta;
+                response.content = None;
+                response.delta = Some(delta);
+                response.meta.source_tokens = emitted_tokens;
+            }
+            response.delta_receipt = Some(evaluation.receipt);
+            prefer_full_if_delta_payload_not_smaller(
+                &mut response,
+                &materialized.current_content,
+                materialized.current_tokens,
+                self.config.tokenizer,
+            )?;
         }
+        let mut returned_items = usize::from(!response.not_modified);
+        if let Some(limit) = options.max_response_tokens() {
+            let mut reserved = self.finalized_response_tokens_with_receipt_reserve(
+                &response,
+                returned_items,
+                options,
+            )?;
+            if reserved > limit && request.mode.is_delta() {
+                response = direct_response;
+                returned_items = usize::from(!response.not_modified);
+                reserved = self.finalized_response_tokens_with_receipt_reserve(
+                    &response,
+                    returned_items,
+                    options,
+                )?;
+            }
+            if reserved > limit {
+                return Err(self.response_budget_error_with_receipt_reserve(
+                    &response,
+                    returned_items,
+                    limit,
+                    options,
+                )?);
+            }
+        }
+        let receipt_candidates = if response.not_modified {
+            Vec::new()
+        } else {
+            vec![ReceiptEvidence::new(
+                response.path.clone(),
+                response.returned_start_line,
+                response.returned_end_line,
+                response.content_hash.clone(),
+                Some(&materialized.current_content),
+            )]
+        };
+        let receipt = self.evaluate_read_receipt(
+            request.receipt_id.as_deref(),
+            response.meta.repository_generation,
+            &receipt_candidates,
+        )?;
+        if receipt
+            .decisions
+            .first()
+            .is_some_and(|decision| *decision == ReceiptDecision::SuppressExact)
+        {
+            response.content = None;
+            response.delta = None;
+            response.status = ReadStatus::ReceiptSuppressed;
+            response.not_modified = false;
+            response.meta.source_tokens = 0;
+            if let Some(delta_receipt) = response.delta_receipt.as_mut() {
+                delta_receipt.outcome = ReadDeltaOutcome::ReceiptSuppressed;
+                delta_receipt.delta_tokens = Some(0);
+                delta_receipt.avoided_tokens = delta_receipt.full_tokens;
+                delta_receipt.fallback_reason = None;
+            }
+        }
+        receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
-        let _ = returned_items;
+        let expected_hash_not_modified = request.expected_hash.is_some() && response.not_modified;
+        self.record_token_savings_with_expected_hash(
+            TokenAccountingOperation::Read,
+            Some(materialized.baseline_source_tokens),
+            &response.meta,
+            if response.not_modified {
+                TokenSavingsRequestClass::HashSuppressed
+            } else if matches!(
+                &response.status,
+                ReadStatus::Truncated | ReadStatus::ReceiptSuppressed
+            ) {
+                TokenSavingsRequestClass::Incomplete
+            } else {
+                TokenSavingsRequestClass::Useful
+            },
+            expected_hash_not_modified,
+            if expected_hash_not_modified {
+                materialized.baseline_source_tokens
+            } else {
+                0
+            },
+        );
         Ok(response)
     }
 
@@ -277,14 +406,24 @@ impl Services {
     ) -> Result<MaterializedRead> {
         let (mut materialized, minimum_progress_tokens) =
             self.read_at_generation(session, request, generation, max_tokens)?;
-        if self.response_fits(&materialized.response, options)? && !materialized.response.truncated
+        let returned_items = usize::from(!materialized.response.not_modified);
+        if self.response_fits_with_receipt_reserve(
+            &materialized.response,
+            returned_items,
+            options,
+        )? && !materialized.response.truncated
         {
             return Ok(materialized);
         }
 
         let budget_estimate = self.read_budget_estimate(session, request, generation)?;
         self.apply_read_budget_guidance(&mut materialized, budget_estimate.as_ref(), max_tokens);
-        if self.response_fits(&materialized.response, options)? {
+        let returned_items = usize::from(!materialized.response.not_modified);
+        if self.response_fits_with_receipt_reserve(
+            &materialized.response,
+            returned_items,
+            options,
+        )? {
             return Ok(materialized);
         }
 
@@ -302,7 +441,12 @@ impl Services {
                 budget_estimate.as_ref(),
                 candidate_limit,
             );
-            self.finalized_response_tokens(&candidate.response, options)
+            let returned_items = usize::from(!candidate.response.not_modified);
+            self.finalized_response_tokens_with_receipt_reserve(
+                &candidate.response,
+                returned_items,
+                options,
+            )
         })?;
         if let Some(additional_tokens) = keep {
             let candidate_limit = minimum_progress_tokens.saturating_add(additional_tokens);
@@ -323,7 +467,12 @@ impl Services {
             budget_estimate.as_ref(),
             minimum_progress_tokens,
         );
-        Err(self.response_budget_error(&minimum.response, max_response_tokens, options)?)
+        Err(self.response_budget_error_with_receipt_reserve(
+            &minimum.response,
+            usize::from(!minimum.response.not_modified),
+            max_response_tokens,
+            options,
+        )?)
     }
 
     fn read_budget_estimate(
@@ -335,7 +484,7 @@ impl Services {
         let Some(indexed) = session.find_file(&request.path)? else {
             return Ok(None);
         };
-        let target = resolve_read_target(self, session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request, generation)?;
         let target_end_line = match target.target_end_line {
             Some(end_line) => end_line,
             None => match session
@@ -389,7 +538,11 @@ impl Services {
             return;
         }
         materialized.response.truncation_guidance = Some(ReadTruncationGuidance {
-            basis: ReadTruncationGuidanceBasis::IndexedGenerationEstimate,
+            basis: if materialized.response.index_state == ReadIndexState::Current {
+                ReadTruncationGuidanceBasis::VerifiedLive
+            } else {
+                ReadTruncationGuidanceBasis::IndexedGenerationEstimate
+            },
             target_source_tokens: estimate.target_source_tokens,
             remaining_source_tokens,
             remaining_pages_at_current_budget: remaining_source_tokens.div_ceil(current_max_tokens),
@@ -409,44 +562,70 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(self, session, indexed.id, request, generation)?;
-        let expected_size = usize::try_from(indexed.size_bytes).map_err(|_| {
-            Error::OperationFailure("indexed file size exceeds this platform".into())
-        })?;
-        let indexed_content = session.file_content(indexed.id, expected_size)?;
-        if hash(&indexed_content) != indexed.content_hash {
-            return Err(Error::OperationFailure(
-                "indexed file content hash does not match its file record".into(),
-            ));
+        let target = resolve_read_target(session, indexed.id, request, generation)?;
+
+        let file = open_live_file(self, &request.path)?;
+        let observation = observe_live_range(
+            &file,
+            target.target_start_line,
+            target.target_end_line,
+            target.page_start_byte,
+            max_tokens,
+            self.config.tokenizer,
+            target.policy,
+        )?;
+        let snapshot = observation.snapshot;
+        let range = observation.range;
+        let live_bytes_read = snapshot.bytes_read;
+        let policy = target.policy;
+        if let (Some(expected), Some(actual)) = (
+            target.expected_full_hash.as_deref(),
+            snapshot.content_hash.as_deref(),
+        ) && expected != actual
+        {
+            return Err(Error::StaleCursor);
         }
-        let indexed_end_line = line_starts(&indexed_content).len().max(1);
+        if let Some(expected_size) = target.expected_file_size
+            && expected_size != snapshot.file_size
+        {
+            return Err(Error::StaleCursor);
+        }
+        if let Some(expected_ns) = target.expected_modified_ns
+            && Some(expected_ns) != snapshot.modified_ns
+        {
+            return Err(Error::StaleCursor);
+        }
+        if let Some(expected) = target.expected_prefix_hash.as_deref() {
+            let actual = hash_live_range_prefix(
+                &file,
+                target.target_start_line,
+                target.target_end_line,
+                target.page_start_byte,
+            )?;
+            if expected != actual {
+                return Err(Error::StaleCursor);
+            }
+        }
         let observed_target_end_line = target
             .target_end_line
-            .unwrap_or(indexed_end_line)
-            .min(indexed_end_line);
+            .unwrap_or(snapshot.end_line)
+            .min(snapshot.end_line);
         if target.target_start_line > observed_target_end_line
             || target.page_start_line > observed_target_end_line
         {
             return Err(invalid_line_range());
         }
-        let target_content = excerpt(
-            &indexed_content,
-            target.target_start_line,
-            observed_target_end_line,
-        );
-        if target.page_start_byte > target_content.len()
-            || !target_content.is_char_boundary(target.page_start_byte)
-        {
+        if range.page_start_line != target.page_start_line {
             return Err(Error::StaleCursor);
         }
-        let remaining = &target_content[target.page_start_byte..];
+        let baseline_source_tokens = self.config.tokenizer.count(&range.content);
         let (content, emitted_tokens, minimum_progress_tokens) = self
             .config
             .tokenizer
-            .truncate_for_read(remaining, max_tokens);
+            .truncate_for_read(&range.content, max_tokens);
         let minimum_progress_tokens = minimum_progress_tokens.unwrap_or(1);
         let next_byte = target.page_start_byte.saturating_add(content.len());
-        let truncated = next_byte < target_content.len();
+        let truncated = next_byte < range.target_bytes;
         // Exact BPE tokens can split a leading UTF-8 scalar. Reject a budget
         // that cannot complete it instead of issuing a cursor at the same byte.
         if truncated && next_byte == target.page_start_byte {
@@ -455,7 +634,7 @@ impl Services {
                 reason: "must fit at least one UTF-8 scalar",
             });
         }
-        let returned_start_line = target.page_start_line;
+        let returned_start_line = range.page_start_line;
         let returned_end_line = returned_end_line(returned_start_line, content);
         let next_start_line = truncated.then(|| {
             if content.ends_with('\n') {
@@ -464,21 +643,62 @@ impl Services {
                 returned_end_line
             }
         });
-        let continuation_cursor = next_start_line
-            .map(|next_start_line| {
-                self.cursor_codec.seal(
-                    generation,
-                    &read_request_digest(&request.path, request.policy)?,
-                    &ReadPosition {
-                        target_start_line: target.target_start_line,
-                        target_end_line: target.target_end_line,
-                        next_start_line,
-                        next_byte,
-                    },
+        // Truncated full-policy reads re-read the complete file to verify no
+        // concurrent modification occurred between the first pass and cursor
+        // issuance. Bounded reads skip this check because they do not hash the
+        // complete file.
+        if truncated && policy.is_full() {
+            let after_read = stream_snapshot(&file)?;
+            if after_read.content_hash != snapshot.content_hash
+                || after_read.end_line != snapshot.end_line
+            {
+                return Err(Error::RetryableConflict(
+                    crate::error::RetryableOperation::Retrieval,
+                ));
+            }
+        }
+        let prefix_hash = (truncated && !policy.is_full())
+            .then(|| {
+                hash_live_range_prefix(
+                    &file,
+                    target.target_start_line,
+                    target.target_end_line,
+                    next_byte,
                 )
             })
             .transpose()?;
+        let continuation_cursor = next_start_line.map(|next_start_line| {
+            ReadCursor {
+                generation,
+                target_start_line: target.target_start_line,
+                target_end_line: target.target_end_line,
+                next_start_line,
+                next_byte,
+                full_hash: snapshot.content_hash.clone(),
+                prefix_hash: prefix_hash.clone(),
+                policy,
+                file_size: snapshot.file_size,
+                modified_ns: snapshot.modified_ns,
+                path_hash: read_path_hash(&request.path),
+            }
+            .encode()
+        });
         let content_hash = hash(content);
+        let (index_stale, indexed_hash, index_state) = if policy.is_full() {
+            let live_hash = snapshot.content_hash.as_deref().unwrap_or("");
+            let stale = indexed.content_hash != live_hash;
+            (
+                stale,
+                Some(indexed.content_hash),
+                if stale {
+                    ReadIndexState::Stale
+                } else {
+                    ReadIndexState::Current
+                },
+            )
+        } else {
+            (false, None, ReadIndexState::Unknown)
+        };
         let not_modified = request.expected_hash.as_deref() == Some(content_hash.as_str());
         let status = if truncated {
             ReadStatus::Truncated
@@ -505,36 +725,88 @@ impl Services {
                 delta: None,
                 delta_receipt: None,
                 content_hash,
-                indexed_hash: Some(indexed.content_hash),
-                index_stale: false,
-                index_state: ReadIndexState::Current,
-                live_bytes_read: 0,
+                indexed_hash,
+                index_stale,
+                index_state,
+                live_bytes_read,
                 meta: self.meta(
                     generation,
                     if not_modified { 0 } else { emitted_tokens },
                     None,
                 ),
             },
+            baseline_source_tokens,
             current_content: content.to_owned(),
+            current_tokens: emitted_tokens,
         };
         Ok((materialized, minimum_progress_tokens))
     }
 }
 
-fn read_request_digest(path: &str, policy: ReadPolicy) -> Result<String> {
-    super::cursor::request_digest("read", &(path, policy))
+pub(super) fn prefer_full_if_delta_payload_not_smaller(
+    response: &mut ReadResponse,
+    current_content: &str,
+    current_tokens: usize,
+    tokenizer: crate::tokens::Tokenizer,
+) -> Result<()> {
+    if response.status != ReadStatus::Delta {
+        return Ok(());
+    }
+    let delta_tokens = finalized_serialized_read_tokens(response, tokenizer)?;
+    let mut full = response.clone();
+    full.status = ReadStatus::Content;
+    full.content = Some(current_content.to_owned());
+    full.delta = None;
+    full.meta.source_tokens = current_tokens;
+    if let Some(receipt) = full.delta_receipt.as_mut() {
+        receipt.outcome = ReadDeltaOutcome::Full;
+        receipt.delta_tokens = None;
+        receipt.avoided_tokens = 0;
+        receipt.fallback_reason = Some(ReadDeltaFallback::DeltaNotSmaller);
+    }
+    if delta_tokens >= finalized_serialized_read_tokens(&full, tokenizer)? {
+        *response = full;
+    }
+    Ok(())
 }
 
-fn returned_end_line(start_line: usize, content: &str) -> usize {
-    let newline_count = content.bytes().filter(|byte| *byte == b'\n').count();
-    start_line
-        .saturating_add(newline_count)
-        .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0))
+pub(super) fn finalized_serialized_read_tokens(
+    response: &ReadResponse,
+    tokenizer: crate::tokens::Tokenizer,
+) -> Result<usize> {
+    let mut finalized = response.clone();
+    finalized.meta.protocol_tokens = 0;
+    finalized.meta.path_and_metadata_tokens = 0;
+    finalized.meta.total_response_tokens = 0;
+    let accounting = crate::tokens::response_token_accounting(
+        &finalized,
+        finalized.meta.source_tokens,
+        &tokenizer,
+    )?;
+    finalized.meta.protocol_tokens = accounting.protocol_tokens;
+    finalized.meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
+    finalized.meta.total_response_tokens = accounting.total_response_tokens;
+    Ok(tokenizer.count(&serde_json::to_string(&finalized)?))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_snapshot_hashes_from_the_start_of_a_shared_file_cursor() {
+        let mut file = tempfile::tempfile().expect("temporary file");
+        std::io::Write::write_all(&mut file, b"first\nsecond\n").expect("write fixture");
+        file.seek(SeekFrom::Start(6)).expect("move shared cursor");
+
+        let snapshot = stream_snapshot(&file).expect("snapshot");
+
+        assert_eq!(
+            snapshot.content_hash.as_deref(),
+            Some(hash("first\nsecond\n").as_str())
+        );
+        assert_eq!(snapshot.end_line, 2);
+    }
 
     #[test]
     fn raw_symbol_bytes_are_bounded_before_normalization() {

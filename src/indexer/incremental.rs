@@ -6,7 +6,7 @@ enum VisibilityObservation {
 }
 
 impl Indexer {
-    /// Reconcile explicitly reported paths without walking the full repository.
+    /// Reconcile watcher-reported paths without walking the full repository.
     ///
     /// Existing regular files and deletions are safe to apply directly. New
     /// paths, directories, symlinks, and ignore-rule changes fall back to a
@@ -17,12 +17,12 @@ impl Indexer {
             .map(IndexReport::into_response)
     }
 
-    /// Reconcile explicit paths and include bounded preparation skip reasons.
+    /// Reconcile watcher paths and include bounded preparation skip reasons.
     pub fn reconcile_paths_report(&self, paths: &[String]) -> Result<IndexReport> {
         self.reconcile_paths_cancellable_report(paths, &CancellationToken::new())
     }
 
-    /// Reconcile explicit paths with cooperative cancellation and stale-plan retry.
+    /// Reconcile watcher paths with cooperative cancellation and stale-plan retry.
     pub fn reconcile_paths_cancellable(
         &self,
         paths: &[String],
@@ -32,7 +32,7 @@ impl Indexer {
             .map(IndexReport::into_response)
     }
 
-    /// Reconcile explicit paths with cancellation and preparation skip reasons.
+    /// Reconcile watcher paths with cancellation and preparation skip reasons.
     pub fn reconcile_paths_cancellable_report(
         &self,
         paths: &[String],
@@ -383,10 +383,11 @@ impl Indexer {
             StorageProfiling::Omit,
             |prepared| {
                 let mut indexed = Vec::with_capacity(prepared.len());
+                let mut source_token_counts = HashMap::with_capacity(prepared.len());
                 for result in prepared {
                     check_cancelled(cancellation)?;
                     match result {
-                        PreparedFile::Indexed(file, warning) => {
+                        PreparedFile::Indexed(file, source_token_count, warning) => {
                             source_bytes.replace(&file.path, file.size_bytes);
                             let same = existing.get(&file.path).is_some_and(|record| {
                                 record.content_hash == file.content_hash
@@ -396,6 +397,7 @@ impl Indexer {
                                 unchanged += 1;
                                 continue;
                             }
+                            source_token_counts.insert(file.path.clone(), source_token_count);
                             indexed.push(*file);
                             if let Some(warning) = warning {
                                 push_warning(&mut warnings, warning);
@@ -426,7 +428,10 @@ impl Indexer {
                 for file in indexed {
                     check_cancelled(cancellation)?;
                     updated_paths.insert(file.path.clone());
-                    staged.stage_indexed(file);
+                    let source_token_count = source_token_counts
+                        .remove(&file.path)
+                        .expect("prepared file has a source token count");
+                    staged.stage_indexed(file, source_token_count);
                 }
                 staged.flush()?;
                 Ok(())

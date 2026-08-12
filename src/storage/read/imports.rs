@@ -31,7 +31,7 @@ impl ReadSession {
         }
         let input = serde_json::to_string(paths)?;
         let mut stmt = self.conn.prepare_cached(
-            "SELECT imports.id, imports.file_id, files.path
+            "SELECT imports.id, imports.file_id, files.path, imports.raw_target
              FROM json_each(?1) AS requested
              JOIN files ON files.path = requested.value
              JOIN imports ON imports.file_id = files.id
@@ -42,6 +42,7 @@ impl ReadSession {
                 id: row.get(0)?,
                 file_id: row.get(1)?,
                 source_path: row.get(2)?,
+                raw_target: row.get(3)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

@@ -1,0 +1,90 @@
+name: Graph signal ablation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: graph-signal-ablation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Stable summary and raw archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      CARGO_INCREMENTAL: 0
+      RUSTUP_TOOLCHAIN: "1.95"
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Prepare pinned representative repositories
+        run: |
+          mkdir -p target/representative-repos
+          while IFS=$'\t' read -r url directory revision; do
+            git init "target/representative-repos/${directory}"
+            git -C "target/representative-repos/${directory}" remote add origin "${url}"
+            git -C "target/representative-repos/${directory}" fetch --depth=2 origin "${revision}"
+            git -C "target/representative-repos/${directory}" checkout --detach "${revision}"
+          done < <(jq -r '.corpora[] | [.url, .directory, .base_revision] | @tsv' benchmarks/representative.json)
+
+      - name: Run release benchmark
+        run: |
+          cargo build --locked --release \
+            --package leantoken-benchmarks \
+            --bin graph_signal_ablation \
+            --bin artifact_blake3
+          target/release/graph_signal_ablation \
+            --manifest benchmarks/graph_signal_ablation_v1.json \
+            --repos-root target/representative-repos \
+            --output target/graph-signal-ablation-v1.json \
+            --raw-output target/graph-signal-ablation-v1.raw.json
+
+      - name: Verify summary/raw linkage and run count
+        run: |
+          summary_hash=$(target/release/artifact_blake3 target/graph-signal-ablation-v1.json | cut -d' ' -f1)
+          test "$(jq -r '.summary_blake3' target/graph-signal-ablation-v1.raw.json)" = "${summary_hash}"
+          test "$(jq '.runs | length' target/graph-signal-ablation-v1.raw.json)" -eq 96
+          test "$(jq 'has("runs") or has("host_os") or has("cold_index_ms")' target/graph-signal-ablation-v1.json)" = false
+
+      - name: Compute artifact identity
+        id: identity
+        run: |
+          manifest_blake3=$(target/release/artifact_blake3 benchmarks/graph_signal_ablation_v1.json | cut -d' ' -f1)
+          source_manifest_blake3=$(target/release/artifact_blake3 benchmarks/representative.json | cut -d' ' -f1)
+          harness_blake3=$(target/release/artifact_blake3 examples/graph_signal_ablation.rs | cut -d' ' -f1)
+          echo "manifest_blake3=${manifest_blake3}" >> "${GITHUB_OUTPUT}"
+          echo "source_manifest_blake3=${source_manifest_blake3}" >> "${GITHUB_OUTPUT}"
+          echo "harness_blake3=${harness_blake3}" >> "${GITHUB_OUTPUT}"
+
+      - name: Add benchmark summary
+        if: always()
+        run: |
+          if [[ -f target/graph-signal-ablation-v1.json ]]; then
+            jq -r '"- Decision: \(.decision.issue_outcome)\n- Raw archive: generated with 96 per-run records; summary/raw linkage is checked separately."' \
+              target/graph-signal-ablation-v1.json >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload summary and raw archive
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: graph-signal-ablation-${{ github.sha }}-${{ steps.identity.outputs.manifest_blake3 }}-${{ steps.identity.outputs.source_manifest_blake3 }}-${{ steps.identity.outputs.harness_blake3 }}-${{ runner.os }}-${{ runner.arch }}-rust-1.95
+          path: |
+            target/graph-signal-ablation-v1.json
+            target/graph-signal-ablation-v1.raw.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -423,6 +423,7 @@ impl Services {
             max_results: Some(max_candidates),
             max_tokens: Some(max_tokens),
             case_sensitive: false,
+            receipt_id: None,
             cursor: None,
         };
         Ok(self

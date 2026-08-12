@@ -4,6 +4,8 @@ const STARTUP_BUSY_TIMEOUT: Duration = Duration::from_millis(250);
 const STARTUP_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(25);
 const STARTUP_RETRY_MAX_DELAY: Duration = Duration::from_millis(500);
 pub(super) const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+pub(super) const INITIAL_INDEX_IDLE_GRACE: Duration = Duration::from_secs(1);
+pub(super) const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 impl Services {
     pub fn open(config: Config) -> Result<Self> {
@@ -117,22 +119,32 @@ impl Services {
         let tokenizer = config.tokenizer;
         let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
+        let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
-        let repository_id = {
-            let mut input = b"leantoken-repository-root-v1\0".to_vec();
-            input.extend_from_slice(config.root.as_os_str().as_encoded_bytes());
-            blake3::hash(&input).to_hex()[..32].to_owned()
-        };
+        let active_reconciliations = Arc::new(AtomicUsize::new(0));
+        let reconciliation_changed = Arc::new(tokio::sync::Notify::new());
+        let reconciliation = reconciliation::ReconciliationCoordinator::new(
+            indexer.clone(),
+            coordination.clone(),
+            Arc::clone(&active_reconciliations),
+            Arc::clone(&reconciliation_changed),
+        );
+        let observer = observer::ServiceObserver::new(storage.clone(), tokenizer);
         Ok(Self {
             config,
             storage,
             indexer,
+            repository_root,
             coordination,
             _cache_lease: cache_lease,
-            process_budget: executor::ProcessBudget::default(),
+            active_reconciliations,
+            reconciliation_changed,
+            read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
+            blocking_executor: executor::BlockingExecutor::default(),
             response_accountant: accounting::ResponseAccountant::new(tokenizer),
+            observer,
+            reconciliation,
             context_exclude_paths,
-            cursor_codec: cursor::CursorCodec::new(repository_id),
         })
     }
 }

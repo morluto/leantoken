@@ -64,6 +64,7 @@ impl WorkingTreeObservation {
 enum ContextDelivery {
     Plan,
     Fragments {
+        receipt_id: Option<String>,
         handoff: Option<HandoffManifestRequest>,
     },
 }
@@ -82,10 +83,10 @@ impl ContextPolicy {
                 "must not be empty when focus path constraints are enabled",
             ));
         }
-        if request.receipt_id.is_some() {
+        if request.plan_only && request.receipt_id.is_some() {
             violations.push(crate::InputViolation::new(
                 "receipt_id",
-                "server-managed retrieval receipts have been removed",
+                "must be omitted when plan_only is true",
             ));
         }
         if request.plan_only && handoff.is_some() {
@@ -114,7 +115,10 @@ impl ContextPolicy {
         let delivery = if request.plan_only {
             ContextDelivery::Plan
         } else {
-            ContextDelivery::Fragments { handoff }
+            ContextDelivery::Fragments {
+                receipt_id: request.receipt_id.clone(),
+                handoff,
+            }
         };
         let focus = ContextFocusPolicy::parse(request);
         Ok(Self { delivery, focus })
@@ -130,6 +134,13 @@ impl ContextPolicy {
 
     pub(super) const fn focus_minimum(&self) -> Option<usize> {
         self.focus.minimum_fragments()
+    }
+
+    pub(super) fn receipt_id(&self) -> Option<&str> {
+        match &self.delivery {
+            ContextDelivery::Plan => None,
+            ContextDelivery::Fragments { receipt_id, .. } => receipt_id.as_deref(),
+        }
     }
 
     pub(super) fn handoff(&self) -> Option<&HandoffManifestRequest> {
@@ -184,6 +195,8 @@ pub(super) struct ContextFinalization<'a> {
 
 pub(super) struct AccountedContextResponse {
     pub(super) response: ContextResponse,
+    pub(super) baseline_source_tokens: Option<usize>,
+    pub(super) operation: TokenAccountingOperation,
 }
 
 pub(super) struct ContextExecution {

@@ -8,16 +8,20 @@ use regex_syntax::hir::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::cursor::request_digest;
 use super::execution_options::RetrievalExecution;
 use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
+use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, validate_glob_patterns,
-    validate_input, validate_optional_input,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
+    validate_cursor, validate_glob_patterns, validate_input,
 };
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
+use crate::query_receipt::{
+    ExactQueryPredicate, QUERY_RECEIPT_ID_RESPONSE_RESERVE, QueryReceiptRecord,
+    exhaustive_result_digest,
+};
 use crate::text::{
     anchored_line_window, byte_range_to_line_range, byte_to_line, excerpt, hash, line_starts,
 };
@@ -42,66 +46,6 @@ pub(super) use types::{
 };
 use validation::*;
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SearchPosition {
-    offset: usize,
-}
-
-fn search_request_digest(request: &SearchInput, output_shape: SearchOutputShape) -> Result<String> {
-    let kind = match &request.kind {
-        SearchKind::Auto(preference) => format!("auto:{preference:?}"),
-        SearchKind::Text => "text".into(),
-        SearchKind::Regex => "regex".into(),
-        SearchKind::Identifier(preference) => format!("identifier:{preference:?}"),
-        SearchKind::Symbol => "symbol".into(),
-        SearchKind::Reference => "reference".into(),
-        SearchKind::Exhaustive { mode, .. } => format!("exhaustive:{mode:?}"),
-    };
-    request_digest(
-        "search",
-        &(
-            &request.query,
-            kind,
-            &request.include_paths,
-            &request.exclude_paths,
-            &request.focus_paths,
-            request.case_sensitive,
-            format!("{output_shape:?}"),
-        ),
-    )
-}
-
-fn search_cursor_offset(
-    services: &Services,
-    request: &SearchInput,
-    output_shape: SearchOutputShape,
-    generation: u64,
-) -> Result<usize> {
-    let Some(cursor) = request.cursor.as_deref() else {
-        return Ok(0);
-    };
-    let position: SearchPosition = services.cursor_codec.open(
-        cursor,
-        generation,
-        &search_request_digest(request, output_shape)?,
-    )?;
-    Ok(position.offset)
-}
-
-fn make_search_cursor(
-    services: &Services,
-    request: &SearchInput,
-    output_shape: SearchOutputShape,
-    generation: u64,
-    offset: usize,
-) -> Result<String> {
-    services.cursor_codec.seal(
-        generation,
-        &search_request_digest(request, output_shape)?,
-        &SearchPosition { offset },
-    )
-}
-
 impl Services {
     fn ensure_search_page_fits(
         &self,
@@ -109,53 +53,43 @@ impl Services {
         shape: SearchResponseShape<'_>,
         options: ServiceCallOptions,
     ) -> Result<()> {
-        let provisional = |selected: &[CandidateSearchHit]| -> Result<SearchResponse> {
-            Ok(SearchResponse {
-                hits: selected
+        let provisional = |selected: &[CandidateSearchHit]| SearchResponse {
+            hits: selected
+                .iter()
+                .map(|candidate| candidate.hit.clone())
+                .collect(),
+            coverage: search_coverage(shape.all, selected),
+            occurrences_returned: selected.len(),
+            occurrences_total: shape
+                .request
+                .kind
+                .is_exhaustive()
+                .then_some(shape.total_candidates),
+            meta: self.meta(
+                shape.generation,
+                selected
                     .iter()
-                    .map(|candidate| candidate.hit.clone())
-                    .collect(),
-                coverage: search_coverage(shape.all, selected),
-                occurrences_returned: selected.len(),
-                occurrences_total: shape
-                    .request
-                    .kind
-                    .is_exhaustive()
-                    .then_some(shape.total_candidates),
-                meta: self.meta(
-                    shape.generation,
-                    selected
-                        .iter()
-                        .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
-                        .sum(),
-                    shape
-                        .has_more
-                        .then(|| {
-                            make_search_cursor(
-                                self,
-                                shape.request,
-                                shape.output_shape,
-                                shape.generation,
-                                shape.offset + shape.consumed,
-                            )
-                        })
-                        .transpose()?,
-                ),
-            })
+                    .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                    .sum(),
+                shape
+                    .has_more
+                    .then(|| make_cursor(shape.generation, shape.offset + shape.consumed)),
+            ),
         };
-        let mut sized = provisional(selected)?;
-        if self.response_fits(&sized, options)? {
+        let mut sized = provisional(selected);
+        if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
         for candidate in selected.iter_mut() {
             candidate.hit.score_reasons.clear();
         }
-        sized = provisional(selected)?;
-        if self.response_fits(&sized, options)? {
+        sized = provisional(selected);
+        if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
-        Err(self.response_budget_error(
+        Err(self.response_budget_error_with_receipt_reserve(
             &sized,
+            selected.len(),
             options
                 .max_response_tokens()
                 .expect("fitting only runs with a response limit"),
@@ -250,6 +184,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Full;
         let request = self
@@ -262,7 +197,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
-            .process_budget
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.search_sync(
                     request,
@@ -271,6 +206,7 @@ impl Services {
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
                         response_options: options,
+                        accounting: SearchAccounting::Record,
                     },
                 )
                 .map(|snapshot| snapshot.response)
@@ -324,6 +260,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Compact;
         let request = self
@@ -336,7 +273,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
-            .process_budget
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
                     .search_sync(
@@ -346,6 +283,7 @@ impl Services {
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
                             response_options: ServiceCallOptions::new(),
+                            accounting: SearchAccounting::Omit,
                         },
                     )?
                     .response;
@@ -362,6 +300,7 @@ impl Services {
                     meta: response.meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
                 Ok(compact)
             })
             .await;
@@ -413,6 +352,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::Full;
         let request = self
@@ -425,7 +365,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
-            .process_budget
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
                     .search_sync(
@@ -435,6 +375,7 @@ impl Services {
                         SearchDiagnostics::Omit,
                         SearchExecutionOptions {
                             response_options: ServiceCallOptions::new(),
+                            accounting: SearchAccounting::Omit,
                         },
                     )?
                     .response;
@@ -457,6 +398,7 @@ impl Services {
                     meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
                 Ok(compact)
             })
             .await;
@@ -517,6 +459,7 @@ impl Services {
             options,
             cancellation,
         } = execution;
+        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let output_shape = SearchOutputShape::OccurrenceGroups(output);
         let request = self
@@ -529,7 +472,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
-            .process_budget
+            .blocking_executor
             .run(cancellation, move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -538,6 +481,7 @@ impl Services {
                     SearchDiagnostics::Omit,
                     SearchExecutionOptions {
                         response_options: ServiceCallOptions::new(),
+                        accounting: SearchAccounting::Omit,
                     },
                 )?;
                 let response = snapshot.response;
@@ -547,6 +491,14 @@ impl Services {
                     )
                 })?;
                 let groups = group_occurrence_hits(&response.hits, output)?;
+                let query_receipt = match &snapshot.query_receipt {
+                    QueryReceiptExecution::None => None,
+                    QueryReceiptExecution::Pending(record) => Some(recorded_query_receipt_outcome(
+                        record,
+                        QUERY_RECEIPT_ID_RESPONSE_RESERVE.to_owned(),
+                    )),
+                    QueryReceiptExecution::Outcome(outcome) => Some(outcome.clone()),
+                };
                 let mut compact = SearchOccurrencesResponse {
                     groups_returned: groups.len(),
                     groups,
@@ -554,10 +506,18 @@ impl Services {
                     occurrences_total,
                     coordinates_only: output.coordinates_only(),
                     coverage: response.coverage,
-                    query_receipt: None,
+                    query_receipt,
                     meta: response.meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
+                if let QueryReceiptExecution::Pending(record) = snapshot.query_receipt {
+                    check_cancelled(cancellation)?;
+                    let receipt_id = this.storage.persist_query_receipt(&record)?;
+                    compact.query_receipt =
+                        Some(recorded_query_receipt_outcome(&record, receipt_id));
+                    this.finalize_bounded_response(&mut compact, options)?;
+                }
+                this.record_token_savings(TokenAccountingOperation::Search, None, &compact.meta);
                 Ok(compact)
             })
             .await;
@@ -572,7 +532,7 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.process_budget
+        self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -581,6 +541,7 @@ impl Services {
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
                         response_options: ServiceCallOptions::new(),
+                        accounting: SearchAccounting::Record,
                     },
                 )?;
                 Ok(SearchEvaluation {
@@ -603,7 +564,7 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.process_budget
+        self.blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -612,6 +573,7 @@ impl Services {
                     SearchDiagnostics::Collect,
                     SearchExecutionOptions {
                         response_options: ServiceCallOptions::new(),
+                        accounting: SearchAccounting::Record,
                     },
                 )?;
                 Ok(SearchEvaluation {
@@ -658,7 +620,32 @@ impl Services {
             )
         })?;
         self.finalize_bounded_response(&mut snapshot.response, execution.response_options)?;
+        if execution.accounting == SearchAccounting::Record {
+            self.record_token_savings(
+                TokenAccountingOperation::Search,
+                snapshot.baseline_source_tokens,
+                &snapshot.response.meta,
+            );
+        }
         Ok(snapshot)
+    }
+}
+
+pub(super) fn recorded_query_receipt_outcome(
+    record: &QueryReceiptRecord,
+    receipt_id: String,
+) -> QueryReceiptOutcome {
+    QueryReceiptOutcome {
+        status: QueryReceiptStatus::Recorded,
+        receipt_id: Some(receipt_id),
+        complete: true,
+        match_count: record.match_count,
+        requested_predicate_blake3: record.predicate_blake3.clone(),
+        covered_predicate_blake3: record.predicate_blake3.clone(),
+        result_blake3: Some(record.result_blake3.clone()),
+        receipt_generation: record.repository_generation,
+        reused_across_generation: false,
+        scope_relation: QueryReceiptScopeRelation::Exact,
     }
 }
 

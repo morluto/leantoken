@@ -1,5 +1,9 @@
 use super::*;
 
+mod query_receipts;
+mod read_delta;
+mod receipts;
+
 #[test]
 pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
     let root = tempfile::tempdir().expect("root");
@@ -148,6 +152,164 @@ pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
             limit: 1,
         }
     ));
+}
+
+#[test]
+pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    storage
+        .full_reconcile("config", vec![sample_file("alpha.rs", "fn alpha() {}\n")])
+        .expect("initial publication");
+    let pinned = storage.begin_read().expect("pinned read");
+    assert_eq!(
+        pinned.repository_generation().expect("pinned generation"),
+        1
+    );
+    let initial = pinned
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("initial parser coverage");
+    assert_eq!(
+        initial.languages.iter().map(|row| row.files).sum::<usize>(),
+        1
+    );
+
+    storage
+        .full_reconcile(
+            "config",
+            vec![
+                sample_file("alpha.rs", "fn alpha() {}\n"),
+                sample_file("bravo.rs", "fn bravo() {}\n"),
+            ],
+        )
+        .expect("second publication");
+
+    let still_pinned = pinned
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("pinned parser coverage after publication");
+    assert_eq!(
+        still_pinned
+            .languages
+            .iter()
+            .map(|row| row.files)
+            .sum::<usize>(),
+        1
+    );
+    let current = storage
+        .begin_read()
+        .expect("current read")
+        .parser_coverage_rows(|_| "fixture".to_owned())
+        .expect("current parser coverage");
+    assert_eq!(
+        current.languages.iter().map(|row| row.files).sum::<usize>(),
+        2
+    );
+}
+
+#[test]
+pub(crate) fn cold_publication_reports_ordered_bounded_phases() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let baseline = storage.meta().expect("baseline");
+    let mut phases = Vec::new();
+
+    let (generation, ()) = storage
+        .publish_reconciliation_at_with_progress(
+            &baseline,
+            "config",
+            IndexingMode::Reconcile,
+            |phase| {
+                phases.push(phase);
+                Ok(())
+            },
+            |writer| {
+                writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
+                let unpublished = Storage::read_only_status_scoped(&database, root.path(), None)
+                    .expect("concurrent status");
+                assert_eq!(unpublished.generation, 0);
+                assert_eq!(unpublished.counts.files, 0);
+                Ok(())
+            },
+        )
+        .expect("cold publication");
+
+    assert_eq!(generation, 1);
+    let published =
+        Storage::read_only_status_scoped(&database, root.path(), None).expect("published status");
+    assert_eq!(published.generation, 1);
+    assert_eq!(published.counts.files, 1);
+    assert_eq!(
+        phases,
+        [
+            ReconciliationPublicationPhase::ChunkWordFts,
+            ReconciliationPublicationPhase::ChunkTrigramFts,
+            ReconciliationPublicationPhase::SymbolFts,
+            ReconciliationPublicationPhase::ReferenceFts,
+            ReconciliationPublicationPhase::CommitAndCheckpoint,
+        ]
+    );
+}
+
+#[test]
+pub(crate) fn publication_phase_cancellation_rolls_back_and_rebuilds_from_the_same_cache() {
+    for target in [
+        ReconciliationPublicationPhase::ChunkWordFts,
+        ReconciliationPublicationPhase::ChunkTrigramFts,
+        ReconciliationPublicationPhase::SymbolFts,
+        ReconciliationPublicationPhase::ReferenceFts,
+        ReconciliationPublicationPhase::CommitAndCheckpoint,
+    ] {
+        let root = tempfile::tempdir().expect("root");
+        let database = root.path().join("index.sqlite");
+        let storage = Storage::open(&database).expect("storage");
+        let baseline = storage.meta().expect("baseline");
+        let error = storage
+            .publish_reconciliation_at_with_progress(
+                &baseline,
+                "config",
+                IndexingMode::Reconcile,
+                |phase| {
+                    if phase == target {
+                        Err(Error::Cancelled)
+                    } else {
+                        Ok(())
+                    }
+                },
+                |writer| {
+                    writer.replace(sample_file("lib.rs", "fn answer() -> u8 { 42 }\n"))?;
+                    Ok(())
+                },
+            )
+            .expect_err("cancellation before commit must roll back");
+        assert!(
+            matches!(error, Error::Cancelled),
+            "target phase: {target:?}"
+        );
+        drop(storage);
+
+        let reopened = Storage::open(&database).expect("reopen cancelled cache");
+        let cancelled = Storage::read_only_status_scoped(&database, root.path(), None)
+            .expect("cancelled status");
+        assert_eq!(cancelled.generation, 0, "target phase: {target:?}");
+        assert_eq!(cancelled.counts.files, 0, "target phase: {target:?}");
+
+        let generation = reopened
+            .full_reconcile(
+                "config",
+                vec![sample_file("lib.rs", "fn answer() -> u8 { 42 }\n")],
+            )
+            .expect("rebuild cancelled cache");
+        assert_eq!(generation, 1, "target phase: {target:?}");
+        assert_eq!(
+            reopened
+                .search_word("answer", 10)
+                .expect("search rebuilt cache")
+                .len(),
+            1,
+            "target phase: {target:?}"
+        );
+    }
 }
 
 #[test]
@@ -305,6 +467,75 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
+pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .pragma_update(None, "wal_autocheckpoint", 0)
+            .expect("disable auto-checkpoint for repair fixture");
+    }
+    storage
+        .full_reconcile(
+            "config",
+            (0..8)
+                .map(|index| sample_file(&format!("repair-{index}.rs"), "fn repair() {}\n"))
+                .collect(),
+        )
+        .expect("backlogged generation");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "DELETE FROM path_entries WHERE file_id = (SELECT id FROM files LIMIT 1)",
+                [],
+            )
+            .expect("damage path projection");
+    }
+    let wal_bytes_before = fs::metadata(wal_path(&database))
+        .expect("repair fixture WAL")
+        .len();
+    assert!(wal_bytes_before > 0);
+
+    let repaired = Storage::open(&database).expect("repair storage on reopen");
+
+    let writer = repaired
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (files, paths) = writer
+        .query_row(
+            "SELECT (SELECT count(*) FROM files),
+                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("repaired projection counts");
+    assert_eq!(paths, files);
+    assert!(
+        writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("restored auto-checkpoint policy")
+            > 0
+    );
+    let wal_bytes_after = fs::metadata(wal_path(&database))
+        .expect("WAL after repair")
+        .len();
+    assert_eq!(
+        wal_bytes_after, 0,
+        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
+    );
+}
+
+#[test]
 pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_drops() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
@@ -393,7 +624,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 }
 
 #[test]
-pub(crate) fn startup_rejects_a_generation_with_corrupt_fts_projection() {
+pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -426,7 +657,15 @@ pub(crate) fn startup_rejects_a_generation_with_corrupt_fts_projection() {
     );
     drop(storage);
 
-    assert!(Storage::open(&database).is_err());
+    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
+
+    assert_eq!(
+        reopened
+            .search_word("repaired_fts_needle", 10)
+            .expect("search rebuilt index")[0]
+            .path,
+        "needle.rs"
+    );
 }
 
 pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {
@@ -994,5 +1233,209 @@ pub(crate) fn repository_binding_updates_last_access_once_per_open() {
             )
             .expect("second access"),
         5_678
+    );
+}
+
+#[test]
+pub(crate) fn token_savings_accounting_skips_a_busy_local_writer() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let meta = ResponseMeta {
+        repository_id: "repository".into(),
+        repository_generation: 1,
+        freshness: crate::model::Freshness::Current,
+        index_scope: crate::model::IndexScopeMode::Full,
+        index_scope_digest: None,
+        source_tokens: 2,
+        protocol_tokens: 3,
+        path_and_metadata_tokens: 5,
+        total_response_tokens: 10,
+        tokenizer: "cl100k_base".into(),
+        token_count_exact: true,
+        receipt_id: None,
+        receipt_suppressed_exact: 0,
+        receipt_suppressed_overlap: 0,
+        receipt_near_duplicates: 0,
+        next_cursor: None,
+    };
+    let writer = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    assert!(
+        !storage
+            .record_token_savings(
+                "cl100k_base",
+                TokenSavingsObservation {
+                    operation: TokenAccountingOperation::Search,
+                    baseline_source_tokens: Some(10),
+                    meta: &meta,
+                    classification: TokenSavingsRequestClass::Useful,
+                    expected_hash_not_modified: false,
+                    expected_hash_suppressed_source_tokens: 0,
+                },
+            )
+            .expect("best-effort accounting")
+    );
+    assert!(
+        !storage
+            .record_service_failure(
+                "cl100k_base",
+                TokenAccountingOperation::Search,
+                "invalid_input",
+            )
+            .expect("best-effort failure accounting")
+    );
+    drop(writer);
+    assert!(
+        storage
+            .record_token_savings(
+                "cl100k_base",
+                TokenSavingsObservation {
+                    operation: TokenAccountingOperation::Search,
+                    baseline_source_tokens: Some(10),
+                    meta: &meta,
+                    classification: TokenSavingsRequestClass::HashSuppressed,
+                    expected_hash_not_modified: true,
+                    expected_hash_suppressed_source_tokens: 8,
+                },
+            )
+            .expect("available accounting")
+    );
+    assert!(
+        storage
+            .record_service_failure(
+                "cl100k_base",
+                TokenAccountingOperation::Search,
+                "invalid_input",
+            )
+            .expect("available failure accounting")
+    );
+    let records = storage
+        .token_savings("cl100k_base")
+        .expect("stored accounting");
+    let record = records.get("search").expect("search accounting");
+    assert_eq!(record.tracked_requests, 0);
+    assert_eq!(record.response_tracked_requests, 1);
+    assert_eq!(record.response_baseline_requests, 1);
+    assert_eq!(record.baseline_source_tokens, 0);
+    assert_eq!(record.response_baseline_source_tokens, 10);
+    assert_eq!(record.emitted_source_tokens, 0);
+    assert_eq!(record.response_source_tokens, 2);
+    assert_eq!(record.path_and_metadata_tokens, 5);
+    assert_eq!(record.protocol_tokens, 3);
+    assert_eq!(record.total_response_tokens, 10);
+    assert_eq!(record.expected_hash_not_modified_responses, 1);
+    assert_eq!(record.expected_hash_suppressed_source_tokens, 8);
+    assert_eq!(record.hash_suppressed_requests, 1);
+    let failures = storage
+        .begin_read()
+        .expect("failure read session")
+        .service_failures("cl100k_base")
+        .expect("stored failure accounting");
+    assert_eq!(
+        failures,
+        vec![ServiceFailureRecord {
+            operation: "search".into(),
+            error_category: "invalid_input".into(),
+            failed_requests: 1,
+        }]
+    );
+}
+
+#[test]
+pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let mut file = sample_file("source.rs", "hello\n\n");
+    file.chunks = vec![
+        ChunkInput {
+            content: "hello\n".into(),
+            start_line: 1,
+            end_line: 1,
+            start_byte: 0,
+            end_byte: 6,
+            token_count: 2,
+        },
+        ChunkInput {
+            content: "\n".into(),
+            start_line: 2,
+            end_line: 2,
+            start_byte: 6,
+            end_byte: 7,
+            token_count: 1,
+        },
+    ];
+    let baseline = storage.meta().expect("baseline");
+    storage
+        .publish_reconciliation_at(&baseline, "config", IndexingMode::Reconcile, |writer| {
+            writer.replace_with_source_tokens(file, "cl100k_base", 2)
+        })
+        .expect("indexed file");
+
+    assert_eq!(
+        storage
+            .begin_read()
+            .expect("read session")
+            .whole_file_source_tokens(&["source.rs".into()], "cl100k_base")
+            .expect("whole-file tokens"),
+        Some(2)
+    );
+    assert_eq!(
+        storage
+            .begin_read()
+            .expect("read session")
+            .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
+            .expect("mismatched tokenizer"),
+        None
+    );
+}
+
+#[test]
+pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let mut files = (0..80)
+        .map(|i| {
+            sample_file(
+                &format!("src/other{i}.rs"),
+                &format!("fn other{i}() {{}}\n"),
+            )
+        })
+        .collect::<Vec<_>>();
+    files.push(sample_file("src/target_alpha.rs", "fn target_alpha() {}\n"));
+    files.push(sample_file("src/target_bravo.rs", "fn target_bravo() {}\n"));
+    files.push(sample_file(
+        "src/target_charlie.rs",
+        "fn target_charlie() {}\n",
+    ));
+    storage.full_reconcile("config", files).expect("reconcile");
+
+    let session = storage.begin_read().expect("session");
+    let first = session
+        .list_glob_paths("src/target_*.rs", None, None, 2)
+        .expect("first glob page");
+    assert_eq!(first.len(), 2);
+    assert!(
+        first.iter().all(|entry| entry.path.contains("target_")),
+        "selective glob must not return non-matching paths: {first:?}"
+    );
+    let second = session
+        .list_glob_paths(
+            "src/target_*.rs",
+            None,
+            first.last().map(|entry| entry.path.as_str()),
+            2,
+        )
+        .expect("second glob page");
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].path, "src/target_charlie.rs");
+
+    let lean = session.list_file_paths(10, None).expect("lean paths");
+    assert_eq!(lean.len(), 10);
+    assert_eq!(
+        lean[0].path,
+        session.list_files(1, None).expect("full")[0].path
     );
 }

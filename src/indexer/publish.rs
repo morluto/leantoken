@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) enum PreparedFile {
-    Indexed(Box<IndexedFile>, Option<String>),
+    Indexed(Box<IndexedFile>, usize, Option<String>),
     Binary(String),
     Oversized(String),
     Failed(String, String),

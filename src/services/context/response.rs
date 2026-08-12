@@ -1,5 +1,11 @@
-use super::super::{ServiceCallOptions, Services};
+use std::collections::BTreeSet;
+
+use super::super::{
+    ServiceCallOptions, Services,
+    receipts::{ReceiptDecision, ReceiptEvidence},
+};
 use super::ContextPolicy;
+use super::IndexReadSnapshot;
 use crate::{
     Error, Result,
     model::{ContextCoverageReceipt, ContextRequest, ContextResponse, ContextResponseProfile},
@@ -26,9 +32,11 @@ pub(super) fn effective_context_response_profile(
 }
 
 pub(super) struct ContextResponseFinalization<'a> {
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
+    pub(super) generation: u64,
 }
 
 pub(super) fn merge_selected_coverage(
@@ -192,16 +200,45 @@ impl Services {
         &self,
         response: &mut ContextResponse,
         finalization: ContextResponseFinalization<'_>,
-    ) -> Result<()> {
+    ) -> Result<Option<usize>> {
         let ContextResponseFinalization {
+            session,
             request,
             policy,
             options,
+            generation,
         } = finalization;
         if options.max_response_tokens().is_some() {
             self.fit_context_response(response, request, policy, options)?;
         }
         if !policy.is_plan() {
+            let receipt_candidates = response
+                .fragments
+                .iter()
+                .map(|fragment| {
+                    ReceiptEvidence::new(
+                        fragment.path.clone(),
+                        fragment.start_line,
+                        fragment.end_line,
+                        fragment.content_hash.clone(),
+                        Some(&fragment.content),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let receipt =
+                self.evaluate_receipt(policy.receipt_id(), generation, &receipt_candidates)?;
+            response.fragments = response
+                .fragments
+                .drain(..)
+                .zip(&receipt.decisions)
+                .filter_map(|(fragment, decision)| {
+                    matches!(
+                        decision,
+                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
+                    )
+                    .then_some(fragment)
+                })
+                .collect();
             response.receipt.fragment_hashes = response
                 .fragments
                 .iter()
@@ -212,13 +249,29 @@ impl Services {
                 .iter()
                 .map(|fragment| self.config.tokenizer.count(&fragment.content))
                 .sum();
-            if response.fragments.is_empty()
-                && response.omission_summary.budget_or_result_limit == 0
-            {
-                response
-                    .warnings
-                    .push("no relevant indexed evidence found".into());
+            receipt.apply_meta(&mut response.meta);
+            if response.meta.receipt_near_duplicates > 0 {
+                response.warnings.push(format!(
+                    "{} returned fragments are semantic near-duplicates of prior receipt evidence",
+                    response.meta.receipt_near_duplicates
+                ));
             }
+            if response.fragments.is_empty() {
+                if response.meta.receipt_suppressed_exact + response.meta.receipt_suppressed_overlap
+                    > 0
+                {
+                    response
+                        .warnings
+                        .push("all selected evidence was already covered by the receipt".into());
+                } else if response.omission_summary.budget_or_result_limit == 0 {
+                    response
+                        .warnings
+                        .push("no relevant indexed evidence found".into());
+                }
+            }
+        }
+        if let Some(manifest) = &mut response.handoff_manifest {
+            manifest.receipt_id.clone_from(&response.meta.receipt_id);
         }
         if options.mcp_response_shape().is_some() {
             self.finalize_bounded_response(response, options)?;
@@ -232,6 +285,16 @@ impl Services {
                 "context response exceeded its fitted serialized-response budget".into(),
             ));
         }
-        Ok(())
+        if policy.is_plan() {
+            return Ok(None);
+        }
+        let paths = response
+            .fragments
+            .iter()
+            .map(|fragment| fragment.path.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        session.whole_file_source_tokens(&paths, self.config.tokenizer.name())
     }
 }

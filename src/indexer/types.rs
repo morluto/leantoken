@@ -90,6 +90,8 @@ pub struct PreparationDiagnostics {
     pub hash_ms: f64,
     /// Tree-sitter language parsing and syntax extraction.
     pub parse_ms: f64,
+    /// Whole-file source-token counting.
+    pub source_token_count_ms: f64,
     /// Per-chunk token counting.
     pub chunk_token_count_ms: f64,
     /// Conversion from parser/text output into storage input records.
@@ -134,6 +136,7 @@ pub(super) struct FilePreparationDiagnostics {
     pub(super) text_prepare: Duration,
     pub(super) hash: Duration,
     pub(super) parse: Duration,
+    pub(super) source_token_count: Duration,
     pub(super) chunk_token_count: Duration,
     pub(super) projection: Duration,
 }
@@ -146,6 +149,7 @@ impl FilePreparationDiagnostics {
         self.text_prepare += other.text_prepare;
         self.hash += other.hash;
         self.parse += other.parse;
+        self.source_token_count += other.source_token_count;
         self.chunk_token_count += other.chunk_token_count;
         self.projection += other.projection;
     }
@@ -158,6 +162,7 @@ impl FilePreparationDiagnostics {
             text_prepare_ms: duration_ms(self.text_prepare),
             hash_ms: duration_ms(self.hash),
             parse_ms: duration_ms(self.parse),
+            source_token_count_ms: duration_ms(self.source_token_count),
             chunk_token_count_ms: duration_ms(self.chunk_token_count),
             projection_ms: duration_ms(self.projection),
         }

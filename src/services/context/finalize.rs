@@ -13,11 +13,37 @@ impl Services {
     pub(super) fn context_response_with_receipt_reserve(
         &self,
         response: &ContextResponse,
-        _policy: &ContextPolicy,
+        policy: &ContextPolicy,
         options: ServiceCallOptions,
     ) -> Result<ContextResponse> {
         let mut sized = response.clone();
-        self.finalize_context_response_accounting(&mut sized, options)?;
+        if !policy.is_plan() {
+            let receipt_id = policy
+                .receipt_id()
+                .map(str::to_owned)
+                .unwrap_or_else(|| crate::receipt::RECEIPT_ID_RESPONSE_RESERVE.into());
+            let selected = sized.fragments.len();
+            sized.meta.receipt_id = Some(receipt_id.clone());
+            sized.meta.receipt_suppressed_exact = selected;
+            sized.meta.receipt_suppressed_overlap = selected;
+            sized.meta.receipt_near_duplicates = selected;
+            sized.warnings.push(format!(
+                "{selected} returned fragments are semantic near-duplicates of prior receipt evidence"
+            ));
+            sized
+                .warnings
+                .push("all selected evidence was already covered by the receipt".into());
+            if let Some(manifest) = &mut sized.handoff_manifest {
+                manifest.receipt_id = Some(receipt_id);
+            }
+        }
+        set_routing_consistency(&mut sized, IndexConsistency::ReconcileWorkingTree);
+        if options.mcp_response_shape().is_some() {
+            self.response_accountant
+                .finalize_with_receipt_resource(&mut sized, options.mcp_response_shape())?;
+        } else {
+            self.finalize_response(&mut sized)?;
+        }
         Ok(sized)
     }
 
@@ -41,6 +67,7 @@ impl Services {
         let minimum_required_response_tokens =
             self.context_response_tokens_with_receipt_reserve(response, policy, options)?;
         let mut mandatory = response.clone();
+        set_routing_consistency(&mut mandatory, IndexConsistency::ReconcileWorkingTree);
         self.finalize_context_response_accounting(&mut mandatory, options)?;
         Ok(Self::response_budget_exceeded(
             &mandatory.meta,
@@ -211,7 +238,7 @@ impl Services {
         finalization: ContextFinalization<'_>,
         batch: CandidateBatch,
         mut phases: ContextPhaseTracker,
-    ) -> Result<ContextEvaluation> {
+    ) -> Result<(ContextEvaluation, Option<usize>)> {
         let ContextFinalization {
             session,
             request,
@@ -412,26 +439,31 @@ impl Services {
                 },
             ));
         }
-        self.finalize_context_delivery(
+        let baseline_source_tokens = self.finalize_context_delivery(
             &mut response,
             response::ContextResponseFinalization {
+                session,
                 request,
                 policy,
                 options,
+                generation,
             },
         )?;
         if let Some(started) = ranking_started {
             phases.timings.ranking_finalize_ms = started.elapsed().as_secs_f64() * 1_000.0;
         }
         let (phases, timings, primitive_keys) = phases.finish(generated_candidates.len());
-        Ok(ContextEvaluation {
-            response,
-            generated_candidate_paths,
-            generated_candidates,
-            phases,
-            timings,
-            primitive_keys,
-        })
+        Ok((
+            ContextEvaluation {
+                response,
+                generated_candidate_paths,
+                generated_candidates,
+                phases,
+                timings,
+                primitive_keys,
+            },
+            baseline_source_tokens,
+        ))
     }
 }
 use super::*;

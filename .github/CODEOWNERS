@@ -6,3 +6,7 @@
 /.github/workflows/ @morluto @N0zoM1z0
 /ci/ @morluto @N0zoM1z0
 /tests/ @morluto @N0zoM1z0
+/crates/test-suite/ @morluto @N0zoM1z0
+/crates/test-support/ @morluto @N0zoM1z0
+/fixtures/ @morluto @N0zoM1z0
+/benchmarks/ @morluto @N0zoM1z0

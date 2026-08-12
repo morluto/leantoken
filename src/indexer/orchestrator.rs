@@ -18,6 +18,10 @@ impl Indexer {
         })
     }
 
+    pub(crate) fn repository_root(&self) -> Arc<Dir> {
+        Arc::clone(&self.repository_root)
+    }
+
     /// Return the latest bounded process-local initial-index progress snapshot.
     ///
     /// This read uses only the indexer's small progress registry and never
@@ -288,11 +292,13 @@ impl Indexer {
                     progress.phase(IndexProgressPhase::RelationalWrite);
                 }
                 let mut indexed = Vec::with_capacity(prepared.len());
+                let mut source_token_counts = HashMap::with_capacity(prepared.len());
                 for result in prepared {
                     check_cancelled(cancellation)?;
                     match result {
-                        PreparedFile::Indexed(file, warning) => {
+                        PreparedFile::Indexed(file, source_token_count, warning) => {
                             source_bytes.replace(&file.path, file.size_bytes);
+                            source_token_counts.insert(file.path.clone(), source_token_count);
                             indexed.push(*file);
                             if let Some(warning) = warning {
                                 push_warning(&mut warnings, warning);
@@ -324,7 +330,10 @@ impl Indexer {
                 files_indexed = files_indexed.saturating_add(indexed.len());
                 for file in indexed {
                     check_cancelled(cancellation)?;
-                    staged.stage_indexed(file);
+                    let source_token_count = source_token_counts
+                        .remove(&file.path)
+                        .expect("prepared file has a source token count");
+                    staged.stage_indexed(file, source_token_count);
                 }
                 if let Some(progress) = &progress {
                     progress.staged(staged_files);

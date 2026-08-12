@@ -10,6 +10,117 @@ impl Storage {
         Self::open_with_startup_timeout(path, DEFAULT_BUSY_TIMEOUT)
     }
 
+    /// Read status from an existing cache without running migrations, changing
+    /// SQLite pragmas, or binding the cache to a repository.
+    pub(crate) fn read_only_status_scoped(
+        path: &Path,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
+    ) -> Result<ReadOnlyStatusSnapshot> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(READ_ONLY_STATUS_BUSY_TIMEOUT)?;
+        conn.execute_batch("BEGIN DEFERRED")?;
+
+        if !table_exists(&conn, StorageTable::Meta)? {
+            return Ok(ReadOnlyStatusSnapshot {
+                generation: 0,
+                counts: StorageCounts {
+                    files: 0,
+                    chunks: 0,
+                    symbols: 0,
+                    source_bytes: 0,
+                    languages: Vec::new(),
+                },
+            });
+        }
+
+        let has_repository_root = column_exists(&conn, StorageColumn::MetaRepositoryRoot)?;
+        let has_repository_identity = column_exists(&conn, StorageColumn::MetaRepositoryIdentity)?;
+        let expected_repository = if has_repository_root {
+            conn.query_row("SELECT repository_root FROM meta WHERE id = 1", [], |row| {
+                row.get::<_, String>(0)
+            })?
+        } else {
+            String::new()
+        };
+        let expected_identity = if has_repository_identity {
+            conn.query_row(
+                "SELECT repository_identity FROM meta WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )?
+        } else {
+            String::new()
+        };
+        let actual_identity = repository_identity(repository_root, index_scope_digest);
+        let actual_repository = repository_root.to_string_lossy();
+        let mismatched_identity =
+            !expected_identity.is_empty() && expected_identity != actual_identity;
+        let mismatched_unversioned_root = expected_identity.is_empty()
+            && !expected_repository.is_empty()
+            && expected_repository != actual_repository;
+        if mismatched_identity && expected_repository == actual_repository {
+            return Err(Error::IndexScopeMismatch {
+                database: path.to_path_buf(),
+            });
+        }
+        if mismatched_identity || mismatched_unversioned_root {
+            return Err(Error::RepositoryMismatch {
+                database: path.to_path_buf(),
+                expected_repository,
+                actual_repository: repository_root.to_path_buf(),
+            });
+        }
+
+        let generation = if column_exists(&conn, StorageColumn::MetaRepositoryGeneration)? {
+            i64_to_u64(conn.query_row(
+                "SELECT repository_generation FROM meta WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)?
+        } else {
+            0
+        };
+        let files = count_table_rows(&conn, StorageTable::Files)?;
+        let chunks = count_table_rows(&conn, StorageTable::Chunks)?;
+        let symbols = count_table_rows(&conn, StorageTable::Symbols)?;
+        let source_bytes = if table_exists(&conn, StorageTable::Files)?
+            && column_exists(&conn, StorageColumn::FilesSizeBytes)?
+        {
+            i64_to_u64(conn.query_row(
+                "SELECT coalesce(sum(size_bytes), 0) FROM files",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)?
+        } else {
+            0
+        };
+        let languages = if table_exists(&conn, StorageTable::Files)? {
+            let mut statement = conn.prepare(
+                "SELECT language, count(*) FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY language",
+            )?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, i64_to_usize(row.get(1)?)?)))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        Ok(ReadOnlyStatusSnapshot {
+            generation,
+            counts: StorageCounts {
+                files,
+                chunks,
+                symbols,
+                source_bytes,
+                languages,
+            },
+        })
+    }
+
     pub(crate) fn open_with_startup_timeout(
         path: impl AsRef<Path>,
         startup_timeout: Duration,
@@ -23,7 +134,11 @@ impl Storage {
         with_auto_checkpoint_suspended(
             &mut conn,
             AutoCheckpointCompletion::CheckpointIfMutated,
-            |conn| MIGRATIONS.to_latest(conn).map_err(Into::into),
+            |conn| {
+                MIGRATIONS.to_latest(conn)?;
+                Self::ensure_token_savings_schema(conn)?;
+                Self::ensure_path_projection(conn)
+            },
         )?;
         Self::validate_fts5(&mut conn)?;
         with_auto_checkpoint_suspended(
@@ -201,9 +316,13 @@ impl Storage {
     ///
     /// A database can pass migrations, integrity_check, and the FTS5
     /// capability probe while FTS silently omits results. This function
-    /// checks that each FTS table matches its external content. Corruption is
-    /// returned to the cache owner, which discards a managed projection as a
-    /// unit; storage never heals one derived table in place.
+    /// checks that each FTS table matches its external content and issues a
+    /// `rebuild` command if it does not. This runs on every database open:
+    /// external writers can damage an index without changing LeanToken's
+    /// generation marker.
+    ///
+    /// See issue #563: Validate and repair external-content FTS indexes
+    /// instead of probing only FTS5 availability.
     pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
         // Use FTS5's built-in integrity-check command. For external-content
         // tables, `SELECT count(*)` reads through the content table and always
@@ -218,12 +337,146 @@ impl Storage {
             "symbol_refs_fts_trigram",
         ];
 
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for fts_table in FTS_TABLES {
-            conn.execute(
+            match tx.execute(
                 &format!("INSERT INTO {fts_table}({fts_table}, rank) VALUES('integrity-check', 1)"),
                 [],
+            ) {
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(error, _))
+                    if error.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB =>
+                {
+                    tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
+                    tx.execute(
+                        &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
+                        [],
+                    )?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
+        let file_count: i64 = conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
+        let projected_files: i64 = conn.query_row(
+            "SELECT count(*) FROM path_entries WHERE kind = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        if file_count == projected_files {
+            return Ok(());
+        }
+        let paths = {
+            let mut stmt = conn.prepare("SELECT id, path FROM files ORDER BY id")?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?
+        };
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM path_entries", [])?;
+        for (file_id, path) in paths {
+            Self::insert_path_projection(&tx, &path, file_id)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
+        // These additive fields are intentionally outside the numbered cache
+        // schema so older LeanToken versions can still open and rebuild it.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let columns = {
+            let mut stmt = tx.prepare("PRAGMA table_info(files)")?;
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<HashSet<_>, _>>()?
+        };
+        if !columns.contains("source_token_count") {
+            tx.execute_batch(
+                "ALTER TABLE files ADD COLUMN source_token_count INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+        if !columns.contains("source_tokenizer") {
+            tx.execute_batch(
+                "ALTER TABLE files ADD COLUMN source_tokenizer TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        tx.execute_batch(TOKEN_SAVINGS_TABLE_SQL)?;
+        let savings_columns = {
+            let mut stmt = tx.prepare("PRAGMA table_info(token_savings)")?;
+            stmt.query_map([], |row| row.get::<_, String>(1))?
+                .collect::<std::result::Result<HashSet<_>, _>>()?
+        };
+        for (column, statement) in [
+            (
+                "response_tracked_requests",
+                "ALTER TABLE token_savings ADD COLUMN response_tracked_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_baseline_requests",
+                "ALTER TABLE token_savings ADD COLUMN response_baseline_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_baseline_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN response_baseline_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "response_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN response_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "path_and_metadata_tokens",
+                "ALTER TABLE token_savings ADD COLUMN path_and_metadata_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "protocol_tokens",
+                "ALTER TABLE token_savings ADD COLUMN protocol_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "total_response_tokens",
+                "ALTER TABLE token_savings ADD COLUMN total_response_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "receipt_suppressed_exact",
+                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "receipt_suppressed_overlap",
+                "ALTER TABLE token_savings ADD COLUMN receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "expected_hash_not_modified_responses",
+                "ALTER TABLE token_savings ADD COLUMN expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "expected_hash_suppressed_source_tokens",
+                "ALTER TABLE token_savings ADD COLUMN expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "useful_requests",
+                "ALTER TABLE token_savings ADD COLUMN useful_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "incomplete_requests",
+                "ALTER TABLE token_savings ADD COLUMN incomplete_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "unsupported_requests",
+                "ALTER TABLE token_savings ADD COLUMN unsupported_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "hash_suppressed_requests",
+                "ALTER TABLE token_savings ADD COLUMN hash_suppressed_requests INTEGER NOT NULL DEFAULT 0;",
+            ),
+        ] {
+            if !savings_columns.contains(column) {
+                tx.execute_batch(statement)?;
+            }
+        }
+        tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
+        tx.commit()?;
         Ok(())
     }
 }

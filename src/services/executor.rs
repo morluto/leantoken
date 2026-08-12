@@ -20,22 +20,22 @@ pub(super) fn default_blocking_active_capacity() -> usize {
 pub(super) const DEFAULT_BLOCKING_QUEUE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
-pub(super) struct ProcessBudget {
-    inner: Arc<ProcessBudgetInner>,
+pub(super) struct BlockingExecutor {
+    inner: Arc<BlockingExecutorInner>,
 }
 
 #[derive(Debug)]
-struct ProcessBudgetInner {
+struct BlockingExecutorInner {
     active: Arc<Semaphore>,
     execution: Arc<Semaphore>,
     queue_timeout: Duration,
     #[cfg(test)]
-    diagnostics: Arc<Mutex<ProcessBudgetDiagnostics>>,
+    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
 }
 
 #[cfg(test)]
 #[derive(Debug, Clone, Default)]
-pub(super) struct ProcessBudgetDiagnostics {
+pub(super) struct BlockingExecutorDiagnostics {
     pub submitted: u64,
     pub accepted: u64,
     pub rejected: u64,
@@ -54,13 +54,13 @@ pub(super) struct ProcessBudgetDiagnostics {
 struct ActivePermit {
     _permit: OwnedSemaphorePermit,
     #[cfg(test)]
-    diagnostics: Arc<Mutex<ProcessBudgetDiagnostics>>,
+    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
 }
 
 impl ActivePermit {
     fn new(
         permit: OwnedSemaphorePermit,
-        #[cfg(test)] diagnostics: Arc<Mutex<ProcessBudgetDiagnostics>>,
+        #[cfg(test)] diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
     ) -> Self {
         Self {
             _permit: permit,
@@ -80,12 +80,12 @@ impl Drop for ActivePermit {
 
 #[cfg(test)]
 struct StartedWork {
-    diagnostics: Arc<Mutex<ProcessBudgetDiagnostics>>,
+    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
 }
 
 #[cfg(test)]
 impl StartedWork {
-    fn new(diagnostics: Arc<Mutex<ProcessBudgetDiagnostics>>) -> Self {
+    fn new(diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>) -> Self {
         {
             let mut diagnostics_guard = diagnostics.lock().expect("executor diagnostics");
             diagnostics_guard.started = diagnostics_guard.started.saturating_add(1);
@@ -110,7 +110,7 @@ impl Drop for StartedWork {
     }
 }
 
-impl Default for ProcessBudget {
+impl Default for BlockingExecutor {
     fn default() -> Self {
         Self::new(
             default_blocking_active_capacity(),
@@ -120,7 +120,7 @@ impl Default for ProcessBudget {
     }
 }
 
-impl ProcessBudget {
+impl BlockingExecutor {
     pub(super) fn new(
         active_capacity: usize,
         execution_capacity: usize,
@@ -129,12 +129,12 @@ impl ProcessBudget {
         debug_assert!(active_capacity >= execution_capacity);
         debug_assert!(execution_capacity > 0);
         Self {
-            inner: Arc::new(ProcessBudgetInner {
+            inner: Arc::new(BlockingExecutorInner {
                 active: Arc::new(Semaphore::new(active_capacity)),
                 execution: Arc::new(Semaphore::new(execution_capacity)),
                 queue_timeout,
                 #[cfg(test)]
-                diagnostics: Arc::new(Mutex::new(ProcessBudgetDiagnostics::default())),
+                diagnostics: Arc::new(Mutex::new(BlockingExecutorDiagnostics::default())),
             }),
         }
     }
@@ -273,6 +273,21 @@ impl ProcessBudget {
     fn active_available_permits(&self) -> usize {
         self.inner.active.available_permits()
     }
+
+    #[cfg(test)]
+    pub(super) fn reset_diagnostics(&self) {
+        *self.inner.diagnostics.lock().expect("executor diagnostics") =
+            BlockingExecutorDiagnostics::default();
+    }
+
+    #[cfg(test)]
+    pub(super) fn diagnostics(&self) -> BlockingExecutorDiagnostics {
+        self.inner
+            .diagnostics
+            .lock()
+            .expect("executor diagnostics")
+            .clone()
+    }
 }
 
 #[cfg(test)]
@@ -324,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_work_boundary_rejects_without_starting_more_work() {
-        let executor = ProcessBudget::new(2, 1, Duration::from_secs(30));
+        let executor = BlockingExecutor::new(2, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
         let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let started = Arc::new(AtomicUsize::new(0));
@@ -366,7 +381,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn queue_timeout_never_starts_the_operation() {
-        let executor = ProcessBudget::new(2, 1, Duration::from_millis(500));
+        let executor = BlockingExecutor::new(2, 1, Duration::from_millis(500));
         let gate = Arc::new(Gate::default());
         let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let running_started = Arc::new(AtomicBool::new(false));
@@ -418,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_cancellation_never_starts_the_operation() {
-        let executor = ProcessBudget::new(2, 1, Duration::from_secs(30));
+        let executor = BlockingExecutor::new(2, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
         let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let running_started = Arc::new(AtomicBool::new(false));
@@ -474,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn execution_never_exceeds_its_limit() {
-        let executor = ProcessBudget::new(6, 2, Duration::from_secs(30));
+        let executor = BlockingExecutor::new(6, 2, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
         let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let current = Arc::new(AtomicUsize::new(0));
@@ -510,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn aborting_a_running_caller_does_not_release_capacity_early() {
-        let executor = ProcessBudget::new(1, 1, Duration::from_secs(30));
+        let executor = BlockingExecutor::new(1, 1, Duration::from_secs(30));
         let gate = Arc::new(Gate::default());
         let _open_gate_on_drop = OpenGateOnDrop(Arc::clone(&gate));
         let first_started = Arc::new(AtomicBool::new(false));
@@ -551,7 +566,7 @@ mod tests {
 
     #[tokio::test]
     async fn permits_return_after_success_error_and_panic() {
-        let executor = ProcessBudget::new(1, 1, Duration::from_secs(30));
+        let executor = BlockingExecutor::new(1, 1, Duration::from_secs(30));
 
         executor
             .run(CancellationToken::new(), |_| Ok(()))

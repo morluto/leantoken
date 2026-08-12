@@ -5,7 +5,7 @@ impl Indexer {
         &self,
         paths: &HashSet<String>,
         source_path_overrides: &HashMap<String, String>,
-        _repository_paths: &HashSet<String>,
+        repository_paths: &HashSet<String>,
         cancellation: &CancellationToken,
     ) -> Result<Vec<ImportProjection>> {
         let mut paths = paths.iter().cloned().collect::<Vec<_>>();
@@ -14,14 +14,16 @@ impl Indexer {
         let mut projections = Vec::with_capacity(seeds.len());
         for seed in seeds {
             check_cancelled(cancellation)?;
-            let _source_path = source_path_overrides
+            let source_path = source_path_overrides
                 .get(&seed.source_path)
                 .map_or(seed.source_path.as_str(), String::as_str);
+            let candidate_paths = import_candidates(source_path, &seed.raw_target);
+            let resolved_path = resolve_import_candidates(&candidate_paths, repository_paths);
             projections.push(ImportProjection {
                 id: seed.id,
                 file_id: seed.file_id,
-                resolved_path: None,
-                candidate_paths: Vec::new(),
+                resolved_path,
+                candidate_paths,
             });
         }
         Ok(projections)

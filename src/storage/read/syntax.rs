@@ -1,43 +1,44 @@
 impl ReadSession {
-    /// Reconstruct one complete file from the canonical, non-overlapping chunks
-    /// stored in this session's pinned generation.
-    ///
-    /// The file row supplies the authoritative expected byte length. Any gap,
-    /// overlap, or mismatched chunk coordinate means the disposable index is
-    /// corrupt and must not be exposed as source.
-    pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
+    pub(crate) fn receipt_structural_hash_matches(
+        &self,
+        file_id: i64,
+        start_line: usize,
+        end_line: usize,
+        content_hash: &str,
+    ) -> Result<Option<bool>> {
+        let limit = crate::receipt::MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE;
         let mut statement = self.conn.prepare_cached(
-            "SELECT content, start_byte, end_byte
-             FROM chunks
-             WHERE file_id = ?1
-             ORDER BY start_byte, id",
+            "SELECT content
+             FROM (
+                 SELECT COALESCE(signature, name) AS content, rowid AS stable_id, 0 AS kind
+                 FROM symbols
+                 WHERE file_id = ?1 AND start_line = ?2 AND end_line = ?3
+                 UNION ALL
+                 SELECT raw_target AS content, id AS stable_id, 1 AS kind
+                 FROM imports
+                 WHERE file_id = ?1 AND line = ?2 AND line = ?3
+             )
+             ORDER BY kind, stable_id
+             LIMIT ?4",
         )?;
-        let mut rows = statement.query(params![file_id])?;
-        let mut content = String::with_capacity(expected_size);
-        let mut expected_start = 0usize;
+        let mut rows = statement.query(params![
+            file_id,
+            usize_to_i64(start_line)?,
+            usize_to_i64(end_line)?,
+            usize_to_i64(limit.saturating_add(1))?,
+        ])?;
+        let mut count = 0usize;
         while let Some(row) = rows.next()? {
-            let chunk: String = row.get(0)?;
-            let start = i64_to_usize(row.get(1)?)?;
-            let end = i64_to_usize(row.get(2)?)?;
-            if start != expected_start || end != start.saturating_add(chunk.len()) {
-                return Err(Error::OperationFailure(
-                    "indexed file chunks are not contiguous".into(),
-                ));
+            count = count.saturating_add(1);
+            let content: String = row.get(0)?;
+            if crate::text::hash(&content) == content_hash {
+                return Ok(Some(true));
             }
-            if end > expected_size {
-                return Err(Error::OperationFailure(
-                    "indexed file chunks exceed the recorded file size".into(),
-                ));
-            }
-            content.push_str(&chunk);
-            expected_start = end;
         }
-        if content.len() != expected_size {
-            return Err(Error::OperationFailure(
-                "indexed file content does not match the recorded file size".into(),
-            ));
+        if count > limit {
+            return Ok(None);
         }
-        Ok(content)
+        Ok(Some(false))
     }
 
     pub fn get_chunks_for_file(

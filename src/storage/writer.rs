@@ -1,15 +1,28 @@
 impl ReconciliationWriter<'_, '_> {
     /// Insert one complete file replacement without retaining it in memory.
     pub(crate) fn replace(&mut self, file: IndexedFile) -> Result<()> {
-        self.replace_inner(file)
+        self.replace_inner(file, None)
     }
 
-    pub(crate) fn replace_inner(&mut self, file: IndexedFile) -> Result<()> {
+    pub(crate) fn replace_with_source_tokens(
+        &mut self,
+        file: IndexedFile,
+        tokenizer: &str,
+        source_token_count: usize,
+    ) -> Result<()> {
+        self.replace_inner(file, Some((tokenizer, source_token_count)))
+    }
+
+    pub(crate) fn replace_inner(
+        &mut self,
+        file: IndexedFile,
+        source_tokens: Option<(&str, usize)>,
+    ) -> Result<()> {
         if !self.mode.is_rebuild() {
             self.transaction
                 .execute("DELETE FROM files WHERE path = ?1", params![&file.path])?;
         }
-        Storage::insert_file(self.transaction, &file, self.generation)?;
+        Storage::insert_file(self.transaction, &file, self.generation, source_tokens)?;
         self.replacements = self.replacements.saturating_add(1);
         Ok(())
     }
@@ -54,6 +67,16 @@ impl ReconciliationWriter<'_, '_> {
                 "relocation source changed before publication".into(),
             ));
         }
+        let file_id = self.transaction.query_row(
+            "SELECT id FROM files WHERE path = ?1",
+            params![new_path],
+            |row| row.get(0),
+        )?;
+        self.transaction.execute(
+            "DELETE FROM path_entries WHERE file_id = ?1",
+            params![file_id],
+        )?;
+        Storage::insert_path_projection(self.transaction, new_path, file_id)?;
         self.deletions.insert(old_path.to_string());
         self.replacements = self.replacements.saturating_add(1);
         Ok(())

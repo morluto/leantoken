@@ -11,6 +11,14 @@ pub enum IndexingMode {
 }
 
 impl IndexingMode {
+    pub(crate) const fn from_rebuild_flag(rebuild: bool) -> Self {
+        if rebuild {
+            Self::Rebuild
+        } else {
+            Self::Reconcile
+        }
+    }
+
     pub(crate) const fn is_rebuild(self) -> bool {
         matches!(self, Self::Rebuild)
     }

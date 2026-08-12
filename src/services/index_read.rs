@@ -2,5 +2,5 @@
 
 pub(super) use crate::storage::IndexSnapshot as IndexReadSnapshot;
 pub(super) use crate::storage::{
-    ChunkHit, ChunkRecord, FileRecord, ReferenceHit, SymbolHit, SymbolRecord,
+    ChunkHit, ChunkRecord, FilePathRecord, FileRecord, ReferenceHit, SymbolHit, SymbolRecord,
 };

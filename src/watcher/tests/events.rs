@@ -1,0 +1,290 @@
+use super::*;
+use notify::event::RenameMode;
+
+#[test]
+fn paired_rename_event_coalesces_both_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let mut pending = PendingReconciliation::empty();
+    let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+        .add_path(root.path().join("a.txt"))
+        .add_path(root.path().join("b.txt"));
+
+    process_raw_event(
+        Ok(event),
+        root.path(),
+        &DiscoveryPolicy::default(),
+        &mut pending,
+    );
+
+    assert!(pending.is_full());
+}
+
+#[test]
+fn generated_events_are_filtered_before_the_raw_queue() {
+    let root = tempfile::tempdir().unwrap();
+    let generated = root.path().join("node_modules/pkg/index.js");
+    std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+    std::fs::write(&generated, "generated").unwrap();
+    let generated_event = Event::new(EventKind::Any).add_path(generated);
+
+    assert!(!raw_event_is_relevant(
+        &Ok(generated_event.clone()),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+    assert!(raw_event_is_relevant(
+        &Ok(generated_event),
+        root.path(),
+        &DiscoveryPolicy::new(true),
+    ));
+
+    let visible = root.path().join(".github/workflows/ci.yml");
+    std::fs::create_dir_all(visible.parent().unwrap()).unwrap();
+    std::fs::write(&visible, "name: ci\n").unwrap();
+    assert!(raw_event_is_relevant(
+        &Ok(Event::new(EventKind::Any).add_path(visible)),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+
+    let git_config = root.path().join(".git/config");
+    std::fs::create_dir_all(git_config.parent().unwrap()).unwrap();
+    std::fs::write(&git_config, "[core]\n").unwrap();
+    assert!(!raw_event_is_relevant(
+        &Ok(Event::new(EventKind::Any).add_path(git_config)),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+
+    let rescan = Event::new(EventKind::Other)
+        .add_path(root.path().join("node_modules"))
+        .set_flag(notify::event::Flag::Rescan);
+    assert!(raw_event_is_relevant(
+        &Ok(rescan),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+}
+
+#[test]
+fn removed_generated_directory_is_filtered_after_it_disappears() {
+    let root = tempfile::tempdir().unwrap();
+    let generated = root.path().join("node_modules");
+    let event = Event::new(EventKind::Remove(RemoveKind::Folder)).add_path(generated);
+
+    assert!(!raw_event_is_relevant(
+        &Ok(event),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+}
+
+#[test]
+fn rename_shapes_with_missing_endpoints_fail_closed_to_reconciliation() {
+    let root = tempfile::tempdir().unwrap();
+    let shapes = [
+        // Linux inotify commonly reports both endpoints in one notification.
+        ("linux", "src/old.rs", "src/new.rs"),
+        // Windows ReadDirectoryChangesW may surface a generated-tree rename.
+        (
+            "windows",
+            "node_modules/pkg/old.js",
+            "node_modules/pkg/new.js",
+        ),
+        // macOS FSEvents can report only a path after the source disappeared;
+        // the second endpoint here is deliberately outside the active scope.
+        ("macos", "src/old.rs", "generated/missing.rs"),
+    ];
+
+    for (platform, source, target) in shapes {
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(root.path().join(source))
+            .add_path(root.path().join(target));
+        assert!(
+            raw_event_is_relevant(&Ok(event.clone()), root.path(), &DiscoveryPolicy::default()),
+            "{platform} rename must be admitted even when an endpoint is missing"
+        );
+        let mut pending = PendingReconciliation::empty();
+        process_raw_event(
+            Ok(event),
+            root.path(),
+            &DiscoveryPolicy::default(),
+            &mut pending,
+        );
+        assert!(
+            pending.is_full(),
+            "{platform} rename must request full reconciliation without stale paths"
+        );
+    }
+}
+
+#[test]
+fn generated_directory_rename_cannot_bypass_process_reconciliation() {
+    let root = tempfile::tempdir().unwrap();
+    let event = Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::To)))
+        .add_path(root.path().join("node_modules/pkg/new.js"));
+    let mut pending = PendingReconciliation::empty();
+
+    process_raw_event(
+        Ok(event),
+        root.path(),
+        &DiscoveryPolicy::default(),
+        &mut pending,
+    );
+
+    assert!(pending.is_full());
+}
+
+#[test]
+fn scoped_watcher_keeps_relevant_paths_and_ancestor_ignore_controls() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = DiscoveryPolicy::default().with_index_scope(
+        crate::IndexScope::new(vec!["src/**".into()], vec!["src/generated/**".into()])
+            .expect("scope"),
+    );
+    let event = |path: &str| Ok(Event::new(EventKind::Any).add_path(root.path().join(path)));
+
+    assert!(raw_event_is_relevant(
+        &event("src/lib.rs"),
+        root.path(),
+        &policy,
+    ));
+    assert!(!raw_event_is_relevant(
+        &event("third_party/lib.rs"),
+        root.path(),
+        &policy,
+    ));
+    assert!(!raw_event_is_relevant(
+        &event("src/generated/schema.rs"),
+        root.path(),
+        &policy,
+    ));
+    assert!(raw_event_is_relevant(
+        &event(".gitignore"),
+        root.path(),
+        &policy,
+    ));
+    assert!(raw_event_is_relevant(
+        &event("src/.leantokenignore"),
+        root.path(),
+        &policy,
+    ));
+    assert!(!raw_event_is_relevant(
+        &event("third_party/.gitignore"),
+        root.path(),
+        &policy,
+    ));
+
+    let mut pending = PendingReconciliation::empty();
+    process_raw_event(
+        Ok(
+            Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                .add_path(root.path().join("src/lib.rs"))
+                .add_path(root.path().join("third_party/lib.rs")),
+        ),
+        root.path(),
+        &policy,
+        &mut pending,
+    );
+    assert!(
+        pending.is_full(),
+        "cross-scope rename requires a full scoped reconciliation"
+    );
+}
+
+#[test]
+fn watch_count_includes_ignored_and_generated_directories() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::create_dir_all(root.path().join("ignored/nested")).unwrap();
+    std::fs::create_dir_all(root.path().join("node_modules/pkg")).unwrap();
+
+    let cancellation = CancellationToken::new();
+    let complete = inspect_watch_admission(root.path(), 100, 100, &cancellation);
+    assert_eq!(complete.entries, 6);
+    assert_eq!(complete.directories, 5);
+    assert!(complete.complete());
+    assert_eq!(complete.fallback_reason(), None);
+
+    let directory_limited = inspect_watch_admission(root.path(), 2, 100, &cancellation);
+    assert_eq!(directory_limited.directories, 3);
+    assert!(!directory_limited.complete());
+    assert_eq!(
+        directory_limited.fallback_reason(),
+        Some(WatcherFallbackReason::AdmissionDirectoryLimit)
+    );
+}
+
+#[test]
+fn watch_admission_is_bounded_by_entries_and_cancellation() {
+    let root = tempfile::tempdir().unwrap();
+    for index in 0..10 {
+        std::fs::write(root.path().join(format!("{index}.txt")), "").unwrap();
+    }
+    let cancellation = CancellationToken::new();
+    let entry_limited = inspect_watch_admission(root.path(), 100, 4, &cancellation);
+    assert_eq!(entry_limited.entries, 4);
+    assert!(!entry_limited.complete());
+    assert_eq!(
+        entry_limited.fallback_reason(),
+        Some(WatcherFallbackReason::AdmissionEntryLimit)
+    );
+
+    cancellation.cancel();
+    let cancelled = inspect_watch_admission(root.path(), 100, 100, &cancellation);
+    assert_eq!(cancelled.entries, 0);
+    assert!(!cancelled.complete());
+    assert_eq!(
+        cancelled.fallback_reason(),
+        Some(WatcherFallbackReason::AdmissionCancelled)
+    );
+}
+
+#[test]
+fn full_output_queue_degrades_changes_to_reconciliation() {
+    let (tx, mut rx) = mpsc::channel(1);
+    tx.try_send(WatcherMessage::Changed {
+        paths: vec!["occupied.txt".into()],
+    })
+    .unwrap();
+    let mut pending = PendingReconciliation::Paths(BTreeSet::from(["changed.txt".to_string()]));
+    let counters = WatcherCounters::default();
+
+    assert!(flush(&mut pending, &tx, &counters,));
+    assert!(pending.is_full());
+
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(WatcherMessage::Changed { paths }) if paths == ["occupied.txt"]
+    ));
+    assert!(flush(&mut pending, &tx, &counters,));
+    assert!(pending.is_empty());
+    assert_eq!(
+        counters
+            .full_reconciliation_deliveries
+            .load(Ordering::Relaxed),
+        1
+    );
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(WatcherMessage::ReconcileRequired)
+    ));
+}
+
+#[test]
+fn retained_path_state_overflow_becomes_one_sticky_reconciliation() {
+    let mut pending = PendingReconciliation::Paths(BTreeSet::from([
+        "a.rs".to_string(),
+        "b.rs".to_string(),
+        "c.rs".to_string(),
+    ]));
+    pending.insert("old.rs".into());
+
+    bound_pending_state(&mut pending, 3);
+
+    assert!(pending.is_full());
+
+    pending.insert("later.rs".into());
+    bound_pending_state(&mut pending, 3);
+    assert!(pending.is_full());
+}

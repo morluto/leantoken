@@ -5,17 +5,25 @@ use serde::{Deserialize, Serialize};
 
 mod common;
 mod context;
+mod files;
+mod history;
 mod index;
+mod json;
 mod outline;
 mod read;
+mod receipt;
 mod savings;
 mod search;
 
 pub use common::*;
 pub use context::*;
+pub use files::*;
+pub use history::*;
 pub use index::*;
+pub use json::*;
 pub use outline::*;
 pub use read::*;
+pub use receipt::*;
 pub use savings::*;
 pub use search::*;
 

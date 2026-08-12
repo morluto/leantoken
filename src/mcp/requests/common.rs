@@ -8,6 +8,12 @@ pub(in crate::mcp) fn service_call_options(
     })
 }
 
+pub(in crate::mcp) fn service_call_options_with_receipt(
+    max_response_tokens: Option<usize>,
+) -> ServiceCallOptions {
+    service_call_options(max_response_tokens).with_receipt_resource_reserve()
+}
+
 pub(in crate::mcp) const fn default_heading_occurrence() -> usize {
     1
 }
@@ -69,6 +75,14 @@ pub(in crate::mcp) fn expected_repository_id_schema(_: &mut SchemaGenerator) -> 
     })
 }
 
+pub(in crate::mcp) fn repository_context_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "description": "Optional name of an approved repository context; omitted values use the primary workspace.",
+        "type": ["string", "null"],
+        "maxLength": 64
+    })
+}
+
 pub(in crate::mcp) fn validate_optional_positive_limit(
     field: &'static str,
     requested: Option<usize>,
@@ -86,5 +100,13 @@ pub(in crate::mcp) fn validate_optional_limit(
 ) -> crate::Result<()> {
     requested.map_or(Ok(()), |requested| {
         validate_request_limit(field, requested, limit).map(drop)
+    })
+}
+
+pub(in crate::mcp) fn index_consistency_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+        "type": "string",
+        "enum": ["indexed_generation", "reconcile_working_tree"]
     })
 }

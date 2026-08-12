@@ -1,73 +1,381 @@
 use std::{
+    ffi::OsString,
     num::{NonZeroU64, NonZeroUsize},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    str::FromStr,
+    time::Duration,
 };
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 
+use crate::Config;
+use crate::Result;
+use crate::cache::{
+    CacheCompatibility, CacheListRequest, CachePruneRequest, CacheState, DEFAULT_CACHE_LIST_LIMIT,
+    MAX_CACHE_LIST_LIMIT,
+};
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
 use crate::model::{
-    ContextRequest, ContextWorkflow, OutlineRequest, ReadRequest, SearchRequest, WorkflowEvidence,
+    ContextRequest, ContextRequiredEvidence, FileOperation, FilesRequest, HandoffManifestRequest,
+    HistoryOperation, HistoryRequest, IndexConsistency, IndexingMode, JsonOperation,
+    JsonProjection, JsonRequest, JsonSelector, OutlineRequest, ReadRequest, SearchMode,
+    SearchRequest, WorkflowEvidence,
 };
+use crate::setup::{SetupClient, SetupRequest};
 use crate::tokens::Tokenizer;
-use crate::{Config, Result};
 
 fn parse_positive_usize(value: &str) -> std::result::Result<usize, String> {
-    value
+    let value = value
         .parse::<usize>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| "value must be a positive integer".to_owned())
+        .map_err(|_| "value must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("value must be a positive integer".to_owned());
+    }
+    Ok(value)
 }
 
+fn parse_required_evidence(value: &str) -> std::result::Result<ContextRequiredEvidence, String> {
+    serde_json::from_str(value).map_err(|error| format!("invalid required-evidence JSON: {error}"))
+}
+
+fn parse_cache_list_limit(value: &str) -> std::result::Result<usize, String> {
+    let value = parse_positive_usize(value)?;
+    if value > MAX_CACHE_LIST_LIMIT {
+        return Err(format!("must not exceed {MAX_CACHE_LIST_LIMIT}"));
+    }
+    Ok(value)
+}
+
+const DEFAULT_DOCTOR_READY_TIMEOUT_SECONDS: u64 = 120;
+const MAX_DOCTOR_READY_TIMEOUT_SECONDS: u64 = 600;
+
+fn parse_doctor_ready_timeout(value: &str) -> std::result::Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "value must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("value must be a positive integer".to_owned());
+    }
+    if value > MAX_DOCTOR_READY_TIMEOUT_SECONDS {
+        return Err(format!(
+            "value must not exceed {MAX_DOCTOR_READY_TIMEOUT_SECONDS} seconds"
+        ));
+    }
+    Ok(value)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScopedGlobalOption {
+    id: &'static str,
+    long: &'static str,
+    advanced: bool,
+}
+
+// Keep command-scope policy beside the option identifiers. Clap owns the
+// parser shape; this table owns the separate rule that repository-free
+// commands must reject repository and tokenizer flags.
+const COMMAND_SCOPE_OPTIONS: &[ScopedGlobalOption] = &[
+    ScopedGlobalOption {
+        id: "root",
+        long: "--root",
+        advanced: false,
+    },
+    ScopedGlobalOption {
+        id: "allow_broad_root",
+        long: "--allow-broad-root",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "include_generated",
+        long: "--include-generated",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "index_include",
+        long: "--index-include",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "index_exclude",
+        long: "--index-exclude",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_walk_entries",
+        long: "--max-walk-entries",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_files",
+        long: "--max-files",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_total_source_bytes",
+        long: "--max-total-source-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_depth",
+        long: "--max-depth",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_file_bytes",
+        long: "--max-file-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_prepare_batch_files",
+        long: "--max-prepare-batch-files",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_prepare_batch_bytes",
+        long: "--max-prepare-batch-bytes",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "max_index_workers",
+        long: "--max-index-workers",
+        advanced: true,
+    },
+    ScopedGlobalOption {
+        id: "database",
+        long: "--database",
+        advanced: false,
+    },
+    ScopedGlobalOption {
+        id: "tokenizer",
+        long: "--tokenizer",
+        advanced: false,
+    },
+];
+
+fn hide_advanced_repository_options(command: Command) -> Command {
+    command
+        .mut_args(|argument| {
+            if COMMAND_SCOPE_OPTIONS
+                .iter()
+                .any(|option| option.advanced && option.id == argument.get_id().as_str())
+            {
+                argument.hide(true)
+            } else {
+                argument
+            }
+        })
+        .mut_subcommands(|subcommand| subcommand.defer(hide_advanced_repository_options))
+}
+
+fn keep_advanced_repository_options_in_root_help(command: Command) -> Command {
+    command.mut_subcommands(|subcommand| subcommand.defer(hide_advanced_repository_options))
+}
+
+/// LeanToken CLI and MCP server entry point.
 #[derive(Debug, Clone, Parser)]
-#[command(name = "leantoken", version, about = "Immutable repository retrieval")]
+#[command(
+    name = "leantoken",
+    version,
+    about = "Token-budgeted repository context",
+    defer = keep_advanced_repository_options_in_root_help
+)]
 pub struct Cli {
+    /// Repository root path.
     #[arg(long, value_name = "PATH", global = true, default_value = ".")]
     pub root: PathBuf,
-    #[arg(long, global = true)]
+
+    /// Allow indexing a filesystem root, home directory, or parent of home.
+    #[arg(long, global = true, help_heading = "Advanced repository options")]
     pub allow_broad_root: bool,
-    #[arg(long, global = true)]
+
+    /// Include known generated and package-cache directories.
+    #[arg(long, global = true, help_heading = "Advanced repository options")]
     pub include_generated: bool,
-    #[arg(long = "index-include", global = true, action = clap::ArgAction::Append)]
+
+    /// Include only repository-relative paths matched by these patterns.
+    #[arg(
+        long = "index-include",
+        value_name = "PATTERN",
+        global = true,
+        action = clap::ArgAction::Append,
+        help_heading = "Advanced repository options"
+    )]
     pub index_include: Vec<String>,
-    #[arg(long = "index-exclude", global = true, action = clap::ArgAction::Append)]
+
+    /// Exclude repository-relative paths matched by these patterns.
+    #[arg(
+        long = "index-exclude",
+        value_name = "PATTERN",
+        global = true,
+        action = clap::ArgAction::Append,
+        help_heading = "Advanced repository options"
+    )]
     pub index_exclude: Vec<String>,
-    #[arg(long, global = true)]
+
+    /// Maximum filesystem entries yielded by repository discovery.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_walk_entries: Option<NonZeroU64>,
-    #[arg(long, global = true)]
+
+    /// Maximum files admitted to the repository index.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_files: Option<NonZeroU64>,
-    #[arg(long, global = true)]
+
+    /// Maximum aggregate bytes admitted to the repository index.
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_total_source_bytes: Option<NonZeroU64>,
-    #[arg(long, global = true)]
+
+    /// Maximum repository-relative traversal depth.
+    #[arg(
+        long,
+        value_name = "DEPTH",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_depth: Option<NonZeroUsize>,
-    #[arg(long, global = true)]
+
+    /// Maximum bytes admitted from one file.
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_file_bytes: Option<NonZeroU64>,
-    #[arg(long, global = true)]
+
+    /// Maximum files scheduled in one preparation batch.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_prepare_batch_files: Option<NonZeroUsize>,
-    #[arg(long, global = true)]
+
+    /// Maximum source bytes scheduled in one preparation batch.
+    #[arg(
+        long,
+        value_name = "BYTES",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_prepare_batch_bytes: Option<NonZeroU64>,
-    #[arg(long, global = true)]
+
+    /// Maximum parallel file-preparation workers.
+    #[arg(
+        long,
+        value_name = "COUNT",
+        global = true,
+        help_heading = "Advanced repository options"
+    )]
     pub max_index_workers: Option<NonZeroUsize>,
+
+    /// SQLite database path.
     #[arg(long, value_name = "PATH", global = true)]
     pub database: Option<PathBuf>,
+
+    /// Emit compact JSON; retrieval commands use pretty JSON by default.
     #[arg(long, global = true)]
     pub json: bool,
-    #[arg(long, value_enum, default_value_t = Tokenizer::default(), global = true)]
+
+    /// Tokenizer used for source and protocol token accounting.
+    #[arg(long, value_enum, value_name = "ENCODING", default_value_t = Tokenizer::default(), global = true)]
     pub tokenizer: Tokenizer,
+
+    /// Internal marker attached to MCP launchers managed by `leantoken setup`.
+    #[arg(long, global = true, hide = true)]
+    pub managed_by_setup: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
 
 impl Cli {
+    /// Reject repository-scoped global options for repository-free commands.
+    ///
+    /// Clap propagates global arguments to every subcommand. Checking the
+    /// original argument tokens preserves before/after-subcommand placement
+    /// for repository commands while distinguishing an explicit default value
+    /// such as `--root .` from an omitted option.
+    pub fn validate_option_scope(
+        &self,
+        arguments: &[OsString],
+    ) -> std::result::Result<(), clap::Error> {
+        let Some(command) = (match &self.command {
+            Commands::Setup(_) => Some("setup"),
+            Commands::Remove(_) => Some("remove"),
+            Commands::Cache(_) => Some("cache"),
+            Commands::Runtime(_) => Some("runtime"),
+            Commands::Episode(_) => Some("episode"),
+            Commands::Update(_) => Some("update"),
+            Commands::Upgrade(_) => Some("upgrade"),
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+        let supplied = arguments.iter().skip(1).find_map(|argument| {
+            let argument = argument.as_os_str().as_encoded_bytes();
+            COMMAND_SCOPE_OPTIONS
+                .iter()
+                .map(|option| option.long)
+                .find(|option| {
+                    argument == option.as_bytes()
+                        || argument
+                            .strip_prefix(option.as_bytes())
+                            .is_some_and(|suffix| suffix.starts_with(b"="))
+                })
+        });
+        let Some(option) = supplied else {
+            return Ok(());
+        };
+        Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!("repository option {option} cannot be used with `{command}`"),
+        ))
+    }
+
+    /// Resolve global options into a [`Config`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the repository root cannot be canonicalized or is
+    /// an unsafe broad root without the explicit override.
     pub fn config(&self) -> Result<Config> {
-        let scope = crate::IndexScope::new(self.index_include.clone(), self.index_exclude.clone())?;
+        self.config_for_root(&self.root, self.database.clone())
+    }
+
+    /// Resolve a repository configuration using this CLI's global overrides.
+    ///
+    /// The database path is supplied separately so approved MCP contexts can
+    /// inherit safety and accounting policy without sharing the primary
+    /// repository's index storage.
+    pub fn config_for_root(
+        &self,
+        root: impl AsRef<Path>,
+        database_path: Option<PathBuf>,
+    ) -> Result<Config> {
+        let index_scope =
+            crate::IndexScope::new(self.index_include.clone(), self.index_exclude.clone())?;
         let mut config = Config::discover_scoped_with_broad_root(
-            &self.root,
-            self.database.clone(),
+            root,
+            database_path,
             self.allow_broad_root,
-            scope,
+            index_scope,
         )?;
         if let Some(value) = self.max_walk_entries {
             config.max_walk_entries = value.get();
@@ -99,96 +407,317 @@ impl Cli {
         Ok(config)
     }
 
+    /// Convert the parsed CLI into an application request.
     #[must_use]
     pub fn app_request(&self) -> AppRequest {
         match &self.command {
-            Commands::Refresh => AppRequest::Refresh,
-            Commands::Search(args) => AppRequest::Search {
-                request: args.clone().into(),
-                projection: args.projection,
-                max_response_tokens: args.max_response_tokens,
+            Commands::Index { rebuild } => AppRequest::Index {
+                mode: IndexingMode::from_rebuild_flag(*rebuild),
             },
-            Commands::Outline(args) => AppRequest::Outline {
-                request: args.clone().into(),
-                max_response_tokens: args.max_response_tokens,
-            },
-            Commands::Read(args) => AppRequest::Read {
-                request: args.clone().into(),
-                max_response_tokens: args.max_response_tokens,
-            },
-            Commands::Context(args) => AppRequest::Context {
-                request: Box::new(args.request()),
-                workflow: args.workflow.into(),
-                workflow_evidence: args.workflow_evidence(),
-                max_response_tokens: args.max_response_tokens,
-                response_profile: args.response_profile.map(Into::into),
+            Commands::Status => AppRequest::Status,
+            Commands::Coverage => AppRequest::Coverage,
+            Commands::Savings(args) => args
+                .snapshot
+                .clone()
+                .map_or(AppRequest::Savings, |snapshot| AppRequest::SavingsDelta {
+                    snapshot,
+                }),
+            Commands::Files(args) => {
+                let consistency = args.index_consistency.consistency.into();
+                let max_response_tokens = args.max_response_tokens;
+                let request: FilesRequest = args.clone().into();
+                AppRequest::Files {
+                    request,
+                    consistency,
+                    max_response_tokens,
+                }
+            }
+            Commands::Search(args) => {
+                let consistency = args.index_consistency.consistency.into();
+                let max_response_tokens = args.max_response_tokens;
+                let projection = args.projection;
+                let request: SearchRequest = args.clone().into();
+                AppRequest::Search {
+                    request,
+                    consistency,
+                    max_response_tokens,
+                    projection,
+                }
+            }
+            Commands::Outline(args) => {
+                let consistency = args.index_consistency.consistency.into();
+                let max_response_tokens = args.max_response_tokens;
+                let request: OutlineRequest = args.clone().into();
+                AppRequest::Outline {
+                    request,
+                    consistency,
+                    max_response_tokens,
+                }
+            }
+            Commands::Read(args) => {
+                let consistency = args.index_consistency.consistency.into();
+                let max_response_tokens = args.max_response_tokens;
+                let request: ReadRequest = args.clone().into();
+                AppRequest::Read {
+                    request,
+                    consistency,
+                    max_response_tokens,
+                }
+            }
+            Commands::History(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: HistoryRequest = args.clone().into();
+                AppRequest::History {
+                    request,
+                    max_response_tokens,
+                }
+            }
+            Commands::Json(args) => {
+                let max_response_tokens = args.max_response_tokens;
+                let request: JsonRequest = args.clone().into();
+                AppRequest::Json {
+                    request,
+                    max_response_tokens,
+                }
+            }
+            Commands::Context(args) => {
+                let consistency = args.index_consistency.consistency.into();
+                let workflow = args.workflow.into();
+                let handoff = args.handoff_request();
+                let workflow_evidence = args.workflow_evidence();
+                let max_response_tokens = args.max_response_tokens;
+                let response_profile = args.response_profile.map(Into::into);
+                AppRequest::Context {
+                    request: (**args).clone().into(),
+                    consistency,
+                    workflow,
+                    workflow_evidence,
+                    handoff,
+                    max_response_tokens,
+                    response_profile,
+                }
+            }
+            Commands::Doctor(args) => AppRequest::Doctor {
+                ready_timeout: Duration::from_secs(args.ready_timeout_seconds),
+                client: args.client,
             },
             Commands::Mcp(args) => AppRequest::Mcp {
                 result_mode: args.result_mode,
+            },
+            Commands::Setup(args) => AppRequest::Setup(args.clone().into()),
+            Commands::Remove(args) => AppRequest::Remove(args.clone().into()),
+            Commands::Cache(args) => match &args.command {
+                CacheCommand::List(args) => AppRequest::CacheList(args.clone().into()),
+                CacheCommand::Prune(args) => AppRequest::CachePrune(args.clone().into()),
+            },
+            Commands::Runtime(args) => match &args.command {
+                RuntimeCommand::List => AppRequest::RuntimeList,
+                RuntimeCommand::Prune(args) => AppRequest::RuntimePrune(args.clone().into()),
+            },
+            Commands::Episode(args) => match &args.command {
+                EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.clone().into()),
+            },
+            Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
+                check: args.check,
+                yes: args.yes,
             },
         }
     }
 }
 
+/// Parsed application request produced by the CLI.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AppRequest {
-    Refresh,
+    Index {
+        mode: IndexingMode,
+    },
+    Status,
+    Coverage,
+    Savings,
+    SavingsDelta {
+        snapshot: String,
+    },
+    Files {
+        request: FilesRequest,
+        consistency: IndexConsistency,
+        max_response_tokens: Option<usize>,
+    },
     Search {
         request: SearchRequest,
-        projection: SearchProjectionArg,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
+        projection: SearchProjectionArg,
     },
     Outline {
         request: OutlineRequest,
+        consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
     },
     Read {
         request: ReadRequest,
+        consistency: IndexConsistency,
+        max_response_tokens: Option<usize>,
+    },
+    History {
+        request: HistoryRequest,
+        max_response_tokens: Option<usize>,
+    },
+    Json {
+        request: JsonRequest,
         max_response_tokens: Option<usize>,
     },
     Context {
-        request: Box<ContextRequest>,
-        workflow: ContextWorkflow,
+        request: ContextRequest,
+        consistency: IndexConsistency,
+        workflow: crate::model::ContextWorkflow,
         workflow_evidence: WorkflowEvidence,
+        handoff: Option<HandoffManifestRequest>,
         max_response_tokens: Option<usize>,
         response_profile: Option<crate::model::ContextResponseProfile>,
+    },
+    Doctor {
+        ready_timeout: Duration,
+        client: Option<SetupClient>,
     },
     Mcp {
         result_mode: McpResultMode,
     },
+    Setup(SetupRequest),
+    Remove(SetupRequest),
+    CacheList(CacheListRequest),
+    CachePrune(CachePruneRequest),
+    RuntimeList,
+    RuntimePrune(crate::setup::RuntimePruneRequest),
+    EpisodeAudit(crate::episode::EpisodeAuditRequest),
+    Upgrade {
+        check: bool,
+        yes: bool,
+    },
+}
+
+/// Typed payload for a context application request.
+#[derive(Debug, Clone)]
+pub struct ContextAppRequest {
+    pub request: ContextRequest,
+    pub workflow: crate::model::ContextWorkflow,
+    pub workflow_evidence: WorkflowEvidence,
+    pub handoff: Option<Box<HandoffManifestRequest>>,
+    pub max_response_tokens: Option<usize>,
+    pub response_profile: Option<crate::model::ContextResponseProfile>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
-    /// Build and atomically publish a complete repository generation.
-    Refresh,
-    /// Search the published generation.
+    /// Index the repository.
+    Index {
+        /// Rebuild the index from scratch.
+        #[arg(long)]
+        rebuild: bool,
+    },
+
+    /// Show index status.
+    Status,
+
+    /// Report structural parser coverage for the indexed generation.
+    Coverage,
+
+    /// Show source compression and full-response token accounting.
+    Savings(SavingsArgs),
+
+    /// List, find, or glob repository paths.
+    Files(FilesArgs),
+
+    /// Search the repository for terms, symbols, or references.
     Search(SearchArgs),
-    /// Outline files in the published generation.
+
+    /// Show the structural outline of one or more files.
     Outline(OutlineArgs),
-    /// Read indexed content from the published generation.
+
+    /// Read a bounded source range.
     Read(ReadArgs),
-    /// Orchestrate bounded retrieval over the published generation.
+
+    /// Read, diff, or trace a symbol across Git revisions.
+    History(HistoryArgs),
+
+    /// Query, summarize, or compare live JSON structures.
+    Json(JsonArgs),
+
+    /// Retrieve ranked task context within a token budget.
     Context(Box<ContextArgs>),
-    /// Serve the five-tool MCP projection over stdio.
+
+    /// Verify MCP identity, tools, and first-retrieval readiness.
+    Doctor(DoctorArgs),
+
+    /// Run the MCP server over stdio.
     Mcp(McpArgs),
+
+    /// Configure LeanToken as a global MCP server for coding clients.
+    Setup(IntegrationArgs),
+
+    /// Remove LeanToken's global MCP server entries.
+    Remove(IntegrationArgs),
+
+    /// Inspect or prune centrally managed repository caches.
+    Cache(CacheArgs),
+
+    /// Inspect or prune application-owned private runtimes.
+    Runtime(RuntimeArgs),
+
+    /// Audit existing redacted model/tool episode artifacts.
+    Episode(EpisodeArgs),
+
+    /// Update LeanToken to the latest release.
+    Update(UpgradeArgs),
+
+    /// Update LeanToken to the latest release.
+    Upgrade(UpgradeArgs),
 }
 
+/// Readiness budget used by `leantoken doctor` while a cold repository index
+/// is being built.
 #[derive(Debug, Clone, Args)]
-pub struct McpArgs {
-    #[arg(long, value_enum, default_value_t = McpResultMode::Structured)]
-    pub result_mode: McpResultMode,
+pub struct DoctorArgs {
+    /// Verify the exact launcher stored for this configured client.
+    #[arg(long, value_enum, value_name = "CLIENT")]
+    pub client: Option<SetupClient>,
+
+    /// Maximum seconds to wait for the first repository retrieval to become ready.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = DEFAULT_DOCTOR_READY_TIMEOUT_SECONDS,
+        value_parser = parse_doctor_ready_timeout
+    )]
+    pub ready_timeout_seconds: u64,
 }
 
+mod cache;
 mod context;
-mod outline;
-mod read;
-mod retrieval;
-mod search;
 
+use cache::*;
 use context::*;
+use episode::*;
+use files::*;
+use history::*;
+use integration::*;
+use json::*;
 use outline::*;
 use read::*;
 use retrieval::*;
+use runtime::*;
 use search::SearchArgs;
 pub use search::SearchProjectionArg;
+mod episode;
+mod files;
+mod history;
+mod integration;
+mod json;
+mod outline;
+mod read;
+mod retrieval;
+mod runtime;
+mod search;
+
+#[cfg(test)]
+mod tests;

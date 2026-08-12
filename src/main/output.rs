@@ -1,5 +1,4 @@
 use super::*;
-use std::io::Write;
 
 pub(super) fn print<T: Serialize>(value: &T, compact: bool) -> Result<()> {
     let stdout = std::io::stdout();

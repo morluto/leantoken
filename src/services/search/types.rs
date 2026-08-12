@@ -129,6 +129,15 @@ impl DefinitionPreference {
     }
 }
 
+pub(super) enum PreparedQueryReceipt {
+    None,
+    Record(ExactQueryPredicate),
+    Reuse {
+        receipt_id: String,
+        predicate: ExactQueryPredicate,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExhaustiveSearchMode {
     Text,
@@ -142,7 +151,10 @@ pub(super) enum SearchKind {
     Identifier(DefinitionPreference),
     Symbol,
     Reference,
-    Exhaustive { mode: ExhaustiveSearchMode },
+    Exhaustive {
+        mode: ExhaustiveSearchMode,
+        query_receipt: PreparedQueryReceipt,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +263,18 @@ impl SearchKind {
             }
         }
     }
+
+    pub(super) const fn query_receipt(&self) -> Option<&PreparedQueryReceipt> {
+        match self {
+            Self::Exhaustive { query_receipt, .. } => Some(query_receipt),
+            Self::Auto(_)
+            | Self::Text
+            | Self::Regex
+            | Self::Identifier(_)
+            | Self::Symbol
+            | Self::Reference => None,
+        }
+    }
 }
 
 pub(super) struct SearchInput {
@@ -262,6 +286,7 @@ pub(super) struct SearchInput {
     pub(super) max_results: Option<usize>,
     pub(super) max_tokens: Option<usize>,
     pub(super) case_sensitive: bool,
+    pub(super) receipt_id: Option<String>,
     pub(super) cursor: Option<String>,
 }
 
@@ -279,7 +304,7 @@ impl SearchInput {
             case_sensitive,
             all_occurrences: _,
             prefer_structural: _,
-            receipt_id: _,
+            receipt_id,
             query_receipt: _,
             cursor,
         } = request;
@@ -292,6 +317,7 @@ impl SearchInput {
             max_results,
             max_tokens,
             case_sensitive,
+            receipt_id,
             cursor,
         }
     }
@@ -307,6 +333,19 @@ pub(super) enum SearchOutputShape {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SearchExecutionOptions {
     pub(super) response_options: ServiceCallOptions,
+    pub(super) accounting: SearchAccounting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SearchAccounting {
+    Omit,
+    Record,
+}
+
+pub(super) enum QueryReceiptExecution {
+    None,
+    Pending(QueryReceiptRecord),
+    Outcome(QueryReceiptOutcome),
 }
 
 pub(super) struct RegexScan {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::SearchOccurrenceOutput;
+use crate::model::{QueryReceiptAction, SearchOccurrenceOutput};
 
 /// A search query that preserves significant leading and trailing whitespace.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
@@ -69,6 +69,10 @@ pub(in crate::mcp) enum SearchMcpOutput {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct SearchMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     pub(in crate::mcp) expected_repository_id: Option<String>,
@@ -176,8 +180,16 @@ pub(in crate::mcp) struct SearchMcpOptions {
     #[serde(default)]
     pub(in crate::mcp) prefer_structural: bool,
     #[serde(default)]
+    #[schemars(length(max = 128))]
+    pub(in crate::mcp) receipt_id: Option<String>,
+    #[serde(default)]
+    pub(in crate::mcp) query_receipt: Option<QueryReceiptAction>,
+    #[serde(default)]
     #[schemars(length(max = 4096))]
     pub(in crate::mcp) cursor: Option<String>,
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    pub(in crate::mcp) consistency: IndexConsistency,
     #[serde(default)]
     pub(in crate::mcp) projection: SearchMcpProjection,
 }
@@ -272,6 +284,26 @@ impl SearchMcpRequest {
                 reason: "occurrences requires all_occurrences=true",
             });
         }
+        if options.query_receipt.is_some()
+            && (!options.all_occurrences
+                || !matches!(self.operation.mode(), SearchMode::Text | SearchMode::Regex))
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires all_occurrences=true with text or regex mode",
+            });
+        }
+        if options.query_receipt.is_some()
+            && !matches!(
+                options.projection,
+                SearchMcpProjection::Auto | SearchMcpProjection::Occurrences
+            )
+        {
+            return Err(crate::Error::InvalidInput {
+                field: "query_receipt",
+                reason: "requires the occurrences projection",
+            });
+        }
         Ok(())
     }
 
@@ -284,6 +316,7 @@ impl SearchMcpRequest {
     ) -> (
         SearchRequest,
         SearchMcpOutput,
+        IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
@@ -302,6 +335,7 @@ impl SearchMcpRequest {
             SearchMcpProjection::Grouped => SearchMcpOutput::Grouped,
             SearchMcpProjection::Occurrences => SearchMcpOutput::Occurrences(occurrence_output),
         };
+        let receipt_resource = options.receipt_id.is_some() || options.query_receipt.is_some();
         (
             SearchRequest {
                 query: options.query.into_string(),
@@ -327,12 +361,17 @@ impl SearchMcpRequest {
                 case_sensitive: options.case_sensitive,
                 all_occurrences: options.all_occurrences,
                 prefer_structural: options.prefer_structural,
-                receipt_id: None,
-                query_receipt: None,
+                receipt_id: options.receipt_id,
+                query_receipt: options.query_receipt,
                 cursor: options.cursor,
             },
             output,
-            service_call_options(options.max_response_tokens),
+            options.consistency,
+            if receipt_resource {
+                service_call_options_with_receipt(options.max_response_tokens)
+            } else {
+                service_call_options(options.max_response_tokens)
+            },
             self.expected_repository_id,
         )
     }
