@@ -94,6 +94,7 @@ async fn read_reports_live_content_that_differs_from_the_index() {
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -127,6 +128,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             max_tokens: Some(32_000),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -136,6 +138,10 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
     assert_eq!(first_receipt.outcome, ReadDeltaOutcome::Full);
     assert_eq!(first_receipt.head_hash, first.content_hash);
     assert!(first_receipt.base_hash.is_none());
+    let base_artifact = first_receipt
+        .head_artifact_id
+        .clone()
+        .expect("base artifact");
     let base_hash = first.content_hash.clone();
 
     let unchanged = services
@@ -150,6 +156,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             max_tokens: Some(32_000),
             expected_hash: Some(base_hash.clone()),
             delta: true,
+            delta_base_artifact_id: Some(base_artifact.clone()),
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -183,6 +190,7 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
             max_tokens: Some(32_000),
             expected_hash: Some(base_hash),
             delta: true,
+            delta_base_artifact_id: Some(base_artifact),
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -210,42 +218,49 @@ async fn read_delta_returns_a_complete_strictly_cheaper_edit() {
 }
 
 #[tokio::test]
-async fn read_delta_restart_matches_the_process_local_oracle() {
+async fn read_delta_artifact_survives_restart() {
     let source = (1..=120)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
         .collect::<String>();
     let (persistent_root, persistent_a) = indexed_source("restart.rs", source.as_bytes()).await;
     let (oracle_root, oracle) = indexed_source("restart.rs", source.as_bytes()).await;
-    let request = |expected_hash: Option<String>| WorktreeReadRequest {
-        path: "restart.rs".into(),
-        start_line: None,
-        end_line: None,
-        symbol: None,
-        heading: None,
-        heading_occurrence: None,
-        continuation_cursor: None,
-        max_tokens: Some(32_000),
-        expected_hash,
-        delta: true,
-        receipt_id: None,
-        policy: leantoken::ReadPolicy::Full,
+    let request = |expected_hash: Option<String>, delta_base_artifact_id: Option<String>| {
+        WorktreeReadRequest {
+            path: "restart.rs".into(),
+            start_line: None,
+            end_line: None,
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(32_000),
+            expected_hash,
+            delta: true,
+            delta_base_artifact_id,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::Full,
+        }
     };
 
     let persistent_base = persistent_a
-        .read_worktree(request(None))
+        .read_worktree(request(None, None))
         .await
         .expect("persist clean base");
     let oracle_base = oracle
-        .read_worktree(request(None))
+        .read_worktree(request(None, None))
         .await
-        .expect("capture process-local oracle base");
+        .expect("capture comparison artifact");
     assert_eq!(persistent_base.content_hash, oracle_base.content_hash);
     let persistent_receipt = persistent_base
         .delta_receipt
         .as_ref()
         .expect("persistent base receipt");
-    assert!(persistent_receipt.head_persisted);
-    assert!(persistent_receipt.persistence_fallback_reason.is_none());
+    assert!(persistent_receipt.head_artifact_id.is_some());
+    assert!(
+        persistent_receipt
+            .artifact_capture_fallback_reason
+            .is_none()
+    );
 
     let changed_source = source.replace(
         "let value_60 = compute_value(60);",
@@ -266,14 +281,26 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
     .expect("restart services");
 
     let expected_hash = persistent_base.content_hash.clone();
+    let persistent_artifact = persistent_receipt
+        .head_artifact_id
+        .clone()
+        .expect("persistent artifact id");
+    let oracle_artifact = oracle_base
+        .delta_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.head_artifact_id.clone())
+        .expect("oracle artifact id");
     let restarted = persistent_b
-        .read_worktree(request(Some(expected_hash.clone())))
+        .read_worktree(request(
+            Some(expected_hash.clone()),
+            Some(persistent_artifact),
+        ))
         .await
         .expect("read from persistent base");
     let in_memory = oracle
-        .read_worktree(request(Some(expected_hash)))
+        .read_worktree(request(Some(expected_hash), Some(oracle_artifact)))
         .await
-        .expect("read from process-local base");
+        .expect("read from explicit artifact");
     assert_eq!(restarted.status, ReadStatus::Delta);
     assert_eq!(restarted.status, in_memory.status);
     assert_eq!(restarted.delta, in_memory.delta);
@@ -287,17 +314,14 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
     let oracle_receipt = in_memory.delta_receipt.as_ref().expect("oracle receipt");
     assert_eq!(
         restarted_receipt.base_source,
-        Some(ReadDeltaBaseSource::Persistent)
+        Some(ReadDeltaBaseSource::Artifact)
     );
     assert_eq!(
         oracle_receipt.base_source,
-        Some(ReadDeltaBaseSource::ProcessLocal)
+        Some(ReadDeltaBaseSource::Artifact)
     );
-    assert_eq!(
-        restarted_receipt.persistence_fallback_reason,
-        Some(ReadDeltaPersistenceFallback::LiveDiffersFromIndex)
-    );
-    assert!(!restarted_receipt.head_persisted);
+    assert!(restarted_receipt.artifact_capture_fallback_reason.is_none());
+    assert!(restarted_receipt.head_artifact_id.is_some());
     assert_eq!(restarted_receipt.outcome, oracle_receipt.outcome);
     assert_eq!(
         restarted_receipt.base_generation,
@@ -312,7 +336,7 @@ async fn read_delta_restart_matches_the_process_local_oracle() {
 }
 
 #[tokio::test]
-async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
+async fn dirty_delta_artifacts_are_explicit_while_unindexed_paths_remain_unreadable() {
     let source = (1..=80)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
         .collect::<String>();
@@ -334,28 +358,19 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             max_tokens: Some(32_000),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
         .await
-        .expect("capture process-local dirty base");
+        .expect("capture dirty read artifact");
     let dirty_receipt = dirty.delta_receipt.as_ref().expect("dirty receipt");
-    assert!(!dirty_receipt.head_persisted);
-    assert_eq!(
-        dirty_receipt.persistence_fallback_reason,
-        Some(ReadDeltaPersistenceFallback::LiveDiffersFromIndex)
-    );
-    let connection =
-        rusqlite::Connection::open(root.path().join("index.sqlite")).expect("inspect database");
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM read_delta_bases", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .expect("persistent base count"),
-        0
-    );
-    drop(connection);
+    assert!(dirty_receipt.head_artifact_id.is_some());
+    assert!(dirty_receipt.artifact_capture_fallback_reason.is_none());
+    let dirty_artifact = dirty_receipt
+        .head_artifact_id
+        .clone()
+        .expect("dirty artifact id");
 
     drop(services);
     std::fs::write(
@@ -380,17 +395,17 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             max_tokens: Some(32_000),
             expected_hash: Some(dirty.content_hash),
             delta: true,
+            delta_base_artifact_id: Some(dirty_artifact),
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
         .await
-        .expect("dirty base unavailable after restart");
+        .expect("dirty artifact available after restart");
     let restart_receipt = after_restart.delta_receipt.expect("restart receipt");
     assert_eq!(
-        restart_receipt.fallback_reason,
-        Some(ReadDeltaFallback::BaseUnavailable)
+        restart_receipt.base_source,
+        Some(ReadDeltaBaseSource::Artifact)
     );
-    assert!(restart_receipt.base_source.is_none());
 
     let isolated = tempfile::tempdir().expect("isolated repository");
     std::fs::create_dir(isolated.path().join(".git")).expect("git marker");
@@ -421,6 +436,7 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
                     max_tokens: Some(32_000),
                     expected_hash: None,
                     delta: true,
+                    delta_base_artifact_id: None,
                     receipt_id: None,
                     policy: leantoken::ReadPolicy::Full,
                 })
@@ -429,20 +445,10 @@ async fn dirty_unindexed_and_ignored_delta_bases_never_persist() {
             "{path} must not become a delta base"
         );
     }
-    let connection = rusqlite::Connection::open(isolated.path().join("index.sqlite"))
-        .expect("inspect isolated database");
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM read_delta_bases", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .expect("isolated persistent base count"),
-        0
-    );
 }
 
 #[tokio::test]
-async fn read_delta_automatically_uses_the_latest_exact_target_base() {
+async fn read_delta_requires_an_explicit_base_artifact() {
     let source = (1..=80)
         .map(|line| format!("let value_{line} = compute_value({line});\n"))
         .collect::<String>();
@@ -451,7 +457,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         .observed_token_savings_snapshot(None)
         .await
         .expect("savings base");
-    let request = || WorktreeReadRequest {
+    let request = |delta_base_artifact_id: Option<String>| WorktreeReadRequest {
         path: "latest.rs".into(),
         start_line: None,
         end_line: None,
@@ -462,14 +468,15 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         max_tokens: Some(32_000),
         expected_hash: None,
         delta: true,
+        delta_base_artifact_id,
         receipt_id: None,
         policy: leantoken::ReadPolicy::Full,
     };
 
     let first = services
-        .read_worktree(request())
+        .read_worktree(request(None))
         .await
-        .expect("capture latest base");
+        .expect("capture base artifact");
     let first_receipt = first.delta_receipt.as_ref().expect("first receipt");
     let first_generation = first_receipt.head_generation;
     assert_eq!(first_receipt.outcome, ReadDeltaOutcome::Full);
@@ -477,11 +484,28 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         first_receipt.fallback_reason,
         Some(ReadDeltaFallback::BaseUnavailable)
     );
+    let first_artifact = first_receipt
+        .head_artifact_id
+        .clone()
+        .expect("first artifact");
+
+    let without_base = services
+        .read_worktree(request(None))
+        .await
+        .expect("read without an implicit base");
+    assert_eq!(without_base.status, ReadStatus::Content);
+    assert_eq!(
+        without_base
+            .delta_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.fallback_reason.clone()),
+        Some(ReadDeltaFallback::BaseUnavailable)
+    );
 
     let unchanged = services
-        .read_worktree(request())
+        .read_worktree(request(Some(first_artifact.clone())))
         .await
-        .expect("automatic unchanged read");
+        .expect("explicit unchanged read");
     assert_eq!(unchanged.status, ReadStatus::NotModified);
     assert!(unchanged.not_modified);
     assert!(unchanged.content.is_none());
@@ -500,9 +524,9 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
     );
     std::fs::write(root.path().join("latest.rs"), &changed_source).expect("first edit");
     let changed = services
-        .read_worktree(request())
+        .read_worktree(request(Some(first_artifact)))
         .await
-        .expect("automatic changed read");
+        .expect("explicit changed read");
     assert_eq!(changed.status, ReadStatus::Delta);
     assert_eq!(
         changed
@@ -519,15 +543,20 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
     );
 
     let latest_hash = changed.content_hash.clone();
+    let latest_artifact = changed
+        .delta_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.head_artifact_id.clone())
+        .expect("changed artifact");
     let changed_again_source = changed_source.replace(
         "let value_60 = compute_value(60);",
         "let value_60 = compute_updated_value(60);",
     );
     std::fs::write(root.path().join("latest.rs"), &changed_again_source).expect("second edit");
     let changed_again = services
-        .read_worktree(request())
+        .read_worktree(request(Some(latest_artifact)))
         .await
-        .expect("latest changed read");
+        .expect("second explicit changed read");
     assert_eq!(changed_again.status, ReadStatus::Delta);
     assert_eq!(
         changed_again
@@ -535,7 +564,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
             .as_ref()
             .and_then(|receipt| receipt.base_hash.as_deref()),
         Some(latest_hash.as_str()),
-        "the second edit must use the most recently captured head"
+        "the second edit uses the artifact selected by the caller"
     );
 
     let ordinary_source = changed_again_source.replace(
@@ -543,7 +572,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
         "let value_70 = compute_updated_value(70);",
     );
     std::fs::write(root.path().join("latest.rs"), ordinary_source).expect("ordinary edit");
-    let mut ordinary_request = request();
+    let mut ordinary_request = request(None);
     ordinary_request.delta = false;
     let ordinary = services
         .read_worktree(ordinary_request)
@@ -553,10 +582,15 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
     assert!(ordinary.content.is_some());
     assert!(ordinary.delta_receipt.is_none());
 
+    let changed_again_artifact = changed_again
+        .delta_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.head_artifact_id.clone())
+        .expect("second changed artifact");
     let after_ordinary = services
-        .read_worktree(request())
+        .read_worktree(request(Some(changed_again_artifact)))
         .await
-        .expect("delta read after ordinary read");
+        .expect("explicit delta read after ordinary read");
     assert_eq!(after_ordinary.status, ReadStatus::Delta);
     assert_eq!(
         after_ordinary
@@ -564,7 +598,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
             .as_ref()
             .and_then(|receipt| receipt.base_hash.as_deref()),
         Some(changed_again.content_hash.as_str()),
-        "an ordinary read must not replace the latest opt-in delta base"
+        "ordinary reads cannot change the caller-selected artifact"
     );
 
     let savings = services
@@ -577,7 +611,7 @@ async fn read_delta_automatically_uses_the_latest_exact_target_base() {
             .observations
             .expected_hash_not_modified_responses,
         0,
-        "automatic base selection is not an expected_hash match"
+        "artifact selection is not an expected_hash match"
     );
     assert_eq!(
         savings
@@ -608,6 +642,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
             max_tokens: Some(20),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -624,9 +659,9 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
         receipt.fallback_reason,
         Some(ReadDeltaFallback::CurrentTruncated)
     );
-    assert!(!receipt.head_persisted);
+    assert!(receipt.head_artifact_id.is_none());
     assert_eq!(
-        receipt.persistence_fallback_reason,
+        receipt.artifact_capture_fallback_reason,
         Some(ReadDeltaPersistenceFallback::CurrentTruncated)
     );
     assert_eq!(receipt.avoided_tokens, 0);
@@ -635,7 +670,7 @@ async fn read_delta_does_not_capture_or_diff_a_truncated_page() {
 #[tokio::test]
 async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
     let (root, services) = indexed_source("small.txt", b"alpha\n").await;
-    let _first = services
+    let first = services
         .read_worktree(WorktreeReadRequest {
             path: "small.txt".into(),
             start_line: Some(1),
@@ -647,11 +682,17 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture small base");
+    let base_artifact = first
+        .delta_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.head_artifact_id.clone())
+        .expect("small base artifact");
     std::fs::write(root.path().join("small.txt"), "beta\n").expect("edit small source");
 
     let changed = services
@@ -666,6 +707,7 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: Some(base_artifact),
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -700,11 +742,17 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
             max_tokens: Some(1_000),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
         .await
         .expect("capture symbol base");
+    let base_artifact = first
+        .delta_receipt
+        .as_ref()
+        .and_then(|receipt| receipt.head_artifact_id.clone())
+        .expect("symbol base artifact");
     std::fs::write(
         root.path().join("symbol.rs"),
         "\nfn target() {\n    new_behavior();\n}\n",
@@ -727,6 +775,7 @@ async fn read_delta_falls_back_when_symbol_coordinates_change() {
             max_tokens: Some(1_000),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: Some(base_artifact),
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -768,6 +817,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -787,6 +837,7 @@ async fn read_receipt_does_not_suppress_changed_overlapping_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: first.meta.receipt_id,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -813,6 +864,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -830,6 +882,7 @@ async fn read_receipt_distinguishes_exact_suppression_from_not_modified() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: first.meta.receipt_id,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -872,6 +925,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -892,6 +946,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -913,6 +968,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -942,6 +998,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -968,6 +1025,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -985,6 +1043,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1009,6 +1068,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1040,6 +1100,7 @@ async fn exact_and_open_reads_preserve_coordinates_hashes_and_live_content() {
             max_tokens: Some(100),
             expected_hash: Some(exact.content_hash.clone()),
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -1102,6 +1163,7 @@ async fn open_ended_read_bounds_live_suffix_before_returning_content() {
             max_tokens: Some(12),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1132,6 +1194,7 @@ async fn live_read_rejects_malformed_utf8_at_eof() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1163,6 +1226,7 @@ async fn live_read_rejects_line_after_terminal_newline() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1194,6 +1258,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1211,6 +1276,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1234,6 +1300,7 @@ async fn bounded_reads_preserve_crlf_and_missing_final_newline() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1390,6 +1457,7 @@ async fn truncated_symbol_guidance_replaces_many_tiny_pages_with_one_sized_conti
         max_tokens: Some(max_tokens),
         expected_hash: None,
         delta: false,
+        delta_base_artifact_id: None,
         receipt_id: None,
         policy,
     };
@@ -1759,6 +1827,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
                 max_tokens: Some(12),
                 expected_hash: None,
                 delta: false,
+                delta_base_artifact_id: None,
                 receipt_id: None,
                 policy: leantoken::ReadPolicy::default(),
             })
@@ -1800,6 +1869,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             max_tokens: Some(12),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1817,6 +1887,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             max_tokens: Some(12),
             expected_hash: Some(first.content_hash.clone()),
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1845,6 +1916,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             max_tokens: Some(12),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1864,6 +1936,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             max_tokens: Some(12),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -1886,6 +1959,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             max_tokens: Some(12),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::default(),
         })
@@ -2074,6 +2148,7 @@ async fn bounded_read_stops_early_and_reports_unknown_index_state() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Bounded,
         })
@@ -2109,6 +2184,7 @@ async fn full_read_hashes_complete_file_and_reports_index_state() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -2148,6 +2224,7 @@ async fn full_read_reports_stale_index_state_when_live_file_diverges() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })
@@ -2179,6 +2256,7 @@ async fn delta_request_without_full_policy_is_rejected() {
             max_tokens: Some(32_000),
             expected_hash: None,
             delta: true,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Bounded,
         })
@@ -2212,6 +2290,7 @@ async fn bounded_continuation_cursor_rejects_full_policy_switch() {
             max_tokens: Some(1),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Bounded,
         })
@@ -2237,6 +2316,7 @@ async fn bounded_continuation_cursor_rejects_full_policy_switch() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: leantoken::ReadPolicy::Full,
         })

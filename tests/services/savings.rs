@@ -358,6 +358,7 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: ReadPolicy::Bounded,
         })

@@ -381,6 +381,11 @@ impl Config {
     }
 
     #[must_use]
+    pub(crate) fn artifact_database_path(&self) -> PathBuf {
+        auxiliary_database_path(&self.database_path, "artifacts")
+    }
+
+    #[must_use]
     pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
         let fallback_cache = self.root.join(FALLBACK_CACHE_DIRECTORY);
         if self.database_storage.is_managed()
@@ -390,19 +395,24 @@ impl Config {
             return true;
         }
         let instrumentation = self.instrumentation_database_path();
-        if candidate == self.database_path || candidate == instrumentation {
+        let artifacts = self.artifact_database_path();
+        if candidate == self.database_path || candidate == instrumentation || candidate == artifacts
+        {
             return true;
         }
-        [self.database_path.as_path(), instrumentation.as_path()]
-            .into_iter()
-            .any(|database| {
-                ["-wal", "-shm", "-journal"].into_iter().any(|suffix| {
-                    let mut sidecar = database.as_os_str().to_os_string();
-                    sidecar.push(suffix);
-                    candidate.as_os_str() == sidecar
-                })
+        [
+            self.database_path.as_path(),
+            instrumentation.as_path(),
+            artifacts.as_path(),
+        ]
+        .into_iter()
+        .any(|database| {
+            ["-wal", "-shm", "-journal"].into_iter().any(|suffix| {
+                let mut sidecar = database.as_os_str().to_os_string();
+                sidecar.push(suffix);
+                candidate.as_os_str() == sidecar
             })
-            || is_coordination_sidecar_for_database(candidate, &self.database_path)
+        }) || is_coordination_sidecar_for_database(candidate, &self.database_path)
             || is_recognized_stale_coordination_sidecar(candidate)
     }
 
@@ -875,6 +885,8 @@ mod tests {
         assert!(config.is_database_artifact(".leantoken/index.sqlite-journal"));
         assert!(config.is_database_artifact(".leantoken/index.sqlite.instrumentation.sqlite"));
         assert!(config.is_database_artifact(".leantoken/index.sqlite.instrumentation.sqlite-wal"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.artifacts.sqlite"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.artifacts.sqlite-shm"));
         assert!(!config.is_database_artifact(".leantoken.toml"));
     }
 

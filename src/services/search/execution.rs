@@ -147,7 +147,9 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
-        let stored = session.load_query_receipt(receipt_id)?;
+        let stored = self
+            .artifacts
+            .load_query_receipt(&self.repository_id(), receipt_id)?;
         let Some(scope_relation) = requested_predicate.scope_relation_to(&stored.predicate) else {
             return Err(Error::QueryReceiptMismatch);
         };

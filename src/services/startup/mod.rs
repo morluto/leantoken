@@ -117,6 +117,7 @@ impl Services {
 
     fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let tokenizer = config.tokenizer;
+        let artifacts = ArtifactStorage::open(&config.artifact_database_path());
         let instrumentation = InstrumentationStorage::open(&config.instrumentation_database_path());
         let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
@@ -134,6 +135,7 @@ impl Services {
         Ok(Self {
             config,
             storage,
+            artifacts,
             instrumentation,
             indexer,
             repository_root,
@@ -141,7 +143,6 @@ impl Services {
             _cache_lease: cache_lease,
             active_reconciliations,
             reconciliation_changed,
-            read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             blocking_executor: executor::BlockingExecutor::default(),
             response_accountant: accounting::ResponseAccountant::new(tokenizer),
             observer,
@@ -156,7 +157,12 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
         return Ok(());
     }
     let instrumentation = config.instrumentation_database_path();
-    let databases = [config.database_path.as_path(), instrumentation.as_path()];
+    let artifacts = config.artifact_database_path();
+    let databases = [
+        config.database_path.as_path(),
+        instrumentation.as_path(),
+        artifacts.as_path(),
+    ];
     let database_artifacts = databases.into_iter().flat_map(|database| {
         ["", "-wal", "-shm", "-journal"].map(move |suffix| {
             let mut path = database.as_os_str().to_os_string();
@@ -499,6 +505,27 @@ mod tests {
         assert_eq!(
             fs::read(target.path()).expect("sentinel contents"),
             b"external instrumentation sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_artifact_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external artifact sentinel").expect("sentinel");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        symlink(target.path(), config.artifact_database_path()).expect("artifact symlink");
+        config.mark_database_as_managed_platform();
+
+        let error = Services::open(config).expect_err("managed artifact symlink rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external artifact sentinel"
         );
     }
 

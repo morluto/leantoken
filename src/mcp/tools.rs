@@ -359,7 +359,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "receipt_rebase",
-        description = "Explicitly carry only exactly unchanged evidence from a stale server-managed receipt into the current committed generation. Requires the same repository/cache/scope identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\",\"consistency\":\"reconcile_working_tree\"}."
+        description = "Explicitly carry only exactly unchanged evidence from an immutable artifact into the current committed generation. Requires the same repository identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\"}."
     )]
     async fn leantoken_receipt_rebase(
         &self,

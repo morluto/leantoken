@@ -1,9 +1,5 @@
 use super::*;
 
-mod query_receipts;
-mod read_delta;
-mod receipts;
-
 #[test]
 pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
     let root = tempfile::tempdir().expect("root");

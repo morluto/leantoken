@@ -35,6 +35,7 @@ pub(super) struct ReadInput {
     pub(super) mode: ReadMode,
     pub(super) max_tokens: Option<usize>,
     pub(super) expected_hash: Option<String>,
+    pub(super) delta_base_artifact_id: Option<String>,
     pub(super) receipt_id: Option<String>,
     pub(super) policy: ReadPolicy,
 }

@@ -417,11 +417,16 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
 }
 
 fn query_receipt_count(database: &std::path::Path) -> usize {
-    let connection = rusqlite::Connection::open(database).expect("open database");
+    let mut artifacts = database.as_os_str().to_os_string();
+    artifacts.push(".artifacts.sqlite");
+    let connection = rusqlite::Connection::open(std::path::PathBuf::from(artifacts))
+        .expect("open artifact database");
     let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM query_coverage_receipts", [], |row| {
-            row.get(0)
-        })
-        .expect("query receipt count");
-    usize::try_from(count).expect("non-negative query receipt count")
+        .query_row(
+            "SELECT COUNT(*) FROM artifacts WHERE kind = 'query_proof'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query proof count");
+    usize::try_from(count).expect("non-negative query proof count")
 }

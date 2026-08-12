@@ -1298,12 +1298,11 @@ boundary, base revision, and held fragment hashes once; callers overlay a
 suggested scope while reusing the original diff inputs. It is decomposition
 guidance, not a completeness claim.
 
-The context evidence receipt retains a compact hash list aligned by index with
-the returned fragments. For normal same-session reuse, pass
-`meta.receipt_id` instead of copying those hashes. The server then suppresses
-exact duplicates and overlapping ranges across context, search, outline, and
-read. `fragment_hashes` plus `known_hashes` remains the stateless fallback for
-clients that cannot retain a server receipt.
+The context evidence artifact retains a compact hash list aligned by index with
+the returned fragments. Pass `meta.receipt_id` to use that immutable artifact
+as the next request's suppression input. If new evidence is returned, the
+response contains a new artifact ID; the input artifact is never changed.
+`fragment_hashes` plus `known_hashes` remains the client-carried alternative.
 
 Set the optional `handoff` object on a materialized request when a host is about
 to compact a broad context or transfer work to another executor. The response
@@ -1317,14 +1316,14 @@ Validations are transported as caller reports; LeanToken does not execute them.
 materialized grounded evidence.
 
 The manifest is a host-triggered transfer artifact, not persistent memory.
-`receipt_id` remains useful across processes while the same repository cache,
-generation, and TTL survive; after a new generation, only the explicit
-exact-only `receipt_rebase` operation can create a current receipt. Coordinates
-and hashes remain the verification boundary. If Git identity or working-tree
-state cannot be established, the corresponding field is absent or `unknown`
-and `gaps` explains the missing provenance. Receipt suppression can leave
-`fragments` empty while the manifest still records the selected pre-suppression
-coordinates.
+`receipt_id` remains useful across processes while its immutable artifact is
+retained and the repository generation matches. After a new generation, only
+the explicit exact-only `receipt_rebase` operation can create a current
+artifact. Coordinates and hashes remain the verification boundary. If Git
+identity or working-tree state cannot be established, the corresponding field
+is absent or `unknown` and `gaps` explains the missing provenance. Receipt
+suppression can leave `fragments` empty while the manifest still records the
+selected pre-suppression coordinates.
 
 Host state is capped at 16 validations and 16 entries in each note list.
 Summaries and notes accept 512 UTF-8 bytes per item; validation commands accept

@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
 use super::index_read::RepositoryGeneration;
-use super::read_delta::ReadDeltaInput;
+use super::read_delta::{ReadDeltaInput, evaluate as evaluate_read_delta};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
     MAX_CURSOR_BYTES, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
@@ -43,8 +43,10 @@ fn parse_read_request(request: ReadRequest) -> Result<ReadInput> {
 }
 
 fn parse_worktree_read_request(request: WorktreeReadRequest) -> Result<ReadInput> {
-    let (read, delta, receipt_id, policy) = request.into_read_request();
-    parse_read_input(read, delta, receipt_id, policy)
+    let (read, delta, delta_base_artifact_id, receipt_id, policy) = request.into_read_request();
+    let mut input = parse_read_input(read, delta, receipt_id, policy)?;
+    input.delta_base_artifact_id = delta_base_artifact_id;
+    Ok(input)
 }
 
 fn parse_read_input(
@@ -92,6 +94,7 @@ fn parse_read_input(
         mode,
         max_tokens: request.max_tokens,
         expected_hash: request.expected_hash,
+        delta_base_artifact_id: None,
         receipt_id,
         policy,
     })
@@ -263,9 +266,10 @@ impl Services {
         let mut response = materialized.response;
         let direct_response = response.clone();
         if let ReadMode::Delta(target) = &request.mode {
-            let evaluation = self.read_deltas.evaluate(ReadDeltaInput {
+            let evaluation = evaluate_read_delta(ReadDeltaInput {
                 repository_id: &response.meta.repository_id,
-                storage: &self.storage,
+                artifacts: &self.artifacts,
+                base_artifact_id: request.delta_base_artifact_id.as_deref(),
                 path: &request.path,
                 target,
                 expected_hash: request.expected_hash.as_deref(),

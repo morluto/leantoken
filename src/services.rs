@@ -19,8 +19,8 @@ use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::storage::{
-    InstrumentationStorage, ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts,
-    TokenSavingsObservation, TokenSavingsRecord,
+    ArtifactStorage, InstrumentationStorage, ParserCoverageRows, ServiceFailureRecord, Storage,
+    StorageCounts, TokenSavingsObservation, TokenSavingsRecord,
 };
 use crate::{Config, Error, Result};
 
@@ -115,6 +115,7 @@ pub(crate) fn validate_request_limit(
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
+    artifacts: ArtifactStorage,
     instrumentation: InstrumentationStorage,
     indexer: Indexer,
     repository_root: Arc<Dir>,
@@ -122,7 +123,6 @@ pub struct Services {
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
-    read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     blocking_executor: executor::BlockingExecutor,
     response_accountant: accounting::ResponseAccountant,
     observer: observer::ServiceObserver,
@@ -593,9 +593,8 @@ impl Services {
     pub(crate) fn read_stored_receipt(
         &self,
         receipt_id: &str,
-        now_unix_millis: i64,
     ) -> Result<crate::receipt::StoredReceipt> {
-        self.storage.read_receipt(receipt_id, now_unix_millis)
+        self.artifacts.read_receipt(receipt_id)
     }
 
     /// Rejects retrieval bound to a different repository/worktree.

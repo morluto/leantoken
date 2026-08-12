@@ -126,153 +126,45 @@ bounded to 32 KiB; current rows remain bounded by nine operations and failures
 by the finite category matrix. These properties make the counters persisted
 lower bounds rather than an audit ledger.
 
-Retrieval receipts persist evidence metadata, never task/query text or raw
-source. An opaque ID combines a random 128-bit database-incarnation namespace
-with a SQLite `AUTOINCREMENT` row, so concurrent processes, cache recreation,
-and different repository databases cannot reuse an ID. Each evaluate loads the
-requested header and at most 2,048 ordered evidence rows, computes the same
-exact/overlap/near-duplicate decisions as the former process-local oracle, and
-appends only returned evidence. Header lookup, evidence lookup, expiry pruning,
-and LRU selection have checked primary-key/range-index query plans.
+Retrieval evidence, exact-query proofs, and live-read bases are immutable,
+content-addressed artifacts in a database separate from the repository
+generation. An artifact ID is the BLAKE3 address of its kind, repository
+identity, generation, and canonical payload. Loading recomputes that address,
+so corrupt or mismatched bytes fail closed. Repeating the same write returns
+the same ID; extending evidence creates a new artifact and leaves its input
+unchanged. Artifact reads never touch access time, extend a lifetime, or mutate
+ordering.
 
-Receipt evaluation uses one `IMMEDIATE` transaction for lookup, generation and
-clock validation, decisions, append, counters, expiry, and quota eviction.
-The process-local writer mutex and SQLite's database writer lock therefore make
-two processes using one receipt observe a serial order: a duplicate concurrent
-call is returned once and suppressed by the follower, and distinct appends
-cannot lose one another. Live wall-clock time is sampled only after the
-`IMMEDIATE` transaction acquires that writer order, preventing an older queued
-sample from looking like clock rollback after a newer request commits. A
-receipt remains bound to the generation of the read
-snapshot that produced it even if a newer generation publishes before the
-receipt transaction. A later request on the new generation fails with
-`StaleReceipt`; it never silently creates a new session.
+Evidence artifacts contain at most 2,048 source-free path, coordinate, hash,
+and match-policy records, bounded to 1 MiB. A retrieval supplied with an
+evidence artifact evaluates candidates against that immutable payload and
+writes a successor artifact containing newly returned evidence.
+Cross-generation use fails as stale. `receipt_rebase` classifies
+exact-coordinate evidence against one pinned generation, carries only exact
+matches, and writes a new generation-bound artifact. The 64 MiB live-read and
+64 structural-candidate bounds still govern classification.
 
-`receipt_rebase` is the only opt-in cross-generation path. It first loads an
-immutable snapshot of at most 2,048 source receipt rows, then classifies them
-against one pinned completed generation. Carry requires the same normalized
-path, inclusive line coordinates, and emitted-content hash. Live source is
-accepted only when its complete hash matches the indexed file record from that
-snapshot; outline-only evidence may additionally match one current symbol
-signature/name or import target at the exact same coordinates. Line shifts,
-renames, symbol-name relocation, overlaps, semantic signatures, near-duplicate
-signatures, and fuzzy matching never carry evidence. Missing paths, changed
-content, live/index divergence, invalid coordinates, and validation overflow
-remain source-free `missing`, `changed`, or `unmapped` outcomes.
+Exact exhaustive-query proofs contain the normalized predicate,
+relevant-partition, and result commitments; match count; configuration hash;
+and source generation. Recording occurs only after exhaustive execution,
+response fitting, and cancellation checks. Reuse validates repository identity,
+predicate semantics, configuration, and either the same generation or an
+unchanged relevant partition. No access timestamp, TTL, LRU state, or mutable
+proof row participates.
 
-Every carried row is persisted as exact-only evidence. It may suppress a later
-candidate with the same emitted-content hash, but receipt evaluation excludes
-it from range-overlap and near-duplicate decisions. This prevents an unchanged
-outline signature from hiding a changed body in the same range; any changed
-representation is returned and appended as ordinary current-generation
-evidence.
+Opt-in `read_worktree` deltas require an explicit prior read-artifact ID; the
+server never selects a base from conversational history. A complete target of
+at most 512 KiB is captured with its exact target coordinates and content hash.
+Dirty worktree content is allowed because the operation and artifact are
+explicitly live; ignored or unindexed paths remain unreadable. A follow-up
+verifies repository and target identity before diffing, and returns the new
+head artifact ID.
 
-After classification, one `IMMEDIATE` transaction rechecks the current
-generation and the complete source receipt snapshot before inserting a new
-current-generation receipt. Quota cleanup is forbidden from evicting the
-source receipt. A concurrent publication, source append, expiry, quota failure,
-cancellation before the transaction, or insert failure creates no new receipt
-and does not update the source. Response fitting also runs before this write.
-The old receipt retains its original generation and normal stale behavior.
-
-The hard receipt bounds are 128 headers, 64 KiB of logical header data, 2,048
-evidence rows and 1 MiB of logical evidence per receipt, and 16,384 evidence
-rows or 8 MiB of logical evidence globally. Logical bytes include persisted
-field values and fixed-width scalar fields, not SQLite page overhead. A
-monotonic database access sequence makes LRU ties deterministic. Appending new
-evidence refreshes access immediately; an access that appends nothing refreshes
-LRU and the sliding 24-hour wall-clock expiry at most once per 60 seconds,
-bounding write amplification without allowing an actively reused receipt to
-expire. Expiry and observed clock rollback fail closed. Lazy pruning runs
-inside receipt evaluation. Capacity eviction and expiry deliberately become
-`UnknownReceipt`, while generation-stale headers remain available until expiry
-or capacity pressure so callers normally receive the more specific
-`StaleReceipt`. Whole-cache prune removes receipts with the same disposable
-database. Normal evaluation can inspect at most 128 headers and 16,384
-cascading evidence rows during worst-case quota cleanup and performs no
-filesystem scan. One rebase opens at most one live file per distinct source
-path, retains only one file at a time (bounded by the configured per-file
-indexing limit), and reads at most 64 MiB of live source in total. Each evidence
-item checks at most 64 exact-coordinate structural candidates. Evidence beyond
-either validation bound is `unmapped`, never carried. Complete counts and a
-BLAKE3 classification commitment cover every source item; the response retains
-at most 16 source-free samples per outcome. Rebase performs no repository walk,
-subprocess, network access, or concurrency fan-out.
-
-Exact exhaustive query receipts use separate SQLite headers and a separate
-opaque `q` namespace; they never participate in excerpt exact/overlap/
-near-duplicate suppression. The caller must explicitly select `record` or
-`reuse`, and only `text` or `regex` with `all_occurrences=true` and the
-occurrence projection is eligible. A record is inserted only after the
-exhaustive engine has completed, every occurrence fits one response page, the
-final serialized response fits its caller ceiling, and cancellation is checked
-immediately before the write. Ranked/fuzzy/structural channels, pagination,
-token omission, invalid regex, exhaustive-limit failure, and pre-write
-cancellation cannot create a complete query receipt.
-
-The persisted normalized predicate stores a BLAKE3 query commitment rather than
-raw query text, plus versioned case/Unicode/regex semantics and sorted,
-deduplicated include/exclude patterns. The result commitment covers every
-deduplicated path and exact byte/line/column coordinate in deterministic order.
-Same-generation reuse validates the database namespace, repository identity,
-predicate, TTL, and generation before returning `already_covered` without
-reading source chunks. A zero-match proof may cover a narrower scope only when
-syntactic include-set containment and exclude-set expansion prove the subset;
-nonzero subset reuse fails loud because the stored aggregate cannot derive its
-count.
-
-Cross-generation reuse additionally requires an identical index config hash and
-an identical relevant-partition commitment. The commitment streams
-`files(path, content_hash)` in path-index order through the pinned request
-snapshot and the recorded scope filter, retaining only one row at a time. It
-therefore performs at most one pass over the configured maximum indexed-file
-count and no source/chunk read, repository walk, subprocess, network access, or
-fan-out. Any relevant add/delete/rename/content change, config change, unknown
-receipt, expired receipt, predicate mismatch, or partition mismatch fails loud.
-
-Query receipt storage retains at most 128 headers, 64 KiB per normalized
-predicate, and 1 MiB of logical data in total for a fixed 24-hour TTL. Logical
-bytes include every stored string and fixed-width scalar, not SQLite page
-overhead. An `IMMEDIATE` insert transaction rechecks generation and config,
-deduplicates identical complete proofs, lazily prunes expiry, and evicts by a
-deterministic access sequence. Header lookup is primary-key bounded; duplicate,
-expiry, and eviction paths use checked predicate, expiry, and access indexes.
-The tables contain no raw query or result/source content. A reuse call can avoid
-the exhaustive server scan and payload, but it is not counted as a host-avoided
-tool call.
-
-Opt-in read deltas persist a narrower safe subset of their bases in the same
-repository SQLite cache. A base is eligible only when the returned target is
-complete, at most 512 KiB, and the complete live file hash equals the indexed
-file hash from the same pinned repository generation. Dirty or otherwise
-live-diverged content remains process-local. Truncated and oversized targets
-are not persisted, and ignored or unindexed paths fail before delta capture.
-The response receipt reports whether the selected base came from process-local
-or persistent state, whether the current head was persisted, and the bounded
-fallback reason. Persisted rows contain the exact eligible target content;
-computed unified deltas remain process-local because they are cheap to
-recompute and can contain removed lines.
-
-The persistent target key hashes repository identity, normalized path, target
-kind, and target selector. Raw paths and request text are not duplicated into
-the delta table. The content stays in the existing index database, so it has
-the same file ownership, permissions, cache lifecycle, repository binding, and
-whole-cache prune behavior as indexed chunks; no additional source-bearing
-sidecar is created. Content hashes are verified on load and duplicate insert,
-and clock rollback or corruption fails closed.
-
-Persistent read-delta state retains at most 128 bases, 512 KiB per base, and
-8 MiB of logical base data in total, with a sliding 30-minute wall-clock TTL.
-An access sequence gives deterministic LRU eviction; automatic base selection
-orders by newest repository generation independently of LRU recency. Exact
-unchanged metadata refreshes are debounced for 60 seconds. Lookup, lazy expiry,
-refresh, insertion, and quota eviction use one `IMMEDIATE` transaction, so
-independent processes observe a serial writer order without lost updates. One
-operation can evict at most the 128 retained rows and performs no filesystem
-scan, subprocess, network access, or concurrency fan-out. Checked query plans
-use the `(target_key, content_hash)` primary key, target/generation index,
-expiry index, and LRU index; the LRU plan scans only the covering index to its
-first row.
+The artifact store is bounded to 256 artifacts and 16 MiB of logical data. It
+never silently evicts an artifact: insertion fails when capacity is exhausted,
+preserving referential truth. Artifact-store corruption or unavailability falls
+back to process-local storage without affecting refresh or generation-backed
+retrieval.
 
 LeanToken does not serialize a separate in-memory index snapshot. In this
 document, a request snapshot means a SQLite read transaction pinned to one

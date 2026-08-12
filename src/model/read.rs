@@ -123,12 +123,16 @@ pub struct WorktreeReadRequest {
     pub max_tokens: Option<usize>,
     #[serde(default)]
     pub expected_hash: Option<String>,
-    /// Record a bounded base and prefer a cheaper changed follow-up. Without
-    /// `expected_hash`, select the latest compatible base for this exact target.
+    /// Capture a bounded immutable base and prefer a cheaper changed follow-up.
+    /// Supply `delta_base_artifact_id` to select an explicit prior base.
     /// Requires `policy: full`.
     #[serde(default)]
     pub delta: bool,
-    /// Server-managed receipt whose previously returned evidence should be suppressed.
+    /// Immutable read artifact returned by a prior delta-enabled read. A
+    /// delta is never selected from implicit server history.
+    #[serde(default)]
+    pub delta_base_artifact_id: Option<String>,
+    /// Immutable evidence artifact whose previously returned evidence should be suppressed.
     #[serde(default)]
     pub receipt_id: Option<String>,
     /// Live-file I/O and verification policy.
@@ -137,7 +141,15 @@ pub struct WorktreeReadRequest {
 }
 
 impl WorktreeReadRequest {
-    pub(crate) fn into_read_request(self) -> (ReadRequest, bool, Option<String>, ReadPolicy) {
+    pub(crate) fn into_read_request(
+        self,
+    ) -> (
+        ReadRequest,
+        bool,
+        Option<String>,
+        Option<String>,
+        ReadPolicy,
+    ) {
         (
             ReadRequest {
                 path: self.path,
@@ -151,6 +163,7 @@ impl WorktreeReadRequest {
                 expected_hash: self.expected_hash,
             },
             self.delta,
+            self.delta_base_artifact_id,
             self.receipt_id,
             self.policy,
         )
@@ -170,6 +183,7 @@ impl From<ReadRequest> for WorktreeReadRequest {
             max_tokens: read.max_tokens,
             expected_hash: read.expected_hash,
             delta: false,
+            delta_base_artifact_id: None,
             receipt_id: None,
             policy: ReadPolicy::Bounded,
         }
@@ -204,7 +218,7 @@ pub struct ReadResponse {
     /// Source-budget guidance for completing a truncated target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation_guidance: Option<ReadTruncationGuidance>,
-    /// Whether an explicit or automatically selected base matched this response page.
+    /// Whether an explicit base matched this response page.
     #[serde(default)]
     pub not_modified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,7 +295,7 @@ pub enum ReadDeltaOutcome {
     Full,
     /// A complete unified diff was returned.
     Delta,
-    /// The requested or automatically selected base already identifies current content.
+    /// The explicit base already identifies current content.
     NotModified,
     /// A general evidence receipt already contained the exact current content.
     ReceiptSuppressed,
@@ -307,13 +321,11 @@ pub enum ReadDeltaFallback {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadDeltaBaseSource {
-    /// The base existed only in the current service process.
-    ProcessLocal,
-    /// The base was recovered from the bounded repository cache.
-    Persistent,
+    /// The caller supplied an immutable content-addressed artifact.
+    Artifact,
 }
 
-/// Why a complete current base remained process-local.
+/// Why a complete current base was not captured as an artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadDeltaPersistenceFallback {
@@ -321,11 +333,7 @@ pub enum ReadDeltaPersistenceFallback {
     CurrentTruncated,
     /// The complete target exceeds the per-base persistence bound.
     ContentTooLarge,
-    /// The live file hash differs from the indexed snapshot.
-    LiveDiffersFromIndex,
-    /// No same-generation indexed hash was available to prove eligibility.
-    IndexedHashUnavailable,
-    /// The bounded persistent cache could not retain another eligible base.
+    /// The bounded artifact store could not retain another eligible base.
     StorageCapacity,
 }
 
@@ -334,11 +342,17 @@ pub enum ReadDeltaPersistenceFallback {
 pub struct ReadDeltaReceipt {
     /// Stable hash of the repository and caller-selected target.
     pub target_key: String,
-    /// Requested or automatically selected prior content hash.
+    /// Explicit prior content hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_hash: Option<String>,
+    /// Explicit immutable artifact used as the delta base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_artifact_id: Option<String>,
     /// Hash of the complete current response page.
     pub head_hash: String,
+    /// Immutable artifact for the complete current target, when captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_artifact_id: Option<String>,
     /// Repository generation observed when the bounded base was captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_generation: Option<u64>,
@@ -356,12 +370,9 @@ pub struct ReadDeltaReceipt {
     pub delta_tokens: Option<usize>,
     /// Full-content tokens avoided by the selected response.
     pub avoided_tokens: usize,
-    /// Whether the complete current base was retained in the repository cache.
-    #[serde(default)]
-    pub head_persisted: bool,
-    /// Why the current base was intentionally not persisted.
+    /// Why the current base was not captured as an artifact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persistence_fallback_reason: Option<ReadDeltaPersistenceFallback>,
+    pub artifact_capture_fallback_reason: Option<ReadDeltaPersistenceFallback>,
     /// Explicit reason full content was retained after a delta attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<ReadDeltaFallback>,

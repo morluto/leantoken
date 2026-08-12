@@ -6,7 +6,7 @@ use super::{
     SymbolHit, SymbolRecord,
 };
 use crate::Result;
-use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
+use crate::query_receipt::QueryPartition;
 
 /// One atomically published repository generation pinned by a SQLite read
 /// transaction for its complete lifetime.
@@ -371,10 +371,6 @@ impl RepositoryGeneration {
     ) -> Result<Option<bool>> {
         self.session
             .receipt_structural_hash_matches(file_id, start_line, end_line, content_hash)
-    }
-
-    pub(crate) fn load_query_receipt(&self, requested_id: &str) -> Result<StoredQueryReceipt> {
-        self.session.load_query_receipt(requested_id)
     }
 
     pub(crate) fn exact_query_partition(

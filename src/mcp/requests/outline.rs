@@ -41,7 +41,7 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "response_token_limit_schema")]
     pub(in crate::mcp) max_response_tokens: Option<usize>,
-    /// Suppress evidence already returned under this server-managed receipt.
+    /// Suppress evidence already returned under this immutable artifact.
     #[serde(default)]
     #[schemars(length(max = 128))]
     pub(in crate::mcp) receipt_id: Option<String>,

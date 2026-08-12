@@ -43,6 +43,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 max_tokens: Some(100),
                 expected_hash: None,
                 delta: false,
+                delta_base_artifact_id: None,
                 receipt_id: None,
                 policy: leantoken::ReadPolicy::Bounded,
             })
@@ -102,6 +103,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 max_tokens: Some(100),
                 expected_hash: None,
                 delta: false,
+                delta_base_artifact_id: None,
                 receipt_id: None,
                 policy: leantoken::ReadPolicy::Bounded,
             })

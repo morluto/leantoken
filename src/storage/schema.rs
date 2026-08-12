@@ -448,6 +448,17 @@ DROP TABLE IF EXISTS service_failures;
 UPDATE meta SET schema_version = 11 WHERE id = 1;
 "#;
 
+pub(crate) const IMMUTABLE_ARTIFACT_STORAGE_SQL: &str = r#"
+DROP TABLE IF EXISTS retrieval_receipt_evidence;
+DROP TABLE IF EXISTS retrieval_receipts;
+DROP TABLE IF EXISTS retrieval_receipt_usage;
+DROP TABLE IF EXISTS read_delta_bases;
+DROP TABLE IF EXISTS read_delta_base_usage;
+DROP TABLE IF EXISTS query_coverage_receipts;
+DROP TABLE IF EXISTS query_coverage_receipt_usage;
+UPDATE meta SET schema_version = 12 WHERE id = 1;
+"#;
+
 pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
@@ -461,8 +472,9 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(RECEIPT_EXACT_ONLY_SQL),
     M::up(QUERY_COVERAGE_RECEIPTS_SQL),
     M::up(AUXILIARY_STORAGE_SPLIT_SQL),
+    M::up(IMMUTABLE_ARTIFACT_STORAGE_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 12;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 13;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 use super::*;

@@ -11,8 +11,13 @@ impl Services {
         generation: u64,
         candidates: &[ReceiptEvidence],
     ) -> Result<ReceiptEvaluation> {
-        self.storage
-            .evaluate_receipt(requested_id, generation, candidates, true)
+        self.artifacts.evaluate_receipt(
+            &self.repository_id(),
+            requested_id,
+            generation,
+            candidates,
+            true,
+        )
     }
 
     pub(super) fn evaluate_read_receipt(
@@ -21,7 +26,12 @@ impl Services {
         generation: u64,
         candidates: &[ReceiptEvidence],
     ) -> Result<ReceiptEvaluation> {
-        self.storage
-            .evaluate_receipt(requested_id, generation, candidates, false)
+        self.artifacts.evaluate_receipt(
+            &self.repository_id(),
+            requested_id,
+            generation,
+            candidates,
+            false,
+        )
     }
 }

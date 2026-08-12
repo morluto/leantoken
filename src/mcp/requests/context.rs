@@ -79,7 +79,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 128)))]
     pub(in crate::mcp) known_hashes: Vec<String>,
-    /// Suppress evidence already returned under this server-managed receipt; omit
+    /// Suppress evidence already returned under this immutable artifact; omit
     /// when `plan_only` is true.
     #[serde(default)]
     #[schemars(length(max = 128))]

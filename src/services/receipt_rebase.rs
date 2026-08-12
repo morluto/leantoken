@@ -105,7 +105,7 @@ impl Services {
     ) -> Result<ReceiptRebaseResponse> {
         check_cancelled(cancellation)?;
         let source = self
-            .storage
+            .artifacts
             .load_receipt_rebase_source(&request.receipt_id)?;
         let classification = self.consistent(|session| {
             let generation = session.generation();
@@ -138,8 +138,9 @@ impl Services {
             );
         };
         check_cancelled(cancellation)?;
-        let receipt_id = self.storage.persist_rebased_receipt(
+        let receipt_id = self.artifacts.persist_rebased_receipt(
             &source,
+            &self.repository_id(),
             classification.generation,
             &classification.carried,
         )?;
@@ -264,7 +265,7 @@ fn classify_receipt(
         match outcome {
             ReceiptRebaseOutcomeKind::Carried => {
                 counts.carried = counts.carried.saturating_add(1);
-                carried.push(evidence.clone());
+                carried.push(evidence.clone().into_exact_only());
             }
             ReceiptRebaseOutcomeKind::Changed => {
                 counts.changed = counts.changed.saturating_add(1);

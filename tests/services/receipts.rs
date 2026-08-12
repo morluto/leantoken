@@ -416,7 +416,7 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
     outline_request.receipt_id = Some(receipt_id.clone());
     let outline = services.outline(outline_request).await.expect("outline");
 
-    assert_eq!(
+    assert_ne!(
         outline.meta.receipt_id.as_deref(),
         Some(receipt_id.as_str())
     );
@@ -632,7 +632,10 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
         )
         .await
         .expect("exact receipt-decoration boundary");
-    assert!(boundary_response.meta.receipt_id.is_some());
+    let boundary_receipt = boundary_response
+        .meta
+        .receipt_id
+        .expect("boundary artifact");
     assert_eq!(receipt_header_count(&database), before + 1);
 
     let response = services
@@ -653,8 +656,9 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     assert!(response.samples_complete);
     assert_eq!(response.outcomes_blake3.len(), 64);
     assert_response_token_accounting!(response, services.config().tokenizer);
-    assert_eq!(receipt_header_count(&database), before + 2);
+    assert_eq!(receipt_header_count(&database), before + 1);
     let rebased_receipt = response.meta.receipt_id.clone().expect("rebased receipt");
+    assert_eq!(rebased_receipt, boundary_receipt);
 
     let unchanged = services
         .read_worktree(line_read_request(
@@ -866,6 +870,7 @@ fn line_read_request(path: &str, receipt_id: Option<String>) -> WorktreeReadRequ
         max_tokens: Some(100),
         expected_hash: None,
         delta: false,
+        delta_base_artifact_id: None,
         policy: leantoken::ReadPolicy::default(),
         receipt_id,
     }
@@ -886,11 +891,16 @@ async fn append_line_receipt(
 }
 
 fn receipt_header_count(database: &std::path::Path) -> usize {
-    let connection = rusqlite::Connection::open(database).expect("inspect receipt headers");
+    let mut artifacts = database.as_os_str().to_os_string();
+    artifacts.push(".artifacts.sqlite");
+    let connection =
+        rusqlite::Connection::open(std::path::PathBuf::from(artifacts)).expect("inspect artifacts");
     let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM retrieval_receipts", [], |row| {
-            row.get(0)
-        })
-        .expect("receipt header count");
-    usize::try_from(count).expect("non-negative receipt count")
+        .query_row(
+            "SELECT COUNT(*) FROM artifacts WHERE kind = 'evidence'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("evidence artifact count");
+    usize::try_from(count).expect("non-negative artifact count")
 }

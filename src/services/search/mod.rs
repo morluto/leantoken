@@ -453,7 +453,9 @@ impl Services {
                 this.finalize_bounded_response(&mut compact, options)?;
                 if let QueryReceiptExecution::Pending(record) = snapshot.query_receipt {
                     check_cancelled(cancellation)?;
-                    let receipt_id = this.storage.persist_query_receipt(&record)?;
+                    let receipt_id = this
+                        .artifacts
+                        .persist_query_receipt(&this.repository_id(), &record)?;
                     compact.query_receipt =
                         Some(recorded_query_receipt_outcome(&record, receipt_id));
                     this.finalize_bounded_response(&mut compact, options)?;

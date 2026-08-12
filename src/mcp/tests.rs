@@ -387,7 +387,7 @@ fn semantic_failures_use_native_model_visible_tool_errors() {
 
 #[test]
 fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff() {
-    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
@@ -436,7 +436,7 @@ fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff
 
 #[test]
 fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
-    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
@@ -559,7 +559,7 @@ async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
         .collect::<Vec<_>>();
     let error = server
         .read_receipt_resource(
-            "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             None,
         )
         .await
