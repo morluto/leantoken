@@ -61,6 +61,35 @@ pub(in crate::ranking) fn carries_specific_exact_atom(candidate: &Candidate) -> 
     })
 }
 
+pub(in crate::ranking) fn carries_specific_exact_primary_change(candidate: &Candidate) -> bool {
+    if !carries_specific_exact_atom(candidate) {
+        return false;
+    }
+    let exact_prefix = format!("{FACET_PREFIX}exact_atom:");
+    let primary_prefix = format!("{FACET_PREFIX}primary_change:");
+    candidate
+        .match_kinds
+        .iter()
+        .filter_map(|kind| kind.strip_prefix(&exact_prefix))
+        .map(normalized_facet_identity)
+        .any(|exact| {
+            candidate
+                .match_kinds
+                .iter()
+                .filter_map(|kind| kind.strip_prefix(&primary_prefix))
+                .map(normalized_facet_identity)
+                .any(|primary| primary == exact)
+        })
+}
+
+fn normalized_facet_identity(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 pub(in crate::ranking) fn carries_specific_primary_change(candidate: &Candidate) -> bool {
     let prefix = format!("{FACET_PREFIX}primary_change:");
     candidate.match_kinds.iter().any(|kind| {
@@ -176,7 +205,6 @@ fn is_supporting_code_path(path: &str) -> bool {
         || path.starts_with("benchmarks/")
         || path.contains("/benchmarks/")
         || path.starts_with("scripts/")
-        || path.contains("/scripts/")
         || path.starts_with("tools/")
 }
 
@@ -390,7 +418,15 @@ mod tests {
             ContextPathClass::Production
         );
         assert_eq!(
+            context_path_class("src/myapp/scripts/migrate.py"),
+            ContextPathClass::Production
+        );
+        assert_eq!(
             context_path_class("tools/release.rs"),
+            ContextPathClass::Supporting
+        );
+        assert_eq!(
+            context_path_class("scripts/release.py"),
             ContextPathClass::Supporting
         );
     }

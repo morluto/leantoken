@@ -463,6 +463,25 @@ fn broad_allocation_does_not_treat_surface_acronyms_as_exact_owners() {
 }
 
 #[test]
+fn broad_allocation_keeps_exact_atom_owners_ahead_of_generic_primary_matches() {
+    let generic = Candidate::new("src/json/projection.rs", 1, 1, "generic projection")
+        .concept("projection", 2.0)
+        .facet("primary_change", "projection")
+        .exact(10.0);
+    let owner = Candidate::new("src/search.rs", 1, 1, "compact search owner")
+        .concept("search_compact_response", 2.0)
+        .facet("primary_change", "search_compact_response")
+        .facet("exact_atom", "search_compact_response")
+        .exact(1.0);
+    let mut request = request_with_budget(100);
+    request.max_fragments = Some(1);
+
+    let response = select(vec![generic, owner], &request, 1);
+
+    assert_eq!(response.fragments[0].path, "src/search.rs");
+}
+
+#[test]
 fn broad_allocation_prefers_the_owner_matching_more_primary_facets() {
     let generic = Candidate::new("src/main/dispatch.rs", 1, 1, "generic projection")
         .concept("projection", 2.0)
