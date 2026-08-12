@@ -307,10 +307,11 @@ fn ensure_real_directories(repository: &Dir, relative: &std::path::Path) -> Resu
 }
 
 fn is_database_corruption(error: &Error) -> bool {
-    matches!(
-        sqlite_error_code(error),
-        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
-    )
+    matches!(error, Error::InvalidIndexGeneration { .. })
+        || matches!(
+            sqlite_error_code(error),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+        )
 }
 
 fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {

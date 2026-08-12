@@ -137,14 +137,14 @@ impl Storage {
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
                 Self::ensure_source_accounting_columns(conn)?;
-                Self::ensure_path_projection(conn)
+                Self::validate_path_projection(conn)
             },
         )?;
         Self::validate_fts5(&mut conn)?;
         with_auto_checkpoint_suspended(
             &mut conn,
             AutoCheckpointCompletion::RestoreOnly,
-            Self::verify_fts_integrity,
+            Self::validate_fts_integrity,
         )?;
         conn.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
 
@@ -312,18 +312,10 @@ impl Storage {
         }
     }
 
-    /// Verify persisted FTS5 indexes against their relational tables.
-    ///
-    /// A database can pass migrations, integrity_check, and the FTS5
-    /// capability probe while FTS silently omits results. This function
-    /// checks that each FTS table matches its external content and issues a
-    /// `rebuild` command if it does not. This runs on every database open:
-    /// external writers can damage an index without changing LeanToken's
-    /// generation marker.
-    ///
-    /// See issue #563: Validate and repair external-content FTS indexes
-    /// instead of probing only FTS5 availability.
-    pub(crate) fn verify_fts_integrity(conn: &mut Connection) -> Result<()> {
+    /// Reject a generation whose persisted FTS projections disagree with
+    /// their relational source. The generation owner decides whether the
+    /// disposable index can be discarded and rebuilt.
+    pub(crate) fn validate_fts_integrity(conn: &mut Connection) -> Result<()> {
         // Use FTS5's built-in integrity-check command. For external-content
         // tables, `SELECT count(*)` reads through the content table and always
         // matches, even when the FTS index is corrupted. The integrity-check
@@ -337,9 +329,8 @@ impl Storage {
             "symbol_refs_fts_trigram",
         ];
 
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         for fts_table in FTS_TABLES {
-            match tx.execute(
+            match conn.execute(
                 &format!("INSERT INTO {fts_table}({fts_table}, rank) VALUES('integrity-check', 1)"),
                 [],
             ) {
@@ -347,20 +338,17 @@ impl Storage {
                 Err(rusqlite::Error::SqliteFailure(error, _))
                     if error.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB =>
                 {
-                    tracing::warn!(fts_table, "FTS index integrity check failed; rebuilding");
-                    tx.execute(
-                        &format!("INSERT INTO {fts_table}({fts_table}) VALUES('rebuild')"),
-                        [],
-                    )?;
+                    return Err(Error::InvalidIndexGeneration {
+                        projection: "full-text search",
+                    });
                 }
                 Err(error) => return Err(error.into()),
             }
         }
-        tx.commit()?;
         Ok(())
     }
 
-    pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
+    pub(crate) fn validate_path_projection(conn: &mut Connection) -> Result<()> {
         let file_count: i64 = conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
         let projected_files: i64 = conn.query_row(
             "SELECT count(*) FROM path_entries WHERE kind = 1",
@@ -370,18 +358,9 @@ impl Storage {
         if file_count == projected_files {
             return Ok(());
         }
-        let paths = {
-            let mut stmt = conn.prepare("SELECT id, path FROM files ORDER BY id")?;
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?
-        };
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("DELETE FROM path_entries", [])?;
-        for (file_id, path) in paths {
-            Self::insert_path_projection(&tx, &path, file_id)?;
-        }
-        tx.commit()?;
-        Ok(())
+        Err(Error::InvalidIndexGeneration {
+            projection: "repository path",
+        })
     }
 
     pub(crate) fn ensure_source_accounting_columns(conn: &mut Connection) -> Result<()> {

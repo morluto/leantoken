@@ -466,7 +466,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
+pub(crate) fn startup_rejects_a_damaged_path_projection() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -504,34 +504,13 @@ pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verifi
         .len();
     assert!(wal_bytes_before > 0);
 
-    let repaired = Storage::open(&database).expect("repair storage on reopen");
-
-    let writer = repaired
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (files, paths) = writer
-        .query_row(
-            "SELECT (SELECT count(*) FROM files),
-                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .expect("repaired projection counts");
-    assert_eq!(paths, files);
-    assert!(
-        writer
-            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
-            .expect("restored auto-checkpoint policy")
-            > 0
-    );
-    let wal_bytes_after = fs::metadata(wal_path(&database))
-        .expect("WAL after repair")
-        .len();
-    assert_eq!(
-        wal_bytes_after, 0,
-        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
-    );
+    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
+    assert!(matches!(
+        error,
+        Error::InvalidIndexGeneration {
+            projection: "repository path"
+        }
+    ));
 }
 
 #[test]
@@ -623,7 +602,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 }
 
 #[test]
-pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
+pub(crate) fn startup_rejects_a_damaged_fts_projection() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -656,15 +635,13 @@ pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check
     );
     drop(storage);
 
-    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
-
-    assert_eq!(
-        reopened
-            .search_word("repaired_fts_needle", 10)
-            .expect("search rebuilt index")[0]
-            .path,
-        "needle.rs"
-    );
+    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
+    assert!(matches!(
+        error,
+        Error::InvalidIndexGeneration {
+            projection: "full-text search"
+        }
+    ));
 }
 
 pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {

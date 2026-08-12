@@ -191,6 +191,48 @@ async fn managed_corrupt_index_is_deleted_and_rebuilt() {
     std::fs::remove_dir_all(database_parent).expect("remove managed cache fixture");
 }
 
+#[tokio::test]
+async fn managed_invalid_projection_discards_the_whole_generation() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn recovered() {}\n").expect("source");
+    let config = Config::discover(root.path(), None).expect("config");
+    let database = config.database_path.clone();
+    let database_parent = database.parent().expect("database parent").to_owned();
+
+    let services = Services::open(config.clone()).expect("open managed cache");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("initial generation");
+    drop(services);
+
+    let connection = rusqlite::Connection::open(&database).expect("raw index");
+    connection
+        .execute(
+            "DELETE FROM path_entries WHERE file_id = (SELECT id FROM files LIMIT 1)",
+            [],
+        )
+        .expect("damage projection");
+    drop(connection);
+
+    let recovered = Services::open(config).expect("discard invalid managed generation");
+    assert_eq!(
+        recovered
+            .status()
+            .await
+            .expect("empty replacement status")
+            .repository_generation,
+        0
+    );
+    recovered
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish replacement generation");
+    assert_eq!(recovered.status().await.expect("status").file_count, 1);
+    drop(recovered);
+    std::fs::remove_dir_all(database_parent).expect("remove managed cache fixture");
+}
+
 #[test]
 fn explicit_corrupt_database_is_not_deleted() {
     let root = tempfile::tempdir().expect("root");

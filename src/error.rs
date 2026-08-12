@@ -241,6 +241,9 @@ pub enum Error {
     RepositoryTraversal(#[from] ignore::Error),
     #[error("path is not indexed: {0}")]
     NotIndexed(String),
+    /// A persisted index generation failed one of its derived-projection checks.
+    #[error("index generation is invalid: {projection} projection failed validation")]
+    InvalidIndexGeneration { projection: &'static str },
     /// Requested symbol was absent from an indexed file.
     #[error("symbol is not indexed in {path}: {symbol}")]
     SymbolNotFound {
@@ -561,6 +564,7 @@ impl Error {
             Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::IndexNotReady => "index_not_ready",
+            Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",
             Self::StaleReceipt { .. } => "stale_receipt",
@@ -653,6 +657,7 @@ impl Error {
             Self::RetrievalOverloaded => "retrieval_overloaded",
             Self::RetrievalQueueTimeout => "retrieval_queue_timeout",
             Self::IndexNotReady => "index_not_ready",
+            Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleReconciliation { .. } => "stale_reconciliation",
             Self::ReconciliationFailed(_) => "reconciliation_failed",
             Self::RetryableConflict(_) => "retryable_conflict",
