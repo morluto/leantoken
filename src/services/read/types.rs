@@ -99,6 +99,7 @@ pub(in crate::services) struct AdaptiveExcerptRequest {
     pub(in crate::services) declaration_end: usize,
     pub(in crate::services) matched_line: usize,
     pub(in crate::services) token_budget: usize,
+    pub(in crate::services) selection_budget: usize,
 }
 
 #[derive(Debug, Clone)]

@@ -57,6 +57,7 @@ impl Services {
                 declaration_end: hit.symbol.end_line,
                 matched_line: hit.symbol.start_line,
                 token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Symbol),
+                selection_budget: request.token_budget,
             })
             .collect::<Vec<_>>();
         phases.record_adaptive_excerpts(&symbol_excerpt_requests);
@@ -161,6 +162,7 @@ impl Services {
                         request.token_budget,
                         ContextExcerptKind::Reference,
                     ),
+                    selection_budget: request.token_budget,
                 });
             }
         }
@@ -210,6 +212,7 @@ impl Services {
                         excerpt,
                         hit.reference.start_line,
                         excerpt_budget(request.token_budget, ContextExcerptKind::Reference),
+                        request.token_budget,
                     )
                 })
             });
@@ -306,6 +309,7 @@ impl Services {
                     declaration_end: symbol.end_line,
                     matched_line: facts.matched_line,
                     token_budget: excerpt_budget(request.token_budget, ContextExcerptKind::Text),
+                    selection_budget: request.token_budget,
                 });
             }
         }
@@ -328,6 +332,7 @@ impl Services {
                     },
                     facts.matched_line,
                     excerpt_budget(request.token_budget, ContextExcerptKind::Text),
+                    request.token_budget,
                 )
             });
             let Some(excerpt) = excerpt else { continue };

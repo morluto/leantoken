@@ -90,6 +90,7 @@ impl Services {
         excerpt: StoredExcerpt,
         matched_line: usize,
         token_budget: usize,
+        selection_budget: usize,
     ) -> Option<StoredExcerpt> {
         if matched_line < excerpt.start_line || matched_line > excerpt.end_line {
             return None;
@@ -114,8 +115,11 @@ impl Services {
         }
 
         let required = crop_adaptive_excerpt(&excerpt, matched_line, 1);
-        if self.config.tokenizer.count(&required.content) > token_budget {
-            return None;
+        let required_tokens = self.config.tokenizer.count(&required.content);
+        if required_tokens > token_budget {
+            // Preserve an unselectable candidate so ranking can report a
+            // budget omission instead of claiming indexed evidence is absent.
+            return (required_tokens > selection_budget).then_some(required);
         }
 
         let mut lower = 2usize;
@@ -156,7 +160,12 @@ impl Services {
             .zip(requests)
             .map(|(excerpt, request)| {
                 excerpt.and_then(|excerpt| {
-                    self.fit_context_excerpt(excerpt, request.matched_line, request.token_budget)
+                    self.fit_context_excerpt(
+                        excerpt,
+                        request.matched_line,
+                        request.token_budget,
+                        request.selection_budget,
+                    )
                 })
             })
             .collect())

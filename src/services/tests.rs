@@ -1021,6 +1021,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
                 declaration_end: large.end_line,
                 matched_line,
                 token_budget: 60,
+                selection_budget: 60,
             }],
         )
         .expect("bounded excerpt")
@@ -1052,6 +1053,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
                 declaration_end: small.end_line,
                 matched_line: small.start_line,
                 token_budget: 1_000,
+                selection_budget: 1_000,
             }],
         )
         .expect("complete excerpt")
@@ -1071,6 +1073,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
                 declaration_end: small.end_line,
                 matched_line: small.start_line,
                 token_budget: 1,
+                selection_budget: 1_000,
             }],
         )
         .expect("single-line excerpt")
