@@ -1200,7 +1200,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
     let services = Services::open(config).expect("services");
     let first = services
         .storage
-        .full_reconcile("hash-a", Vec::new())
+        .full_reconcile(&services.indexer.config_hash(), Vec::new())
         .expect("initial generation");
     assert_eq!(first, 1);
 
@@ -1213,7 +1213,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
             assert_eq!(session.generation(), first);
             services
                 .storage
-                .full_reconcile("hash-b", Vec::new())
+                .full_reconcile(&services.indexer.config_hash(), Vec::new())
                 .expect("concurrent publish");
             assert_eq!(
                 session.generation(),
@@ -1243,7 +1243,7 @@ fn pinned_snapshot_operation_errors_are_not_retried() {
     let services = Services::open(config).expect("services");
     services
         .storage
-        .full_reconcile("hash-a", Vec::new())
+        .full_reconcile(&services.indexer.config_hash(), Vec::new())
         .expect("initial generation");
     let calls = Cell::new(0);
 
@@ -1289,7 +1289,7 @@ async fn regex_retained_chunk_overflow_is_not_reported_as_complete() {
         .collect();
     services
         .storage
-        .full_reconcile("hash-a", files)
+        .full_reconcile(&services.indexer.config_hash(), files)
         .expect("indexed fixture");
 
     let error = services
