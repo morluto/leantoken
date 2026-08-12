@@ -148,6 +148,8 @@ fn is_test_path(path: &str) -> bool {
             .any(|component| component == "__tests__" || component.starts_with("test_"))
         || module_stem.ends_with(".test")
         || module_stem.ends_with(".spec")
+        || module_stem.ends_with(".test-d")
+        || module_stem.ends_with(".spec-d")
         || matches!(stem, "test" | "tests")
         || file_name.ends_with("_spec.rb")
         || file_name.ends_with(".spec.rb")
@@ -216,7 +218,9 @@ fn normalized_source_stem(path: &str) -> String {
         .rsplit_once('.')
         .map_or(file_name, |(stem, _)| stem);
     let stem = stem
-        .strip_suffix(".test")
+        .strip_suffix(".test-d")
+        .or_else(|| stem.strip_suffix(".spec-d"))
+        .or_else(|| stem.strip_suffix(".test"))
         .or_else(|| stem.strip_suffix(".spec"))
         .unwrap_or(stem);
     let stem = stem
@@ -467,6 +471,10 @@ mod tests {
             context_path_class("packages/core/widget.spec.mts"),
             ContextPathClass::Test
         );
+        assert_eq!(
+            context_path_class("packages-private/dts-test/setupHelpers.test-d.ts"),
+            ContextPathClass::Test
+        );
     }
 
     #[test]
@@ -477,6 +485,10 @@ mod tests {
         );
         assert_eq!(owner_test_path_affinity("app.go", "app_test.go"), 4);
         assert_eq!(owner_test_path_affinity("src/db.rs", "src/db_test.rs"), 4);
+        assert_eq!(
+            owner_test_path_affinity("src/setupHelpers.ts", "src/setupHelpers.test-d.ts"),
+            4
+        );
         assert_eq!(
             owner_test_path_affinity("src/UserService.cs", "src/UserServiceTests.cs"),
             4
