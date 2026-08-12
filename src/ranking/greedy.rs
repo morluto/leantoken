@@ -22,8 +22,8 @@ pub(in crate::ranking) fn greedy_select(
     let mut concept_paths = HashMap::new();
     let mut evidence_counts = EvidenceQuotaCounts::default();
 
-    let primary_candidate_fits = |candidate: &ScoredCandidate| {
-        context_path_class(&candidate.candidate.path) == ContextPathClass::Production
+    let primary_candidate_fits = |candidate: &ScoredCandidate, path_class| {
+        context_path_class(&candidate.candidate.path) == path_class
             && evidence_counts.allows(candidate, max_fragments)
             && candidate_fits(
                 candidate,
@@ -34,37 +34,103 @@ pub(in crate::ranking) fn greedy_select(
                 max_fragments,
             )
     };
-    let primary_position = pool
-        .iter()
-        .position(|candidate| {
-            primary_candidate_fits(candidate)
-                && carries_specific_exact_atom(&candidate.candidate)
+    let primary_position_for = |path_class| {
+        let exact_position = pool.iter().position(|candidate| {
+            primary_candidate_fits(candidate, path_class)
+                && carries_specific_exact_primary_change(&candidate.candidate)
                 && carries_facet(&candidate.candidate, "primary_change")
-        })
-        .or_else(|| {
-            pool.iter()
-                .enumerate()
-                .filter(|(_, candidate)| {
-                    primary_candidate_fits(candidate)
-                        && is_primary_owner_path(&candidate.candidate.path)
-                        && carries_facet(&candidate.candidate, "primary_change")
-                })
-                .max_by_key(|(position, candidate)| {
-                    (
-                        facet_value_count(&candidate.candidate, "primary_change"),
-                        std::cmp::Reverse(*position),
-                    )
-                })
-                .map(|(position, _)| position)
-        })
-        .or_else(|| {
-            pool.iter().position(|candidate| {
-                primary_candidate_fits(candidate)
-                    && carries_facet(&candidate.candidate, "primary_change")
-            })
         });
+        let specific_baseline = pool.iter().find(|candidate| {
+            primary_candidate_fits(candidate, path_class)
+                && carries_specific_primary_change(&candidate.candidate)
+        });
+        exact_position.or_else(|| {
+            specific_baseline
+                .and_then(|baseline| {
+                    let owner_path = pool
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, candidate)| {
+                            primary_candidate_fits(candidate, path_class)
+                                && carries_specific_primary_change(&candidate.candidate)
+                                && candidate.candidate.representation
+                                    == baseline.candidate.representation
+                                && carries_all_facet_values(
+                                    &candidate.candidate,
+                                    &baseline.candidate,
+                                    "primary_change",
+                                )
+                        })
+                        .max_by_key(|(position, candidate)| {
+                            (
+                                facet_value_count(&candidate.candidate, "primary_change"),
+                                std::cmp::Reverse(*position),
+                            )
+                        })
+                        .map(|(_, candidate)| candidate.candidate.path.as_str())?;
+                    pool.iter().position(|candidate| {
+                        candidate.candidate.path == owner_path
+                            && primary_candidate_fits(candidate, path_class)
+                            && carries_specific_primary_change(&candidate.candidate)
+                            && candidate.candidate.representation
+                                == baseline.candidate.representation
+                            && carries_all_facet_values(
+                                &candidate.candidate,
+                                &baseline.candidate,
+                                "primary_change",
+                            )
+                    })
+                })
+                .or_else(|| {
+                    let baseline = pool.iter().find(|candidate| {
+                        primary_candidate_fits(candidate, path_class)
+                            && carries_facet(&candidate.candidate, "primary_change")
+                    })?;
+                    let owner_path = pool
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, candidate)| {
+                            primary_candidate_fits(candidate, path_class)
+                                && carries_facet(&candidate.candidate, "primary_change")
+                                && candidate.candidate.representation
+                                    == baseline.candidate.representation
+                                && carries_all_facet_values(
+                                    &candidate.candidate,
+                                    &baseline.candidate,
+                                    "primary_change",
+                                )
+                        })
+                        .max_by_key(|(position, candidate)| {
+                            (
+                                facet_value_count(&candidate.candidate, "primary_change"),
+                                std::cmp::Reverse(*position),
+                            )
+                        })
+                        .map(|(_, candidate)| candidate.candidate.path.as_str())?;
+                    pool.iter().position(|candidate| {
+                        candidate.candidate.path == owner_path
+                            && primary_candidate_fits(candidate, path_class)
+                            && carries_facet(&candidate.candidate, "primary_change")
+                            && candidate.candidate.representation
+                                == baseline.candidate.representation
+                            && carries_all_facet_values(
+                                &candidate.candidate,
+                                &baseline.candidate,
+                                "primary_change",
+                            )
+                    })
+                })
+        })
+    };
+    let primary_position = primary_position_for(ContextPathClass::Production)
+        .or_else(|| primary_position_for(ContextPathClass::Supporting));
+    let mut primary_owner = None;
     if let Some(position) = primary_position {
         let candidate = pool.remove(position);
+        primary_owner = Some((
+            candidate.candidate.path.clone(),
+            candidate.candidate.concepts.clone(),
+        ));
         record_context_selection(
             &candidate,
             &mut covered_concepts,
@@ -75,24 +141,53 @@ pub(in crate::ranking) fn greedy_select(
         push_selected(candidate, &mut selected, &mut used_tokens, &mut file_counts);
     }
 
-    if let Some(position) = pool.iter().position(|candidate| {
-        context_path_class(&candidate.candidate.path) == ContextPathClass::Test
-            && (carries_specific_exact_atom(&candidate.candidate)
-                || candidate
-                    .candidate
-                    .concepts
-                    .iter()
-                    .any(|concept| covered_concepts.contains(concept)))
-            && evidence_counts.allows(candidate, max_fragments)
-            && candidate_fits(
-                candidate,
-                budget.saturating_sub(used_tokens),
-                *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
-                max_per_file,
-                selected.len(),
-                max_fragments,
+    let eligible_tests = pool
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            context_path_class(&candidate.candidate.path) == ContextPathClass::Test
+                && (carries_specific_exact_atom(&candidate.candidate)
+                    || primary_owner.as_ref().is_some_and(|(path, _)| {
+                        owner_test_path_affinity(path, &candidate.candidate.path) > 0
+                    })
+                    || candidate
+                        .candidate
+                        .concepts
+                        .iter()
+                        .any(|concept| covered_concepts.contains(concept)))
+                && evidence_counts.allows(candidate, max_fragments)
+                && candidate_fits(
+                    candidate,
+                    budget.saturating_sub(used_tokens),
+                    *file_counts.get(&candidate.candidate.path).unwrap_or(&0),
+                    max_per_file,
+                    selected.len(),
+                    max_fragments,
+                )
+        })
+        .collect::<Vec<_>>();
+    let test_position = eligible_tests
+        .iter()
+        .map(|(position, candidate)| {
+            let owner_affinity = primary_owner.as_ref().map_or(0, |(path, _)| {
+                owner_test_path_affinity(path, &candidate.candidate.path)
+            });
+            (
+                *position,
+                owner_affinity,
+                usize::from(carries_specific_exact_atom(&candidate.candidate)),
             )
-    }) {
+        })
+        .max_by_key(|(position, owner_affinity, exact)| {
+            (
+                usize::from(*owner_affinity >= 3),
+                *exact,
+                *owner_affinity,
+                std::cmp::Reverse(*position),
+            )
+        })
+        .map(|(position, _, _)| position);
+    if let Some(position) = test_position {
         let candidate = pool.remove(position);
         record_context_selection(
             &candidate,

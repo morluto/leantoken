@@ -153,6 +153,31 @@ files, 2 GiB aggregate source, depth 64, and 2 MiB per file. Preparation batches
 hold at most 256 files or 64 MiB of source. Configuration may lower these
 limits. Broad roots are rejected unless explicitly authorized.
 
+## Context owner selection
+
+Implementation-shaped tasks classify recognized-language implementation files
+as production across root, library, application, package, and workspace layouts.
+Tests, documentation, examples, repository tooling, generated schemas,
+snapshots, fixtures, agent skills, benchmark reports, and unscoped root prose
+are auxiliary evidence.
+
+Greedy selection first reserves a production fragment where a specific exact
+atom corroborates the same normalized primary-change identity. Qualified
+adjacent surfaces, short acronyms such as CLI and MCP, and prose hyphen compounds
+do not override a matching owner. A deterministic supporting-file fallback is
+considered only when no production owner fits. Within either class, facet breadth
+chooses an owner only among comparable evidence that preserves the baseline
+representation and all primary facets; the highest-utility qualifying excerpt
+from that path is emitted.
+
+Natural phrase queries prefer the primary clause and use trailing clauses only
+when a query slot remains. After explicit required and focused evidence,
+selection may reserve one relevant test path and one non-auxiliary preservation
+fragment, then at most one auxiliary, two failure-trace, two test, and two
+preservation fragments. The reservations use at most thirteen linear passes over
+the already bounded candidate pool; they add no repository scan or candidate
+fan-out and never relax source-token or fragment bounds.
+
 ## Language intelligence
 
 Tree-sitter adapters extract definitions, syntactic references, and import
