@@ -205,6 +205,7 @@ fn request(expected_hash: Option<String>) -> WorktreeReadRequest {
         max_tokens: Some(32_000),
         expected_hash,
         delta: true,
+        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::Full,
     }

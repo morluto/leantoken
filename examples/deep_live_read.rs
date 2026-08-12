@@ -207,6 +207,7 @@ fn request(range: (usize, usize), max_tokens: usize) -> WorktreeReadRequest {
         max_tokens: Some(max_tokens),
         expected_hash: None,
         delta: false,
+        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::default(),
     }

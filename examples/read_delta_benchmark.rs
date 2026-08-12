@@ -275,6 +275,7 @@ fn request(target: Target, expected_hash: Option<String>, delta: bool) -> Worktr
         max_tokens: Some(32_000),
         expected_hash,
         delta,
+        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::default(),
     }

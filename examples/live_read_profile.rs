@@ -445,6 +445,7 @@ fn read_request(target: &ReadTarget, max_tokens: usize) -> WorktreeReadRequest {
         max_tokens: Some(max_tokens),
         expected_hash: None,
         delta: false,
+        delta_base_artifact_id: None,
         receipt_id: None,
         // This profile measures the historical exact freshness contract.
         policy: leantoken::model::ReadPolicy::Full,
