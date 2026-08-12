@@ -175,6 +175,7 @@ fn normalized_source_stem(path: &str) -> String {
     let stem = stem
         .strip_suffix("_tests")
         .or_else(|| stem.strip_suffix("_test"))
+        .or_else(|| stem.strip_suffix("_spec"))
         .or_else(|| stem.strip_prefix("test_"))
         .unwrap_or(stem);
     stem.to_ascii_lowercase()
@@ -192,13 +193,14 @@ pub(in crate::ranking) fn owner_test_path_affinity(owner: &str, test: &str) -> u
             .rsplit('/')
             .next()
             .is_some_and(|parent| parent.eq_ignore_ascii_case(&test_stem));
-    if owner_stem.chars().count() < 4 || test_stem.chars().count() < 4 {
-        0
-    } else if owner_stem == test_stem {
-        if same_parent { 4 } else { 2 }
-    } else if directory_module_test {
+    if (owner_stem == test_stem && same_parent) || directory_module_test {
         4
-    } else if owner_stem.starts_with(&test_stem) || test_stem.starts_with(&owner_stem) {
+    } else if owner_stem.chars().count() < 4 || test_stem.chars().count() < 4 {
+        0
+    } else if owner_stem == test_stem
+        || owner_stem.starts_with(&test_stem)
+        || test_stem.starts_with(&owner_stem)
+    {
         2
     } else if owner_stem
         .split(|character: char| !character.is_ascii_alphanumeric())
@@ -364,6 +366,12 @@ mod tests {
         assert_eq!(
             owner_test_path_affinity("recovery.go", "recovery_test.go"),
             4
+        );
+        assert_eq!(owner_test_path_affinity("app.go", "app_test.go"), 4);
+        assert_eq!(owner_test_path_affinity("src/db.rs", "src/db_test.rs"), 4);
+        assert_eq!(
+            owner_test_path_affinity("app/models/user.rb", "spec/models/user_spec.rb"),
+            2
         );
         assert_eq!(
             owner_test_path_affinity(
