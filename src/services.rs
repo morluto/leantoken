@@ -469,6 +469,11 @@ impl Services {
             if generation == 0 && matches!(readiness, IndexSnapshotReadiness::RequireReady) {
                 return Err(Error::IndexNotReady);
             }
+            if matches!(readiness, IndexSnapshotReadiness::RequireReady)
+                && snapshot.semantics_fingerprint() != self.indexer.config_hash()
+            {
+                return Err(Error::RefreshRequired);
+            }
             // Do not retry operation errors: after the first read, this session
             // is pinned and concurrent publication cannot have caused them.
             return operation(&snapshot);
@@ -594,7 +599,12 @@ impl Services {
         &self,
         receipt_id: &str,
     ) -> Result<crate::receipt::StoredReceipt> {
-        self.artifacts.read_receipt(receipt_id)
+        let meta = self.storage.meta()?;
+        self.artifacts.read_receipt(
+            &self.repository_id(),
+            &meta.database_incarnation_id,
+            receipt_id,
+        )
     }
 
     /// Rejects retrieval bound to a different repository/worktree.

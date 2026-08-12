@@ -31,7 +31,10 @@ async fn read_returns_the_published_generation_after_a_worktree_edit() {
         Some(std::str::from_utf8(indexed).unwrap())
     );
     assert_eq!(response.content_hash, leantoken::text::hash_bytes(indexed));
+    assert_eq!(response.source, leantoken::ReadSource::PublishedGeneration);
+    assert_eq!(response.index_state, leantoken::ReadIndexState::Unknown);
     assert!(!response.index_stale);
+    assert_eq!(response.live_bytes_read, 0);
 
     services
         .refresh(leantoken::IndexingMode::Reconcile)

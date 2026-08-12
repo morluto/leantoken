@@ -136,6 +136,7 @@ impl Storage {
             AutoCheckpointCompletion::CheckpointIfMutated,
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
+                Self::ensure_database_incarnation_id(conn)?;
                 Self::ensure_source_accounting_columns(conn)?;
                 Self::validate_path_projection(conn)
             },
@@ -167,6 +168,16 @@ impl Storage {
             #[cfg(test)]
             diagnostics: Arc::new(StorageDiagnostics::default()),
         })
+    }
+
+    fn ensure_database_incarnation_id(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "UPDATE meta
+             SET database_incarnation_id = lower(hex(randomblob(16)))
+             WHERE id = 1 AND database_incarnation_id = ''",
+            [],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn open_for_repository_scoped(

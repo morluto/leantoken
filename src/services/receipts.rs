@@ -13,6 +13,7 @@ impl Services {
     ) -> Result<ReceiptEvaluation> {
         self.artifacts.evaluate_receipt(
             &self.repository_id(),
+            &self.storage.meta()?.database_incarnation_id,
             requested_id,
             generation,
             candidates,
@@ -28,6 +29,7 @@ impl Services {
     ) -> Result<ReceiptEvaluation> {
         self.artifacts.evaluate_receipt(
             &self.repository_id(),
+            &self.storage.meta()?.database_incarnation_id,
             requested_id,
             generation,
             candidates,

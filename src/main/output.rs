@@ -20,6 +20,10 @@ pub(super) fn cli_error_message(error: &leantoken::Error) -> String {
             for direct CLI use or `leantoken doctor` to verify MCP readiness"
                 .into()
         }
+        leantoken::Error::RefreshRequired => {
+            "repository projection requires refresh; run `leantoken refresh` before retrieval"
+                .into()
+        }
         leantoken::Error::RetrievalLimitExceeded { kind, .. } => {
             format!("{error}; {}", kind.guidance())
         }

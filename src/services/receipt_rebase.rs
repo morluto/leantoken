@@ -104,9 +104,12 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReceiptRebaseResponse> {
         check_cancelled(cancellation)?;
-        let source = self
-            .artifacts
-            .load_receipt_rebase_source(&request.receipt_id)?;
+        let database_incarnation_id = self.storage.meta()?.database_incarnation_id;
+        let source = self.artifacts.load_receipt_rebase_source(
+            &self.repository_id(),
+            &database_incarnation_id,
+            &request.receipt_id,
+        )?;
         let classification = self.consistent(|session| {
             let generation = session.generation();
             if source.repository_generation >= generation {
@@ -141,6 +144,7 @@ impl Services {
         let receipt_id = self.artifacts.persist_rebased_receipt(
             &source,
             &self.repository_id(),
+            &database_incarnation_id,
             classification.generation,
             &classification.carried,
         )?;

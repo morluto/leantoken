@@ -491,6 +491,9 @@ pub enum Error {
     RetrievalQueueTimeout,
     #[error("repository index is not ready")]
     IndexNotReady,
+    /// The committed derived projection uses incompatible content semantics.
+    #[error("repository projection requires refresh")]
+    RefreshRequired,
     #[error(
         "reconciliation plan is stale: expected generation {expected}, found generation {actual}"
     )]
@@ -564,6 +567,7 @@ impl Error {
             Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::IndexNotReady => "index_not_ready",
+            Self::RefreshRequired => "refresh_required",
             Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",
@@ -657,6 +661,7 @@ impl Error {
             Self::RetrievalOverloaded => "retrieval_overloaded",
             Self::RetrievalQueueTimeout => "retrieval_queue_timeout",
             Self::IndexNotReady => "index_not_ready",
+            Self::RefreshRequired => "refresh_required",
             Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleReconciliation { .. } => "stale_reconciliation",
             Self::ReconciliationFailed(_) => "reconciliation_failed",

@@ -4,7 +4,7 @@ impl GenerationReadTransaction {
         self.conn
             .query_row(
                 "SELECT schema_version, index_version, config_hash, repository_generation,
-                        repository_identity
+                        repository_identity, database_incarnation_id
                  FROM meta WHERE id = 1",
                 [],
                 |row| {
@@ -14,6 +14,7 @@ impl GenerationReadTransaction {
                         config_hash: row.get(2)?,
                         repository_generation: i64_to_u64(row.get(3)?)?,
                         repository_identity: row.get(4)?,
+                        database_incarnation_id: row.get(5)?,
                     })
                 },
             )

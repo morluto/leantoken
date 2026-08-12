@@ -72,6 +72,17 @@ pub enum ReadIndexState {
     Unknown,
 }
 
+/// Origin of the bytes returned by a read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadSource {
+    /// Bytes reconstructed from a pinned, atomically published generation.
+    #[default]
+    PublishedGeneration,
+    /// Bytes read directly from the mutable worktree.
+    Worktree,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Input for `leantoken.read`.
 pub struct ReadRequest {
@@ -194,6 +205,9 @@ impl From<ReadRequest> for WorktreeReadRequest {
 pub struct ReadResponse {
     pub path: String,
     pub status: ReadStatus,
+    /// Whether this response uses the published generation or the live worktree.
+    #[serde(default)]
+    pub source: ReadSource,
     /// First line in the complete resolved target.
     #[serde(default)]
     pub target_start_line: usize,
@@ -233,9 +247,10 @@ pub struct ReadResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_hash: Option<String>,
     pub index_stale: bool,
-    /// Index verification state. `unknown` for bounded reads; `current` or
-    /// `stale` for full reads. Retained alongside `indexed_hash`/`index_stale`
-    /// for backward-compatible clients.
+    /// Index verification state. Published-generation and bounded worktree
+    /// reads report `unknown`; only a full worktree read may report `current`
+    /// or `stale`. Retained alongside `indexed_hash`/`index_stale` for
+    /// backward-compatible clients.
     #[serde(default)]
     pub index_state: ReadIndexState,
     /// Number of live file bytes read to produce this response. Bounded reads

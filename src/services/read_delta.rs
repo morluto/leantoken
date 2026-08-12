@@ -18,6 +18,7 @@ pub(super) struct ReadDeltaEvaluation {
 
 pub(super) struct ReadDeltaInput<'a> {
     pub repository_id: &'a str,
+    pub database_incarnation_id: &'a str,
     pub artifacts: &'a ArtifactStorage,
     pub base_artifact_id: Option<&'a str>,
     pub path: &'a str,
@@ -32,6 +33,7 @@ pub(super) struct ReadDeltaInput<'a> {
 pub(super) fn evaluate(input: ReadDeltaInput<'_>) -> Result<ReadDeltaEvaluation> {
     let ReadDeltaInput {
         repository_id,
+        database_incarnation_id,
         artifacts,
         base_artifact_id,
         path,
@@ -44,7 +46,7 @@ pub(super) fn evaluate(input: ReadDeltaInput<'_>) -> Result<ReadDeltaEvaluation>
     } = input;
     let target_key = target_key(repository_id, path, target);
     let base = base_artifact_id
-        .map(|id| artifacts.load_read_base(repository_id, id))
+        .map(|id| artifacts.load_read_base(repository_id, database_incarnation_id, id))
         .transpose()?;
     if let Some(base) = &base
         && base.target_key != target_key
@@ -73,7 +75,7 @@ pub(super) fn evaluate(input: ReadDeltaInput<'_>) -> Result<ReadDeltaEvaluation>
             returned_start_line: response.returned_start_line,
             returned_end_line: response.returned_end_line,
         };
-        match artifacts.persist_read_base(repository_id, &current) {
+        match artifacts.persist_read_base(repository_id, database_incarnation_id, &current) {
             Ok(id) => Some(id),
             Err(error) => {
                 tracing::warn!(%error, "read artifact capture was skipped");

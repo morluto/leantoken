@@ -10,16 +10,31 @@ fn evidence_artifacts_are_content_addressed_and_immutable() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = ArtifactStorage::open(&directory.path().join("artifacts.sqlite"));
     let first = storage
-        .evaluate_receipt("repository", None, 7, &[evidence("one")], true)
+        .evaluate_receipt(
+            "repository",
+            "incarnation",
+            None,
+            7,
+            &[evidence("one")],
+            true,
+        )
         .expect("first artifact");
     let same = storage
-        .evaluate_receipt("repository", None, 7, &[evidence("one")], true)
+        .evaluate_receipt(
+            "repository",
+            "incarnation",
+            None,
+            7,
+            &[evidence("one")],
+            true,
+        )
         .expect("same artifact");
     assert_eq!(same.receipt_id, first.receipt_id);
 
     let extended = storage
         .evaluate_receipt(
             "repository",
+            "incarnation",
             Some(&first.receipt_id),
             7,
             &[evidence("two")],
@@ -29,7 +44,7 @@ fn evidence_artifacts_are_content_addressed_and_immutable() {
     assert_ne!(extended.receipt_id, first.receipt_id);
     assert_eq!(
         storage
-            .read_receipt(&first.receipt_id)
+            .read_receipt("repository", "incarnation", &first.receipt_id)
             .expect("first")
             .evidence
             .len(),
@@ -37,7 +52,7 @@ fn evidence_artifacts_are_content_addressed_and_immutable() {
     );
     assert_eq!(
         storage
-            .read_receipt(&extended.receipt_id)
+            .read_receipt("repository", "incarnation", &extended.receipt_id)
             .expect("extended")
             .evidence
             .len(),
@@ -51,7 +66,14 @@ fn one_response_batch_does_not_suppress_its_own_candidates() {
     let storage = ArtifactStorage::open(&directory.path().join("artifacts.sqlite"));
     let duplicate = evidence("same");
     let evaluation = storage
-        .evaluate_receipt("repository", None, 7, &[duplicate.clone(), duplicate], true)
+        .evaluate_receipt(
+            "repository",
+            "incarnation",
+            None,
+            7,
+            &[duplicate.clone(), duplicate],
+            true,
+        )
         .expect("batch artifact");
     assert_eq!(
         evaluation.decisions,
@@ -59,7 +81,7 @@ fn one_response_batch_does_not_suppress_its_own_candidates() {
     );
     assert_eq!(
         storage
-            .read_receipt(&evaluation.receipt_id)
+            .read_receipt("repository", "incarnation", &evaluation.receipt_id)
             .expect("stored batch")
             .evidence
             .len(),
@@ -72,15 +94,47 @@ fn artifact_ids_bind_repository_generation_and_payload_integrity() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = ArtifactStorage::open(&directory.path().join("artifacts.sqlite"));
     let artifact = storage
-        .evaluate_receipt("repository", None, 7, &[evidence("one")], true)
+        .evaluate_receipt(
+            "repository",
+            "incarnation",
+            None,
+            7,
+            &[evidence("one")],
+            true,
+        )
         .expect("artifact");
     assert!(matches!(
-        storage.evaluate_receipt("other", Some(&artifact.receipt_id), 7, &[], true),
+        storage.evaluate_receipt(
+            "other",
+            "incarnation",
+            Some(&artifact.receipt_id),
+            7,
+            &[],
+            true
+        ),
         Err(Error::UnknownReceipt(_))
     ));
     assert!(matches!(
-        storage.evaluate_receipt("repository", Some(&artifact.receipt_id), 8, &[], true),
+        storage.evaluate_receipt(
+            "repository",
+            "incarnation",
+            Some(&artifact.receipt_id),
+            8,
+            &[],
+            true
+        ),
         Err(Error::StaleReceipt { .. })
+    ));
+    assert!(matches!(
+        storage.evaluate_receipt(
+            "repository",
+            "recreated-database",
+            Some(&artifact.receipt_id),
+            7,
+            &[],
+            true,
+        ),
+        Err(Error::UnknownReceipt(_))
     ));
 
     let connection = storage
@@ -94,7 +148,50 @@ fn artifact_ids_bind_repository_generation_and_payload_integrity() {
         )
         .expect("tamper artifact");
     drop(connection);
-    assert!(storage.read_receipt(&artifact.receipt_id).is_err());
+    assert!(
+        storage
+            .read_receipt("repository", "incarnation", &artifact.receipt_id)
+            .is_err()
+    );
+}
+
+#[test]
+fn recreated_primary_database_cannot_use_old_sidecar_artifacts() {
+    let directory = tempfile::tempdir().expect("directory");
+    let index_path = directory.path().join("index.sqlite");
+    let artifact_path = directory.path().join("index.artifacts.sqlite");
+    let index = Storage::open(&index_path).expect("first index");
+    let first_incarnation = index
+        .meta()
+        .expect("first metadata")
+        .database_incarnation_id;
+    assert_eq!(first_incarnation.len(), 32);
+    let artifacts = ArtifactStorage::open(&artifact_path);
+    let receipt_id = artifacts
+        .evaluate_receipt(
+            "repository",
+            &first_incarnation,
+            None,
+            1,
+            &[evidence("first")],
+            true,
+        )
+        .expect("artifact")
+        .receipt_id;
+    drop(index);
+
+    std::fs::remove_file(&index_path).expect("remove only primary database");
+    let recreated = Storage::open(&index_path).expect("recreated index");
+    let recreated_incarnation = recreated
+        .meta()
+        .expect("recreated metadata")
+        .database_incarnation_id;
+    assert_eq!(recreated_incarnation.len(), 32);
+    assert_ne!(recreated_incarnation, first_incarnation);
+    assert!(matches!(
+        artifacts.read_receipt("repository", &recreated_incarnation, &receipt_id),
+        Err(Error::UnknownReceipt(_))
+    ));
 }
 
 #[test]

@@ -18,6 +18,7 @@ pub(crate) struct RepositoryGeneration {
     generation: u64,
     semantics_fingerprint: String,
     repository_identity: String,
+    database_incarnation_id: String,
 }
 
 impl RepositoryGeneration {
@@ -29,6 +30,7 @@ impl RepositoryGeneration {
             generation: meta.repository_generation,
             semantics_fingerprint: meta.config_hash,
             repository_identity: meta.repository_identity,
+            database_incarnation_id: meta.database_incarnation_id,
         })
     }
 
@@ -42,6 +44,10 @@ impl RepositoryGeneration {
 
     pub(crate) fn repository_identity(&self) -> &str {
         &self.repository_identity
+    }
+
+    pub(crate) fn database_incarnation_id(&self) -> &str {
+        &self.database_incarnation_id
     }
 
     pub(crate) fn meta(&self) -> Result<MetaRecord> {

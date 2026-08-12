@@ -19,13 +19,18 @@ CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY CHECK(length(id) = 65),
     kind TEXT NOT NULL,
     repository_identity TEXT NOT NULL,
+    database_incarnation_id TEXT NOT NULL DEFAULT '',
     repository_generation INTEGER NOT NULL CHECK(repository_generation >= 0),
     payload BLOB NOT NULL,
     logical_bytes INTEGER NOT NULL CHECK(logical_bytes >= 0)
 );
-CREATE INDEX IF NOT EXISTS artifacts_repository_generation_idx
-ON artifacts(repository_identity, repository_generation, kind, id);
 "#;
+
+const ARTIFACT_REPOSITORY_GENERATION_INDEX_SQL: &str = "
+DROP INDEX IF EXISTS artifacts_repository_generation_idx;
+CREATE INDEX artifacts_repository_generation_idx
+ON artifacts(repository_identity, database_incarnation_id, repository_generation, kind, id);
+";
 
 #[derive(Clone)]
 pub(crate) struct ArtifactStorage {
@@ -48,6 +53,7 @@ struct EvidenceArtifact {
 
 struct StoredArtifact {
     repository_identity: String,
+    database_incarnation_id: String,
     repository_generation: u64,
     payload: Vec<u8>,
 }
@@ -76,18 +82,22 @@ impl ArtifactStorage {
         let connection = Connection::open(path)?;
         connection.busy_timeout(DEFAULT_BUSY_TIMEOUT)?;
         connection.execute_batch(ARTIFACT_SCHEMA)?;
+        ensure_artifact_incarnation_column(&connection)?;
+        connection.execute_batch(ARTIFACT_REPOSITORY_GENERATION_INDEX_SQL)?;
         Ok(connection)
     }
 
     fn open_memory() -> Result<Connection> {
         let connection = Connection::open_in_memory()?;
         connection.execute_batch(ARTIFACT_SCHEMA)?;
+        connection.execute_batch(ARTIFACT_REPOSITORY_GENERATION_INDEX_SQL)?;
         Ok(connection)
     }
 
     pub(crate) fn evaluate_receipt(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         requested_id: Option<&str>,
         generation: u64,
         candidates: &[ReceiptEvidence],
@@ -112,7 +122,9 @@ impl ArtifactStorage {
         let mut evidence = match requested_id {
             Some(id) => {
                 let stored = self.read_evidence_artifact(id)?;
-                if stored.repository_identity != repository_identity {
+                if stored.repository_identity != repository_identity
+                    || stored.database_incarnation_id != database_incarnation_id
+                {
                     return Err(Error::UnknownReceipt(id.to_owned()));
                 }
                 if stored.repository_generation != generation {
@@ -150,15 +162,30 @@ impl ArtifactStorage {
             ));
         }
         evidence.extend(returned);
-        let receipt_id = self.put_evidence_artifact(repository_identity, generation, &evidence)?;
+        let receipt_id = self.put_evidence_artifact(
+            repository_identity,
+            database_incarnation_id,
+            generation,
+            &evidence,
+        )?;
         Ok(ReceiptEvaluation {
             receipt_id,
             decisions,
         })
     }
 
-    pub(crate) fn read_receipt(&self, requested_id: &str) -> Result<StoredReceipt> {
+    pub(crate) fn read_receipt(
+        &self,
+        repository_identity: &str,
+        database_incarnation_id: &str,
+        requested_id: &str,
+    ) -> Result<StoredReceipt> {
         let stored = self.read_evidence_artifact(requested_id)?;
+        if stored.repository_identity != repository_identity
+            || stored.database_incarnation_id != database_incarnation_id
+        {
+            return Err(Error::UnknownReceipt(requested_id.to_owned()));
+        }
         let complete = stored.evidence.len() < MAX_EVIDENCE_PER_RECEIPT
             && stored
                 .evidence
@@ -178,9 +205,12 @@ impl ArtifactStorage {
 
     pub(crate) fn load_receipt_rebase_source(
         &self,
+        repository_identity: &str,
+        database_incarnation_id: &str,
         requested_id: &str,
     ) -> Result<ReceiptRebaseSource> {
-        let receipt = self.read_receipt(requested_id)?;
+        let receipt =
+            self.read_receipt(repository_identity, database_incarnation_id, requested_id)?;
         Ok(ReceiptRebaseSource {
             receipt_id: receipt.receipt_id,
             repository_identity: receipt.repository_identity,
@@ -193,18 +223,25 @@ impl ArtifactStorage {
         &self,
         source: &ReceiptRebaseSource,
         repository_identity: &str,
+        database_incarnation_id: &str,
         generation: u64,
         evidence: &[ReceiptEvidence],
     ) -> Result<String> {
         if source.repository_identity != repository_identity {
             return Err(Error::UnknownReceipt(source.receipt_id.clone()));
         }
-        self.put_evidence_artifact(repository_identity, generation, evidence)
+        self.put_evidence_artifact(
+            repository_identity,
+            database_incarnation_id,
+            generation,
+            evidence,
+        )
     }
 
     pub(crate) fn persist_query_receipt(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         record: &QueryReceiptRecord,
     ) -> Result<String> {
         let payload = serde_json::to_vec(record)?;
@@ -212,6 +249,7 @@ impl ArtifactStorage {
             "query_proof",
             'q',
             repository_identity,
+            database_incarnation_id,
             record.repository_generation,
             &payload,
         )
@@ -220,6 +258,7 @@ impl ArtifactStorage {
     pub(crate) fn load_query_receipt(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         requested_id: &str,
     ) -> Result<StoredQueryReceipt> {
         if requested_id.len() > MAX_QUERY_RECEIPT_ID_BYTES {
@@ -231,7 +270,9 @@ impl ArtifactStorage {
         let stored = self
             .get("query_proof", 'q', requested_id)?
             .ok_or_else(|| Error::UnknownQueryReceipt(requested_id.to_owned()))?;
-        if stored.repository_identity != repository_identity {
+        if stored.repository_identity != repository_identity
+            || stored.database_incarnation_id != database_incarnation_id
+        {
             return Err(Error::UnknownQueryReceipt(requested_id.to_owned()));
         }
         let record: QueryReceiptRecord = serde_json::from_slice(&stored.payload)
@@ -256,6 +297,7 @@ impl ArtifactStorage {
     pub(crate) fn persist_read_base(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         base: &ReadDeltaBase,
     ) -> Result<String> {
         if base.content.len() > MAX_READ_DELTA_BASE_BYTES {
@@ -268,6 +310,7 @@ impl ArtifactStorage {
             "read_base",
             'd',
             repository_identity,
+            database_incarnation_id,
             base.generation,
             &payload,
         )
@@ -276,6 +319,7 @@ impl ArtifactStorage {
     pub(crate) fn load_read_base(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         requested_id: &str,
     ) -> Result<ReadDeltaBase> {
         let invalid = || Error::InvalidInput {
@@ -285,7 +329,9 @@ impl ArtifactStorage {
         let stored = self
             .get("read_base", 'd', requested_id)?
             .ok_or_else(invalid)?;
-        if stored.repository_identity != repository_identity {
+        if stored.repository_identity != repository_identity
+            || stored.database_incarnation_id != database_incarnation_id
+        {
             return Err(Error::InvalidInput {
                 field: "delta_base_artifact_id",
                 reason: "belongs to another repository",
@@ -304,6 +350,7 @@ impl ArtifactStorage {
     fn put_evidence_artifact(
         &self,
         repository_identity: &str,
+        database_incarnation_id: &str,
         generation: u64,
         evidence: &[ReceiptEvidence],
     ) -> Result<String> {
@@ -311,7 +358,14 @@ impl ArtifactStorage {
             version: ARTIFACT_SCHEMA_VERSION,
             evidence: evidence.to_vec(),
         })?;
-        self.put("evidence", 'r', repository_identity, generation, &payload)
+        self.put(
+            "evidence",
+            'r',
+            repository_identity,
+            database_incarnation_id,
+            generation,
+            &payload,
+        )
     }
 
     fn read_evidence_artifact(&self, requested_id: &str) -> Result<StoredEvidenceArtifact> {
@@ -333,6 +387,7 @@ impl ArtifactStorage {
         }
         Ok(StoredEvidenceArtifact {
             repository_identity: stored.repository_identity,
+            database_incarnation_id: stored.database_incarnation_id,
             repository_generation: stored.repository_generation,
             evidence: artifact.evidence,
         })
@@ -343,6 +398,7 @@ impl ArtifactStorage {
         kind: &str,
         prefix: char,
         repository_identity: &str,
+        database_incarnation_id: &str,
         generation: u64,
         payload: &[u8],
     ) -> Result<String> {
@@ -351,11 +407,19 @@ impl ArtifactStorage {
                 "artifact payload exceeds its bound".into(),
             ));
         }
-        let id = artifact_id(prefix, kind, repository_identity, generation, payload);
+        let id = artifact_id(
+            prefix,
+            kind,
+            repository_identity,
+            database_incarnation_id,
+            generation,
+            payload,
+        );
         let logical_bytes = id
             .len()
             .saturating_add(kind.len())
             .saturating_add(repository_identity.len())
+            .saturating_add(database_incarnation_id.len())
             .saturating_add(payload.len())
             .saturating_add(2 * size_of::<u64>());
         let mut connection = self
@@ -383,12 +447,14 @@ impl ArtifactStorage {
             ));
         }
         transaction.execute(
-            "INSERT INTO artifacts(id, kind, repository_identity, repository_generation, payload, logical_bytes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO artifacts(id, kind, repository_identity, database_incarnation_id,
+                                   repository_generation, payload, logical_bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 id,
                 kind,
                 repository_identity,
+                database_incarnation_id,
                 u64_to_i64(generation)?,
                 payload,
                 usize_to_i64(logical_bytes)?
@@ -408,14 +474,15 @@ impl ArtifactStorage {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = connection
             .query_row(
-                "SELECT repository_identity, repository_generation, payload
+                "SELECT repository_identity, database_incarnation_id, repository_generation, payload
                  FROM artifacts WHERE id = ?1 AND kind = ?2",
                 params![requested_id, kind],
                 |row| {
                     Ok(StoredArtifact {
                         repository_identity: row.get(0)?,
-                        repository_generation: i64_to_u64(row.get(1)?)?,
-                        payload: row.get(2)?,
+                        database_incarnation_id: row.get(1)?,
+                        repository_generation: i64_to_u64(row.get(2)?)?,
+                        payload: row.get(3)?,
                     })
                 },
             )
@@ -425,6 +492,7 @@ impl ArtifactStorage {
                 prefix,
                 kind,
                 &stored.repository_identity,
+                &stored.database_incarnation_id,
                 stored.repository_generation,
                 &stored.payload,
             ) == requested_id
@@ -434,6 +502,7 @@ impl ArtifactStorage {
 
 struct StoredEvidenceArtifact {
     repository_identity: String,
+    database_incarnation_id: String,
     repository_generation: u64,
     evidence: Vec<ReceiptEvidence>,
 }
@@ -442,18 +511,38 @@ fn artifact_id(
     prefix: char,
     kind: &str,
     repository_identity: &str,
+    database_incarnation_id: &str,
     generation: u64,
     payload: &[u8],
 ) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"leantoken-artifact-v1\0");
+    hasher.update(b"leantoken-artifact-v2\0");
     hasher.update(kind.as_bytes());
     hasher.update(&[0]);
     hasher.update(repository_identity.as_bytes());
     hasher.update(&[0]);
+    hasher.update(database_incarnation_id.as_bytes());
+    hasher.update(&[0]);
     hasher.update(&generation.to_le_bytes());
     hasher.update(payload);
     format!("{prefix}{}", hasher.finalize().to_hex())
+}
+
+fn ensure_artifact_incarnation_column(connection: &Connection) -> Result<()> {
+    let has_column = connection
+        .prepare("PRAGMA table_info(artifacts)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .iter()
+        .any(|column| column == "database_incarnation_id");
+    if !has_column {
+        connection.execute(
+            "ALTER TABLE artifacts ADD COLUMN database_incarnation_id TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+        connection.execute("DELETE FROM artifacts", [])?;
+    }
+    Ok(())
 }
 
 fn valid_artifact_id(id: &str, prefix: char) -> bool {

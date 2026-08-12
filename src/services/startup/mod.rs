@@ -576,6 +576,7 @@ mod tests {
         let receipt_id = ArtifactStorage::open(&artifacts_path)
             .evaluate_receipt(
                 "repository",
+                "old-incarnation",
                 None,
                 1,
                 &[ReceiptEvidence::new(
@@ -595,7 +596,11 @@ mod tests {
         drop(Services::open(config).expect("rebuild managed index"));
 
         assert!(matches!(
-            ArtifactStorage::open(&artifacts_path).read_receipt(&receipt_id),
+            ArtifactStorage::open(&artifacts_path).read_receipt(
+                "repository",
+                "old-incarnation",
+                &receipt_id,
+            ),
             Err(Error::UnknownReceipt(_))
         ));
         assert_eq!(

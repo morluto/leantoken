@@ -258,6 +258,7 @@ impl Services {
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
+        let database_incarnation_id = self.storage.meta()?.database_incarnation_id;
         let materialized = self.consistent(|session| {
             let generation = session.generation();
             check_cancelled(cancellation)?;
@@ -268,6 +269,7 @@ impl Services {
         if let ReadMode::Delta(target) = &request.mode {
             let evaluation = evaluate_read_delta(ReadDeltaInput {
                 repository_id: &response.meta.repository_id,
+                database_incarnation_id: &database_incarnation_id,
                 artifacts: &self.artifacts,
                 base_artifact_id: request.delta_base_artifact_id.as_deref(),
                 path: &request.path,
@@ -706,6 +708,7 @@ impl Services {
             response: ReadResponse {
                 path: request.path.clone(),
                 status,
+                source: ReadSource::Worktree,
                 target_start_line: target.target_start_line,
                 target_end_line: observed_target_end_line,
                 returned_start_line,

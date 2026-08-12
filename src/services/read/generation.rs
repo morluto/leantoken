@@ -347,6 +347,7 @@ impl Services {
             ReadResponse {
                 path: request.path.clone(),
                 status,
+                source: ReadSource::PublishedGeneration,
                 target_start_line: target.target_start_line,
                 target_end_line,
                 returned_start_line,
@@ -362,7 +363,7 @@ impl Services {
                 content_hash,
                 indexed_hash: Some(indexed.content_hash),
                 index_stale: false,
-                index_state: ReadIndexState::Current,
+                index_state: ReadIndexState::Unknown,
                 live_bytes_read: 0,
                 meta: self.meta(
                     generation_id,

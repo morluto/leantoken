@@ -459,6 +459,11 @@ DROP TABLE IF EXISTS query_coverage_receipt_usage;
 UPDATE meta SET schema_version = 12 WHERE id = 1;
 "#;
 
+pub(crate) const DATABASE_INCARNATION_SQL: &str = r#"
+ALTER TABLE meta ADD COLUMN database_incarnation_id TEXT NOT NULL DEFAULT '';
+UPDATE meta SET schema_version = 13 WHERE id = 1;
+"#;
+
 pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(SCHEMA_SQL).foreign_key_check(),
     M::up(LOOKUP_INDEXES_SQL),
@@ -473,8 +478,9 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(QUERY_COVERAGE_RECEIPTS_SQL),
     M::up(AUXILIARY_STORAGE_SPLIT_SQL),
     M::up(IMMUTABLE_ARTIFACT_STORAGE_SQL),
+    M::up(DATABASE_INCARNATION_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 13;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 14;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 use super::*;

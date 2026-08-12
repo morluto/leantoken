@@ -359,3 +359,51 @@ async fn unchanged_refresh_does_not_publish_a_generation() {
         before
     );
 }
+
+#[tokio::test]
+async fn incompatible_projection_semantics_require_refresh_before_retrieval() {
+    let (root, services) = fixture().await;
+    let database = root.path().join("index.sqlite");
+    rusqlite::Connection::open(&database)
+        .expect("raw database")
+        .execute(
+            "UPDATE meta SET config_hash = 'obsolete-projection' WHERE id = 1",
+            [],
+        )
+        .expect("mark obsolete projection");
+
+    let error = services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("obsolete projection must not be retrieved");
+    assert!(matches!(error, Error::RefreshRequired));
+
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("rebuild obsolete projection");
+    services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("retrieval after refresh");
+}
