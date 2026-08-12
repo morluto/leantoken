@@ -89,13 +89,11 @@ pub(super) struct ContextPathScorer {
     pub(super) languages: [bool; 5],
     pub(super) mcp_repository_intent: bool,
     pub(super) owner_intent: bool,
-    pub(super) call_edge_intent: bool,
 }
 
 impl ContextPathScorer {
     pub(super) fn new(terms: &[String], task: &str) -> Self {
         let primary_task = facets::primary_task_text(task);
-        let primary_lower = primary_task.to_ascii_lowercase();
         let code_token_parts = facets::code_tokens(task)
             .into_iter()
             .filter(|token| {
@@ -126,25 +124,25 @@ impl ContextPathScorer {
             ],
             mcp_repository_intent: mcp_repository_intent(&[], &primary_task),
             owner_intent: !primary_task.is_empty(),
-            call_edge_intent: ["trace", "owner", "request path", "dispatch", "caller"]
-                .iter()
-                .any(|term| primary_lower.contains(term)),
         }
     }
 
     pub(super) fn score(&self, path: &str) -> f64 {
-        let path = path.to_lowercase();
+        let normalized_path = path.to_lowercase();
         let mut score = f64::from(
             u32::try_from(
                 self.terms
                     .iter()
-                    .filter(|term| path.contains(term.as_str()))
+                    .filter(|term| normalized_path.contains(term.as_str()))
                     .count(),
             )
             .unwrap_or(u32::MAX),
         );
         for parts in &self.code_token_parts {
-            let matched_parts = parts.iter().filter(|part| path.contains(*part)).count();
+            let matched_parts = parts
+                .iter()
+                .filter(|part| normalized_path.contains(*part))
+                .count();
             if matched_parts >= 2 {
                 let matched_parts = u32::try_from(matched_parts).unwrap_or(u32::MAX);
                 score += f64::from(matched_parts.saturating_mul(matched_parts));
@@ -157,11 +155,11 @@ impl ContextPathScorer {
             (self.languages[3], "/rust/", &["rs"][..]),
             (self.languages[4], "/go/", &["go"][..]),
         ] {
-            let extension_matches = path
+            let extension_matches = normalized_path
                 .rsplit_once('.')
                 .is_some_and(|(_, extension)| extensions.contains(&extension));
             let component = component.trim_matches('/');
-            let component_matches = path
+            let component_matches = normalized_path
                 .split('/')
                 .any(|path_component| path_component == component);
             if mentioned && (extension_matches || component_matches) {
@@ -172,21 +170,21 @@ impl ContextPathScorer {
             }
         }
         if self.mcp_repository_intent {
-            if path == "src/mcp.rs"
-                || path.starts_with("src/mcp/")
-                || path == "src/main/mcp_runtime.rs"
+            if normalized_path == "src/mcp.rs"
+                || normalized_path.starts_with("src/mcp/")
+                || normalized_path == "src/main/mcp_runtime.rs"
             {
                 score += 14.0;
-            } else if path == "crates/test-suite/src/domains/protocol.rs"
-                || path == "crates/test-suite/src/domains/contracts.rs"
-                || path == "tests/mcp.rs"
-                || path.starts_with("tests/mcp/")
+            } else if normalized_path == "crates/test-suite/src/domains/protocol.rs"
+                || normalized_path == "crates/test-suite/src/domains/contracts.rs"
+                || normalized_path == "tests/mcp.rs"
+                || normalized_path.starts_with("tests/mcp/")
             {
                 score += 8.0;
             }
         }
         if self.owner_intent {
-            score += ranking::owner_path_prior(&path, self.call_edge_intent);
+            score += ranking::owner_path_prior(path);
         }
         score
     }
