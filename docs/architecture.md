@@ -147,6 +147,7 @@ returning a false exhaustive result.
 | Batched history targets | 64 requested, 32 returned per page |
 | Batched history source | 32 paths and 8 MiB per revision endpoint |
 | Read response fitting | At most 18 materializations in one generation |
+| Context excerpts | At most 256 exact tokenizer tokens per fragment; omit a required line that cannot fit |
 
 Repository discovery defaults to 500,000 walked entries, 150,000 admitted
 files, 2 GiB aggregate source, depth 64, and 2 MiB per file. Preparation batches
@@ -185,6 +186,12 @@ candidates for supported languages. These records are structural heuristics,
 not compiler binding claims. Import or reference edges that cannot be justified
 by the maintained adapter remain unresolved or are labeled heuristic. A wrong
 high-confidence graph is worse than an absent edge.
+
+C and C++ adapters include direct identifier and named field/pointer-field call
+references from the same bounded parser pass, including C source in ambiguous
+`.h` files. Declarations, comments, strings, and non-call field access are not
+treated as calls; malformed recovered top-level expressions are excluded unless
+they occur inside executable scope.
 
 ## Determinism and failure behavior
 

@@ -85,6 +85,59 @@ impl Services {
         Ok(excerpts)
     }
 
+    pub(in crate::services) fn fit_context_excerpt(
+        &self,
+        excerpt: StoredExcerpt,
+        matched_line: usize,
+        token_budget: usize,
+        selection_budget: usize,
+    ) -> Option<StoredExcerpt> {
+        if matched_line < excerpt.start_line || matched_line > excerpt.end_line {
+            return None;
+        }
+        let full_tokens = self.config.tokenizer.count(&excerpt.content).max(1);
+        if full_tokens <= token_budget {
+            return Some(excerpt);
+        }
+
+        let declaration_lines = excerpt
+            .end_line
+            .saturating_sub(excerpt.start_line)
+            .saturating_add(1);
+        let proportional_lines = declaration_lines
+            .saturating_mul(token_budget)
+            .saturating_div(full_tokens)
+            .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
+            .min(declaration_lines);
+        let proportional = crop_adaptive_excerpt(&excerpt, matched_line, proportional_lines);
+        if self.config.tokenizer.count(&proportional.content) <= token_budget {
+            return Some(proportional);
+        }
+
+        let required = crop_adaptive_excerpt(&excerpt, matched_line, 1);
+        let required_tokens = self.config.tokenizer.count(&required.content);
+        if required_tokens > token_budget {
+            // Preserve an unselectable candidate so ranking can report a
+            // budget omission instead of claiming indexed evidence is absent.
+            return (required_tokens > selection_budget).then_some(required);
+        }
+
+        let mut lower = 2usize;
+        let mut upper = proportional_lines.saturating_sub(1);
+        let mut best = Some(required);
+        while lower <= upper {
+            let line_count = lower + (upper - lower) / 2;
+            let candidate = crop_adaptive_excerpt(&excerpt, matched_line, line_count);
+            if self.config.tokenizer.count(&candidate.content) <= token_budget {
+                best = Some(candidate);
+                lower = line_count.saturating_add(1);
+            } else {
+                upper = line_count.saturating_sub(1);
+            }
+        }
+        best
+    }
+
     pub(in crate::services) fn adaptive_context_excerpts(
         &self,
         session: &RepositoryGeneration,
@@ -101,58 +154,67 @@ impl Services {
                 max_lines: 0,
             })
             .collect::<Vec<_>>();
-        let mut excerpts = self.stored_excerpts(session, &full_requests)?;
-        let mut narrowed_indices = Vec::new();
-        let mut narrowed_requests = Vec::new();
-        for (index, (request, excerpt)) in requests.iter().zip(&excerpts).enumerate() {
-            let Some(excerpt) = excerpt else {
-                continue;
-            };
-            let full_tokens = self.config.tokenizer.count(&excerpt.content).max(1);
-            if full_tokens <= request.token_budget {
-                continue;
-            }
-            let declaration_lines = request
-                .declaration_end
-                .saturating_sub(request.declaration_start)
-                .saturating_add(1);
-            let proportional_lines = declaration_lines
-                .saturating_mul(request.token_budget)
-                .saturating_div(full_tokens)
-                .clamp(MIN_CONTEXT_RANGE_LINES, MAX_CONTEXT_RANGE_LINES)
-                .min(declaration_lines);
-            let before = proportional_lines / 3;
-            let mut start = request
-                .matched_line
-                .saturating_sub(before)
-                .max(request.declaration_start);
-            let mut end = start
-                .saturating_add(proportional_lines.saturating_sub(1))
-                .min(request.declaration_end);
-            if end.saturating_sub(start).saturating_add(1) < proportional_lines {
-                start = end
-                    .saturating_add(1)
-                    .saturating_sub(proportional_lines)
-                    .max(request.declaration_start);
-            }
-            end = start
-                .saturating_add(proportional_lines.saturating_sub(1))
-                .min(request.declaration_end);
-            narrowed_indices.push(index);
-            narrowed_requests.push(StoredExcerptRequest {
-                file_id: request.file_id,
-                desired_start_line: start,
-                desired_end_line: end,
-                required_start_line: request.matched_line,
-                required_end_line: request.matched_line,
-                max_lines: 0,
-            });
-        }
-        let narrowed = self.stored_excerpts(session, &narrowed_requests)?;
-        for (index, excerpt) in narrowed_indices.into_iter().zip(narrowed) {
-            excerpts[index] = excerpt;
-        }
-        Ok(excerpts)
+        Ok(self
+            .stored_excerpts(session, &full_requests)?
+            .into_iter()
+            .zip(requests)
+            .map(|(excerpt, request)| {
+                excerpt.and_then(|excerpt| {
+                    self.fit_context_excerpt(
+                        excerpt,
+                        request.matched_line,
+                        request.token_budget,
+                        request.selection_budget,
+                    )
+                })
+            })
+            .collect())
     }
+}
+
+fn crop_adaptive_excerpt(
+    excerpt: &StoredExcerpt,
+    matched_line: usize,
+    line_count: usize,
+) -> StoredExcerpt {
+    let (start_line, end_line) = adaptive_excerpt_window(
+        excerpt.start_line,
+        excerpt.end_line,
+        matched_line,
+        line_count,
+    );
+    StoredExcerpt {
+        content: crate::text::excerpt(
+            &excerpt.content,
+            start_line.saturating_sub(excerpt.start_line) + 1,
+            end_line.saturating_sub(excerpt.start_line) + 1,
+        ),
+        start_line,
+        end_line,
+    }
+}
+
+fn adaptive_excerpt_window(
+    declaration_start: usize,
+    declaration_end: usize,
+    matched_line: usize,
+    line_count: usize,
+) -> (usize, usize) {
+    let line_count = line_count.max(1);
+    let before = line_count / 3;
+    let mut start = matched_line.saturating_sub(before).max(declaration_start);
+    let mut end = start
+        .saturating_add(line_count.saturating_sub(1))
+        .min(declaration_end);
+    if end.saturating_sub(start).saturating_add(1) < line_count {
+        start = end
+            .saturating_add(1)
+            .saturating_sub(line_count)
+            .max(declaration_start);
+    }
+    end = start
+        .saturating_add(line_count.saturating_sub(1))
+        .min(declaration_end);
+    (start, end)
 }
 use super::*;

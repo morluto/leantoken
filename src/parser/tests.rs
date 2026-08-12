@@ -238,6 +238,61 @@ fn development_languages_are_detected_by_path() {
 }
 
 #[test]
+fn c_family_indexes_named_calls_without_declaration_false_positives() -> Result<()> {
+    let source = "\
+static int target(int value);\n\
+static int target(int value) { return value; }\n\
+struct Hooks { int (*target)(int); };\n\
+static int caller(struct Hooks *hooks) {\n\
+    const char *literal = \"target()\";\n\
+    // target(0);\n\
+    int direct = target(1);\n\
+    int member = hooks->target(2);\n\
+    return direct + member + (literal[0] == 't');\n\
+}\n";
+    for language in ["c", "cpp"] {
+        let output = parse_language(language, source)?;
+
+        assert!(output.structurally_complete, "{language}");
+        assert_eq!(
+            output
+                .references
+                .iter()
+                .map(|reference| (
+                    reference.name.as_str(),
+                    reference.kind.as_str(),
+                    reference.enclosing_symbol.as_deref(),
+                    reference.start_line,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("target", "call", Some("caller"), 7),
+                ("target", "call", Some("caller"), 8),
+            ],
+            "{language}"
+        );
+        assert!(output.references.iter().all(|reference| {
+            &source[reference.start_byte..reference.end_byte] == "target"
+                && reference.role == ReferenceRole::Reference
+        }));
+    }
+
+    let macro_prototype = "\
+#ifdef __cplusplus\n\
+extern \"C\" {\n\
+#endif\n\
+API(void) declared(int value);\n\
+WRAP(target());\n\
+#ifdef __cplusplus\n\
+}\n\
+#endif\n";
+    let recovered = parse_language("cpp", macro_prototype)?;
+    assert!(!recovered.structurally_complete);
+    assert!(recovered.references.is_empty());
+    Ok(())
+}
+
+#[test]
 fn csharp_indexes_tolerant_structure_imports_calls_and_parents() -> Result<()> {
     let output = parse_language("csharp", CSHARP_SRC)?;
     assert!(output.structurally_complete);

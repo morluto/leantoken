@@ -48,6 +48,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_search_coverage_defaults_reference_capability_to_absent() {
+        let count = serde_json::json!({
+            "total": 0,
+            "returned": 0,
+            "truncated": 0
+        });
+        let coverage: SearchCoverage = serde_json::from_value(serde_json::json!({
+            "definitions": count,
+            "references": count,
+            "text_matches": count
+        }))
+        .expect("deserialize legacy search coverage");
+
+        assert_eq!(coverage.reference_capability, None);
+    }
+
+    #[test]
     fn focus_coverage_keeps_legacy_results_readable_and_bounds_diagnostics() {
         let legacy: ContextFocusPathCoverage = serde_json::from_value(serde_json::json!({
             "pattern": "src/**",

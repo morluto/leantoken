@@ -14,6 +14,15 @@ pub(super) const GO_DEFS_QUERY: &str = r#"
 (const_declaration (const_spec name: (identifier) @name)) @definition.constant
 "#;
 
+pub(super) const C_FAMILY_REFS_QUERY: &str = r#"
+(call_expression
+  function: (identifier) @name) @reference.call
+
+(call_expression
+  function: (field_expression
+    field: (field_identifier) @name)) @reference.call
+"#;
+
 pub(super) const PHP_REFS_QUERY: &str = r#"
 (function_call_expression
   function: (name) @name) @reference.call

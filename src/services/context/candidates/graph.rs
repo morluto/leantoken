@@ -67,6 +67,7 @@ impl Services {
                     expansion.request.token_budget,
                     ContextExcerptKind::ImportSymbol,
                 ),
+                selection_budget: expansion.request.token_budget,
             })
             .collect::<Vec<_>>();
         let excerpts = self.adaptive_context_excerpts(expansion.session, &excerpt_requests)?;

@@ -346,8 +346,69 @@ async fn context_text_hits_use_bounded_declaration_excerpts() {
         .expect("text fragment");
 
     assert!(
-        text_fragment.token_count <= 320,
+        text_fragment.token_count <= 256,
         "oversized text fragment: {text_fragment:?}"
     );
     assert!(text_fragment.content.contains("rare_runtime_marker"));
+}
+
+#[tokio::test]
+async fn context_text_fallbacks_obey_exact_excerpt_caps() {
+    let root = tempfile::tempdir().expect("root");
+    let dense_line = (0..120)
+        .map(|index| format!("dense_token_{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        format!(
+            "// {dense_line}\n// {dense_line}\n// rare_top_level_marker\n// {dense_line}\n// {dense_line}\nfn unrelated() {{}}\n"
+        ),
+    )
+    .expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("refresh");
+
+    let response = services
+        .context(ContextRequest {
+            task: "fix rare_top_level_marker behavior".into(),
+            token_budget: 1200,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
+        })
+        .await
+        .expect("context");
+    let text_fragment = response
+        .fragments
+        .iter()
+        .find(|fragment| fragment.path == "lib.rs" && fragment.reason.contains("text"))
+        .expect("top-level text fragment");
+
+    assert!(
+        text_fragment.token_count <= 256,
+        "oversized fallback fragment: {text_fragment:?}"
+    );
+    assert!(text_fragment.content.contains("rare_top_level_marker"));
+    assert!(text_fragment.start_line <= 3 && text_fragment.end_line >= 3);
 }

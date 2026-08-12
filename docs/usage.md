@@ -120,6 +120,11 @@ semantics. Compact projections return source-free coordinates. Exhaustive text
 or regex occurrence mode fails closed if the configured scan boundary cannot
 prove completeness.
 
+When a request consults structural references, `reference_capability` states
+that extraction is partial: zero structural hits are not proof that no callers
+or occurrences exist. Use lexical `identifier` or `text` search where a
+language, construct, or incomplete parse falls outside the structural adapter.
+
 ## `leantoken.outline`
 
 Return definitions, signatures, imports, parse coverage, and source ranges for

@@ -255,6 +255,7 @@ impl Services {
                 declaration_end: hit.symbol.end_line,
                 matched_line: hit.symbol.start_line,
                 token_budget: required_symbol_budget,
+                selection_budget: request.token_budget,
             })
             .collect::<Vec<_>>();
         phases.record_adaptive_excerpts(&symbol_excerpt_requests);

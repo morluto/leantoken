@@ -392,6 +392,101 @@ async fn reference_search_window_keeps_the_required_reference_span() {
 }
 
 #[tokio::test]
+async fn c_reference_results_report_calls_and_retain_partial_capability() {
+    let source = b"void target(void) {}\nvoid caller(void) { target(); }\n";
+    let (_root, services) = indexed_source("calls.c", source).await;
+    let mut request = SearchRequest {
+        query: "target".into(),
+        mode: SearchMode::Reference,
+        include_paths: vec!["calls.c".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(10),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+
+    let structural = services
+        .search(request.clone())
+        .await
+        .expect("C reference search");
+    assert_eq!(structural.coverage.references.total, 1);
+    assert_eq!(structural.hits.len(), 1);
+    let hit = &structural.hits[0];
+    assert_eq!(hit.path, "calls.c");
+    assert_eq!(hit.start_line, 2);
+    assert_eq!(hit.end_line, 2);
+    assert_eq!(hit.role, Some(ReferenceRole::Reference));
+    assert_eq!(hit.enclosing_symbol.as_deref(), Some("caller"));
+    assert!(hit.excerpt.contains("target();"));
+    let capability = structural
+        .coverage
+        .reference_capability
+        .expect("reference capability");
+    assert_eq!(capability.extraction, ReferenceExtractionStatus::Partial);
+    assert!(!capability.zero_results_conclusive);
+    assert_eq!(
+        capability.fallback_modes,
+        [SearchMode::Identifier, SearchMode::Text]
+    );
+
+    request.mode = SearchMode::Text;
+    let lexical = services.search(request).await.expect("C lexical fallback");
+    assert!(!lexical.hits.is_empty());
+    assert_eq!(lexical.coverage.reference_capability, None);
+}
+
+#[tokio::test]
+async fn c_indirect_call_gap_exposes_partial_capability_and_lexical_fallbacks() {
+    let source = b"void target(void) {}\nvoid caller(void) { (*target)(); }\n";
+    let (_root, services) = indexed_source("indirect.c", source).await;
+    let mut request = SearchRequest {
+        query: "target".into(),
+        mode: SearchMode::Reference,
+        include_paths: vec!["indirect.c".into()],
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(10),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: false,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+
+    let structural = services
+        .search(request.clone())
+        .await
+        .expect("C indirect reference search");
+    assert!(structural.hits.is_empty());
+    assert_eq!(structural.coverage.references.total, 0);
+    let capability = structural
+        .coverage
+        .reference_capability
+        .expect("reference capability");
+    assert_eq!(capability.extraction, ReferenceExtractionStatus::Partial);
+    assert!(!capability.zero_results_conclusive);
+    assert_eq!(
+        capability.fallback_modes,
+        [SearchMode::Identifier, SearchMode::Text]
+    );
+
+    request.mode = SearchMode::Text;
+    let lexical = services.search(request).await.expect("C lexical fallback");
+    assert!(!lexical.hits.is_empty());
+    assert_eq!(lexical.coverage.reference_capability, None);
+}
+
+#[tokio::test]
 async fn text_search_reports_enclosing_symbols_across_languages() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
