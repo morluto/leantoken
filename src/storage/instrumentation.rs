@@ -121,7 +121,14 @@ impl InstrumentationStorage {
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        connection.execute("ATTACH DATABASE ?1 AS legacy", params![&source_database])?;
+        // Startup owns retries for the primary database and must remain
+        // cancellable. Do not let this optional pre-migration copy consume the
+        // instrumentation connection's ordinary busy wait while that startup
+        // lock is contended.
+        connection.busy_timeout(Duration::ZERO)?;
+        let attach = connection.execute("ATTACH DATABASE ?1 AS legacy", params![&source_database]);
+        let restore_timeout = connection.busy_timeout(DEFAULT_BUSY_TIMEOUT);
+        attach.and(restore_timeout)?;
         let result = (|| {
             let has_legacy_token_savings = connection.query_row(
                 "SELECT EXISTS(
