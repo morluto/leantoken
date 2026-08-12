@@ -6,6 +6,8 @@
 
 `mcp-name: io.github.morluto/leantoken`
 
+**Language:** English · [简体中文](docs/i18n/zh-CN/README.md) · [日本語](docs/i18n/ja-JP/README.md) · [한국어](docs/i18n/ko-KR/README.md)
+
 <img src="assets/leantoken-hero-v3.jpg" alt="LeanToken narrowing a repository to the code an agent needs" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
