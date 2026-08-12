@@ -1397,6 +1397,17 @@ Go, C/C++, C#, Java, PHP, Ruby, HTML, and CSS. LeanToken stores flat
 definitions, syntactic references, signatures, parents, and imports; syntax
 trees are discarded after indexing.
 
+C/C++ extraction appends direct identifier calls and named field/pointer-field
+calls to the upstream definition tags. Applying the patterns to both grammars
+also covers C source embedded in ambiguous `.h` files. The patterns run in the
+same bounded tree-sitter query pass; they add no repository walk or file-level
+fan-out, and retain memory only for the syntactic reference facts already
+bounded by the indexed file size. Function declarations, declarators,
+comments, strings, and non-call field access do not match these call patterns.
+Malformed C-family recovery can represent a macro-wrapped top-level prototype
+as an expression statement; call captures in such a statement are discarded
+unless a compound-statement ancestor establishes executable scope.
+
 JavaScript-family extraction supplements upstream tags with program-level data
 bindings and class fields. It deliberately excludes function-local variables,
 while retaining complete declarator ranges so outline, symbol search, and
