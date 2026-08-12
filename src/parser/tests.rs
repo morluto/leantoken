@@ -282,6 +282,7 @@ static int caller(struct Hooks *hooks) {\n\
 extern \"C\" {\n\
 #endif\n\
 API(void) declared(int value);\n\
+WRAP(target());\n\
 #ifdef __cplusplus\n\
 }\n\
 #endif\n";

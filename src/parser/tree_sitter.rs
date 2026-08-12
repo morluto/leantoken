@@ -212,19 +212,16 @@ fn is_invalid_c_family_call(language: &str, kind: &str, node: Node<'_>) -> bool 
     if !matches!(language, "c" | "cpp") || kind != "call" || node.kind() != "call_expression" {
         return false;
     }
-    let Some(statement) = node
-        .parent()
-        .filter(|parent| parent.kind() == "expression_statement")
-    else {
-        return false;
-    };
-
-    let mut ancestor = statement.parent();
+    let mut has_expression_statement_ancestor = false;
+    let mut ancestor = node.parent();
     while let Some(node) = ancestor {
         if node.kind() == "compound_statement" {
             return false;
         }
+        if node.kind() == "expression_statement" {
+            has_expression_statement_ancestor = true;
+        }
         ancestor = node.parent();
     }
-    true
+    has_expression_statement_ancestor
 }
