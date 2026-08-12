@@ -449,6 +449,7 @@ fn broad_allocation_does_not_treat_surface_acronyms_as_exact_owners() {
         .concept("mcp", 2.0)
         .facet("primary_change", "mcp")
         .facet("exact_atom", "mcp")
+        .facet("exact_atom", "LegacySearchResponse")
         .exact(10.0);
     let owner = Candidate::new("src/services/search.rs", 1, 1, "search projection owner")
         .concept("search projection", 2.0)

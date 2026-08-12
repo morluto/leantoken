@@ -45,32 +45,21 @@ pub(in crate::ranking) fn carries_facet(candidate: &Candidate, facet: &str) -> b
 
 pub(in crate::ranking) fn carries_specific_exact_atom(candidate: &Candidate) -> bool {
     let prefix = format!("{FACET_PREFIX}exact_atom:");
-    candidate.match_kinds.iter().any(|kind| {
-        let Some(atom) = kind.strip_prefix(&prefix) else {
-            return false;
-        };
-        let prose_hyphen = atom.contains('-')
-            && atom
-                .chars()
-                .all(|character| character.is_ascii_lowercase() || character == '-');
-        !prose_hyphen
-            && (atom.chars().count() >= 5
-                || atom
-                    .chars()
-                    .any(|character| !character.is_ascii_alphanumeric()))
-    })
+    candidate
+        .match_kinds
+        .iter()
+        .filter_map(|kind| kind.strip_prefix(&prefix))
+        .any(specific_exact_atom)
 }
 
 pub(in crate::ranking) fn carries_specific_exact_primary_change(candidate: &Candidate) -> bool {
-    if !carries_specific_exact_atom(candidate) {
-        return false;
-    }
     let exact_prefix = format!("{FACET_PREFIX}exact_atom:");
     let primary_prefix = format!("{FACET_PREFIX}primary_change:");
     candidate
         .match_kinds
         .iter()
         .filter_map(|kind| kind.strip_prefix(&exact_prefix))
+        .filter(|atom| specific_exact_atom(atom))
         .map(normalized_facet_identity)
         .any(|exact| {
             candidate
@@ -80,6 +69,18 @@ pub(in crate::ranking) fn carries_specific_exact_primary_change(candidate: &Cand
                 .map(normalized_facet_identity)
                 .any(|primary| primary == exact)
         })
+}
+
+fn specific_exact_atom(atom: &str) -> bool {
+    let prose_hyphen = atom.contains('-')
+        && atom
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '-');
+    !prose_hyphen
+        && (atom.chars().count() >= 5
+            || atom
+                .chars()
+                .any(|character| !character.is_ascii_alphanumeric()))
 }
 
 fn normalized_facet_identity(value: &str) -> String {
