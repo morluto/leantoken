@@ -1032,6 +1032,11 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
     assert!(bounded.end_line >= matched_line);
     assert!(bounded.start_line > large.start_line);
     assert!(bounded.end_line <= large.end_line);
+    let bounded_tokens = services.config.tokenizer.count(&bounded.content);
+    assert!(
+        bounded_tokens <= 60,
+        "adaptive excerpt used {bounded_tokens} tokens"
+    );
 
     let crate::symbol_identity::SymbolResolution::Unique(small) =
         session.find_symbol(file.id, "small").expect("find symbol")
@@ -1056,6 +1061,26 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("complete declaration");
     assert_eq!(complete.start_line, small.start_line);
     assert_eq!(complete.end_line, small.end_line);
+
+    let impossible = services
+        .adaptive_context_excerpts(
+            &session,
+            &[AdaptiveExcerptRequest {
+                file_id: file.id,
+                declaration_start: small.start_line,
+                declaration_end: small.end_line,
+                matched_line: small.start_line,
+                token_budget: 1,
+            }],
+        )
+        .expect("single-line excerpt")
+        .into_iter()
+        .next()
+        .expect("one single-line request");
+    assert!(
+        impossible.is_none(),
+        "a required line that cannot fit must not escape the cap"
+    );
 }
 
 #[tokio::test]

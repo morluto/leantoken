@@ -1529,7 +1529,14 @@ summed into a request total.
 
 Symbol and lexical matches expand to the complete enclosing declaration when it
 fits. Oversized declarations use a bounded window centered on the exact match,
-so an arbitrary declaration prefix cannot hide the decisive line. Context
+so an arbitrary declaration prefix cannot hide the decisive line. The full
+declaration is hydrated once, then the proportional window is tokenized and an
+over-budget result receives at most seven in-memory binary refinements across
+deterministic windows of at most 128 lines. Only an excerpt whose configured-
+tokenizer count is within its representation cap is returned. A candidate is
+omitted when its required single line cannot fit. Raw reference and lexical
+fallback excerpts pass through the same exact cap without another storage read.
+Context
 selection first covers independent task concepts, then prefers a second source
 view on the selected definition path before filling by score. This keeps SQLite
 chunking and candidate order from silently truncating known evidence.
