@@ -287,6 +287,9 @@ pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
     if path.starts_with(".agents/")
         || path.starts_with("fixtures/")
         || path.contains("/fixtures/")
+        || path
+            .split('/')
+            .any(|component| component.eq_ignore_ascii_case("testdata"))
         || path.starts_with("benchmarks/reports/")
         || path.contains("/snapshots/")
         || path.ends_with(".snap")
@@ -421,6 +424,10 @@ mod tests {
         );
         assert_eq!(
             context_path_class("packages/app/fixtures/user.ts"),
+            ContextPathClass::Auxiliary
+        );
+        assert_eq!(
+            context_path_class("pkg/testdata/helper.go"),
             ContextPathClass::Auxiliary
         );
     }
