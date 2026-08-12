@@ -125,6 +125,24 @@ fn is_test_path(path: &str) -> bool {
         || stem.starts_with("test_")
 }
 
+fn is_class_or_project_test_path(path: &str) -> bool {
+    if !matches!(
+        crate::parser::language_by_path(path).as_deref(),
+        Some("csharp" | "java")
+    ) {
+        return false;
+    }
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
+    stem.ends_with("Test")
+        || stem.ends_with("Tests")
+        || path
+            .split('/')
+            .any(|component| component.to_ascii_lowercase().ends_with(".tests"))
+}
+
 fn is_programming_language_path(path: &str) -> bool {
     matches!(
         crate::parser::language_by_path(path).as_deref(),
@@ -160,7 +178,6 @@ fn is_supporting_code_path(path: &str) -> bool {
         || path.starts_with("scripts/")
         || path.contains("/scripts/")
         || path.starts_with("tools/")
-        || path.contains("/tools/")
 }
 
 fn normalized_source_stem(path: &str) -> String {
@@ -218,6 +235,7 @@ pub(in crate::ranking) fn owner_test_path_affinity(owner: &str, test: &str) -> u
 }
 
 pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
+    let class_or_project_test = is_class_or_project_test_path(path);
     let path = path.to_ascii_lowercase();
     let root_markdown = !path.contains('/')
         && (path.ends_with(".md") || path.ends_with(".mdx"))
@@ -232,7 +250,7 @@ pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
         || path.contains("/schema/")
     {
         ContextPathClass::Auxiliary
-    } else if is_test_path(&path) {
+    } else if class_or_project_test || is_test_path(&path) {
         ContextPathClass::Test
     } else if is_supporting_code_path(&path) {
         ContextPathClass::Supporting
@@ -345,6 +363,34 @@ mod tests {
         );
         assert_eq!(
             context_path_class("Cargo.toml"),
+            ContextPathClass::Supporting
+        );
+    }
+
+    #[test]
+    fn class_test_conventions_and_nested_product_tools_are_classified_by_role() {
+        assert_eq!(
+            context_path_class("MyApp.Tests/UserService.cs"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("src/UserServiceTests.cs"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("src/main/java/UserServiceTest.java"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("src/main/java/Contest.java"),
+            ContextPathClass::Production
+        );
+        assert_eq!(
+            context_path_class("src/mcp/tools/catalog.rs"),
+            ContextPathClass::Production
+        );
+        assert_eq!(
+            context_path_class("tools/release.rs"),
             ContextPathClass::Supporting
         );
     }
