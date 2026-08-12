@@ -93,6 +93,9 @@ LeanToken separates three kinds of state:
 
 The generation database uses bundled SQLite with FTS5, WAL, foreign keys,
 versioned migrations, bounded busy waits, and a bounded read-connection pool.
+The pool has one reader beyond the CPU-bound retrieval cohort so reconciliation
+can read its publication baseline without starving a complete cohort of pinned
+generation reads.
 An explicit database path is bound to its canonical repository and normalized
 index scope. A database claimed by another root or scope is rejected.
 
