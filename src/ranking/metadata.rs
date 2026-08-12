@@ -218,7 +218,7 @@ pub(crate) fn context_path_class(path: &str) -> ContextPathClass {
 pub(crate) fn owner_path_prior(path: &str) -> f64 {
     match context_path_class(path) {
         ContextPathClass::Production => 4.0,
-        ContextPathClass::Test => 0.5,
+        ContextPathClass::Test => 0.0,
         ContextPathClass::Auxiliary => -8.0,
         ContextPathClass::Supporting => 0.0,
     }
