@@ -81,6 +81,7 @@ pub(super) fn build_tags_query(language: &str, lang: &Language) -> Result<Option
 
     let mut source = base.to_string();
     match language {
+        "c" | "cpp" => source.push_str(C_FAMILY_REFS_QUERY),
         "rust" => source.push_str(RUST_DEFS_QUERY),
         "go" => source.push_str(GO_DEFS_QUERY),
         "php" => source.push_str(PHP_REFS_QUERY),
@@ -191,7 +192,7 @@ pub(super) fn process_tags_match(
                 start_byte,
                 end_byte,
             });
-        } else {
+        } else if !is_invalid_c_family_call(language, kind, kind_node) {
             let (start_line, end_line, start_byte, end_byte) = range_from_node(name_node);
             references.push(Reference {
                 name: name.clone(),
@@ -205,4 +206,25 @@ pub(super) fn process_tags_match(
             });
         }
     }
+}
+
+fn is_invalid_c_family_call(language: &str, kind: &str, node: Node<'_>) -> bool {
+    if !matches!(language, "c" | "cpp") || kind != "call" || node.kind() != "call_expression" {
+        return false;
+    }
+    let Some(statement) = node
+        .parent()
+        .filter(|parent| parent.kind() == "expression_statement")
+    else {
+        return false;
+    };
+
+    let mut ancestor = statement.parent();
+    while let Some(node) = ancestor {
+        if node.kind() == "compound_statement" {
+            return false;
+        }
+        ancestor = node.parent();
+    }
+    true
 }
