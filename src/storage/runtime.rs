@@ -19,14 +19,14 @@ impl fmt::Debug for Storage {
 }
 
 /// One read-only connection held under a DEFERRED transaction so all queries
-/// on this session observe a single SQLite WAL snapshot.
-pub struct ReadSession {
+/// on this generation transaction observe a single SQLite WAL snapshot.
+pub struct GenerationReadTransaction {
     pub(crate) conn: r2d2::PooledConnection<SqliteConnectionManager>,
     #[cfg(test)]
     pub(crate) diagnostics: Arc<StorageDiagnostics>,
 }
 
-impl Drop for ReadSession {
+impl Drop for GenerationReadTransaction {
     fn drop(&mut self) {
         let _ = self.conn.execute_batch("ROLLBACK");
         #[cfg(test)]

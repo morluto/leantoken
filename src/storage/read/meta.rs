@@ -1,5 +1,5 @@
-impl ReadSession {
-    /// Read metadata from this session's pinned repository snapshot.
+impl GenerationReadTransaction {
+    /// Read metadata from this generation transaction's pinned repository snapshot.
     pub fn meta(&self) -> Result<MetaRecord> {
         self.conn
             .query_row(
@@ -20,7 +20,7 @@ impl ReadSession {
             .map_err(Into::into)
     }
 
-    /// Return the repository generation pinned by this session.
+    /// Return the repository generation pinned by this generation transaction.
     pub fn repository_generation(&self) -> Result<u64> {
         let generation: i64 = self.conn.query_row(
             "SELECT repository_generation FROM meta WHERE id = 1",

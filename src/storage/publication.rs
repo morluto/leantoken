@@ -1,12 +1,12 @@
 impl Storage {
     /// Read the currently committed schema, configuration, and generation metadata.
     pub fn meta(&self) -> Result<MetaRecord> {
-        self.begin_read()?.meta()
+        self.begin_generation_read()?.meta()
     }
 
     /// Return the identifier of the latest atomically committed repository view.
     pub fn repository_generation(&self) -> Result<u64> {
-        self.begin_read()?.repository_generation()
+        self.begin_generation_read()?.repository_generation()
     }
 
     /// Replace the complete index using an internally captured optimistic baseline.

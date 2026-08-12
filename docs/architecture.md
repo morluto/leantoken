@@ -44,7 +44,7 @@ best-effort observations ------> instrumentation SQLite
 - The retrieval services consume the storage-owned `IndexSnapshot` capability
   (re-exported locally as `IndexReadSnapshot`), which owns the pinned generation
   and hides the storage transaction handle. Storage remains responsible for the
-  SQLite `ReadSession` implementation; service modules cannot accidentally
+  SQLite `GenerationReadTransaction` implementation; service modules cannot accidentally
   separate the snapshot lifetime from the generation they report.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
@@ -181,7 +181,7 @@ The connection is configured with:
 - a bounded busy timeout;
 - bundled SQLite with an FTS5 trigram startup probe;
 - transactional schema migrations;
-- prepared-statement caching within each request session;
+- prepared-statement caching within each request transaction;
 - file/range, reverse-import, and path lookup indexes added through versioned
   migrations so existing databases receive the same query plan as new databases.
 
@@ -276,7 +276,7 @@ because SQLite retokenized external content on demand.
 Each multi-step retrieval (search, context, outline, files, read) opens one
 checked-out read-only connection from an established, bounded `r2d2_sqlite`
 pool and holds a DEFERRED transaction for the request
-(`ReadSession`). Under WAL that pins a single committed snapshot for every
+(`GenerationReadTransaction`). Under WAL that pins a single committed snapshot for every
 query in the assembly, so concurrent publishers cannot mix generations inside
 one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
@@ -1177,7 +1177,7 @@ choice, not a claim that any one value is universally optimal. A read request
 checks out one pooled connection and holds one DEFERRED WAL transaction for its
 consistent generation. That snapshot is transaction state, not a copied
 database or per-request artifact. Its main storage effect is that SQLite may
-retain old WAL pages until the reader finishes; dropping the request session
+retain old WAL pages until the reader finishes; dropping the request transaction
 rolls back the read transaction and returns the connection.
 
 Receipt `resources/read` requests have a separate fail-fast admission bound

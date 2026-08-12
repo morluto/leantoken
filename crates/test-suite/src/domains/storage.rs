@@ -216,7 +216,7 @@ fn negative_persisted_unsigned_values_fail_decoding() {
 }
 
 #[test]
-fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
+fn pooled_generation_reads_serve_concurrent_snapshot_queries() {
     let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
     let storage = Storage::open(dir.root().join("index.sqlite")).expect("open");
     storage
@@ -227,7 +227,7 @@ fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
         .map(|_| {
             let storage = storage.clone();
             std::thread::spawn(move || {
-                let session = storage.begin_read().expect("read session");
+                let session = storage.begin_generation_read().expect("read session");
                 session.repository_generation().expect("generation")
             })
         })
@@ -875,7 +875,7 @@ fn wal_and_foreign_keys_enabled() {
 }
 
 #[test]
-fn read_session_pins_generation_across_queries() {
+fn generation_read_pins_publication_across_queries() {
     let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
     let path = dir.root().join("index.sqlite");
     let storage = Storage::open(&path).expect("open");
@@ -884,7 +884,7 @@ fn read_session_pins_generation_across_queries() {
         .expect("gen1");
     assert_eq!(gen1, 1);
 
-    let session = storage.begin_read().expect("session");
+    let session = storage.begin_generation_read().expect("session");
     assert_eq!(session.repository_generation().expect("gen"), 1);
     let files = session.list_files(100, None).expect("list");
     assert_eq!(files.len(), 1);
@@ -900,7 +900,7 @@ fn read_session_pins_generation_across_queries() {
     assert_eq!(still[0].path, "a.rs");
 
     // Fresh session sees the new generation.
-    let latest = storage.begin_read().expect("fresh");
+    let latest = storage.begin_generation_read().expect("fresh");
     assert_eq!(latest.repository_generation().expect("latest"), 2);
     assert_eq!(latest.list_files(100, None).expect("list").len(), 1);
     assert_eq!(latest.list_files(100, None).expect("list")[0].path, "b.rs");

@@ -288,7 +288,7 @@ pub(crate) struct TokenSavingsObservation<'a> {
 /// SQLite-backed repository index with one serialized writer and pooled readers.
 ///
 /// Clones share the same writer mutex and established read pool. Each
-/// [`ReadSession`] checks out one read-only connection and pins a WAL snapshot,
+/// [`GenerationReadTransaction`] checks out one read-only connection and pins a WAL snapshot,
 /// while reconciliation publishes through one immediate transaction. Pooling is
 /// process-local; repository ownership and cross-process write serialization are
 /// enforced separately by the services and coordination layers.

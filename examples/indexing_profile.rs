@@ -500,11 +500,11 @@ fn run_profile(args: &Args) -> AnyResult<Report> {
     let mut pooled_session_durations = Vec::with_capacity(args.read_samples);
     for _ in 0..args.read_samples {
         let start = Instant::now();
-        let session = storage.begin_read()?;
+        let session = storage.begin_generation_read()?;
         black_box(session.repository_generation()?);
         pooled_session_durations.push(start.elapsed());
     }
-    let session = storage.begin_read()?;
+    let session = storage.begin_generation_read()?;
     let mut pinned_query_durations = Vec::with_capacity(args.read_samples);
     for _ in 0..args.read_samples {
         let start = Instant::now();

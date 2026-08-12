@@ -412,7 +412,7 @@ Treat the SQLite schema and retrieval ordering as behavioral contracts, not
 implementation details. When changing them:
 
 - use a versioned migration and test both a new database and an upgraded one;
-- keep multi-query responses inside one `ReadSession` snapshot;
+- keep multi-query responses inside one `RepositoryGeneration` snapshot;
 - bind public pagination cursors to the committed generation and operation
   parameters, even when the underlying query uses a simpler keyset;
 - preserve deterministic ranking, overlap, and token-budget behavior when

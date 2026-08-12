@@ -137,7 +137,7 @@ pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
             ],
         )
         .expect("index fixture");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
 
     let error = session
         .select_scoped_regex_candidate_ids("\"needle\"", 1, 10, &[], &[], |_| true)
@@ -160,7 +160,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
     storage
         .full_reconcile("config", vec![sample_file("alpha.rs", "fn alpha() {}\n")])
         .expect("initial publication");
-    let pinned = storage.begin_read().expect("pinned read");
+    let pinned = storage.begin_generation_read().expect("pinned read");
     assert_eq!(
         pinned.repository_generation().expect("pinned generation"),
         1
@@ -195,7 +195,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
         1
     );
     let current = storage
-        .begin_read()
+        .begin_generation_read()
         .expect("current read")
         .parser_coverage_rows(|_| "fixture".to_owned())
         .expect("current parser coverage");
@@ -424,7 +424,9 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
                 .collect(),
         )
         .expect("backlogged generation");
-    let reader = storage.begin_read().expect("latest pinned reader");
+    let reader = storage
+        .begin_generation_read()
+        .expect("latest pinned reader");
     assert_eq!(
         reader.repository_generation().expect("pinned generation"),
         1
@@ -522,7 +524,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
         .full_reconcile("config", vec![sample_file("pinned.rs", "old snapshot\n")])
         .expect("initial generation");
 
-    let reader = storage.begin_read().expect("long-lived reader");
+    let reader = storage.begin_generation_read().expect("long-lived reader");
     assert_eq!(reader.repository_generation().expect("pin snapshot"), 1);
     assert!(
         reader
@@ -759,7 +761,7 @@ pub(crate) fn enclosing_symbol_lookup_benchmark_rejects_unproven_nesting_depth()
     storage
         .full_reconcile("benchmark", files)
         .expect("index fixture");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
     let file_ids = (0..32)
         .map(|file_index| {
             session
@@ -864,7 +866,7 @@ pub(crate) fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
     storage
         .full_reconcile("config", vec![sample_file("source.rs", "fn source() {}\n")])
         .expect("index source");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
     let file_id = session
         .find_file("source.rs")
         .expect("find source")
@@ -1137,7 +1139,7 @@ pub(crate) fn readers_see_old_generation_until_streamed_publication_commits() {
     let (generation, ()) = storage
         .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
-            let reader = storage.begin_read()?;
+            let reader = storage.begin_generation_read()?;
             assert_eq!(reader.repository_generation()?, 1);
             assert!(reader.find_file("old.rs")?.is_some());
             assert!(reader.find_file("new.rs")?.is_none());
@@ -1244,7 +1246,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
 
     assert_eq!(
         storage
-            .begin_read()
+            .begin_generation_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "cl100k_base")
             .expect("whole-file tokens"),
@@ -1252,7 +1254,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     );
     assert_eq!(
         storage
-            .begin_read()
+            .begin_generation_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
             .expect("mismatched tokenizer"),
@@ -1280,7 +1282,7 @@ pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
     ));
     storage.full_reconcile("config", files).expect("reconcile");
 
-    let session = storage.begin_read().expect("session");
+    let session = storage.begin_generation_read().expect("session");
     let first = session
         .list_glob_paths("src/target_*.rs", None, None, 2)
         .expect("first glob page");

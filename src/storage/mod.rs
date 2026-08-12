@@ -28,6 +28,7 @@ mod accounting;
 mod api;
 mod artifacts;
 mod diagnostics;
+mod generation_read;
 mod helpers;
 mod instrumentation;
 mod mapping;
@@ -49,7 +50,6 @@ mod read_syntax;
 mod runtime;
 mod schema;
 mod scoped_regex;
-mod session;
 mod snapshot;
 mod staging;
 mod writer;
@@ -74,7 +74,7 @@ pub use models::{
     MetaRecord, ReferenceInput, ReferenceRecord, Storage, StorageCounts, SymbolHit, SymbolInput,
     SymbolRecord,
 };
-pub use runtime::ReadSession;
+pub use runtime::GenerationReadTransaction;
 
 #[cfg(test)]
 mod tests;

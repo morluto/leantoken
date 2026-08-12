@@ -1,4 +1,4 @@
-impl ReadSession {
+impl GenerationReadTransaction {
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
         self.search_word_page(query, max_results, 0)
     }
@@ -580,7 +580,7 @@ fn unicode_literal_matcher(query: &str) -> Result<regex::Regex> {
 }
 use super::*;
 
-impl ReadSession {
+impl GenerationReadTransaction {
     pub(crate) fn exact_query_partition(
         &self,
         mut allows_path: impl FnMut(&str) -> bool,

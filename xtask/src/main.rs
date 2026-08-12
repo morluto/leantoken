@@ -15,6 +15,8 @@ const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
+const GIT: &str = "leantoken-git";
+const LAB: &str = "leantoken-lab";
 const PRODUCT_PARALLEL_LANES: usize = 2;
 const PARALLEL_NEXTTEST_JOBS: &str = "2";
 const PRODUCT_PHASE_NAMES: [&str; 3] = [
@@ -528,7 +530,7 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         .iter()
         .map(|package| (package.name.as_str(), package))
         .collect::<BTreeMap<_, _>>();
-    let expected = BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK, BENCHMARKS]);
+    let expected = BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK, BENCHMARKS, GIT, LAB]);
     let actual = packages.keys().copied().collect::<BTreeSet<_>>();
     if actual != expected {
         return Err(XtaskError::Architecture(format!(
@@ -569,7 +571,7 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         )));
     }
     for package in packages.values() {
-        if [SUPPORT, SUITE, XTASK].contains(&package.name.as_str())
+        if [SUPPORT, SUITE, XTASK, BENCHMARKS, GIT, LAB].contains(&package.name.as_str())
             && package.publish != Some(Vec::new())
         {
             return Err(XtaskError::Architecture(format!(
@@ -643,6 +645,17 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
                     "benchmarks must depend only on the product package".to_owned(),
                 ));
             }
+            GIT | LAB
+                if names
+                    .intersection(&BTreeSet::from([PRODUCT, SUPPORT, SUITE, XTASK]))
+                    .next()
+                    .is_some() =>
+            {
+                return Err(XtaskError::Architecture(format!(
+                    "{} must remain independent from the product and test packages",
+                    package.name
+                )));
+            }
             _ => {}
         }
     }
@@ -661,7 +674,7 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
     check_organizational_includes(root)?;
     check_service_snapshot_boundary(root)?;
     println!(
-        "test architecture: ok (workspace resolver 3, one root process target, directed private packages, service snapshot boundary)"
+        "test architecture: ok (workspace resolver 3, one root process target, directed private packages, service generation boundary)"
     );
     Ok(())
 }
@@ -684,10 +697,9 @@ fn check_service_snapshot_boundary(root: &Path) -> Result<(), XtaskError> {
         if source.ends_with("/tests.rs") {
             continue;
         }
-        if contents
-            .lines()
-            .any(|line| line.contains("ReadSession") || line.contains("begin_read("))
-        {
+        if contents.lines().any(|line| {
+            line.contains("GenerationReadTransaction") || line.contains("begin_generation_read(")
+        }) {
             leaked.insert(source);
         }
     }
@@ -696,7 +708,7 @@ fn check_service_snapshot_boundary(root: &Path) -> Result<(), XtaskError> {
             "service modules must use the storage-owned IndexSnapshot; raw snapshot reads leaked into {leaked:?}"
         )));
     }
-    println!("service snapshot boundary: ok (storage owns the raw read session)");
+    println!("service snapshot boundary: ok (storage owns the generation transaction)");
     Ok(())
 }
 

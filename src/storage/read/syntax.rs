@@ -1,6 +1,6 @@
-impl ReadSession {
+impl GenerationReadTransaction {
     /// Reconstruct one complete file from canonical, non-overlapping chunks in
-    /// this session's pinned repository generation.
+    /// this generation transaction's pinned repository generation.
     pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
         let mut statement = self.conn.prepare_cached(
             "SELECT content, start_byte, end_byte

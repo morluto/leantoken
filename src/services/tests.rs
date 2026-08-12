@@ -897,7 +897,10 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .find_file("lib.rs")
         .expect("find file")
         .expect("indexed file");
-    let session = services.storage.begin_read().expect("read session");
+    let session = services
+        .storage
+        .begin_generation_read()
+        .expect("read session");
     let crate::symbol_identity::SymbolResolution::Unique(large) =
         session.find_symbol(file.id, "large").expect("find symbol")
     else {
