@@ -339,7 +339,7 @@ async fn unchanged_refresh_does_not_publish_a_generation() {
     assert_eq!(response.repository_generation, before);
     assert_eq!(response.files_indexed, 0);
     assert_eq!(response.files_removed, 0);
-    assert_eq!(response.files_unchanged, 0);
+    assert_eq!(response.files_unchanged, 1);
     assert_eq!(response.files_skipped, 0);
     assert_eq!(
         response
