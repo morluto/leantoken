@@ -1,23 +1,17 @@
 use std::{
     ffi::{OsStr, OsString},
-    io::Write,
     sync::Arc,
-    time::Duration,
 };
 
 use clap::Parser;
 use leantoken::{
-    Result, cache,
+    Result,
     cli::{AppRequest, Cli, SearchProjectionArg},
-    doctor, episode, mcp,
-    model::{IndexConsistency, IndexState, IndexingMode, SearchOccurrenceOutput},
+    mcp,
+    model::{IndexConsistency, SearchOccurrenceOutput},
     services::{ServiceCallOptions, Services},
-    setup::{self, SetupOperation},
-    upgrade,
-    watcher::{RepositoryWatcher, WatcherAction, WatcherMessage, WatcherReconciliationScheduler},
 };
 use serde::Serialize;
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOptions {
@@ -26,43 +20,8 @@ fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOption
     })
 }
 
-mod savings;
-
-const WATCHER_QUEUE_CAPACITY: usize = 1;
-const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
-const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-const LEADERSHIP_POLL_INITIAL_DELAY: Duration = Duration::from_millis(500);
-const LEADERSHIP_POLL_MAX_DELAY: Duration = Duration::from_secs(8);
-
 fn mcp_index_worker_limit(configured: usize, explicitly_configured: bool) -> usize {
     if explicitly_configured { configured } else { 1 }
-}
-
-#[derive(Debug)]
-struct RetryBackoff {
-    initial: Duration,
-    maximum: Duration,
-    next: Duration,
-}
-
-impl RetryBackoff {
-    fn new(initial: Duration, maximum: Duration) -> Self {
-        Self {
-            initial,
-            maximum,
-            next: initial,
-        }
-    }
-
-    fn failure_delay(&mut self) -> Duration {
-        let delay = self.next;
-        self.next = self.next.saturating_mul(2).min(self.maximum);
-        delay
-    }
-
-    fn reset(&mut self) {
-        self.next = self.initial;
-    }
 }
 
 #[tokio::main]
@@ -71,9 +30,6 @@ async fn main() {
     let json_requested = cli_json_requested(&arguments);
     let cli = Cli::try_parse_from(arguments.clone())
         .unwrap_or_else(|error| exit_cli_error(error, json_requested));
-    if let Err(error) = cli.validate_option_scope(&arguments) {
-        exit_cli_error(error, json_requested);
-    }
     let json = cli.json;
     init_tracing(json);
     if let Err(error) = run(cli).await {
@@ -98,18 +54,11 @@ fn exit_cli_error(error: clap::Error, json_requested: bool) -> ! {
 
 #[path = "main/dispatch.rs"]
 mod dispatch;
-#[path = "main/index_runtime.rs"]
-mod index_runtime;
 #[path = "main/mcp_runtime.rs"]
 mod mcp_runtime;
 #[path = "main/output.rs"]
 mod output;
 
 use dispatch::*;
-use index_runtime::*;
 use mcp_runtime::*;
 use output::*;
-
-#[cfg(test)]
-#[path = "main/tests/mod.rs"]
-mod tests;

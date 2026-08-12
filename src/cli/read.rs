@@ -1,4 +1,5 @@
 use super::*;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LineRange {
@@ -71,10 +72,6 @@ impl FromStr for LineRange {
 pub struct ReadArgs {
     /// File path to read.
     pub path: String,
-
-    /// Consistency boundary for this retrieval.
-    #[command(flatten)]
-    pub index_consistency: RetrievalConsistencyArgs,
 
     /// Line range as START:END.
     #[arg(short, long, value_name = "START:END")]

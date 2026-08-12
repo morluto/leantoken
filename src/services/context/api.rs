@@ -244,11 +244,6 @@ impl Services {
                 );
             }
         }
-        self.record_token_savings(
-            accounted.operation,
-            accounted.baseline_source_tokens,
-            &response.meta,
-        );
         Ok(response)
     }
 
@@ -261,22 +256,19 @@ impl Services {
         let operation = context_accounting_operation(&parsed.request);
         let this = self.clone();
         let result = self
-            .blocking_executor
+            .process_budget
             .run(cancellation, move |cancellation| {
-                let (evaluation, baseline_source_tokens) =
-                    this.context_sync(super::execution::ContextSyncRequest {
-                        parsed,
-                        retrieval: super::execution::ContextRetrieval {
-                            options,
-                            cancellation,
-                            diagnostics: CandidateDiagnostics::Omit,
-                            signals: ContextSignals::PRODUCTION,
-                        },
-                    })?;
+                let evaluation = this.context_sync(super::execution::ContextSyncRequest {
+                    parsed,
+                    retrieval: super::execution::ContextRetrieval {
+                        options,
+                        cancellation,
+                        diagnostics: CandidateDiagnostics::Omit,
+                        signals: ContextSignals::PRODUCTION,
+                    },
+                })?;
                 Ok(AccountedContextResponse {
                     response: evaluation.response,
-                    baseline_source_tokens,
-                    operation,
                 })
             })
             .await;
@@ -294,7 +286,7 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.process_budget
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,
@@ -305,7 +297,6 @@ impl Services {
                         signals: ContextSignals::PRODUCTION,
                     },
                 })
-                .map(|(evaluation, _)| evaluation)
             })
             .await
     }
@@ -323,7 +314,7 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.process_budget
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,
@@ -334,7 +325,6 @@ impl Services {
                         signals: ContextSignals::PRODUCTION,
                     },
                 })
-                .map(|(evaluation, _)| evaluation)
             })
             .await
     }
@@ -354,7 +344,7 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.process_budget
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,
@@ -365,7 +355,6 @@ impl Services {
                         signals: ContextSignals::evaluation(policy),
                     },
                 })
-                .map(|(evaluation, _)| evaluation)
             })
             .await
     }

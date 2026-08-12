@@ -23,23 +23,6 @@ pub struct FileRecord {
     pub generation: u64,
 }
 
-/// Lean file projection for fuzzy find and other path-only scans.
-#[derive(Debug, Clone)]
-pub(crate) struct FilePathRecord {
-    pub id: i64,
-    pub path: String,
-    pub language: Option<String>,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PathRecord {
-    pub path: String,
-    pub is_directory: bool,
-    pub language: Option<String>,
-    pub size_bytes: Option<u64>,
-}
-
 #[derive(Debug, Clone)]
 pub struct ChunkInput {
     pub content: String,
@@ -142,7 +125,6 @@ pub(crate) struct ImportSeed {
     pub id: i64,
     pub file_id: i64,
     pub source_path: String,
-    pub raw_target: String,
 }
 
 #[derive(Debug)]
@@ -218,72 +200,6 @@ pub struct StorageCounts {
     pub languages: Vec<(String, usize)>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct ParserCoverageRows {
-    pub languages: Vec<ParserLanguageCoverageRow>,
-    pub unrecognized_extensions: Vec<UnrecognizedExtensionCoverageRow>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ParserLanguageCoverageRow {
-    pub language: String,
-    pub structurally_complete: bool,
-    pub files: usize,
-    pub source_bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct UnrecognizedExtensionCoverageRow {
-    pub extension: String,
-    pub files: usize,
-    pub source_bytes: u64,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ReadOnlyStatusSnapshot {
-    pub generation: u64,
-    pub counts: StorageCounts,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct TokenSavingsRecord {
-    pub tracked_requests: u64,
-    pub response_tracked_requests: u64,
-    pub response_baseline_requests: u64,
-    pub baseline_source_tokens: u64,
-    pub response_baseline_source_tokens: u64,
-    pub emitted_source_tokens: u64,
-    pub estimated_source_tokens_saved: u64,
-    pub response_source_tokens: u64,
-    pub path_and_metadata_tokens: u64,
-    pub protocol_tokens: u64,
-    pub total_response_tokens: u64,
-    pub receipt_suppressed_exact: u64,
-    pub receipt_suppressed_overlap: u64,
-    pub expected_hash_not_modified_responses: u64,
-    pub expected_hash_suppressed_source_tokens: u64,
-    pub useful_requests: u64,
-    pub incomplete_requests: u64,
-    pub unsupported_requests: u64,
-    pub hash_suppressed_requests: u64,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct ServiceFailureRecord {
-    pub operation: String,
-    pub error_category: String,
-    pub failed_requests: u64,
-}
-
-pub(crate) struct TokenSavingsObservation<'a> {
-    pub operation: TokenAccountingOperation,
-    pub baseline_source_tokens: Option<usize>,
-    pub meta: &'a ResponseMeta,
-    pub classification: TokenSavingsRequestClass,
-    pub expected_hash_not_modified: bool,
-    pub expected_hash_suppressed_source_tokens: usize,
-}
-
 /// SQLite-backed repository index with one serialized writer and pooled readers.
 ///
 /// Clones share the same writer mutex and established read pool. Each
@@ -305,14 +221,6 @@ pub(crate) struct StorageDiagnostics {
     pub(crate) active_snapshots: AtomicUsize,
     pub(crate) peak_active_snapshots: AtomicUsize,
     pub(crate) reader_checkout_wait_micros: Mutex<Vec<u64>>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct StorageDiagnosticsSnapshot {
-    pub active_snapshots: usize,
-    pub peak_active_snapshots: usize,
-    pub reader_checkout_wait_micros: Vec<u64>,
 }
 
 /// Restricted writer for one uncommitted repository generation.

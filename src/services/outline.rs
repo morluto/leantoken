@@ -4,49 +4,17 @@ use std::collections::BTreeMap;
 
 use tokio_util::sync::CancellationToken;
 
+use super::cursor::request_digest;
 use super::execution_options::RetrievalExecution;
-use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, is_lower_hex,
-    validate_input, validate_optional_input,
+    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
+    validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
 use crate::repository::{normalize_relative, validate_relative};
 use crate::text::hash;
 use crate::{Error, Result};
-
-fn outline_request_class(response: &OutlineResponse) -> TokenSavingsRequestClass {
-    let empty_latex_outline = response.total_symbols == 0
-        && response
-            .files
-            .iter()
-            .any(|file| file.language.as_deref() == Some("latex"));
-    if !response.parse_complete || empty_latex_outline {
-        TokenSavingsRequestClass::Unsupported
-    } else if !response.result_complete {
-        TokenSavingsRequestClass::Incomplete
-    } else {
-        TokenSavingsRequestClass::Useful
-    }
-}
-
-fn outline_signatures_request_class(
-    response: &OutlineSignaturesResponse,
-) -> TokenSavingsRequestClass {
-    let empty_latex_outline = response.total_symbols == 0
-        && response
-            .files
-            .iter()
-            .any(|file| file.language.as_deref() == Some("latex"));
-    if !response.parse_complete || empty_latex_outline {
-        TokenSavingsRequestClass::Unsupported
-    } else if !response.result_complete {
-        TokenSavingsRequestClass::Incomplete
-    } else {
-        TokenSavingsRequestClass::Useful
-    }
-}
 
 fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     Symbol {
@@ -61,15 +29,14 @@ fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     }
 }
 
-struct OutlineCursor {
-    generation: u64,
+#[derive(serde::Serialize, serde::Deserialize)]
+struct OutlinePosition {
     offset: usize,
-    query_hash: String,
 }
 
 struct ParsedOutlineRequest {
     request: OutlineRequest,
-    cursor: Option<OutlineCursor>,
+    cursor: Option<String>,
     limit: usize,
     token_limit: usize,
 }
@@ -93,52 +60,21 @@ impl OutlineOutput {
     }
 }
 
-fn decode_outline_cursor(cursor: &str) -> Result<OutlineCursor> {
-    let fields = cursor.split(':').collect::<Vec<_>>();
-    let [generation, kind, offset, query_hash] = fields.as_slice() else {
-        return Err(Error::StaleCursor);
-    };
-    if *kind != "outline" || query_hash.len() != 16 || !query_hash.bytes().all(is_lower_hex) {
-        return Err(Error::StaleCursor);
-    }
-    Ok(OutlineCursor {
-        generation: generation.parse().map_err(|_| Error::StaleCursor)?,
-        offset: offset.parse().map_err(|_| Error::StaleCursor)?,
-        query_hash: (*query_hash).into(),
-    })
-}
-
-fn outline_query_hash(request: &OutlineRequest, projection: Option<&str>) -> String {
-    fn update_field(hasher: &mut blake3::Hasher, value: &str) {
-        hasher.update(&(value.len() as u64).to_le_bytes());
-        hasher.update(value.as_bytes());
-    }
-
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&(request.paths.len() as u64).to_le_bytes());
-    for path in &request.paths {
-        update_field(&mut hasher, path);
-    }
-    for value in [&request.symbol_name, &request.symbol_kind] {
-        match value {
-            Some(value) => {
-                hasher.update(&[1]);
-                update_field(&mut hasher, value);
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-    }
-    if let Some(projection) = projection {
-        hasher.update(&[2]);
-        update_field(&mut hasher, projection);
-    }
-    hasher.finalize().to_hex()[..16].to_string()
+fn outline_request_digest(request: &OutlineRequest, projection: Option<&str>) -> Result<String> {
+    request_digest(
+        "outline",
+        &(
+            &request.paths,
+            &request.symbol_name,
+            &request.symbol_kind,
+            projection,
+        ),
+    )
 }
 
 fn outline_cursor_offset(
-    cursor: Option<&OutlineCursor>,
+    services: &Services,
+    cursor: Option<&str>,
     generation: u64,
     request: &OutlineRequest,
     projection: Option<&str>,
@@ -146,23 +82,22 @@ fn outline_cursor_offset(
     let Some(cursor) = cursor else {
         return Ok(0);
     };
-    if cursor.generation != generation
-        || cursor.query_hash != outline_query_hash(request, projection)
-    {
-        return Err(Error::StaleCursor);
-    }
-    Ok(cursor.offset)
+    let digest = outline_request_digest(request, projection)?;
+    let position: OutlinePosition = services.cursor_codec.open(cursor, generation, &digest)?;
+    Ok(position.offset)
 }
 
 fn make_outline_cursor(
+    services: &Services,
     generation: u64,
     offset: usize,
     request: &OutlineRequest,
     projection: Option<&str>,
-) -> String {
-    format!(
-        "{generation}:outline:{offset}:{}",
-        outline_query_hash(request, projection)
+) -> Result<String> {
+    services.cursor_codec.seal(
+        generation,
+        &outline_request_digest(request, projection)?,
+        &OutlinePosition { offset },
     )
 }
 
@@ -194,11 +129,7 @@ fn parse_outline_input(
         MAX_PATTERN_BYTES,
     )?;
     validate_optional_input(request.cursor.as_deref(), "cursor", 256)?;
-    let cursor = request
-        .cursor
-        .take()
-        .map(|cursor| decode_outline_cursor(&cursor))
-        .transpose()?;
+    let cursor = request.cursor.take();
     request.paths = request
         .paths
         .iter()
@@ -284,7 +215,6 @@ impl Services {
             options,
             cancellation,
         } = execution;
-        let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
         if let Some(consistency) = consistency {
@@ -299,7 +229,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
-            .blocking_executor
+            .process_budget
             .run(cancellation, move |cancellation| {
                 this.outline_sync(request, options, OutlineOutput::Full, cancellation)
             })
@@ -369,7 +299,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
-            .blocking_executor
+            .process_budget
             .run(cancellation, move |cancellation| {
                 let response = this.outline_sync(
                     request,
@@ -414,12 +344,6 @@ impl Services {
                     meta: response.meta,
                 };
                 this.finalize_bounded_response(&mut compact, options)?;
-                this.record_token_savings_classified(
-                    TokenAccountingOperation::Outline,
-                    None,
-                    &compact.meta,
-                    outline_signatures_request_class(&compact),
-                );
                 Ok(compact)
             })
             .await;
@@ -440,11 +364,16 @@ impl Services {
             limit,
             token_limit,
         } = parsed;
-        let (mut response, baseline_source_tokens) = self.consistent(|session| {
+        let mut response = self.consistent(|session| {
             let generation = session.generation();
             let cursor_projection = output.cursor_projection();
-            let offset =
-                outline_cursor_offset(cursor.as_ref(), generation, &request, cursor_projection)?;
+            let offset = outline_cursor_offset(
+                self,
+                cursor.as_deref(),
+                generation,
+                &request,
+                cursor_projection,
+            )?;
             let mut total_symbols = 0usize;
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
@@ -600,102 +529,37 @@ impl Services {
 
             let truncated_by_max_results = remaining == 0 && consumed < total_entries;
             let next_cursor = truncated_by_max_results
-                .then(|| make_outline_cursor(generation, consumed, &request, cursor_projection));
+                .then(|| {
+                    make_outline_cursor(self, generation, consumed, &request, cursor_projection)
+                })
+                .transpose()?;
             let result_complete = offset == 0
                 && returned_symbols == total_symbols
                 && returned_imports == total_imports;
-            let paths = files
-                .iter()
-                .map(|file| file.path.clone())
-                .collect::<Vec<_>>();
-            let baseline_source_tokens =
-                session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
-            Ok((
-                OutlineResponse {
-                    files,
-                    path_results,
-                    parse_complete,
-                    result_complete: result_complete && all_paths_indexed,
-                    total_symbols,
-                    returned_symbols,
-                    total_imports,
-                    returned_imports,
-                    truncated_by_max_results,
-                    truncated_by_max_tokens,
-                    symbol_counts_by_kind,
-                    meta: self.meta(generation, emitted_tokens, next_cursor),
-                },
-                baseline_source_tokens,
-            ))
+            Ok(OutlineResponse {
+                files,
+                path_results,
+                parse_complete,
+                result_complete: result_complete && all_paths_indexed,
+                total_symbols,
+                returned_symbols,
+                total_imports,
+                returned_imports,
+                truncated_by_max_results,
+                truncated_by_max_tokens,
+                symbol_counts_by_kind,
+                meta: self.meta(generation, emitted_tokens, next_cursor),
+            })
         })?;
-        let returned_entries = response
-            .returned_symbols
-            .saturating_add(response.returned_imports);
-        if !self.response_fits_with_receipt_reserve(&response, returned_entries, options)? {
-            return Err(self.response_budget_error_with_receipt_reserve(
+        if !self.response_fits(&response, options)? {
+            return Err(self.response_budget_error(
                 &response,
-                returned_entries,
                 options
                     .max_response_tokens()
                     .expect("fitting only runs with a response limit"),
                 options,
             )?);
         }
-        let receipt_candidates = response
-            .files
-            .iter()
-            .flat_map(|file| {
-                let symbol_evidence = file.symbols.iter().map(|symbol| {
-                    let content = symbol.signature.as_deref().unwrap_or(&symbol.name);
-                    ReceiptEvidence::new(
-                        file.path.clone(),
-                        symbol.start_line,
-                        symbol.end_line,
-                        hash(content),
-                        Some(content),
-                    )
-                });
-                let import_evidence = file.imports.iter().map(|import| {
-                    ReceiptEvidence::new(
-                        file.path.clone(),
-                        import.line,
-                        import.line,
-                        hash(&import.raw_target),
-                        Some(&import.raw_target),
-                    )
-                });
-                symbol_evidence.chain(import_evidence)
-            })
-            .collect::<Vec<_>>();
-        let receipt = self.evaluate_receipt(
-            request.receipt_id.as_deref(),
-            response.meta.repository_generation,
-            &receipt_candidates,
-        )?;
-        let mut decision_index = 0usize;
-        for file in &mut response.files {
-            file.symbols.retain(|_| {
-                let keep = matches!(
-                    receipt.decisions[decision_index],
-                    ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
-                );
-                decision_index += 1;
-                keep
-            });
-            file.imports.retain(|_| {
-                let keep = matches!(
-                    receipt.decisions[decision_index],
-                    ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
-                );
-                decision_index += 1;
-                keep
-            });
-        }
-        response.returned_symbols = response.files.iter().map(|file| file.symbols.len()).sum();
-        response.returned_imports = response.files.iter().map(|file| file.imports.len()).sum();
-        response.result_complete = response.result_complete
-            && response.returned_symbols == response.total_symbols
-            && response.returned_imports == response.total_imports;
         let symbol_tokens = response
             .files
             .iter()
@@ -720,16 +584,7 @@ impl Services {
             })
             .sum::<usize>();
         response.meta.source_tokens = symbol_tokens.saturating_add(import_tokens);
-        receipt.apply_meta(&mut response.meta);
         self.finalize_bounded_response(&mut response, options)?;
-        if output == OutlineOutput::Full {
-            self.record_token_savings_classified(
-                TokenAccountingOperation::Outline,
-                baseline_source_tokens,
-                &response.meta,
-                outline_request_class(&response),
-            );
-        }
         Ok(response)
     }
 }
@@ -749,27 +604,37 @@ mod tests {
             receipt_id: None,
             cursor: None,
         };
-        let full = make_outline_cursor(7, 3, &request, None);
-        let signatures = make_outline_cursor(7, 3, &request, Some("signatures"));
-        let full_cursor = decode_outline_cursor(&full).expect("decode full cursor");
-        let signatures_cursor =
-            decode_outline_cursor(&signatures).expect("decode signature cursor");
+        let codec = super::super::cursor::CursorCodec::new("repository".into());
+        let full_digest = outline_request_digest(&request, None).expect("full digest");
+        let signatures_digest =
+            outline_request_digest(&request, Some("signatures")).expect("signature digest");
+        let full = codec
+            .seal(7, &full_digest, &OutlinePosition { offset: 3 })
+            .expect("full cursor");
+        let signatures = codec
+            .seal(7, &signatures_digest, &OutlinePosition { offset: 3 })
+            .expect("signature cursor");
         assert_ne!(full, signatures);
         assert_eq!(
-            outline_cursor_offset(Some(&full_cursor), 7, &request, None).expect("full cursor"),
+            codec
+                .open::<OutlinePosition>(&full, 7, &full_digest)
+                .expect("full cursor")
+                .offset,
             3
         );
         assert_eq!(
-            outline_cursor_offset(Some(&signatures_cursor), 7, &request, Some("signatures"))
-                .expect("signature cursor"),
+            codec
+                .open::<OutlinePosition>(&signatures, 7, &signatures_digest)
+                .expect("signature cursor")
+                .offset,
             3
         );
         assert!(matches!(
-            outline_cursor_offset(Some(&full_cursor), 7, &request, Some("signatures")),
+            codec.open::<OutlinePosition>(&full, 7, &signatures_digest),
             Err(Error::StaleCursor)
         ));
         assert!(matches!(
-            outline_cursor_offset(Some(&signatures_cursor), 7, &request, None),
+            codec.open::<OutlinePosition>(&signatures, 7, &full_digest),
             Err(Error::StaleCursor)
         ));
     }

@@ -14,6 +14,7 @@ pub(super) struct CandidateSearchHit {
 pub(super) struct SearchResponseShape<'a> {
     pub(super) all: &'a [CandidateSearchHit],
     pub(super) request: &'a SearchInput,
+    pub(super) output_shape: SearchOutputShape,
     pub(super) generation: u64,
     pub(super) total_candidates: usize,
     pub(super) offset: usize,

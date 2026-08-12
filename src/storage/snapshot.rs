@@ -1,12 +1,10 @@
 //! Application-facing reads from one pinned index snapshot.
 
 use super::{
-    ChunkHit, ChunkRecord, FilePathRecord, FileRecord, ImportRecord, ImportSymbolTarget,
-    MetaRecord, ParserCoverageRows, PathRecord, ReadSession, ReferenceHit, ServiceFailureRecord,
-    Storage, StorageCounts, SymbolHit, SymbolRecord, TokenSavingsRecord,
+    ChunkHit, ChunkRecord, FileRecord, ImportRecord, ImportSymbolTarget, ReadSession, ReferenceHit,
+    Storage, SymbolHit, SymbolRecord,
 };
 use crate::Result;
-use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
 
 pub(crate) struct IndexSnapshot {
     session: ReadSession,
@@ -27,40 +25,6 @@ impl IndexSnapshot {
         self.generation
     }
 
-    pub(crate) fn meta(&self) -> Result<MetaRecord> {
-        self.session.meta()
-    }
-
-    pub(crate) fn counts(&self) -> Result<StorageCounts> {
-        self.session.counts()
-    }
-
-    pub(crate) fn parser_coverage_rows(
-        &self,
-        classify_extension: impl FnMut(&str) -> String,
-    ) -> Result<ParserCoverageRows> {
-        self.session.parser_coverage_rows(classify_extension)
-    }
-
-    pub(crate) fn service_failures(&self, tokenizer: &str) -> Result<Vec<ServiceFailureRecord>> {
-        self.session.service_failures(tokenizer)
-    }
-
-    pub(crate) fn token_savings(
-        &self,
-        tokenizer: &str,
-    ) -> Result<std::collections::HashMap<String, TokenSavingsRecord>> {
-        self.session.token_savings(tokenizer)
-    }
-
-    pub(crate) fn whole_file_source_tokens(
-        &self,
-        paths: &[String],
-        tokenizer: &str,
-    ) -> Result<Option<usize>> {
-        self.session.whole_file_source_tokens(paths, tokenizer)
-    }
-
     pub(crate) fn file_count(&self) -> Result<usize> {
         self.session.file_count()
     }
@@ -71,36 +35,6 @@ impl IndexSnapshot {
         cursor: Option<i64>,
     ) -> Result<Vec<FileRecord>> {
         self.session.list_files(max_results, cursor)
-    }
-
-    pub(crate) fn list_file_paths(
-        &self,
-        max_results: usize,
-        cursor: Option<i64>,
-    ) -> Result<Vec<FilePathRecord>> {
-        self.session.list_file_paths(max_results, cursor)
-    }
-
-    pub(crate) fn list_glob_paths(
-        &self,
-        primary: &str,
-        alternate: Option<&str>,
-        after: Option<&str>,
-        max_results: usize,
-    ) -> Result<Vec<PathRecord>> {
-        self.session
-            .list_glob_paths(primary, alternate, after, max_results)
-    }
-
-    pub(crate) fn list_tree_paths(
-        &self,
-        root: &str,
-        max_depth: usize,
-        after: Option<&str>,
-        max_results: usize,
-    ) -> Result<Vec<PathRecord>> {
-        self.session
-            .list_tree_paths(root, max_depth, after, max_results)
     }
 
     pub(crate) fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
@@ -127,6 +61,10 @@ impl IndexSnapshot {
         max_results: usize,
     ) -> Result<Vec<ChunkRecord>> {
         self.session.get_chunks_for_file(file_id, max_results)
+    }
+
+    pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
+        self.session.file_content(file_id, expected_size)
     }
 
     pub(crate) fn get_chunks_overlapping_batch(
@@ -348,28 +286,5 @@ impl IndexSnapshot {
         max_results: usize,
     ) -> Result<usize> {
         self.session.regex_candidate_count_up_to(query, max_results)
-    }
-
-    pub(crate) fn receipt_structural_hash_matches(
-        &self,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-        content_hash: &str,
-    ) -> Result<Option<bool>> {
-        self.session
-            .receipt_structural_hash_matches(file_id, start_line, end_line, content_hash)
-    }
-
-    pub(crate) fn load_query_receipt(&self, requested_id: &str) -> Result<StoredQueryReceipt> {
-        self.session.load_query_receipt(requested_id)
-    }
-
-    pub(crate) fn exact_query_partition(
-        &self,
-        allows_path: impl FnMut(&str) -> bool,
-        check: impl FnMut() -> Result<()>,
-    ) -> Result<QueryPartition> {
-        self.session.exact_query_partition(allows_path, check)
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 
 impl Indexer {
-    /// Remove metadata-only watcher events before parse and publication.
+    /// Remove metadata-only changes before parse and publication.
     pub(super) fn remove_content_stable_candidates(
         &self,
         existing: &HashMap<String, crate::storage::FileRecord>,

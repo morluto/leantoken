@@ -85,15 +85,13 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
     max_response_tokens: Option<usize>,
     protocol: Option<&ProtocolVersion>,
 ) -> Result<CallToolResult, ErrorData> {
-    let mut value = serde_json::to_value(value)
-        .map(decorate_receipt_result)
-        .map_err(|error| {
-            tracing::error!(%error, "MCP response serialization failed");
-            ErrorData::internal_error(
-                "repository retrieval failed",
-                mcp_error_data("response_serialization"),
-            )
-        })?;
+    let mut value = serde_json::to_value(value).map_err(|error| {
+        tracing::error!(%error, "MCP response serialization failed");
+        ErrorData::internal_error(
+            "repository retrieval failed",
+            mcp_error_data("response_serialization"),
+        )
+    })?;
     let shape = mode.response_shape(protocol);
     recalculate_mcp_accounting(&mut value, shape).map_err(|error| {
         tracing::error!(%error, "MCP response accounting failed");
@@ -142,29 +140,6 @@ pub(in crate::mcp) fn tool_result_with_limit<T: Serialize>(
         ));
     }
     Ok(crate::tokens::build_mcp_tool_result(value, shape.mode))
-}
-
-fn decorate_receipt_result(mut value: serde_json::Value) -> serde_json::Value {
-    let receipt_id = value
-        .pointer("/meta/receipt_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned);
-    let Some(receipt_id) = receipt_id else {
-        return value;
-    };
-    let uri = resources::receipt_uri(&receipt_id);
-    let Some(object) = value.as_object_mut() else {
-        return value;
-    };
-    object.insert(
-        "receipt_resource".into(),
-        serde_json::json!({
-            "kind": "retrieval_receipt",
-            "id": receipt_id,
-            "uri": uri,
-        }),
-    );
-    value
 }
 
 fn recalculate_mcp_accounting(

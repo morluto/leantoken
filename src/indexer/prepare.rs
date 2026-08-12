@@ -172,13 +172,6 @@ pub(super) fn prepare_file_inner(
         &mut detail.parse
     });
 
-    let source_tokens_started = diagnostics.is_some().then(Instant::now);
-    let source_token_count = tokenizer.count(&prepared.content);
-    record_preparation_duration(
-        diagnostics.as_deref_mut(),
-        source_tokens_started,
-        |detail| &mut detail.source_token_count,
-    );
     let chunk_tokens_started = diagnostics.is_some().then(Instant::now);
     let chunks = prepared
         .chunks
@@ -251,7 +244,6 @@ pub(super) fn prepare_file_inner(
             references,
             imports,
         }),
-        source_token_count,
         warning,
     ))
 }

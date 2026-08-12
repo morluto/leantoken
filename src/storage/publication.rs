@@ -215,7 +215,6 @@ impl Storage {
 
             if mode.is_rebuild() {
                 tx.execute("DELETE FROM files", [])?;
-                tx.execute("DELETE FROM path_entries", [])?;
             }
 
             let next_generation = current_generation
@@ -238,9 +237,6 @@ impl Storage {
                 || !writer.deletions.is_empty()
                 || writer.projection_refreshes > 0
                 || current_config != config_hash;
-            if !mode.is_rebuild() && !writer.deletions.is_empty() {
-                Self::remove_orphan_path_entries(&tx)?;
-            }
             drop(writer);
 
             if changed && bulk_fts {
@@ -325,15 +321,9 @@ impl Storage {
         })()
     }
 
-    pub(crate) fn insert_file(
-        tx: &Transaction,
-        file: &IndexedFile,
-        generation: i64,
-        source_tokens: Option<(&str, usize)>,
-    ) -> Result<()> {
-        let (source_tokenizer, source_token_count) = source_tokens.unwrap_or(("", 0));
+    pub(crate) fn insert_file(tx: &Transaction, file: &IndexedFile, generation: i64) -> Result<()> {
         tx.prepare_cached(
-            "INSERT INTO files(path, language, structurally_complete, size_bytes, modified_ns, content_hash, generation, source_token_count, source_tokenizer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO files(path, language, structurally_complete, size_bytes, modified_ns, content_hash, generation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?
         .execute(params![
                 &file.path,
@@ -343,11 +333,8 @@ impl Storage {
                 file.modified_ns.map(u128_to_i64).transpose()?,
                 &file.content_hash,
                 generation,
-                usize_to_i64(source_token_count)?,
-                source_tokenizer,
             ])?;
         let file_id = tx.last_insert_rowid();
-        Self::insert_path_projection(tx, &file.path, file_id)?;
 
         let mut insert_chunk = tx.prepare_cached(
             "INSERT INTO chunks(file_id, content, start_line, end_line, start_byte, end_byte, token_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -424,37 +411,6 @@ impl Storage {
             }
         }
 
-        Ok(())
-    }
-
-    pub(crate) fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
-        let parts = path.split('/').collect::<Vec<_>>();
-        let mut insert_directory = tx.prepare_cached(
-            "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
-        )?;
-        for index in 1..parts.len() {
-            let directory = parts[..index].join("/");
-            insert_directory.execute(params![directory, usize_to_i64(index)?])?;
-        }
-        drop(insert_directory);
-        tx.prepare_cached(
-            "INSERT OR REPLACE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 1, ?3)",
-        )?
-        .execute(params![path, usize_to_i64(parts.len())?, file_id])?;
-        Ok(())
-    }
-
-    pub(crate) fn remove_orphan_path_entries(tx: &Transaction) -> Result<()> {
-        tx.execute(
-            "DELETE FROM path_entries
-             WHERE kind = 0
-               AND NOT EXISTS (
-                   SELECT 1 FROM files
-                   WHERE substr(files.path, 1, length(path_entries.path) + 1)
-                         = path_entries.path || '/'
-               )",
-            [],
-        )?;
         Ok(())
     }
 }

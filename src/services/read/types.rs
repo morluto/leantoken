@@ -15,19 +15,12 @@ pub(in crate::services) enum NewReadTarget {
 #[derive(Debug, Clone)]
 pub(super) enum ReadTargetInput {
     New(NewReadTarget),
-    Continuation(ReadCursor),
+    Continuation(String),
 }
 
 #[derive(Debug, Clone)]
 pub(super) enum ReadMode {
     Direct(ReadTargetInput),
-    Delta(NewReadTarget),
-}
-
-impl ReadMode {
-    pub(super) const fn is_delta(&self) -> bool {
-        matches!(self, Self::Delta(_))
-    }
 }
 
 pub(super) struct ReadInput {
@@ -35,7 +28,6 @@ pub(super) struct ReadInput {
     pub(super) mode: ReadMode,
     pub(super) max_tokens: Option<usize>,
     pub(super) expected_hash: Option<String>,
-    pub(super) receipt_id: Option<String>,
     pub(super) policy: ReadPolicy,
 }
 
@@ -107,39 +99,12 @@ pub(super) struct ResolvedReadTarget {
     pub(super) target_end_line: Option<usize>,
     pub(super) page_start_line: usize,
     pub(super) page_start_byte: usize,
-    pub(super) expected_full_hash: Option<String>,
-    pub(super) expected_prefix_hash: Option<String>,
-    pub(super) expected_file_size: Option<usize>,
-    pub(super) expected_modified_ns: Option<u128>,
-    pub(super) policy: ReadPolicy,
 }
 
 #[derive(Debug)]
-pub(super) struct LiveReadRange {
-    pub(super) content: String,
-    pub(super) page_start_line: usize,
-    pub(super) target_bytes: usize,
-}
-
-pub(super) struct LiveFileSnapshot {
-    /// `None` for bounded reads that stop before EOF; `Some` for full reads.
-    pub(super) content_hash: Option<String>,
-    pub(super) end_line: usize,
-    pub(super) bytes_read: usize,
-    pub(super) file_size: usize,
-    pub(super) modified_ns: Option<u128>,
-}
-
-pub(super) struct LiveReadObservation {
-    pub(super) snapshot: LiveFileSnapshot,
-    pub(super) range: LiveReadRange,
-}
-
 pub(super) struct MaterializedRead {
     pub(super) response: ReadResponse,
-    pub(super) baseline_source_tokens: usize,
     pub(super) current_content: String,
-    pub(super) current_tokens: usize,
 }
 
 pub(super) struct ReadBudgetEstimate {
@@ -148,23 +113,13 @@ pub(super) struct ReadBudgetEstimate {
     pub(super) page_start_byte: usize,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct ReadCursor {
-    pub(super) generation: u64,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(super) struct ReadPosition {
     pub(super) target_start_line: usize,
     /// The requested target endpoint. `None` preserves an open-ended read even
     /// when a bounded page stopped before EOF.
     pub(super) target_end_line: Option<usize>,
     pub(super) next_start_line: usize,
     pub(super) next_byte: usize,
-    /// Full-file hash for `Full` policy cursors; `None` for `Bounded` cursors.
-    pub(super) full_hash: Option<String>,
-    /// Hash of the requested target prefix through `next_byte` for bounded
-    /// cursors. Size and mtime alone can miss same-size, same-timestamp edits.
-    pub(super) prefix_hash: Option<String>,
-    pub(super) policy: ReadPolicy,
-    pub(super) file_size: usize,
-    pub(super) modified_ns: Option<u128>,
-    pub(super) path_hash: String,
 }
 use super::*;

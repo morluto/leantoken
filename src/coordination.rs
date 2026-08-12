@@ -14,12 +14,10 @@ const LOCK_RETRY_DELAY: Duration = Duration::from_millis(25);
 pub(crate) const DEFAULT_INDEX_DATABASE_NAME: &str = "index.sqlite";
 pub(crate) const LEASE_LOCK_SUFFIX: &str = ".lease.lock";
 pub(crate) const INITIALIZATION_LOCK_SUFFIX: &str = ".init.lock";
-pub(crate) const LEADERSHIP_LOCK_SUFFIX: &str = ".leader.lock";
 pub(crate) const OPERATION_LOCK_SUFFIX: &str = ".index.lock";
-pub(crate) const COORDINATION_LOCK_SUFFIXES: [&str; 4] = [
+pub(crate) const COORDINATION_LOCK_SUFFIXES: [&str; 3] = [
     LEASE_LOCK_SUFFIX,
     INITIALIZATION_LOCK_SUFFIX,
-    LEADERSHIP_LOCK_SUFFIX,
     OPERATION_LOCK_SUFFIX,
 ];
 
@@ -60,7 +58,6 @@ pub(crate) fn is_recognized_stale_coordination_sidecar(candidate: &Path) -> bool
 pub struct IndexCoordination {
     lease_path: PathBuf,
     initialization_path: PathBuf,
-    leadership_path: PathBuf,
     operation_path: PathBuf,
 }
 
@@ -74,7 +71,6 @@ impl IndexCoordination {
                 database_path,
                 INITIALIZATION_LOCK_SUFFIX,
             ),
-            leadership_path: coordination_sidecar_path(database_path, LEADERSHIP_LOCK_SUFFIX),
             operation_path: coordination_sidecar_path(database_path, OPERATION_LOCK_SUFFIX),
         }
     }
@@ -95,16 +91,6 @@ impl IndexCoordination {
         }
     }
 
-    /// Try to obtain exclusive ownership for one managed-cache deletion.
-    pub(crate) fn try_acquire_prune_lease(&self) -> Result<Option<CachePruneLease>> {
-        let file = open_lock_file(&self.lease_path)?;
-        if try_lock_file(&file)? {
-            Ok(Some(CachePruneLease { _file: file }))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Wait for exclusive cache initialization ownership while honoring cancellation.
     pub fn acquire_initialization(
         &self,
@@ -114,35 +100,9 @@ impl IndexCoordination {
             .map(|file| CacheInitialization { _file: file })
     }
 
-    /// Attempt to become the single automatic indexer and watcher.
-    pub fn try_acquire_leadership(&self) -> Result<Option<IndexLeadership>> {
-        let file = open_lock_file(&self.leadership_path)?;
-        if try_lock_file(&file)? {
-            Ok(Some(IndexLeadership { _file: file }))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Wait for exclusive reconciliation ownership while honoring cancellation.
     pub fn acquire_operation(&self, cancellation: &CancellationToken) -> Result<IndexOperation> {
         acquire(&self.operation_path, cancellation).map(|file| IndexOperation { file })
-    }
-
-    /// Try to reserve reconciliation ownership without waiting.
-    pub(crate) fn try_acquire_operation(&self) -> Result<Option<IndexOperation>> {
-        let file = open_lock_file(&self.operation_path)?;
-        if try_lock_file(&file)? {
-            Ok(Some(IndexOperation { file }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Return whether another handle or process currently owns a reconciliation.
-    pub fn is_reconciling(&self) -> Result<bool> {
-        let file = open_lock_file(&self.operation_path)?;
-        try_lock_file(&file).map(|acquired| !acquired)
     }
 }
 
@@ -156,18 +116,6 @@ pub struct CacheInitialization {
 #[derive(Debug, Clone)]
 pub struct CacheLease {
     _file: Arc<File>,
-}
-
-/// Exclusive proof that no lease-aware process is using a cache.
-#[derive(Debug)]
-pub(crate) struct CachePruneLease {
-    _file: File,
-}
-
-/// Lifetime proof that this process owns automatic indexing for one cache.
-#[derive(Debug)]
-pub struct IndexLeadership {
-    _file: File,
 }
 
 /// Lifetime proof that one reconciliation is serialized across processes.
@@ -276,80 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn leadership_is_exclusive_and_released_with_the_guard() {
-        let directory = tempfile::tempdir().expect("directory");
-        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
-
-        let leader = coordination
-            .try_acquire_leadership()
-            .expect("first attempt")
-            .expect("leader");
-        assert!(
-            coordination
-                .try_acquire_leadership()
-                .expect("second attempt")
-                .is_none()
-        );
-
-        drop(leader);
-        assert!(
-            coordination
-                .try_acquire_leadership()
-                .expect("released attempt")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn cache_prune_lease_waits_for_every_shared_lifetime_lease() {
-        let directory = tempfile::tempdir().expect("directory");
-        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
-        let cancellation = CancellationToken::new();
-        let first = coordination
-            .acquire_cache_lease(&cancellation)
-            .expect("first lease");
-        let second = coordination
-            .acquire_cache_lease(&cancellation)
-            .expect("second lease");
-
-        assert!(
-            coordination
-                .try_acquire_prune_lease()
-                .expect("active probe")
-                .is_none()
-        );
-        drop(first);
-        assert!(
-            coordination
-                .try_acquire_prune_lease()
-                .expect("one lease remains")
-                .is_none()
-        );
-        drop(second);
-        assert!(
-            coordination
-                .try_acquire_prune_lease()
-                .expect("leases released")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn operation_state_is_visible_across_handles() {
-        let directory = tempfile::tempdir().expect("directory");
-        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
-        let cancellation = CancellationToken::new();
-
-        let operation = coordination
-            .acquire_operation(&cancellation)
-            .expect("operation");
-        assert!(coordination.is_reconciling().expect("state"));
-
-        drop(operation);
-        assert!(!coordination.is_reconciling().expect("released state"));
-    }
-
-    #[test]
     fn lock_probe_retries_interruption_before_acquiring() {
         let mut attempts = 0;
 
@@ -418,19 +292,6 @@ mod tests {
         .expect("unlock");
 
         assert_eq!(attempts, 3);
-    }
-
-    #[test]
-    fn operation_release_makes_completion_observable() {
-        let directory = tempfile::tempdir().expect("directory");
-        let coordination = IndexCoordination::for_database(&directory.path().join("index.sqlite"));
-        let operation = coordination
-            .acquire_operation(&CancellationToken::new())
-            .expect("operation");
-
-        operation.release().expect("release");
-
-        assert!(!coordination.is_reconciling().expect("released state"));
     }
 
     #[test]

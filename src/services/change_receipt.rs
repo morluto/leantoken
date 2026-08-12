@@ -6,7 +6,7 @@ use std::{
 use crate::model::{
     DiffConfigurationChange, DiffConfigurationChangeKind, DiffOwnerTestCoverage,
     DiffOwnerTestStatus, DiffSemanticChangeReceipt, DiffSymbolChange, DiffSymbolChangeKind,
-    DiffSymbolEvidence, DiffSymbolModification, HistoricalSymbol,
+    DiffSymbolEvidence, DiffSymbolModification,
 };
 use crate::parser;
 use crate::repository::{GitBlobBatch, git_blobs_at_revision};
@@ -14,7 +14,6 @@ use crate::repository::{GitBlobBatch, git_blobs_at_revision};
 const MAX_SEMANTIC_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SEMANTIC_PARSED_SYMBOLS: usize = 1_024;
 const MAX_OWNER_TESTS_PER_PATH: usize = 8;
-
 #[derive(Debug)]
 struct ParsedSymbol {
     evidence: DiffSymbolEvidence,
@@ -137,82 +136,6 @@ pub(super) fn classify_revision_changes(
     receipt.gaps.sort();
     receipt.gaps.dedup();
     receipt
-}
-
-pub(super) fn classify_historical_symbol_change(
-    path: &str,
-    before: &HistoricalSymbol,
-    before_signature: Option<&str>,
-    before_content: &str,
-    after: &HistoricalSymbol,
-    after_signature: Option<&str>,
-    after_content: &str,
-) -> Option<DiffSymbolChange> {
-    if before_content == after_content {
-        return None;
-    }
-    let modification = modification(before_signature, after_signature);
-    let public_contract_changed = modification == DiffSymbolModification::SignatureChanged
-        && (explicitly_public(before_signature) || explicitly_public(after_signature));
-    Some(DiffSymbolChange {
-        kind: DiffSymbolChangeKind::Modified,
-        before: Some(historical_evidence(path, before)),
-        after: Some(historical_evidence(path, after)),
-        modification: Some(modification),
-        public_contract_changed,
-    })
-}
-
-pub(super) struct HistoricalSymbolChangeEndpoint<'a> {
-    pub path: &'a str,
-    pub symbol: &'a HistoricalSymbol,
-    pub signature: Option<&'a str>,
-    pub content: &'a str,
-}
-
-pub(super) fn classify_historical_symbol_rename(
-    before: HistoricalSymbolChangeEndpoint<'_>,
-    after: HistoricalSymbolChangeEndpoint<'_>,
-) -> DiffSymbolChange {
-    let content_changed = before.content != after.content;
-    let modification = content_changed.then(|| modification(before.signature, after.signature));
-    let public_contract_changed =
-        explicitly_public(before.signature) || explicitly_public(after.signature);
-    DiffSymbolChange {
-        kind: DiffSymbolChangeKind::Renamed,
-        before: Some(historical_evidence(before.path, before.symbol)),
-        after: Some(historical_evidence(after.path, after.symbol)),
-        modification,
-        public_contract_changed,
-    }
-}
-
-pub(super) fn classify_historical_symbol_added(
-    path: &str,
-    after: &HistoricalSymbol,
-    after_signature: Option<&str>,
-) -> DiffSymbolChange {
-    DiffSymbolChange {
-        kind: DiffSymbolChangeKind::Added,
-        before: None,
-        after: Some(historical_evidence(path, after)),
-        modification: None,
-        public_contract_changed: explicitly_public(after_signature),
-    }
-}
-
-pub(super) fn classify_historical_symbol_removed(
-    path: &str,
-    before: &HistoricalSymbol,
-    before_signature: Option<&str>,
-) -> DiffSymbolChange {
-    DiffSymbolChange {
-        kind: DiffSymbolChangeKind::Removed,
-        before: Some(historical_evidence(path, before)),
-        after: None,
-        modification: None,
-        public_contract_changed: explicitly_public(before_signature),
-    }
 }
 
 pub(super) fn owner_test_coverage(
@@ -551,16 +474,6 @@ fn symbol_body_fingerprint(content: &str, signature: Option<&str>) -> Option<Str
         })
         .unwrap_or(normalized_content);
     (!body.is_empty()).then(|| crate::text::hash(&body))
-}
-
-fn historical_evidence(path: &str, symbol: &HistoricalSymbol) -> DiffSymbolEvidence {
-    DiffSymbolEvidence {
-        path: path.to_owned(),
-        name: symbol.name.clone(),
-        kind: symbol.kind.clone(),
-        start_line: symbol.target_start_line,
-        end_line: symbol.target_end_line,
-    }
 }
 
 fn recognized_json_configuration(path: &str) -> bool {

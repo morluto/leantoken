@@ -208,16 +208,6 @@ impl IndexScope {
         }
     }
 
-    pub(crate) fn may_include_descendant(&self, directory: &str) -> bool {
-        if !directory.is_empty() && self.exclude_matcher.excludes_directory(directory) {
-            return false;
-        }
-        self.includes.is_empty()
-            || directory.is_empty()
-            || self.include_matcher.matches(directory)
-            || self.include_matcher.may_match_descendant(directory)
-    }
-
     pub(crate) fn identity_material(&self) -> String {
         self.full_digest().unwrap_or("full").to_owned()
     }

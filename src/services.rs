@@ -1,60 +1,38 @@
-use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cap_std::fs::Dir;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{INDEX_CONTENT_VERSION, MAX_OUTPUT_TOKENS};
-use crate::coordination::{CacheLease, IndexCoordination, IndexLeadership};
+use crate::config::MAX_OUTPUT_TOKENS;
+use crate::coordination::{CacheLease, IndexCoordination};
 use crate::error::RetryableOperation;
-use crate::indexer::{Indexer, index_progress_cache_namespace};
+use crate::indexer::Indexer;
 use crate::model::*;
-use crate::storage::{
-    ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
-    TokenSavingsRecord,
-};
+use crate::storage::Storage;
 use crate::{Config, Error, Result};
 
 mod accounting;
 mod change_receipt;
-#[cfg(test)]
-mod concurrency_profile;
 mod context;
-mod coverage;
+mod cursor;
 mod execution_options;
 mod executor;
-mod files;
 mod handoff;
-mod history;
 mod index_read;
 mod indexing;
-mod json;
-mod observer;
 mod outline;
 mod read;
-mod read_delta;
-mod receipt_rebase;
-mod receipts;
-mod reconciliation;
-mod savings;
 mod search;
 mod startup;
-mod status;
 pub(crate) mod validation;
 
 pub use context::ContextWorkflowOptions;
 pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
-pub(crate) use history::MAX_DIFF_SYMBOL_TARGETS;
-pub(crate) use json::{JsonExecutionOptions, MAX_JSON_DEPTH};
 
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 
@@ -115,30 +93,17 @@ pub struct Services {
     config: Arc<Config>,
     storage: Storage,
     indexer: Indexer,
-    repository_root: Arc<Dir>,
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
-    active_reconciliations: Arc<AtomicUsize>,
-    reconciliation_changed: Arc<tokio::sync::Notify>,
-    read_deltas: Arc<read_delta::ReadDeltaRegistry>,
-    blocking_executor: executor::BlockingExecutor,
+    process_budget: executor::ProcessBudget,
     response_accountant: accounting::ResponseAccountant,
-    observer: observer::ServiceObserver,
-    reconciliation: reconciliation::ReconciliationCoordinator,
     context_exclude_paths: validation::PathMatcher,
+    cursor_codec: cursor::CursorCodec,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IndexSnapshotReadiness {
     RequireReady,
-    AllowEmpty,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum ReceiptResourceReserve {
-    #[default]
-    Omit,
-    Include,
 }
 
 /// Per-call response controls shared by service entry points.
@@ -146,7 +111,6 @@ enum ReceiptResourceReserve {
 #[non_exhaustive]
 pub struct ServiceCallOptions {
     max_response_tokens: Option<usize>,
-    receipt_resource_reserve: ReceiptResourceReserve,
     mcp_response_shape: Option<crate::tokens::McpResponseShape>,
     context_response_profile: Option<ContextResponseProfile>,
     initial_reconciliation_deadline: Option<tokio::time::Instant>,
@@ -158,7 +122,6 @@ impl ServiceCallOptions {
     pub const fn new() -> Self {
         Self {
             max_response_tokens: None,
-            receipt_resource_reserve: ReceiptResourceReserve::Omit,
             mcp_response_shape: None,
             context_response_profile: None,
             initial_reconciliation_deadline: None,
@@ -179,20 +142,6 @@ impl ServiceCallOptions {
     #[must_use]
     pub const fn max_response_tokens(self) -> Option<usize> {
         self.max_response_tokens
-    }
-
-    /// Reserve space for the adapter's optional receipt-resource decoration.
-    #[must_use]
-    pub const fn with_receipt_resource_reserve(mut self) -> Self {
-        self.receipt_resource_reserve = ReceiptResourceReserve::Include;
-        self
-    }
-
-    pub(crate) const fn receipt_resource_reserve(self) -> bool {
-        matches!(
-            self.receipt_resource_reserve,
-            ReceiptResourceReserve::Include
-        )
     }
 
     pub(crate) const fn with_mcp_response_shape(
@@ -222,14 +171,6 @@ impl ServiceCallOptions {
         self.context_response_profile
     }
 
-    pub(crate) fn with_initial_reconciliation_deadline(
-        mut self,
-        deadline: tokio::time::Instant,
-    ) -> Self {
-        self.initial_reconciliation_deadline = Some(deadline);
-        self
-    }
-
     const fn initial_reconciliation_deadline(self) -> Option<tokio::time::Instant> {
         self.initial_reconciliation_deadline
     }
@@ -252,11 +193,6 @@ macro_rules! impl_retrieval_response {
 }
 
 impl_retrieval_response!(
-    FilesResponse,
-    FilesPathsResponse,
-    HistoryResponse,
-    DiffSymbolsResponse,
-    JsonResponse,
     SearchResponse,
     SearchCompactResponse,
     SearchGroupedResponse,
@@ -264,7 +200,6 @@ impl_retrieval_response!(
     OutlineResponse,
     OutlineSignaturesResponse,
     ReadResponse,
-    ReceiptRebaseResponse,
     ContextResponse,
 );
 
@@ -296,40 +231,6 @@ impl Services {
         self.response_accountant.fits(response, options)
     }
 
-    fn response_fits_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-        options: ServiceCallOptions,
-    ) -> Result<bool>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        if options.receipt_resource_reserve() {
-            self.response_accountant
-                .fits_with_receipt_reserve(response, returned_items, options)
-        } else {
-            self.response_fits(response, options)
-        }
-    }
-
-    fn finalized_response_tokens_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-        options: ServiceCallOptions,
-    ) -> Result<usize>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        if options.receipt_resource_reserve() {
-            self.response_accountant
-                .finalized_tokens_with_receipt_reserve(response, returned_items, options)
-        } else {
-            self.finalized_response_tokens(response, options)
-        }
-    }
-
     fn response_budget_exceeded(
         meta: &ResponseMeta,
         provided_max_response_tokens: usize,
@@ -355,28 +256,6 @@ impl Services {
             .budget_error(response, provided_max_response_tokens, options)
     }
 
-    fn response_budget_error_with_receipt_reserve<T>(
-        &self,
-        response: &T,
-        returned_items: usize,
-        provided_max_response_tokens: usize,
-        options: ServiceCallOptions,
-    ) -> Result<Error>
-    where
-        T: RetrievalResponse + Clone,
-    {
-        if options.receipt_resource_reserve() {
-            self.response_accountant.budget_error_with_receipt_reserve(
-                response,
-                returned_items,
-                provided_max_response_tokens,
-                options,
-            )
-        } else {
-            self.response_budget_error(response, provided_max_response_tokens, options)
-        }
-    }
-
     fn finalize_bounded_response<T>(
         &self,
         response: &mut T,
@@ -385,32 +264,7 @@ impl Services {
     where
         T: RetrievalResponse + Clone,
     {
-        if options.receipt_resource_reserve() {
-            let reserved_tokens = if options.mcp_response_shape().is_some() {
-                self.response_accountant
-                    .finalize_with_receipt_resource(response, options.mcp_response_shape())?;
-                response.meta_mut().total_response_tokens
-            } else {
-                let reserved = self
-                    .response_accountant
-                    .finalized_tokens_with_receipt_resource(response, None)?;
-                self.response_accountant.finalize_for(response, None)?;
-                reserved
-            };
-            if let Some(limit) = options.max_response_tokens()
-                && reserved_tokens > limit
-            {
-                let minimum = reserved_tokens;
-                return Err(accounting::ResponseAccountant::budget_exceeded(
-                    response.meta_mut(),
-                    limit,
-                    minimum,
-                ));
-            }
-            Ok(())
-        } else {
-            self.response_accountant.finalize_bounded(response, options)
-        }
+        self.response_accountant.finalize_bounded(response, options)
     }
 
     fn validate_call_options(&self, options: ServiceCallOptions) -> Result<()> {
@@ -433,13 +287,6 @@ impl Services {
         operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::RequireReady, operation)
-    }
-
-    fn consistent_allow_empty<T>(
-        &self,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
-    ) -> Result<T> {
-        self.consistent_inner(IndexSnapshotReadiness::AllowEmpty, operation)
     }
 
     /// Assemble a response against one WAL snapshot (DEFERRED read transaction).
@@ -502,53 +349,24 @@ impl Services {
         )
     }
 
-    #[cfg(test)]
-    pub(super) async fn apply_consistency(
-        &self,
-        consistency: IndexConsistency,
-        cancellation: CancellationToken,
-    ) -> Result<()> {
-        self.apply_consistency_with_initial_deadline(consistency, cancellation, None)
-            .await
-    }
-
     async fn apply_consistency_with_initial_deadline(
         &self,
         consistency: IndexConsistency,
         cancellation: CancellationToken,
         deadline: Option<tokio::time::Instant>,
     ) -> Result<()> {
+        let _ = (cancellation, deadline);
         if consistency == IndexConsistency::ReconcileWorkingTree {
-            let deadline = if let Some(deadline) = deadline {
-                let storage = self.storage.clone();
-                let generation =
-                    tokio::task::spawn_blocking(move || storage.repository_generation());
-                tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Err(Error::Cancelled),
-                    result = generation => {
-                        (result?? == 0).then_some(deadline)
-                    }
-                    _ = tokio::time::sleep_until(deadline) => return Err(Error::IndexNotReady),
-                }
-            } else {
-                None
-            };
-            self.reconciliation
-                .reconcile(cancellation, deadline)
-                .await?;
+            return Err(Error::InvalidInput {
+                field: "consistency",
+                reason: "working-tree reconciliation was removed; call refresh explicitly",
+            });
         }
         Ok(())
     }
 
     pub(super) fn freshness(&self) -> Freshness {
-        let local = self.active_reconciliations.load(Ordering::Acquire) > 0;
-        let shared = self.coordination.is_reconciling().unwrap_or(true);
-        if local || shared {
-            Freshness::Reconciling
-        } else {
-            Freshness::Current
-        }
+        Freshness::Current
     }
 
     pub(super) fn meta(
@@ -588,14 +406,6 @@ impl Services {
         blake3::hash(&input).to_hex()[..32].to_string()
     }
 
-    pub(crate) fn read_stored_receipt(
-        &self,
-        receipt_id: &str,
-        now_unix_millis: i64,
-    ) -> Result<crate::receipt::StoredReceipt> {
-        self.storage.read_receipt(receipt_id, now_unix_millis)
-    }
-
     /// Rejects retrieval bound to a different repository/worktree.
     pub fn validate_repository_id(&self, expected: Option<&str>) -> Result<()> {
         if let Some(expected) = expected {
@@ -617,10 +427,10 @@ impl Services {
 
     pub(super) fn observe_service_result<T>(
         &self,
-        operation: TokenAccountingOperation,
+        _operation: TokenAccountingOperation,
         result: Result<T>,
     ) -> Result<T> {
-        self.observer.observe(operation, result)
+        result
     }
 }
 
@@ -642,6 +452,3 @@ fn sqlite_error_code(error: &Error) -> Option<rusqlite::ErrorCode> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests;

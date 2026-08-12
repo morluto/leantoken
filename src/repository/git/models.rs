@@ -22,15 +22,6 @@ pub struct GitHunkRange {
     pub end_line: usize,
 }
 
-/// One immutable UTF-8 file blob loaded from a resolved Git revision.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitBlob {
-    /// Resolved 12-character revision.
-    pub revision: String,
-    /// File contents at the revision.
-    pub content: String,
-}
-
 /// Bounded UTF-8 blobs loaded together from one immutable Git revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GitBlobBatch {
@@ -50,19 +41,4 @@ pub(crate) struct GitBlobBatch {
     pub unsupported_paths: Vec<String>,
 }
 
-/// One commit from Git's tracked line history.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitLineCommit {
-    pub commit: String,
-    pub authored_at: String,
-    pub subject: String,
-}
-
-/// Shared metadata for one exact immutable commit endpoint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct GitCommitMetadata {
-    pub revision: String,
-    pub authored_at: String,
-    pub subject: String,
-}
 use super::*;

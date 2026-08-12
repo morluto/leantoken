@@ -22,9 +22,7 @@ CREATE TABLE stage_files (
     structurally_complete INTEGER NOT NULL,
     size_bytes INTEGER NOT NULL,
     modified_ns INTEGER,
-    content_hash TEXT NOT NULL,
-    source_token_count INTEGER NOT NULL,
-    source_tokenizer TEXT NOT NULL
+    content_hash TEXT NOT NULL
 );
 
 CREATE TABLE stage_chunks (
@@ -113,7 +111,7 @@ pub(crate) struct PreparedReconciliation {
     _directory: Option<TempDir>,
     path: Option<PathBuf>,
     connection: Option<Connection>,
-    replacements: Vec<(IndexedFile, usize)>,
+    replacements: Vec<IndexedFile>,
     removals: Vec<String>,
     tokenizer: String,
     baseline_generation: u64,
@@ -208,8 +206,8 @@ impl PreparedReconciliation {
         Ok(())
     }
 
-    pub(crate) fn stage_indexed(&mut self, file: IndexedFile, source_token_count: usize) {
-        self.replacements.push((file, source_token_count));
+    pub(crate) fn stage_indexed(&mut self, file: IndexedFile) {
+        self.replacements.push(file);
     }
 
     pub(crate) fn stage_removal(&mut self, path: String) {
@@ -249,14 +247,8 @@ impl PreparedReconciliation {
                 )?;
                 ordinal = ordinal.saturating_add(1);
             }
-            for (file, source_token_count) in &replacements {
-                FinalizedReconciliation::insert_stage_file(
-                    &tx,
-                    file,
-                    *source_token_count,
-                    &self.tokenizer,
-                    ordinal,
-                )?;
+            for file in &replacements {
+                FinalizedReconciliation::insert_stage_file(&tx, file, ordinal)?;
                 ordinal = ordinal.saturating_add(1);
             }
             tx.commit()?;
@@ -368,7 +360,7 @@ impl FinalizedReconciliation {
 
         let mut statement = connection.prepare(
             "SELECT id, path, language, structurally_complete, size_bytes,
-                    modified_ns, content_hash, source_token_count, source_tokenizer
+                    modified_ns, content_hash
              FROM stage_files ORDER BY ordinal",
         )?;
         let mut rows = statement.query([])?;
@@ -381,15 +373,9 @@ impl FinalizedReconciliation {
                 size_bytes: row.get(4)?,
                 modified_ns: row.get(5)?,
                 content_hash: row.get(6)?,
-                source_token_count: row.get(7)?,
-                source_tokenizer: row.get(8)?,
             };
             let file = Self::read_stage_file(&connection, &row)?;
-            writer.replace_with_source_tokens(
-                file,
-                &row.source_tokenizer,
-                i64_to_usize(row.source_token_count)?,
-            )?;
+            writer.replace(file)?;
         }
         Ok(())
     }
@@ -402,18 +388,12 @@ impl FinalizedReconciliation {
         )?)
     }
 
-    fn insert_stage_file(
-        tx: &Transaction,
-        file: &IndexedFile,
-        source_token_count: usize,
-        tokenizer: &str,
-        ordinal: i64,
-    ) -> Result<()> {
+    fn insert_stage_file(tx: &Transaction, file: &IndexedFile, ordinal: i64) -> Result<()> {
         tx.execute(
             "INSERT INTO stage_files(
                 ordinal, path, language, structurally_complete, size_bytes,
-                modified_ns, content_hash, source_token_count, source_tokenizer
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                modified_ns, content_hash
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 ordinal,
                 &file.path,
@@ -422,8 +402,6 @@ impl FinalizedReconciliation {
                 u64_to_i64(file.size_bytes)?,
                 file.modified_ns.map(u128_to_i64).transpose()?,
                 &file.content_hash,
-                usize_to_i64(source_token_count)?,
-                tokenizer,
             ],
         )?;
         let file_id = tx.last_insert_rowid();
@@ -650,8 +628,6 @@ struct StageFileRow {
     size_bytes: i64,
     modified_ns: Option<i64>,
     content_hash: String,
-    source_token_count: i64,
-    source_tokenizer: String,
 }
 
 #[cfg(test)]
@@ -780,7 +756,7 @@ mod tests {
         )
         .expect("stage");
         stage.stage_removal("old.rs".into());
-        stage.stage_indexed(file, 7);
+        stage.stage_indexed(file);
         stage.flush().expect("stage batch");
         let stage_path = stage.path.clone().expect("initialized stage path");
         assert!(

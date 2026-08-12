@@ -77,19 +77,6 @@ impl DiscoveryPolicy {
             || relative_path.ends_with("/.ignore")
             || relative_path.ends_with("/.leantokenignore")
     }
-
-    pub(crate) fn includes_watch_path(&self, relative_path: &str, path_is_directory: bool) -> bool {
-        if self.includes_path(relative_path, path_is_directory) {
-            return true;
-        }
-        if !self.is_ignore_control_path(relative_path) {
-            return false;
-        }
-        let parent = relative_path
-            .rsplit_once('/')
-            .map_or("", |(parent, _)| parent);
-        self.index_scope.may_include_descendant(parent)
-    }
 }
 
 #[derive(Debug, Clone)]

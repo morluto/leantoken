@@ -26,15 +26,12 @@ pub(crate) enum ReconciliationPublicationPhase {
 // disk footprint after a large initial publication.
 pub(crate) const WAL_JOURNAL_SIZE_LIMIT_BYTES: i64 = 16 * 1024 * 1024;
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 10;
-
 /// Default row limit used by callers that do not provide a tighter bound.
 pub const DEFAULT_MAX_RESULTS: usize = 100;
 /// Absolute row limit applied by storage queries, including internal batch reads.
 pub const HARD_MAX_RESULTS: usize = 10_000;
 
 pub(crate) const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
-pub(crate) const READ_ONLY_STATUS_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) fn process_write_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]

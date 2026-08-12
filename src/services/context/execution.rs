@@ -118,10 +118,7 @@ impl Services {
         ))
     }
 
-    pub(super) fn context_sync(
-        &self,
-        input: ContextSyncRequest<'_>,
-    ) -> Result<(ContextEvaluation, Option<usize>)> {
+    pub(super) fn context_sync(&self, input: ContextSyncRequest<'_>) -> Result<ContextEvaluation> {
         let (prepared, retrieval) = self.prepare_context(input)?;
         let PreparedContext {
             request,

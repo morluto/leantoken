@@ -1,20 +1,10 @@
-use std::sync::{
-    Arc, RwLock,
-    atomic::{AtomicBool, Ordering},
-};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 
-#[cfg(test)]
-use rmcp::model::ContentBlock;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::wrapper::Parameters,
-    model::{
-        CacheScope, CallToolResult, ListResourceTemplatesResult, ListResourcesResult,
-        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse,
-        ReadResourceResult, ResourceContents, ResourceTemplate,
-    },
-    service::{NotificationContext, RequestContext},
+    model::{CallToolResult, ProtocolVersion},
+    service::RequestContext,
     tool, tool_handler, tool_router,
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -22,32 +12,20 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::Config;
-use crate::config::{
-    DEFAULT_CONTEXT_FRAGMENTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS,
-    MAX_REPOSITORY_CONTEXTS, MAX_RESULTS,
-};
+use crate::config::{DEFAULT_CONTEXT_FRAGMENTS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS, MAX_RESULTS};
 use crate::model::{
     ContextRequest, ContextRequiredEvidence, ContextResponseProfile, ContextWorkflow,
-    DiffSymbolsRequest, DiffSymbolsTarget, FileOperation, FilesRequest, HandoffManifestRequest,
-    HistoryOperation, HistoryRequest, IndexConsistency, IndexProgressSnapshot, JsonOperation,
-    JsonProjection, JsonRequest, JsonSelector, MAX_RECEIPT_REBASE_SAMPLES_PER_OUTCOME,
-    NonEmptyText, OutlineRequest, ReadRequest, ReceiptRebaseRequest, SearchMode, SearchRequest,
-    SymbolIdentity, WorkflowEvidence,
+    IndexConsistency, IndexProgressSnapshot, NonEmptyText, OutlineRequest, ReadRequest, SearchMode,
+    SearchRequest, SymbolIdentity, WorkflowEvidence,
 };
 use crate::repository::{RepositoryPath, RepositoryPattern};
 use crate::services::{
-    JsonExecutionOptions, MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, MAX_JSON_DEPTH,
-    ServiceCallOptions, Services, validate_positive_request_limit, validate_request_limit,
+    MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN, ServiceCallOptions, Services,
+    validate_positive_request_limit, validate_request_limit,
 };
-use crate::storage::default_read_connection_capacity;
 
 const DEFAULT_ACTIVE_TOOL_CALL_CAPACITY: usize = 16;
-const DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY: usize = DEFAULT_ACTIVE_TOOL_CALL_CAPACITY;
-fn default_receipt_resource_read_capacity() -> usize {
-    default_read_connection_capacity() as usize
-}
-const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
-const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Retrieval is indexed and token-bounded. For broad coding, debugging, review, or architecture, call leantoken.context once with the user's task and plan_only=false; use its evidence directly. For a known scope, choose the matching LeanToken tool directly. Use native tools for edits, builds, tests, runtime probes, unsupported files, and path- or repository-wide Git history. After edits, generated files, branch changes, or external commits, set consistency=reconcile_working_tree on index-backed tools. On status=retryable, wait retry_after_ms and retry. Approved alternate repositories use configured repository_context names. Use savings for token statistics and receipt_rebase only to preserve older-generation evidence.";
+const MCP_INSTRUCTIONS: &str = "One LeanToken server owns one repository. Call refresh explicitly to acquire the working tree and atomically publish a complete immutable generation. Search, outline, read, and context always use one published generation and never reopen repository files. Use native tools for edits, builds, tests, live dirty reads, and Git history. A continuation cursor is valid only for the repository, request, and generation that produced it.";
 
 fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::Value> {
     serde_json::to_value(response)
@@ -64,15 +42,6 @@ pub(crate) fn mcp_schema_fingerprint() -> String {
 fn mcp_contract() -> serde_json::Value {
     serde_json::json!({
         "tools": LeanTokenMcp::tool_router().list_all(),
-        "resources": {
-            "capability": {"listChanged": false, "subscribe": false},
-            "listed": [],
-            "templates": [{
-                "uriTemplate": resources::RECEIPT_RESOURCE_TEMPLATE,
-                "name": "retrieval_receipt",
-                "mimeType": resources::RECEIPT_RESOURCE_MEDIA_TYPE,
-            }],
-        }
     })
 }
 
@@ -90,19 +59,14 @@ pub(crate) fn mcp_runtime_version() -> String {
 }
 
 mod error;
-mod transport;
 
-#[cfg(test)]
-use error::into_mcp_error;
 use error::{into_tool_error, mcp_error_data, tool_unavailable, visible_mcp_error};
-use transport::BoundedStdioTransport;
 
 mod requests;
 
 use requests::*;
 
 mod admission;
-mod resources;
 mod result;
 mod runtime;
 mod server;
@@ -112,13 +76,8 @@ use admission::RequestAdmission;
 pub use result::{McpResultMode, tool_result};
 use result::{RetryableToolResponse, retryable_tool_result, tool_result_with_limit};
 use runtime::RetrievalPreparation;
-#[cfg(test)]
-use runtime::retry_after_initial_index_with_policy;
 pub use server::LeanTokenMcp;
-#[cfg(test)]
-use state::StartupFailure;
-pub use state::{McpContextRegistry, McpServices};
-use state::{McpLimitPolicy, McpServiceState};
+use state::McpLimitPolicy;
 
 mod tools;
 
@@ -140,7 +99,7 @@ pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) ->
 /// Run a prepared MCP server over stdio.
 pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
-    let transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
+    let transport = rmcp::transport::stdio();
 
     let signal_task = tokio::spawn({
         let token = token.clone();
