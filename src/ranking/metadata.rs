@@ -101,6 +101,9 @@ fn is_test_path(path: &str) -> bool {
     let stem = file_name
         .split_once('.')
         .map_or(file_name, |(stem, _)| stem);
+    let module_stem = file_name
+        .rsplit_once('.')
+        .map_or(file_name, |(stem, _)| stem);
     path.starts_with("test/")
         || path.starts_with("tests/")
         || path.starts_with("spec/")
@@ -112,14 +115,8 @@ fn is_test_path(path: &str) -> bool {
         || path
             .split('/')
             .any(|component| component == "__tests__" || component.starts_with("test_"))
-        || file_name.ends_with(".test.js")
-        || file_name.ends_with(".test.jsx")
-        || file_name.ends_with(".test.ts")
-        || file_name.ends_with(".test.tsx")
-        || file_name.ends_with(".spec.js")
-        || file_name.ends_with(".spec.jsx")
-        || file_name.ends_with(".spec.ts")
-        || file_name.ends_with(".spec.tsx")
+        || module_stem.ends_with(".test")
+        || module_stem.ends_with(".spec")
         || matches!(stem, "test" | "tests")
         || file_name.ends_with("_spec.rb")
         || file_name.ends_with(".spec.rb")
@@ -347,6 +344,18 @@ mod tests {
         assert_eq!(
             context_path_class("Cargo.toml"),
             ContextPathClass::Supporting
+        );
+    }
+
+    #[test]
+    fn module_test_file_extensions_are_classified_as_tests() {
+        assert_eq!(
+            context_path_class("npm/npm-packaging.test.mjs"),
+            ContextPathClass::Test
+        );
+        assert_eq!(
+            context_path_class("packages/core/widget.spec.mts"),
+            ContextPathClass::Test
         );
     }
 
