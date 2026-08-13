@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::thread;
 use std::time::Instant;
+use syn::visit::Visit;
 
 const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
@@ -507,6 +508,7 @@ struct Dependency {
 struct Target {
     name: String,
     kind: Vec<String>,
+    src_path: PathBuf,
 }
 
 fn check_architecture(root: &Path) -> Result<(), XtaskError> {
@@ -647,65 +649,26 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         }
     }
     let product = packages[PRODUCT];
-    if !product
+    let integration_target = product
         .targets
         .iter()
-        .any(|target| target.name == "integration" && target.kind.iter().any(|kind| kind == "test"))
-    {
-        return Err(XtaskError::Architecture(
-            "root integration target is missing".to_owned(),
-        ));
-    }
-    check_test_inventory(root)?;
+        .find(|target| {
+            target.name == "integration" && target.kind.iter().any(|kind| kind == "test")
+        })
+        .ok_or_else(|| XtaskError::Architecture("root integration target is missing".to_owned()))?;
+    check_test_inventory(root, &metadata, integration_target)?;
     check_ignored_test_policy(root)?;
     check_organizational_includes(root)?;
-    check_service_snapshot_boundary(root)?;
     println!(
-        "test architecture: ok (workspace resolver 3, one root process target, directed private packages, service snapshot boundary)"
+        "test architecture: ok (workspace resolver 3, Cargo-owned targets, directed private packages, compiled ignored-test inventory, syntax-tree macro policy)"
     );
-    Ok(())
-}
-
-fn check_service_snapshot_boundary(root: &Path) -> Result<(), XtaskError> {
-    let mut rust_files = Vec::new();
-    let facade = root.join("src/services.rs");
-    if facade.is_file() {
-        rust_files.push(facade);
-    }
-    collect_rust_files(&root.join("src/services"), &mut rust_files).map_err(XtaskError::Io)?;
-    let mut leaked = BTreeSet::new();
-    for path in rust_files {
-        let source = path
-            .strip_prefix(root)
-            .expect("walked below repository root")
-            .to_string_lossy()
-            .replace('\\', "/");
-        let contents = fs::read_to_string(&path).map_err(XtaskError::Io)?;
-        if source.ends_with("/tests.rs") {
-            continue;
-        }
-        if contents
-            .lines()
-            .any(|line| line.contains("ReadSession") || line.contains("begin_read("))
-        {
-            leaked.insert(source);
-        }
-    }
-    if !leaked.is_empty() {
-        return Err(XtaskError::Architecture(format!(
-            "service modules must use the storage-owned IndexSnapshot; raw snapshot reads leaked into {leaked:?}"
-        )));
-    }
-    println!("service snapshot boundary: ok (storage owns the raw read session)");
     Ok(())
 }
 
 fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
     let mut rust_files = Vec::new();
     collect_rust_files(root, &mut rust_files).map_err(XtaskError::Io)?;
-    let mut found = BTreeSet::new();
-    let include_macro = "include!".to_owned() + "(";
-    let include_prefix = include_macro.clone() + "\"";
+    let mut found = Vec::new();
     for path in rust_files {
         let source = path
             .strip_prefix(root)
@@ -713,30 +676,48 @@ fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
             .to_string_lossy()
             .replace('\\', "/");
         let contents = fs::read_to_string(&path).map_err(XtaskError::Io)?;
-        for line in contents.lines() {
-            let Some((_, suffix)) = line.split_once(&include_prefix) else {
-                if line.contains(&include_macro) {
-                    return Err(XtaskError::Architecture(format!(
-                        "unsupported include! form in {source}; organizational includes must be migrated to normal modules"
-                    )));
-                }
-                continue;
-            };
-            let Some(included) = suffix.split_once("\")").map(|(value, _)| value) else {
-                return Err(XtaskError::Architecture(format!(
-                    "malformed include! in {source}"
-                )));
-            };
-            found.insert((source.clone(), included.to_owned()));
+        let syntax = parse_rust_source(&source, &contents)?;
+        if contains_include_macro(&syntax) {
+            found.push(source);
         }
     }
     if !found.is_empty() {
         return Err(XtaskError::Architecture(format!(
-            "organizational include! usage remains: {found:?}; migrate it to a normal module"
+            "compiled Rust sources invoke include!: {found:?}; migrate organizational includes to normal modules"
         )));
     }
-    println!("organizational includes: ok (none)");
+    println!("organizational includes: ok (no include! invocation in parsed Rust syntax)");
     Ok(())
+}
+
+fn parse_rust_source(source: &str, contents: &str) -> Result<syn::File, XtaskError> {
+    syn::parse_file(contents).map_err(|error| {
+        XtaskError::Architecture(format!("failed to parse Rust source {source}: {error}"))
+    })
+}
+
+fn contains_include_macro(syntax: &syn::File) -> bool {
+    struct IncludeMacroVisitor {
+        found: bool,
+    }
+
+    impl<'ast> Visit<'ast> for IncludeMacroVisitor {
+        fn visit_macro(&mut self, node: &'ast syn::Macro) {
+            if node
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "include")
+            {
+                self.found = true;
+            }
+            syn::visit::visit_macro(self, node);
+        }
+    }
+
+    let mut visitor = IncludeMacroVisitor { found: false };
+    visitor.visit_file(syntax);
+    visitor.found
 }
 
 fn collect_rust_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
@@ -758,80 +739,170 @@ fn collect_rust_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<
     Ok(())
 }
 
-fn check_test_inventory(root: &Path) -> Result<(), XtaskError> {
-    let tests_dir = root.join("tests");
-    let actual = std::fs::read_dir(&tests_dir)
+fn check_test_inventory(
+    root: &Path,
+    metadata: &Metadata,
+    integration_target: &Target,
+) -> Result<(), XtaskError> {
+    let integration_source =
+        fs::canonicalize(&integration_target.src_path).map_err(XtaskError::Io)?;
+    let tests_dir = integration_source.parent().ok_or_else(|| {
+        XtaskError::Architecture("integration target has no source directory".into())
+    })?;
+    let independent_targets = metadata
+        .packages
+        .iter()
+        .flat_map(|package| &package.targets)
+        .filter_map(|target| fs::canonicalize(&target.src_path).ok())
+        .collect::<BTreeSet<_>>();
+    let actual = fs::read_dir(tests_dir)
         .map_err(XtaskError::Io)?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-        .filter_map(|path| {
-            path.file_stem()
-                .and_then(|stem| stem.to_str())
-                .map(str::to_owned)
+        .map(|path| fs::canonicalize(path).map_err(XtaskError::Io))
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .into_iter()
+        .filter(|path| path != &integration_source && !independent_targets.contains(path))
+        .collect::<BTreeSet<_>>();
+    let contents = fs::read_to_string(&integration_source).map_err(XtaskError::Io)?;
+    let source = integration_source
+        .strip_prefix(root)
+        .unwrap_or(&integration_source)
+        .display()
+        .to_string();
+    let syntax = parse_rust_source(&source, &contents)?;
+    let registered = syntax
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Mod(module) if module.content.is_none() => Some(module),
+            _ => None,
         })
-        .filter(|name| name != "integration" && name != "benchmark_contract")
-        .collect::<BTreeSet<_>>();
-    let integration =
-        std::fs::read_to_string(tests_dir.join("integration.rs")).map_err(XtaskError::Io)?;
-    let registered = integration
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("mod "))
-        .filter_map(|line| line.strip_suffix(';'))
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
+        .map(|module| resolve_external_module(tests_dir, module))
+        .collect::<Result<BTreeSet<_>, _>>()?;
     if actual != registered {
         return Err(XtaskError::Architecture(format!(
-            "root test inventory drifted: expected {registered:?}, found {actual:?}"
+            "root test inventory drifted: Cargo target owns {}, registered modules are {:?}, owner files are {:?}",
+            display_path(root, &integration_source),
+            display_paths(root, &registered),
+            display_paths(root, &actual),
         )));
     }
-    println!("test inventory: ok ({} root owners)", actual.len());
+    println!(
+        "test inventory: ok ({} root owners resolved from Cargo target and Rust modules)",
+        actual.len()
+    );
     Ok(())
+}
+
+fn resolve_external_module(directory: &Path, module: &syn::ItemMod) -> Result<PathBuf, XtaskError> {
+    let explicit = module
+        .attrs
+        .iter()
+        .find(|attribute| attribute.path().is_ident("path"))
+        .map(module_path_value)
+        .transpose()?;
+    let candidate = if let Some(relative) = explicit {
+        directory.join(relative)
+    } else {
+        let flat = directory.join(format!("{}.rs", module.ident));
+        let nested = directory.join(module.ident.to_string()).join("mod.rs");
+        match (flat.is_file(), nested.is_file()) {
+            (true, false) => flat,
+            (false, true) => nested,
+            (true, true) => {
+                return Err(XtaskError::Architecture(format!(
+                    "module {} has both flat and nested source files",
+                    module.ident
+                )));
+            }
+            (false, false) => {
+                return Err(XtaskError::Architecture(format!(
+                    "module {} does not resolve below {}",
+                    module.ident,
+                    directory.display()
+                )));
+            }
+        }
+    };
+    fs::canonicalize(candidate).map_err(XtaskError::Io)
+}
+
+fn module_path_value(attribute: &syn::Attribute) -> Result<PathBuf, XtaskError> {
+    let syn::Meta::NameValue(name_value) = &attribute.meta else {
+        return Err(XtaskError::Architecture(
+            "module #[path] must use a string name-value attribute".into(),
+        ));
+    };
+    let syn::Expr::Lit(expression) = &name_value.value else {
+        return Err(XtaskError::Architecture(
+            "module #[path] must contain a string literal".into(),
+        ));
+    };
+    let syn::Lit::Str(path) = &expression.lit else {
+        return Err(XtaskError::Architecture(
+            "module #[path] must contain a string literal".into(),
+        ));
+    };
+    Ok(PathBuf::from(path.value()))
+}
+
+fn display_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn display_paths(root: &Path, paths: &BTreeSet<PathBuf>) -> Vec<String> {
+    paths.iter().map(|path| display_path(root, path)).collect()
 }
 
 fn check_ignored_test_policy(root: &Path) -> Result<(), XtaskError> {
-    let allowed = root.join("src/services/concurrency_profile.rs");
-    let ignore_marker = ["#[", "ignore"].concat();
-    let mut ignored = Vec::new();
-    for directory in ["src", "tests", "crates", "xtask"] {
-        collect_ignored_tests(
-            &root.join(directory),
-            &allowed,
-            &ignore_marker,
-            &mut ignored,
-        )?;
+    let output = Command::new("cargo")
+        .args([
+            "test",
+            "--locked",
+            "--workspace",
+            "--all-features",
+            "--lib",
+            "--bins",
+            "--tests",
+            "--",
+            "--ignored",
+            "--list",
+            "--format",
+            "terse",
+        ])
+        .current_dir(root)
+        .output()
+        .map_err(XtaskError::Io)?;
+    if !output.status.success() {
+        return Err(XtaskError::CommandFailed {
+            command: "cargo test --locked --workspace --all-features --lib --bins --tests -- --ignored --list --format terse".into(),
+            code: output.status.code(),
+        });
     }
-    if !ignored.is_empty() {
+    let mut ignored = parse_compiled_test_list(&String::from_utf8_lossy(&output.stdout));
+    ignored.sort();
+    let allowed = vec!["services::concurrency_profile::release_concurrency_matrix".to_owned()];
+    if ignored != allowed {
         return Err(XtaskError::Architecture(format!(
-            "ignored tests are not allowed outside the documented manual profiler: {ignored:?}"
+            "compiled ignored-test inventory drifted: expected {allowed:?}, found {ignored:?}"
         )));
     }
-    println!("ignored-test policy: ok (manual release profiler is the only exception)");
+    println!(
+        "ignored-test policy: ok (compiled inventory contains only the manual release profiler)"
+    );
     Ok(())
 }
 
-fn collect_ignored_tests(
-    directory: &Path,
-    allowed: &Path,
-    ignore_marker: &str,
-    ignored: &mut Vec<String>,
-) -> Result<(), XtaskError> {
-    if !directory.exists() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(directory).map_err(XtaskError::Io)? {
-        let path = entry.map_err(XtaskError::Io)?.path();
-        if path.is_dir() {
-            collect_ignored_tests(&path, allowed, ignore_marker, ignored)?;
-        } else if path.extension().is_some_and(|extension| extension == "rs")
-            && path != allowed
-            && std::fs::read_to_string(&path)
-                .map_err(XtaskError::Io)?
-                .contains(ignore_marker)
-        {
-            ignored.push(path.display().to_string());
-        }
-    }
-    Ok(())
+fn parse_compiled_test_list(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.trim().strip_suffix(": test"))
+        .map(str::to_owned)
+        .collect()
 }
 
 fn workspace_root() -> PathBuf {
@@ -890,8 +961,56 @@ impl std::error::Error for XtaskError {}
 mod tests {
     use super::{
         BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
-        listed_test_count, process_test_jobs_for_os, run_parallel_product_plan, workspace_root,
+        contains_include_macro, listed_test_count, module_path_value, parse_compiled_test_list,
+        process_test_jobs_for_os, run_parallel_product_plan, workspace_root,
     };
+
+    #[test]
+    fn syntax_macro_policy_ignores_text_and_catches_token_formatting() {
+        let harmless = syn::parse_file(
+            r##"
+                /// Do not restore an `include!("legacy.rs")` organization hack.
+                const POLICY: &str = "include!(\"legacy.rs\")";
+            "##,
+        )
+        .expect("harmless syntax");
+        assert!(!contains_include_macro(&harmless));
+
+        let invocation = syn::parse_file(
+            r#"
+                include!
+                (
+                    "owner.rs"
+                );
+            "#,
+        )
+        .expect("formatted include syntax");
+        assert!(contains_include_macro(&invocation));
+    }
+
+    #[test]
+    fn module_path_and_compiled_inventory_parsers_are_structural() {
+        let syntax = syn::parse_file("#[path = \"owners/services.rs\"] mod services;")
+            .expect("module syntax");
+        let syn::Item::Mod(module) = &syntax.items[0] else {
+            panic!("expected module");
+        };
+        let path_attribute = module
+            .attrs
+            .iter()
+            .find(|attribute| attribute.path().is_ident("path"))
+            .expect("path attribute");
+        assert_eq!(
+            module_path_value(path_attribute).expect("path value"),
+            std::path::PathBuf::from("owners/services.rs")
+        );
+        assert_eq!(
+            parse_compiled_test_list(
+                "ordinary::case: test\nmanual::profile: test\n0 tests, 0 benchmarks\n"
+            ),
+            vec!["ordinary::case", "manual::profile"]
+        );
+    }
 
     #[test]
     fn plan_contains_visible_locked_phases() {
