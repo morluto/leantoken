@@ -74,7 +74,7 @@ fn storage_public_lifecycle_preserves_projections_search_and_atomic_generations(
     let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 10);
+    assert_eq!(meta.schema_version, 11);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 
@@ -226,10 +226,7 @@ fn pooled_read_sessions_serve_concurrent_snapshot_queries() {
     let handles = (0..32)
         .map(|_| {
             let storage = storage.clone();
-            std::thread::spawn(move || {
-                let session = storage.begin_read().expect("read session");
-                session.repository_generation().expect("generation")
-            })
+            std::thread::spawn(move || storage.snapshot().expect("read snapshot").generation())
         })
         .collect::<Vec<_>>();
     for handle in handles {
@@ -258,6 +255,7 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
              DROP TABLE token_savings;
              ALTER TABLE files DROP COLUMN source_tokenizer;
              ALTER TABLE files DROP COLUMN source_token_count;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              ALTER TABLE meta DROP COLUMN repository_identity;
              ALTER TABLE meta DROP COLUMN repository_root;
@@ -298,6 +296,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
              DROP TABLE token_savings;
              ALTER TABLE files DROP COLUMN source_tokenizer;
              ALTER TABLE files DROP COLUMN source_token_count;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              UPDATE meta SET schema_version = 4 WHERE id = 1;
              PRAGMA user_version = 5;",
@@ -306,7 +305,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     drop(connection);
 
     let storage = Storage::open(&db).expect("migrate");
-    assert_eq!(storage.meta().expect("metadata").schema_version, 10);
+    assert_eq!(storage.meta().expect("metadata").schema_version, 11);
     let connection = rusqlite::Connection::open(&db).expect("inspect");
     let last_access: i64 = connection
         .query_row(
@@ -343,7 +342,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let migration_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("migration version");
-    assert_eq!(migration_version, 11);
+    assert_eq!(migration_version, 12);
 }
 
 #[test]
@@ -580,6 +579,7 @@ fn structural_search_migration_rebuilds_existing_rows() {
              DROP TABLE retrieval_receipt_usage;
              DROP TABLE symbols_fts_trigram;
              DROP TABLE symbol_refs_fts_trigram;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              UPDATE meta SET schema_version = 5 WHERE id = 1;
              PRAGMA user_version = 6;",
         )
@@ -884,8 +884,8 @@ fn read_session_pins_generation_across_queries() {
         .expect("gen1");
     assert_eq!(gen1, 1);
 
-    let session = storage.begin_read().expect("session");
-    assert_eq!(session.repository_generation().expect("gen"), 1);
+    let session = storage.snapshot().expect("snapshot");
+    assert_eq!(session.generation(), 1);
     let files = session.list_files(100, None).expect("list");
     assert_eq!(files.len(), 1);
 
@@ -894,14 +894,14 @@ fn read_session_pins_generation_across_queries() {
         .full_reconcile("cfg-b", vec![sample_file("b.rs", "fn b() {}\n")])
         .expect("gen2");
     assert_eq!(gen2, 2);
-    assert_eq!(session.repository_generation().expect("pinned gen"), 1);
+    assert_eq!(session.generation(), 1);
     let still = session.list_files(100, None).expect("list pinned");
     assert_eq!(still.len(), 1);
     assert_eq!(still[0].path, "a.rs");
 
     // Fresh session sees the new generation.
-    let latest = storage.begin_read().expect("fresh");
-    assert_eq!(latest.repository_generation().expect("latest"), 2);
+    let latest = storage.snapshot().expect("fresh snapshot");
+    assert_eq!(latest.generation(), 2);
     assert_eq!(latest.list_files(100, None).expect("list").len(), 1);
     assert_eq!(latest.list_files(100, None).expect("list")[0].path, "b.rs");
 }

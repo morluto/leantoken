@@ -111,20 +111,91 @@ fn receipt_resource_read_is_snapshot_only_and_does_not_extend_lifetime() {
 }
 
 #[test]
-fn receipt_resource_read_rejects_an_observed_clock_rollback() {
+fn receipt_reuse_does_not_mutate_the_source_snapshot_or_extend_its_lifetime() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let receipt_id = storage
         .evaluate_receipt_at(None, 7, &[evidence(1)], true, 1_000)
         .expect("create receipt")
         .receipt_id;
-    storage
+    let before = storage
+        .read_receipt(&receipt_id, 1_001)
+        .expect("source before reuse");
+    let reused = storage
         .evaluate_receipt_at(Some(&receipt_id), 7, &[], true, 70_000)
-        .expect("touch receipt");
-    assert!(matches!(
-        storage.read_receipt(&receipt_id, 60_000),
-        Err(Error::UnknownReceipt(id)) if id == receipt_id
-    ));
+        .expect("reuse immutable receipt");
+    assert_eq!(reused.receipt_id, receipt_id);
+    assert_eq!(
+        storage
+            .read_receipt(&receipt_id, 60_000)
+            .expect("source after reuse"),
+        before
+    );
+}
+
+#[test]
+fn receipt_successors_leave_retryable_immutable_sources() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let first = evidence(1);
+    let undelivered = evidence(2);
+    let source_id = storage
+        .evaluate_receipt_at(None, 7, std::slice::from_ref(&first), true, 1_000)
+        .expect("create source receipt")
+        .receipt_id;
+    let source_before = storage
+        .read_receipt(&source_id, 1_001)
+        .expect("source snapshot");
+
+    let lost_response = storage
+        .evaluate_receipt_at(
+            Some(&source_id),
+            7,
+            std::slice::from_ref(&undelivered),
+            true,
+            2_000,
+        )
+        .expect("build first successor");
+    assert_eq!(lost_response.decisions, vec![ReceiptDecision::Return]);
+    assert_ne!(lost_response.receipt_id, source_id);
+
+    let retry = storage
+        .evaluate_receipt_at(
+            Some(&source_id),
+            7,
+            std::slice::from_ref(&undelivered),
+            true,
+            3_000,
+        )
+        .expect("retry from source after simulated response loss");
+    assert_eq!(retry.decisions, vec![ReceiptDecision::Return]);
+    assert_ne!(retry.receipt_id, source_id);
+    assert_ne!(retry.receipt_id, lost_response.receipt_id);
+    assert_eq!(
+        storage
+            .read_receipt(&source_id, 3_001)
+            .expect("source remains immutable"),
+        source_before
+    );
+    assert_eq!(
+        storage
+            .read_receipt(&lost_response.receipt_id, 3_001)
+            .expect("delivered successor snapshot")
+            .evidence,
+        vec![first, undelivered.clone()]
+    );
+
+    let acknowledged = storage
+        .evaluate_receipt_at(
+            Some(&lost_response.receipt_id),
+            7,
+            &[undelivered],
+            true,
+            4_000,
+        )
+        .expect("reuse delivered successor");
+    assert_eq!(acknowledged.decisions, vec![ReceiptDecision::SuppressExact]);
+    assert_eq!(acknowledged.receipt_id, lost_response.receipt_id);
 }
 
 #[test]
@@ -138,7 +209,7 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
         "first",
         Some("alpha beta gamma delta epsilon"),
     );
-    let receipt_id = storage
+    let mut receipt_id = storage
         .evaluate_receipt(None, 7, std::slice::from_ref(&first), true)
         .expect("create receipt")
         .receipt_id;
@@ -170,6 +241,7 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
             .evaluate_receipt(Some(&receipt_id), 7, &candidates, suppress_overlap)
             .expect("persistent evaluation");
         assert_eq!(actual.decisions, expected);
+        receipt_id = actual.receipt_id;
         oracle.extend(
             candidates
                 .iter()
@@ -186,7 +258,7 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
 }
 
 #[test]
-fn concurrent_duplicate_append_returns_source_once_without_lost_update() {
+fn concurrent_reuse_branches_into_independent_successors() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -205,28 +277,32 @@ fn concurrent_duplicate_append_returns_source_once_without_lost_update() {
         threads.push(std::thread::spawn(move || {
             let storage = Storage::open(database).expect("independent storage");
             barrier.wait();
-            storage
+            let evaluation = storage
                 .evaluate_receipt(Some(&receipt_id), 1, &[candidate], true)
-                .expect("concurrent evaluation")
-                .decisions[0]
+                .expect("concurrent evaluation");
+            (evaluation.decisions[0], evaluation.receipt_id)
         }));
     }
     barrier.wait();
-    let mut decisions = threads
+    let evaluations = threads
         .into_iter()
         .map(|thread| thread.join().expect("join"))
         .collect::<Vec<_>>();
-    decisions.sort_by_key(|decision| match decision {
-        ReceiptDecision::Return => 0,
-        ReceiptDecision::SuppressExact => 1,
-        ReceiptDecision::SuppressOverlap => 2,
-        ReceiptDecision::ReturnNearDuplicate => 3,
-    });
-    assert_eq!(
-        decisions,
-        vec![ReceiptDecision::Return, ReceiptDecision::SuppressExact]
+    assert!(
+        evaluations
+            .iter()
+            .all(|(decision, _)| *decision == ReceiptDecision::Return)
     );
-    assert_eq!(usage(&storage).2, 1);
+    assert_ne!(evaluations[0].1, evaluations[1].1);
+    assert!(evaluations.iter().all(|(_, id)| id != &receipt_id));
+    assert!(
+        storage
+            .read_receipt(&receipt_id, unix_millis(SystemTime::now()))
+            .expect("immutable source")
+            .evidence
+            .is_empty()
+    );
+    assert_eq!(usage(&storage).2, 2);
 }
 
 #[test]
@@ -265,7 +341,7 @@ fn live_receipt_clock_is_sampled_after_writer_serialization() {
 }
 
 #[test]
-fn independent_writers_append_distinct_evidence_without_lost_update() {
+fn independent_writers_preserve_divergent_successor_branches() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -284,24 +360,25 @@ fn independent_writers_append_distinct_evidence_without_lost_update() {
             barrier.wait();
             storage
                 .evaluate_receipt(Some(&receipt_id), 1, &[evidence(index)], true)
-                .expect("append distinct evidence");
+                .expect("append distinct evidence")
+                .receipt_id
         }));
     }
     barrier.wait();
-    for thread in threads {
-        thread.join().expect("join");
-    }
+    let successor_ids = threads
+        .into_iter()
+        .map(|thread| thread.join().expect("join"))
+        .collect::<Vec<_>>();
+    assert_ne!(successor_ids[0], successor_ids[1]);
+    assert!(successor_ids.iter().all(|id| id != &receipt_id));
     let repeated = storage
         .evaluate_receipt(Some(&receipt_id), 1, &[evidence(1), evidence(2)], true)
-        .expect("read both appends");
+        .expect("reuse immutable source");
     assert_eq!(
         repeated.decisions,
-        vec![
-            ReceiptDecision::SuppressExact,
-            ReceiptDecision::SuppressExact
-        ]
+        vec![ReceiptDecision::Return, ReceiptDecision::Return]
     );
-    assert_eq!(usage(&storage).2, 2);
+    assert_eq!(usage(&storage).2, 4);
 }
 
 #[test]
@@ -562,7 +639,7 @@ fn rebased_receipt_is_atomic_source_preserving_and_restart_safe() {
 }
 
 #[test]
-fn rebase_conflicts_roll_back_without_mutating_the_source() {
+fn rebase_uses_immutable_sources_and_rejects_generation_races() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let first_generation = storage
@@ -577,27 +654,39 @@ fn rebase_conflicts_roll_back_without_mutating_the_source() {
     let stale_source = storage
         .load_receipt_rebase_source(&source_id)
         .expect("source snapshot");
-    storage
+    let successor_id = storage
         .evaluate_receipt(
             Some(&source_id),
             first_generation,
             std::slice::from_ref(&appended),
             true,
         )
-        .expect("concurrent append");
+        .expect("create successor")
+        .receipt_id;
+    assert_eq!(
+        storage
+            .load_receipt_rebase_source(&source_id)
+            .expect("source remains immutable")
+            .evidence,
+        vec![first.clone()]
+    );
+    assert_eq!(
+        storage
+            .load_receipt_rebase_source(&successor_id)
+            .expect("successor snapshot")
+            .evidence,
+        vec![first.clone(), appended]
+    );
     let second_generation = storage
         .full_reconcile("second", vec![sample_file("lib.rs", "fn second() {}\n")])
         .expect("second generation");
-    let before = usage(&storage);
-    assert!(matches!(
-        storage.persist_rebased_receipt(
+    storage
+        .persist_rebased_receipt(
             &stale_source,
             second_generation,
-            std::slice::from_ref(&first)
-        ),
-        Err(Error::RetryableConflict(RetryableOperation::Retrieval))
-    ));
-    assert_eq!(usage(&storage), before);
+            std::slice::from_ref(&first),
+        )
+        .expect("immutable source remains valid for rebase");
 
     let current_source = storage
         .load_receipt_rebase_source(&source_id)
@@ -606,6 +695,7 @@ fn rebase_conflicts_roll_back_without_mutating_the_source() {
         .full_reconcile("third", vec![sample_file("lib.rs", "fn third() {}\n")])
         .expect("third generation");
     assert!(third_generation > second_generation);
+    let before = usage(&storage);
     assert!(matches!(
         storage.persist_rebased_receipt(
             &current_source,
@@ -620,12 +710,12 @@ fn rebase_conflicts_roll_back_without_mutating_the_source() {
             .load_receipt_rebase_source(&source_id)
             .expect("source remains")
             .evidence,
-        vec![first, appended]
+        vec![first]
     );
 }
 
 #[test]
-fn receipt_lru_refresh_is_deterministic_at_the_header_bound() {
+fn immutable_receipt_reuse_does_not_refresh_lru_order() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let mut ids = Vec::new();
@@ -639,19 +729,19 @@ fn receipt_lru_refresh_is_deterministic_at_the_header_bound() {
     }
     storage
         .evaluate_receipt_at(Some(&ids[0]), 1, &[], true, 70_000)
-        .expect("refresh oldest receipt");
+        .expect("reuse oldest immutable receipt");
     storage
         .evaluate_receipt_at(None, 1, &[], true, 70_001)
         .expect("evict one receipt");
+    assert!(matches!(
+        storage.evaluate_receipt_at(Some(&ids[0]), 1, &[], true, 70_002),
+        Err(Error::UnknownReceipt(id)) if id == ids[0]
+    ));
     assert!(
         storage
-            .evaluate_receipt_at(Some(&ids[0]), 1, &[], true, 70_002)
+            .evaluate_receipt_at(Some(&ids[1]), 1, &[], true, 70_002)
             .is_ok()
     );
-    assert!(matches!(
-        storage.evaluate_receipt_at(Some(&ids[1]), 1, &[], true, 70_002),
-        Err(Error::UnknownReceipt(id)) if id == ids[1]
-    ));
     assert_eq!(usage(&storage).0, MAX_RECEIPTS);
 }
 
@@ -1023,6 +1113,7 @@ fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
         .execute_batch(
             "DROP TABLE query_coverage_receipts;
              DROP TABLE query_coverage_receipt_usage;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
              UPDATE retrieval_receipt_evidence
              SET logical_bytes = logical_bytes - 8;
@@ -1062,6 +1153,7 @@ fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
              DROP TABLE IF EXISTS retrieval_receipt_evidence;
              DROP TABLE IF EXISTS retrieval_receipts;
              DROP TABLE IF EXISTS retrieval_receipt_usage;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              UPDATE meta SET schema_version = 6 WHERE id = 1;
              PRAGMA user_version = 7;",
         )

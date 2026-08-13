@@ -6,7 +6,7 @@ impl Storage {
     ///
     /// Keep one session for every multi-query response. Dropping it rolls back
     /// the read transaction and returns the connection to the bounded pool.
-    pub fn begin_read(&self) -> Result<ReadSession> {
+    pub(super) fn begin_read(&self) -> Result<ReadSession> {
         let checkout_started = Instant::now();
         let conn = self.readers.get()?;
         let checkout_wait = checkout_started.elapsed();

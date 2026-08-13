@@ -39,9 +39,10 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   writes.
 - The retrieval services consume the storage-owned `IndexSnapshot` capability
   (re-exported locally as `IndexReadSnapshot`), which owns the pinned generation
-  and hides the storage transaction handle. Storage remains responsible for the
-  SQLite `ReadSession` implementation; service modules cannot accidentally
-  separate the snapshot lifetime from the generation they report.
+  and hides the storage transaction handle. Storage's raw SQLite `ReadSession`
+  and constructor are private to the storage module tree, so service code cannot
+  compile against them. Low-level public callers receive the same safe shape as
+  `StorageSnapshot`, with the generation inseparable from the pinned lifetime.
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Structured is the
@@ -123,21 +124,25 @@ lower bounds rather than an audit ledger.
 Retrieval receipts persist evidence metadata, never task/query text or raw
 source. An opaque ID combines a random 128-bit database-incarnation namespace
 with a SQLite `AUTOINCREMENT` row, so concurrent processes, cache recreation,
-and different repository databases cannot reuse an ID. Each evaluate loads the
-requested header and at most 2,048 ordered evidence rows, computes the same
-exact/overlap/near-duplicate decisions as the former process-local oracle, and
-appends only returned evidence. Header lookup, evidence lookup, expiry pruning,
-and LRU selection have checked primary-key/range-index query plans.
+and different repository databases cannot reuse an ID. Each evaluation loads
+the requested header and at most 2,048 ordered evidence rows and computes exact,
+overlap, and near-duplicate decisions against that immutable snapshot. Header
+lookup, evidence lookup, expiry pruning, and LRU selection have checked
+primary-key/range-index query plans.
 
-Receipt evaluation uses one `IMMEDIATE` transaction for lookup, generation and
-clock validation, decisions, append, counters, expiry, and quota eviction.
-The process-local writer mutex and SQLite's database writer lock therefore make
-two processes using one receipt observe a serial order: a duplicate concurrent
-call is returned once and suppressed by the follower, and distinct appends
-cannot lose one another. Live wall-clock time is sampled only after the
-`IMMEDIATE` transaction acquires that writer order, preventing an older queued
-sample from looking like clock rollback after a newer request commits. A
-receipt remains bound to the generation of the read
+A caller-known receipt is never advanced in place. When a response adds
+evidence, one `IMMEDIATE` transaction creates a copy-on-write successor holding
+the source evidence plus the evidence selected for that response; the source
+row, evidence, timestamps, expiry, and LRU position remain unchanged. If the
+response is lost, retrying its source returns the unacknowledged evidence again.
+If it arrives, the caller continues with the returned successor. Concurrent
+uses of one source intentionally create independent branches rather than
+claiming an acknowledgement ordering the transport cannot observe. Successor
+quota eviction excludes the source for the complete transaction, and resource
+reads of both IDs remain independent immutable snapshots. Live wall-clock time
+is sampled only after the `IMMEDIATE` transaction acquires SQLite's writer
+order, preventing an older queued sample from looking like clock rollback after
+a newer request commits. A receipt remains bound to the generation of the read
 snapshot that produced it even if a newer generation publishes before the
 receipt transaction. A later request on the new generation fails with
 `StaleReceipt`; it never silently creates a new session.
@@ -173,18 +178,19 @@ The hard receipt bounds are 128 headers, 64 KiB of logical header data, 2,048
 evidence rows and 1 MiB of logical evidence per receipt, and 16,384 evidence
 rows or 8 MiB of logical evidence globally. Logical bytes include persisted
 field values and fixed-width scalar fields, not SQLite page overhead. A
-monotonic database access sequence makes LRU ties deterministic. Appending new
-evidence refreshes access immediately; an access that appends nothing refreshes
-LRU and the sliding 24-hour wall-clock expiry at most once per 60 seconds,
-bounding write amplification without allowing an actively reused receipt to
-expire. Expiry and observed clock rollback fail closed. Lazy pruning runs
-inside receipt evaluation. Capacity eviction and expiry deliberately become
-`UnknownReceipt`, while generation-stale headers remain available until expiry
-or capacity pressure so callers normally receive the more specific
-`StaleReceipt`. Whole-cache prune removes receipts with the same disposable
-database. Normal evaluation can inspect at most 128 headers and 16,384
-cascading evidence rows during worst-case quota cleanup and performs no
-filesystem scan. One rebase opens at most one live file per distinct source
+monotonic creation sequence makes LRU ties deterministic. Every immutable
+version receives one fixed 24-hour expiry and is never touched: adding evidence
+creates a fresh successor, while a reuse that adds nothing returns the same ID
+without extending its lifetime. This keeps acknowledgement tokens value-like
+and avoids a hidden write on reads; callers that keep working receive fresh
+successors as their evidence grows. Expiry and observed clock rollback fail
+closed. Lazy pruning runs inside receipt evaluation. Capacity eviction and
+expiry deliberately become `UnknownReceipt`, while generation-stale headers
+remain available until expiry or capacity pressure so callers normally receive
+the more specific `StaleReceipt`. Whole-cache prune removes receipts with the
+same disposable database. Normal evaluation can inspect at most 128 headers
+and 16,384 cascading evidence rows during worst-case quota cleanup and performs
+no filesystem scan. One rebase opens at most one live file per distinct source
 path, retains only one file at a time (bounded by the configured per-file
 indexing limit), and reads at most 64 MiB of live source in total. Each evidence
 item checks at most 64 exact-coordinate structural candidates. Evidence beyond
@@ -377,20 +383,49 @@ because SQLite retokenized external content on demand.
 
 Each multi-step retrieval (search, context, outline, files, read) opens one
 checked-out read-only connection from an established, bounded `r2d2_sqlite`
-pool and holds a DEFERRED transaction for the request
-(`ReadSession`). Under WAL that pins a single committed snapshot for every
+pool and holds a storage-private DEFERRED transaction for the request. The
+public `StorageSnapshot` and application `IndexSnapshot` capabilities own that
+transaction. Under WAL this pins a single committed snapshot for every
 query in the assembly, so concurrent publishers cannot mix generations inside
 one response. SQLite busy/locked errors while opening and pinning a snapshot
 are retried a few times; generation zero returns a typed `IndexNotReady` error
 instead of an empty success.
 
-The pool holds the quota-aware process parallelism value clamped to 4 through 16
-read connections per `Storage` instance. Cloned services share that pool;
-separate processes and separate repository caches do not. This is a concurrency
-bound, not a promise that any one reader count improves every workload. Change
-the shared capacity policy only with release-mode contention measurements that
-include SQLite wait time, end-to-end latency, and memory across the expected
-number of simultaneous agents.
+`ServicesRuntime` is the process-owned capability for repository service
+instances. A standalone `Services` creates one automatically; MCP creates one
+runtime first and passes it to the primary repository and every approved
+context. The primary is opened before secondary activation. Approved contexts
+retain only bounded routing state until their first selection, and concurrent
+first selections coalesce behind one activation. Never-selected contexts do
+not open SQLite, walk a repository, or start an indexing loop.
+
+The runtime owns the limits that otherwise multiply with repository count:
+
+| Process resource | Bound |
+| --- | --- |
+| Repository services | primary + at most 8 approved contexts |
+| Active pinned snapshots | quota-aware parallelism clamped to 4 through 16 |
+| Pooled read connections | snapshot capacity + at most 8 single-reader context pools |
+| Running blocking retrievals | same quota-aware parallelism capacity |
+| Admitted blocking retrievals | running capacity + 8 |
+| Active reconciliation waves | admitted blocking capacity |
+| Active index preparation/publication | 1 across all repositories |
+| Rayon indexing workers | one lazy pool of `max_index_workers` workers |
+
+The first registered repository receives a reader pool sized to the active
+snapshot capacity. Each additional repository receives one pooled connection,
+while every checkout must also acquire the shared snapshot permit. Thus idle
+contexts have a small, documented connection footprint and bursts cannot exceed
+the process active-snapshot budget. Repository-service registration is RAII and
+fails before opening storage when the process limit is exhausted. Public runtime
+diagnostics report every capacity and current occupancy without claiming that a
+pipe write or receipt successor was delivered to its caller.
+
+These are concurrency and retained-resource bounds, not a promise that larger
+values improve every workload. Change the shared capacity policy only with
+release-mode contention measurements that include SQLite wait time,
+end-to-end latency, initialization work, disk writes, and memory across the
+expected number of simultaneous repository contexts.
 
 Reader pool checkout waits are sampled in tests and logged when they exceed
 10 ms in production. Storage startup logs elapsed time for each configured
@@ -407,8 +442,11 @@ domain-specific candidate fusion, overlap, and token-selection policy in Rust.
 The Rust module tree mirrors these ownership boundaries: storage, repository,
 ranking, and service retrieval stages are child modules with explicit imports,
 not textual namespace concatenation. The former organizational `include!()`
-trees have been migrated to ordinary modules, and
-`cargo xtask check-test-architecture` rejects any recurrence.
+trees have been migrated to ordinary modules. The architecture checker parses
+Rust syntax to reject actual `include!` invocations without treating comments
+or strings as code; Cargo metadata owns target inventory, the compiled test
+inventory owns ignored-test policy, and Rust visibility owns the raw storage
+session boundary.
 
 ### Storage and policy ownership
 
@@ -792,10 +830,25 @@ scans each of the four external-content indexes in one immediate transaction
 on every database open. This detects out-of-band index damage that does not
 change LeanToken's index generation, rebuilding any corrupted index before the
 database is used while leaving any pre-existing WAL backlog uncheckpointed.
+Storage startup also treats relational summaries as projections rather than truth. It
+compares the complete path projection with `files`, derives receipt/evidence,
+query-receipt, and read-delta usage counters from their authoritative rows, and
+repairs missing singleton namespaces without regressing access sequences. The
+indexer's first reconciliation likewise regenerates import candidate order and
+resolution through its one language-policy owner in pages of at most 32
+imports, never by consulting the possibly corrupt reverse candidate index or
+materializing the complete file-membership table. Storage resolves each
+at-most-64-path candidate vector through indexed equality lookups against the
+publication transaction's exact `files` rows. Any membership-changing
+publication repeats that repair inside the same transaction. A non-null
+resolved import therefore always names a file in the same committed generation. Once this
+process has verified the projection, content-only publications replace their
+own importer rows but do not rescan every unrelated import; only repository
+membership changes can alter another file's candidate resolution.
 Startup tracks both main-table
 row changes and the schema version while checkpointing is suspended; a real
-migration or path-projection repair explicitly requests `TRUNCATE` after the
-prior policy is restored, with SQLite's ordinary busy-reader behavior. Small
+migration or startup projection repair explicitly requests `TRUNCATE` after
+the prior policy is restored, with SQLite's ordinary busy-reader behavior. Small
 repository last-access telemetry remains deliberately uncheckpointed. Profiled
 no-change runs also collect database, WAL, and FTS footprints without
 requesting an explicit checkpoint. A later changed publication retains the
@@ -863,23 +916,16 @@ committed WAL generation. The short-lived operation lock makes `reconciling`
 visible to followers as well as the leader. Watcher and reconciliation tasks
 receive caller-owned cancellation and are joined during shutdown.
 
-Each `Services`/`Indexer` instance can own one Rayon worker pool sized from that
-instance's `max_index_workers`. MCP background indexing defaults to one worker
-so protocol handling and sibling agents retain CPU capacity; an explicit
-`--max-index-workers` value is preserved. Direct `index` commands retain the
-normal bounded default. The pool is built lazily on the first non-empty
-file preparation and reused afterward. Read-only followers therefore allocate
-no indexing threads, while a process that becomes leader retains its configured
-worker bound without rebuilding a pool on every reconciliation.
-
-Each approved MCP repository context owns a separate `Services` instance and
-therefore a separate pool. With `K` approved contexts, background indexing uses
-at most `1 + K` workers by default; with an explicit
-`--max-index-workers=N`, the process-wide upper bound is `(1 + K) * N`.
-Startup warns when that aggregate exceeds the host's available CPU capacity.
-Operators can reduce the number of approved contexts or lower the per-instance
-worker limit; `--max-index-workers=1` cannot reduce the default aggregate below
-one worker per active repository.
+Each `ServicesRuntime` owns one Rayon worker pool sized by its process-wide
+`max_index_workers`. MCP background indexing defaults to one worker so protocol
+handling and sibling agents retain CPU capacity; an explicit
+`--max-index-workers` value is the shared runtime bound. Direct `index` commands
+use a standalone runtime with the normal bounded default. The pool is built
+lazily on the first non-empty preparation and reused afterward. A process-wide
+indexing permit admits only one repository preparation/publication at a time,
+so approved contexts neither multiply workers nor run concurrent repository
+walks through the same runtime. Read-only followers and never-selected contexts
+allocate no indexing threads.
 
 The manual dependency-heavy profiler keeps production concurrency unchanged.
 Its screening matrix accepts at most 16 fresh subprocesses. The guarded
@@ -1215,9 +1261,10 @@ When an explicitly response-bounded `read` page does not initially fit, the
 service binary-searches the existing source-token ceiling and rematerializes at
 most 18 bounded live pages inside the same SQLite generation. Each probe keeps
 the existing 8 MiB live-read cap and cancellation checks. The selected page
-uses the normal content-bound continuation cursor, so fitting cannot skip
-source. Delta mode falls back to that fitted direct page if delta metadata
-would cross the total-response ceiling.
+uses the request policy's ordinary continuation contract, so fitting cannot
+skip source: `full` emits a content-snapshot cursor and `bounded` emits an
+explicitly prefix-stable cursor. Delta mode falls back to that fitted direct
+page if delta metadata would cross the total-response ceiling.
 
 Run the reproducible hot-path profile with, for example,
 `cargo run --release -p leantoken-benchmarks --bin hot_path_bounds -- --files 10000 --iterations 20`.
@@ -1281,21 +1328,22 @@ a closure, and normal completion, error, cancellation, or panic returns both
 permits. Indexing remains on its existing reconciliation path so retrieval
 backpressure cannot acquire or release indexing ownership.
 
-The execution default matches the SQLite reader pool: both use the same
-quota-aware parallelism value clamped to 4 through 16. This is a bounded safety
-choice, not a claim that any one value is universally optimal. A read request
-checks out one pooled connection and holds one DEFERRED WAL transaction for its
-consistent generation. That snapshot is transaction state, not a copied
-database or per-request artifact. Its main storage effect is that SQLite may
-retain old WAL pages until the reader finishes; dropping the request session
-rolls back the read transaction and returns the connection.
+The execution and process snapshot defaults use the same quota-aware
+parallelism value clamped to 4 through 16. The primary repository's SQLite
+reader pool has that capacity; every additionally activated context has one
+reader, and every checkout also consumes the shared snapshot permit. This is a
+bounded safety choice, not a claim that any one value is universally optimal. A
+read request holds one DEFERRED WAL transaction for its consistent generation.
+That snapshot is transaction state, not a copied database or per-request
+artifact. Its main storage effect is that SQLite may retain old WAL pages until
+the snapshot finishes; dropping the capability rolls back the read transaction,
+returns the connection, and releases process admission.
 
-Receipt `resources/read` requests have a separate fail-fast admission bound
-matching that dynamic reader pool. Admitted reads run on the blocking
-executor, hold one deferred transaction for a complete receipt snapshot, and
-return their permit after serialization state is materialized. Excess reads
-fail before waiting for a pooled connection or allocating a bounded receipt
-response.
+Receipt `resources/read` requests use the same process snapshot admission as
+other pinned reads. Admitted reads run on the shared blocking executor, hold one
+deferred transaction for a complete receipt snapshot, and return their permit
+after serialization state is materialized. Excess reads fail before waiting for
+a pooled connection or allocating a bounded receipt response.
 
 MCP requests with `max_response_tokens` reserve the exact adapter-owned
 structured receipt-reference shape before service execution. The adapter then
@@ -1356,12 +1404,11 @@ and outline never invent empty successful results at generation zero.
 - A repository root is persisted in cache metadata. Canonical aliases of the
   same root and normalized scope share it; a different root or scope cannot
   reuse that database explicitly.
-- Connection capacity remains per process/repository. The bounded established
-  pool reuses read-only connections and prepared statements; it is not a global
-  multi-repository coordination mechanism. Each process establishes at most
-  eight read connections per approved repository context, and the context
-  manifest is capped at eight additional roots, so the aggregate bound is
-  explicit and grows linearly with the configured context count.
+- Each repository retains its own established read-only connection pool and
+  prepared statements, but `ServicesRuntime` owns aggregate capacity. The first
+  repository receives the shared snapshot capacity and each of the at most
+  eight additional activated contexts receives one connection; all checkouts
+  consume the same process snapshot permit.
 - Response token accounting is best-effort telemetry. Its zero-timeout SQLite
   write can be skipped under cross-process writer contention; retrieval
   correctness and generation publication never wait for that observation.
@@ -1374,14 +1421,15 @@ and outline never invent empty successful results at generation zero.
   CPU thresholds identify evidence for host-wide admission work, not permission
   to weaken retrieval, snapshot, or publication invariants and not automatic
   authorization for a shared daemon.
-- MCP request admission and Services blocking execution are instance-local
-  within one process. Another workspace or agent affects these limits only
-  when it shares that same server or `Services` instance; a separate MCP
-  process has separate limits.
-- Reconciliation waves are also instance-local. Cloned Services share wave
-  state, while independently opened Services and separate processes continue
-  to serialize through the repository operation lock. Explicit CLI indexing,
-  watcher path reconciliation, and rebuilds remain outside wave coalescing.
+- MCP tool-call admission belongs to the server, while every repository service
+  in that server shares one blocking executor, snapshot admission domain,
+  reconciliation admission domain, indexing permit, and lazy Rayon pool. A
+  separate MCP process has separate in-memory capacity.
+- Same-repository requests coalesce in that repository's reconciliation
+  coordinator. Different repositories share process reconciliation admission
+  and serialize their bounded indexing footprint through one permit. Separate
+  processes still coordinate only when they address the same repository cache,
+  through its operation lock.
 - Stdio input frames are bounded at four MiB while bytes are read. Oversized
   terminated or unterminated frames are discarded without retaining their
   capacity, after which the next newline-delimited request can proceed.
@@ -1418,6 +1466,48 @@ tree-sitter parse. CSS selector and at-rule symbols retain complete rule ranges;
 HTML ID and element symbols retain complete owning-element ranges. Attribute
 and selector references keep their exact lexical ranges, while resource links
 flow through the shared import model.
+
+Import resolution is deliberately a finite repository graph, not an imitation
+of a compiler or runtime loader. One `ImportResolutionPolicy` selected from the
+source path owns candidate construction and precedence:
+
+- Python tries package initializers before module files for each root. Absolute
+  imports originating below the nearest conventional `src/` directory try that
+  source root before repository root. `from package import member` retains both
+  the package owner and each possible repository submodule as separate bounded
+  syntax-derived edges instead of erasing the member or claiming certainty.
+- TypeScript explicitly applies `.js`, `.jsx`, `.mjs`, and `.cjs` source
+  substitution order, including compound declaration suffixes. Extensionless
+  TypeScript uses the finite `.js`-family lookup shared by classic, CommonJS,
+  and bundler resolution; it never invents implicit `.mts`/`.cts` targets, and
+  an `.mts` importer fails closed because its ESM format is known. Ambiguous
+  `.ts`/`.tsx` importers remain a best-effort graph until project resolution
+  context (`tsconfig.json` and the nearest `package.json`) becomes an explicit
+  input. Bare package specifiers are not guessed.
+- Rust derives conventional nested `src`, `src/bin`, `tests`, `examples`, and
+  `benches` target roots, expands `.rs`/`mod.rs` candidates, and rejects
+  `super::` above the inferred crate root. It does not claim Cargo-manifest,
+  macro, or rustc name resolution for arbitrary explicit targets.
+- LaTeX input/include paths accept their language's bare source-relative form.
+  HTML resolves only exact dot-relative resources without URL query/fragment
+  semantics. Languages without a modeled repository-owner rule—including Go
+  module paths—remain unresolved instead of borrowing another language's
+  file/index heuristic and creating a plausible false edge.
+
+Every candidate is a normalized repository-relative path and no policy performs
+a filesystem walk. A captured target is admitted only through 16 KiB, each
+candidate path through 4 KiB, and every policy emits at most 64 candidates per
+import. Python emits at most eight candidates, ordinary JavaScript at most
+eight, and TypeScript at most ten. Rust first counts grouped targets and
+module prefixes, rejecting the projection before expansion if its at-most-32
+module bases would overflow the shared candidate cap; this prevents quadratic
+prefix materialization from a pathological `use` tree. Resolution selects the
+first candidate present in publication membership. Candidate vectors are
+persisted in that order for reverse membership invalidation, and the same
+derivation function owns initial indexing, relocation, incremental refresh,
+and corruption repair. Its source and dependency fingerprint is stored with
+index metadata, so semantic changes force a rebuild even if a manually
+maintained version constant is missed.
 
 Markdown and LaTeX use custom document parsers instead of tree-sitter. The
 LaTeX parser makes one bounded pass over the already size-limited indexed

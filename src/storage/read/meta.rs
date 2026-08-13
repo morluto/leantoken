@@ -3,14 +3,17 @@ impl ReadSession {
     pub fn meta(&self) -> Result<MetaRecord> {
         self.conn
             .query_row(
-                "SELECT schema_version, index_version, config_hash, repository_generation FROM meta WHERE id = 1",
+                "SELECT schema_version, index_version, config_hash,
+                        derivation_fingerprint, repository_generation
+                 FROM meta WHERE id = 1",
                 [],
                 |row| {
                     Ok(MetaRecord {
                         schema_version: row.get(0)?,
                         index_version: row.get(1)?,
                         config_hash: row.get(2)?,
-                        repository_generation: i64_to_u64(row.get(3)?)?,
+                        derivation_fingerprint: row.get(3)?,
+                        repository_generation: i64_to_u64(row.get(4)?)?,
                     })
                 },
             )

@@ -79,6 +79,166 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
     (root, services)
 }
 
+#[test]
+fn process_runtime_shares_every_multiplying_service_budget() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let mut first_config = Config::discover(
+        first_root.path(),
+        Some(first_root.path().join("index.sqlite")),
+    )
+    .expect("first config");
+    let mut second_config = Config::discover(
+        second_root.path(),
+        Some(second_root.path().join("index.sqlite")),
+    )
+    .expect("second config");
+    first_config.max_index_workers = 2;
+    second_config.max_index_workers = 2;
+    let runtime = ServicesRuntime::new(2).expect("process runtime");
+
+    let first = Services::open_in_runtime(first_config, runtime.clone()).expect("first services");
+    let second = Services::open_in_runtime(second_config, runtime).expect("second services");
+
+    assert!(
+        first
+            .runtime
+            .blocking_executor
+            .shares_capacity_with(&second.runtime.blocking_executor)
+    );
+    assert!(Arc::ptr_eq(
+        &first.runtime.snapshot_admission,
+        &second.runtime.snapshot_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.reconciliation_admission,
+        &second.runtime.reconciliation_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.indexing_admission,
+        &second.runtime.indexing_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.index_pool,
+        &second.runtime.index_pool
+    ));
+    let diagnostics = first.runtime.diagnostics();
+    assert_eq!(diagnostics.active_repository_services, 2);
+    assert_eq!(
+        first.storage.reader_connection_capacity(),
+        u32::try_from(diagnostics.snapshot_capacity).expect("snapshot capacity")
+    );
+    assert_eq!(second.storage.reader_connection_capacity(), 1);
+    assert_eq!(
+        diagnostics.max_pooled_reader_connections,
+        diagnostics.snapshot_capacity + diagnostics.max_repository_services - 1
+    );
+}
+
+#[test]
+fn process_runtime_bounds_repository_and_reader_pool_multiplication() {
+    let runtime = ServicesRuntime::new(2).expect("process runtime");
+    let mut registrations = Vec::new();
+    for _ in 0..runtime.diagnostics().max_repository_services {
+        registrations.push(runtime.register_repository().expect("bounded registration"));
+    }
+    let diagnostics = runtime.diagnostics();
+    assert_eq!(
+        diagnostics.active_repository_services,
+        diagnostics.max_repository_services
+    );
+    assert_eq!(
+        registrations
+            .iter()
+            .map(|registration| registration.reader_connection_capacity() as usize)
+            .sum::<usize>(),
+        diagnostics.max_pooled_reader_connections
+    );
+    assert!(matches!(
+        runtime.register_repository(),
+        Err(Error::RequestLimitExceeded {
+            field: "process repository services",
+            ..
+        })
+    ));
+
+    registrations.pop();
+    assert_eq!(
+        runtime.diagnostics().active_repository_services,
+        diagnostics.max_repository_services - 1
+    );
+    runtime
+        .register_repository()
+        .expect("released registration returns capacity");
+}
+
+#[test]
+fn snapshot_capacity_is_enforced_across_repository_services() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let mut first_config = Config::discover(
+        first_root.path(),
+        Some(first_root.path().join("index.sqlite")),
+    )
+    .expect("first config");
+    let mut second_config = Config::discover(
+        second_root.path(),
+        Some(second_root.path().join("index.sqlite")),
+    )
+    .expect("second config");
+    first_config.max_index_workers = 1;
+    second_config.max_index_workers = 1;
+    let runtime = ServicesRuntime::new(1).expect("process runtime");
+    let first = Services::open_in_runtime(first_config, runtime.clone()).expect("first services");
+    let second =
+        Services::open_in_runtime(second_config, runtime.clone()).expect("second services");
+    let snapshot_capacity = runtime.diagnostics().snapshot_capacity;
+    let entered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut readers = Vec::new();
+
+    for index in 0..snapshot_capacity {
+        let services = if index == 0 {
+            second.clone()
+        } else {
+            first.clone()
+        };
+        let entered = Arc::clone(&entered);
+        let gate = Arc::clone(&gate);
+        readers.push(std::thread::spawn(move || {
+            services.consistent_allow_empty(|_| {
+                entered.fetch_add(1, Ordering::AcqRel);
+                let (open, changed) = &*gate;
+                let mut open = open.lock().expect("snapshot gate");
+                while !*open {
+                    open = changed.wait(open).expect("snapshot gate wait");
+                }
+                Ok(())
+            })
+        }));
+    }
+    while entered.load(Ordering::Acquire) < snapshot_capacity {
+        std::thread::yield_now();
+    }
+
+    assert_eq!(runtime.diagnostics().active_snapshots, snapshot_capacity);
+    assert!(matches!(
+        first.consistent_allow_empty(|_| Ok(())),
+        Err(Error::RetrievalOverloaded)
+    ));
+
+    let (open, changed) = &*gate;
+    *open.lock().expect("snapshot gate") = true;
+    changed.notify_all();
+    for reader in readers {
+        reader
+            .join()
+            .expect("reader thread")
+            .expect("snapshot read");
+    }
+    assert_eq!(runtime.diagnostics().active_snapshots, 0);
+}
+
 fn root_files_request() -> FilesRequest {
     FilesRequest {
         operation: FileOperation::Tree,
@@ -994,7 +1154,8 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .find_file("lib.rs")
         .expect("find file")
         .expect("indexed file");
-    let session = services.storage.begin_read().expect("read session");
+    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+        .expect("read snapshot");
     let crate::symbol_identity::SymbolResolution::Unique(large) =
         session.find_symbol(file.id, "large").expect("find symbol")
     else {
@@ -1010,8 +1171,6 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
-        .expect("read snapshot");
     let bounded = services
         .adaptive_context_excerpts(
             &session,
@@ -1246,12 +1405,13 @@ async fn token_savings_rejects_work_when_blocking_capacity_is_saturated() {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let mut services = Services::open(config).expect("services");
-    services.blocking_executor = executor::BlockingExecutor::new(1, 1, Duration::from_secs(30));
+    services.runtime.blocking_executor =
+        executor::BlockingExecutor::new(1, 1, Duration::from_secs(30));
 
     let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let blocker = {
-        let executor = services.blocking_executor.clone();
+        let executor = services.runtime.blocking_executor.clone();
         let gate = Arc::clone(&gate);
         let started = Arc::clone(&started);
         tokio::spawn(async move {

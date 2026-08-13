@@ -10,7 +10,6 @@ pub(crate) const MAX_TOTAL_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE: usize = 64;
 pub(crate) const MAX_REBASE_LIVE_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
-pub(crate) const RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 const RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
 const RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
 // A valid, high-token-density ID used before storage assigns the exact opaque

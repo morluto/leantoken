@@ -187,6 +187,8 @@ mod tests {
                 database_path: "/cache/index.sqlite".into(),
                 repository_cache_fallback: false,
                 index_content_version: 12,
+                index_derivation_fingerprint: "runtime-derivation".into(),
+                persisted_index_derivation_fingerprint: Some("persisted-derivation".into()),
                 index_scope: IndexScopeMode::Full,
                 index_scope_digest: None,
                 index_include_paths: Vec::new(),
@@ -209,6 +211,11 @@ mod tests {
 
             let value = serde_json::to_value(response).expect("serialize status");
             assert_eq!(value["index_content_version"], 12);
+            assert_eq!(value["index_derivation_fingerprint"], "runtime-derivation");
+            assert_eq!(
+                value["persisted_index_derivation_fingerprint"],
+                "persisted-derivation"
+            );
             assert_eq!(
                 value["index_state"],
                 match index_state {

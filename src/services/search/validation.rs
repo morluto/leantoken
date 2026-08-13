@@ -6,11 +6,32 @@ pub(super) fn validate_search_input(request: &SearchRequest) -> Result<()> {
         });
     }
     validate_input(&request.query, "search query", MAX_QUERY_BYTES)?;
-    validate_glob_patterns(&request.include_paths)?;
-    validate_glob_patterns(&request.exclude_paths)?;
-    validate_glob_patterns(&request.focus_paths)?;
-    validate_cursor(request.cursor.as_deref())?;
     Ok(())
+}
+
+pub(super) fn search_stream_id(
+    services: &Services,
+    request: &SearchInput,
+    prepared: &PreparedSearch,
+    output_shape: SearchOutputShape,
+) -> StreamId {
+    let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::Search);
+    stream.field_str("query", &request.query);
+    stream.field_str("mode", request.kind.mode().wire_name());
+    stream.field_bool("all_occurrences", request.kind.is_exhaustive());
+    stream.field_bool("prefer_structural", request.kind.is_structural_preferred());
+    stream.field_bool("case_sensitive", request.case_sensitive);
+    stream.field_strings("include_paths", &request.include_paths);
+    stream.field_strings("exclude_paths", &request.exclude_paths);
+    stream.field_strings("focus_paths", &request.focus_paths);
+    stream.field_usize("max_results", prepared.limit);
+    stream.field_usize("max_tokens", prepared.token_limit);
+    stream.field_usize("context_lines", prepared.context_lines);
+    stream.field_str("output_shape", output_shape.stream_label());
+    // Pagination advances through the pre-receipt candidate stream. A caller
+    // must be able to acknowledge page N with its copy-on-write successor when
+    // requesting page N+1, so the evolving receipt ID is not stream identity.
+    stream.finish()
 }
 
 pub(super) fn parse_search_kind(

@@ -89,6 +89,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.rebase_receipt_sync(request, options, cancellation)

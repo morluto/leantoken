@@ -1,5 +1,117 @@
 use std::time::Instant;
 
+fn validate_repository_binding_values(
+    database: &Path,
+    expected_repository: &str,
+    expected_identity: &str,
+    repository_root: &Path,
+    index_scope_digest: Option<&str>,
+) -> Result<()> {
+    let actual_repository = repository_root.to_path_buf();
+    let actual_display = repository_root.to_string_lossy();
+    let actual_identity = repository_identity(repository_root, index_scope_digest);
+    if expected_identity.is_empty() {
+        if !expected_repository.is_empty() && expected_repository != actual_display {
+            return Err(Error::RepositoryMismatch {
+                database: database.to_path_buf(),
+                expected_repository: expected_repository.to_owned(),
+                actual_repository,
+            });
+        }
+        return Ok(());
+    }
+    if expected_identity != actual_identity {
+        return if expected_repository == actual_display {
+            Err(Error::IndexScopeMismatch {
+                database: database.to_path_buf(),
+            })
+        } else {
+            Err(Error::RepositoryMismatch {
+                database: database.to_path_buf(),
+                expected_repository: expected_repository.to_owned(),
+                actual_repository,
+            })
+        };
+    }
+    Ok(())
+}
+
+/// Reject an already-bound foreign LeanToken cache before startup pragmas,
+/// migrations, projection repair, or checkpoint behavior can mutate it.
+fn verify_repository_binding_before_mutation(
+    conn: &Connection,
+    database: &Path,
+    repository_root: &Path,
+    index_scope_digest: Option<&str>,
+) -> Result<()> {
+    if !table_exists(conn, StorageTable::Meta)?
+        || !column_exists(conn, StorageColumn::MetaRepositoryRoot)?
+    {
+        return Ok(());
+    }
+    let expected_repository =
+        conn.query_row("SELECT repository_root FROM meta WHERE id = 1", [], |row| {
+            row.get::<_, String>(0)
+        })?;
+    let expected_identity = if column_exists(conn, StorageColumn::MetaRepositoryIdentity)? {
+        conn.query_row(
+            "SELECT repository_identity FROM meta WHERE id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )?
+    } else {
+        String::new()
+    };
+    validate_repository_binding_values(
+        database,
+        &expected_repository,
+        &expected_identity,
+        repository_root,
+        index_scope_digest,
+    )
+}
+
+fn bind_repository_connection(
+    conn: &mut Connection,
+    database: &Path,
+    repository_root: &Path,
+    index_scope_digest: Option<&str>,
+    accessed_at: i64,
+) -> Result<()> {
+    let actual_display = repository_root.to_string_lossy();
+    let actual_identity = repository_identity(repository_root, index_scope_digest);
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let (expected_repository, expected_identity): (String, String) = tx.query_row(
+        "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    validate_repository_binding_values(
+        database,
+        &expected_repository,
+        &expected_identity,
+        repository_root,
+        index_scope_digest,
+    )?;
+    if expected_identity.is_empty() {
+        tx.execute(
+            "UPDATE meta
+             SET repository_root = ?1,
+                 repository_identity = ?2,
+                 last_access_unix_seconds = ?3
+             WHERE id = 1",
+            params![actual_display.as_ref(), actual_identity, accessed_at],
+        )?;
+    } else {
+        tx.execute(
+            "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
+            params![accessed_at],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 impl Storage {
     /// Open or migrate a SQLite index without binding it to a repository root.
     ///
@@ -27,6 +139,7 @@ impl Storage {
         if !table_exists(&conn, StorageTable::Meta)? {
             return Ok(ReadOnlyStatusSnapshot {
                 generation: 0,
+                derivation_fingerprint: None,
                 counts: StorageCounts {
                     files: 0,
                     chunks: 0,
@@ -84,6 +197,17 @@ impl Storage {
         } else {
             0
         };
+        let derivation_fingerprint =
+            if column_exists(&conn, StorageColumn::MetaDerivationFingerprint)? {
+                let fingerprint = conn.query_row(
+                    "SELECT derivation_fingerprint FROM meta WHERE id = 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?;
+                (!fingerprint.is_empty()).then_some(fingerprint)
+            } else {
+                None
+            };
         let files = count_table_rows(&conn, StorageTable::Files)?;
         let chunks = count_table_rows(&conn, StorageTable::Chunks)?;
         let symbols = count_table_rows(&conn, StorageTable::Symbols)?;
@@ -111,6 +235,7 @@ impl Storage {
 
         Ok(ReadOnlyStatusSnapshot {
             generation,
+            derivation_fingerprint,
             counts: StorageCounts {
                 files,
                 chunks,
@@ -125,19 +250,80 @@ impl Storage {
         path: impl AsRef<Path>,
         startup_timeout: Duration,
     ) -> Result<Self> {
+        Self::open_with_startup_timeout_and_read_capacity(
+            path,
+            startup_timeout,
+            default_read_connection_capacity(),
+        )
+    }
+
+    fn open_with_startup_timeout_and_read_capacity(
+        path: impl AsRef<Path>,
+        startup_timeout: Duration,
+        read_connection_capacity: u32,
+    ) -> Result<Self> {
+        Self::open_with_startup_timeout_read_capacity_and_binding(
+            path,
+            startup_timeout,
+            read_connection_capacity,
+            None,
+        )
+    }
+
+    fn open_with_startup_timeout_read_capacity_and_binding(
+        path: impl AsRef<Path>,
+        startup_timeout: Duration,
+        read_connection_capacity: u32,
+        repository_binding: Option<(&Path, Option<&str>)>,
+    ) -> Result<Self> {
+        if read_connection_capacity == 0 {
+            return Err(Error::InvalidConfiguration(
+                "read connection capacity must be positive".into(),
+            ));
+        }
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(&path)?;
+        if let Some((repository_root, index_scope_digest)) = repository_binding {
+            verify_repository_binding_before_mutation(
+                &conn,
+                &path,
+                repository_root,
+                index_scope_digest,
+            )?;
+        }
         Self::configure(&mut conn, startup_timeout)?;
         with_auto_checkpoint_suspended(
             &mut conn,
             AutoCheckpointCompletion::CheckpointIfMutated,
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
-                Self::ensure_token_savings_schema(conn)?;
-                Self::ensure_path_projection(conn)
+                Self::ensure_token_savings_schema(conn)
+            },
+        )?;
+        if let Some((repository_root, index_scope_digest)) = repository_binding {
+            with_auto_checkpoint_suspended(
+                &mut conn,
+                AutoCheckpointCompletion::RestoreOnly,
+                |conn| {
+                    bind_repository_connection(
+                        conn,
+                        &path,
+                        repository_root,
+                        index_scope_digest,
+                        unix_seconds(SystemTime::now()),
+                    )
+                },
+            )?;
+        }
+        with_auto_checkpoint_suspended(
+            &mut conn,
+            AutoCheckpointCompletion::CheckpointIfMutated,
+            |conn| {
+                Self::ensure_path_projection(conn)?;
+                Self::ensure_quota_usage_projections(conn)
             },
         )?;
         Self::validate_fts5(&mut conn)?;
@@ -155,7 +341,7 @@ impl Storage {
                 connection.pragma_update(None, "foreign_keys", "ON")
             });
         let readers = r2d2::Pool::builder()
-            .max_size(default_read_connection_capacity())
+            .max_size(read_connection_capacity)
             .connection_timeout(DEFAULT_BUSY_TIMEOUT)
             .test_on_check_out(false)
             .build(manager)?;
@@ -169,6 +355,7 @@ impl Storage {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn open_for_repository_scoped(
         path: impl AsRef<Path>,
         repository_root: &Path,
@@ -182,29 +369,37 @@ impl Storage {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn open_for_repository_scoped_with_startup_timeout(
         path: impl AsRef<Path>,
         repository_root: &Path,
         index_scope_digest: Option<&str>,
         startup_timeout: Duration,
     ) -> Result<Self> {
-        let storage = Self::open_with_startup_timeout(path, startup_timeout)?;
-        storage.bind_repository(repository_root, index_scope_digest)?;
-        Ok(storage)
-    }
-
-    pub(crate) fn bind_repository(
-        &self,
-        repository_root: &Path,
-        index_scope_digest: Option<&str>,
-    ) -> Result<()> {
-        self.bind_repository_at(
-            repository_root,
-            index_scope_digest,
-            unix_seconds(SystemTime::now()),
+        Self::open_with_startup_timeout_read_capacity_and_binding(
+            path,
+            startup_timeout,
+            default_read_connection_capacity(),
+            Some((repository_root, index_scope_digest)),
         )
     }
 
+    pub(crate) fn open_for_repository_scoped_with_runtime_limits(
+        path: impl AsRef<Path>,
+        repository_root: &Path,
+        index_scope_digest: Option<&str>,
+        startup_timeout: Duration,
+        read_connection_capacity: u32,
+    ) -> Result<Self> {
+        Self::open_with_startup_timeout_read_capacity_and_binding(
+            path,
+            startup_timeout,
+            read_connection_capacity,
+            Some((repository_root, index_scope_digest)),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn bind_repository_at(
         &self,
         repository_root: &Path,
@@ -212,47 +407,18 @@ impl Storage {
         accessed_at: i64,
     ) -> Result<()> {
         let actual_repository = repository_root.to_path_buf();
-        let actual_display = repository_root.to_string_lossy();
-        let actual_identity = repository_identity(repository_root, index_scope_digest);
         let mut conn = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         with_auto_checkpoint_suspended(&mut conn, AutoCheckpointCompletion::RestoreOnly, |conn| {
-            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let (expected_repository, expected_identity): (String, String) = tx.query_row(
-                "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
-
-            if expected_identity.is_empty() {
-                tx.execute(
-                    "UPDATE meta SET repository_root = ?1, repository_identity = ?2, last_access_unix_seconds = ?3 WHERE id = 1",
-                    params![actual_display.as_ref(), actual_identity, accessed_at],
-                )?;
-                tx.commit()?;
-                return Ok(());
-            }
-            if expected_identity != actual_identity {
-                if expected_repository == actual_display {
-                    return Err(Error::IndexScopeMismatch {
-                        database: self.path.clone(),
-                    });
-                }
-                return Err(Error::RepositoryMismatch {
-                    database: self.path.clone(),
-                    expected_repository,
-                    actual_repository,
-                });
-            }
-
-            tx.execute(
-                "UPDATE meta SET last_access_unix_seconds = ?1 WHERE id = 1",
-                params![accessed_at],
-            )?;
-            tx.commit()?;
-            Ok(())
+            bind_repository_connection(
+                conn,
+                &self.path,
+                &actual_repository,
+                index_scope_digest,
+                accessed_at,
+            )
         })
     }
 
@@ -360,30 +526,6 @@ impl Storage {
         Ok(())
     }
 
-    pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
-        let file_count: i64 = conn.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
-        let projected_files: i64 = conn.query_row(
-            "SELECT count(*) FROM path_entries WHERE kind = 1",
-            [],
-            |row| row.get(0),
-        )?;
-        if file_count == projected_files {
-            return Ok(());
-        }
-        let paths = {
-            let mut stmt = conn.prepare("SELECT id, path FROM files ORDER BY id")?;
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?
-        };
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("DELETE FROM path_entries", [])?;
-        for (file_id, path) in paths {
-            Self::insert_path_projection(&tx, &path, file_id)?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     pub(crate) fn ensure_token_savings_schema(conn: &mut Connection) -> Result<()> {
         // These additive fields are intentionally outside the numbered cache
         // schema so older LeanToken versions can still open and rebuild it.
@@ -482,7 +624,7 @@ impl Storage {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum AutoCheckpointCompletion {
+pub(super) enum AutoCheckpointCompletion {
     RestoreOnly,
     CheckpointIfMutated,
 }
@@ -493,7 +635,7 @@ impl AutoCheckpointCompletion {
     }
 }
 
-fn with_auto_checkpoint_suspended<T>(
+pub(super) fn with_auto_checkpoint_suspended<T>(
     conn: &mut Connection,
     completion: AutoCheckpointCompletion,
     operation: impl FnOnce(&mut Connection) -> Result<T>,
@@ -509,13 +651,30 @@ fn with_auto_checkpoint_suspended<T>(
     if previous != 0 {
         conn.pragma_update(None, "wal_autocheckpoint", 0)?;
     }
-    let result = operation(conn);
-    let restore = if previous != 0 {
+    let operation_result = operation(conn);
+    let restoration_result = if previous != 0 {
         conn.pragma_update(None, "wal_autocheckpoint", previous)
             .map_err(Error::from)
     } else {
         Ok(())
     };
+
+    let output = match operation_result {
+        Ok(output) => {
+            restoration_result?;
+            output
+        }
+        Err(operation_error) => {
+            if let Err(restoration_error) = restoration_result {
+                tracing::warn!(
+                    %restoration_error,
+                    "failed to restore wal_autocheckpoint after an operation error"
+                );
+            }
+            return Err(operation_error);
+        }
+    };
+
     let schema_version_after = completion
         .checkpoints_mutations()
         .then(|| conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0)))
@@ -532,13 +691,8 @@ fn with_auto_checkpoint_suspended<T>(
     } else {
         Ok(())
     };
-    match result {
-        Err(error) => Err(error),
-        Ok(output) => {
-            restore?;
-            checkpoint?;
-            Ok(output)
-        }
-    }
+    checkpoint?;
+    Ok(output)
 }
+
 use super::*;

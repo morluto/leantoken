@@ -23,10 +23,12 @@ pub(super) fn resolve_read_target(
     file_id: i64,
     request: &ReadInput,
     generation: u64,
+    stream_id: crate::services::cursor::StreamId,
 ) -> Result<ResolvedReadTarget> {
     let target = match &request.mode {
         ReadMode::Direct(ReadTargetInput::Continuation(cursor)) => {
-            validate_read_cursor(cursor, generation, &request.path)?;
+            validate_read_cursor(cursor, generation, stream_id)?;
+            let cursor = &cursor.state;
             if cursor.policy != request.policy {
                 return Err(Error::StaleCursor);
             }

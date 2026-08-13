@@ -66,6 +66,79 @@ fn repository_context_registry_allows_the_configured_approved_context_limit() {
 }
 
 #[tokio::test]
+async fn selecting_an_approved_context_requests_lazy_activation() {
+    let (server, _) = LeanTokenMcp::pending();
+    let context = McpServices::starting_default();
+    server
+        .contexts
+        .register("docs".into(), context.clone())
+        .expect("approved context");
+    assert!(!context.activation_requested());
+
+    let cancellation = CancellationToken::new();
+    let call_cancellation = cancellation.clone();
+    let call = tokio::spawn(async move {
+        server
+            .prepare_retrieval_call(call_cancellation, Some("docs"), |_| Ok(()))
+            .await
+    });
+    for _ in 0..100 {
+        if context.activation_requested() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(context.activation_requested());
+    context
+        .wait_for_activation(CancellationToken::new())
+        .await
+        .expect("activation signal");
+    cancellation.cancel();
+    let _ = call.await.expect("activation call joins");
+}
+
+#[test]
+fn approved_context_activation_is_dormant_and_coalesced() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    let contexts = (0..MAX_REPOSITORY_CONTEXTS)
+        .map(|index| {
+            let context = McpServices::starting_default();
+            registry
+                .register(format!("context-{index}"), context.clone())
+                .expect("approved context");
+            context
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        contexts
+            .iter()
+            .all(|context| !context.activation_requested())
+    );
+
+    let selected = contexts[3].clone();
+    let requests = (0..32)
+        .map(|_| {
+            let selected = selected.clone();
+            std::thread::spawn(move || selected.request_activation())
+        })
+        .collect::<Vec<_>>();
+    let first_requests = requests
+        .into_iter()
+        .map(|request| request.join().expect("activation request"))
+        .filter(|first| *first)
+        .count();
+
+    assert_eq!(first_requests, 1);
+    assert!(selected.activation_requested());
+    assert!(
+        contexts
+            .iter()
+            .enumerate()
+            .all(|(index, context)| { index == 3 || !context.activation_requested() })
+    );
+}
+
+#[tokio::test]
 async fn prepared_retrieval_selects_the_approved_context() {
     let primary_root = tempfile::tempdir().expect("primary repository");
     let docs_root = tempfile::tempdir().expect("approved repository");

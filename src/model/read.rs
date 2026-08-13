@@ -27,9 +27,10 @@ fn default_heading_occurrence() -> usize {
 /// I/O and verification policy for a live read.
 ///
 /// `Bounded` (default) stops reading after the requested page is satisfied,
-/// reports `index_state: unknown`, and emits a metadata-bound continuation
-/// cursor. `Full` hashes the complete live file, reports current/stale with
-/// live and indexed hashes, and is required for delta requests.
+/// reports `index_state: unknown`, and emits a prefix-stable continuation. It
+/// cannot prove that an unread suffix is unchanged. `Full` hashes the complete
+/// live file, reports current/stale with live and indexed hashes, and emits a
+/// content-snapshot continuation. It is required for delta requests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadPolicy {
@@ -53,6 +54,19 @@ impl std::fmt::Display for ReadPolicy {
             Self::Full => write!(f, "full"),
         }
     }
+}
+
+/// Verification guarantee carried by a truncated read continuation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadContinuationVerification {
+    /// The cursor verifies the bytes already returned plus ordinary file
+    /// metadata. An equal-size, equal-mtime edit confined to the unread suffix
+    /// is not detectable, so pages must not be treated as one content snapshot.
+    PrefixStable,
+    /// The cursor commits to the complete live target observed by the first
+    /// page and fails closed if any content changes before continuation.
+    ContentSnapshot,
 }
 
 /// Index verification state reported by a read response.
@@ -138,9 +152,13 @@ pub struct ReadResponse {
     /// First line represented by the next response page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_start_line: Option<usize>,
-    /// Opaque continuation bound to this repository generation and live file content.
+    /// Opaque continuation bound to this repository generation and the
+    /// guarantee reported by `continuation_verification`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_cursor: Option<String>,
+    /// Exact content-identity guarantee for `continuation_cursor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_verification: Option<ReadContinuationVerification>,
     /// Source-budget guidance for completing a truncated target.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncation_guidance: Option<ReadTruncationGuidance>,

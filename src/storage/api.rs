@@ -1,9 +1,10 @@
 impl Storage {
     /// Return files in increasing row-id order after an optional keyset cursor.
     ///
-    /// The returned record's `id` is the cursor for the next page. Callers that
-    /// require a consistent multi-page view must use [`ReadSession::list_files`]
-    /// on one session because file replacement can assign a new row id.
+    /// The returned record's `id` is the cursor for the next page. Application
+    /// callers that require a consistent multi-page view should use
+    /// [`crate::services::Services`], whose storage snapshot capability pins one
+    /// generation; file replacement can otherwise assign a new row id.
     pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
         self.begin_read()?.list_files(max_results, cursor)
     }

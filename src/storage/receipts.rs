@@ -1,9 +1,9 @@
 use crate::receipt::{
     MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT, MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES,
     MAX_RECEIPT_ID_BYTES, MAX_RECEIPTS, MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES,
-    MAX_TOTAL_RECEIPT_BYTES, RECEIPT_TOUCH_INTERVAL_MILLIS, RECEIPT_TTL_MILLIS, ReceiptDecision,
-    ReceiptEvaluation, ReceiptEvidence, ReceiptRebaseSource, StoredReceipt, decide,
-    format_receipt_id, parse_receipt_id,
+    MAX_TOTAL_RECEIPT_BYTES, RECEIPT_TTL_MILLIS, ReceiptDecision, ReceiptEvaluation,
+    ReceiptEvidence, ReceiptRebaseSource, StoredReceipt, decide, format_receipt_id,
+    parse_receipt_id,
 };
 
 pub(crate) const RECEIPT_HEADER_FIXED_LOGICAL_BYTES: usize = 9 * size_of::<u64>();
@@ -170,9 +170,12 @@ impl Storage {
             .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
         prune_expired_receipts(&tx, now_unix_millis)?;
         let mut usage = receipt_usage(&tx)?;
-        let requested_existing = requested_id.is_some();
-
-        let (receipt_id, receipt) = if let Some(requested_id) = requested_id {
+        let repository_identity: String = tx.query_row(
+            "SELECT repository_identity FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let source = if let Some(requested_id) = requested_id {
             let Some(row_id) = parse_receipt_id(requested_id, &usage.namespace) else {
                 tx.commit()?;
                 return Err(Error::UnknownReceipt(requested_id.to_owned()));
@@ -195,81 +198,31 @@ impl Storage {
                     repository_generation: generation,
                 });
             }
-            let repository_identity: String = tx.query_row(
-                "SELECT repository_identity FROM meta WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )?;
             if receipt.repository_identity != repository_identity {
                 tx.commit()?;
                 return Err(Error::UnknownReceipt(requested_id.to_owned()));
             }
-            (requested_id.to_owned(), receipt)
+            Some((requested_id.to_owned(), receipt))
         } else {
-            let repository_identity: String = tx.query_row(
-                "SELECT repository_identity FROM meta WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )?;
-            let logical_bytes = RECEIPT_HEADER_FIXED_LOGICAL_BYTES
-                .checked_add(repository_identity.len())
-                .ok_or_else(|| {
-                    Error::OperationFailure("retrieval receipt byte accounting overflow".into())
-                })?;
-            if logical_bytes > MAX_TOTAL_RECEIPT_BYTES {
-                return Err(Error::OperationFailure(
-                    "repository identity exceeds the retrieval receipt byte quota".into(),
-                ));
-            }
-            while usage.receipt_count >= MAX_RECEIPTS
-                || usage.receipt_bytes.saturating_add(logical_bytes) > MAX_TOTAL_RECEIPT_BYTES
-            {
-                if !evict_oldest_receipt_except(&tx, None)? {
-                    return Err(Error::OperationFailure(
-                        "retrieval receipt quota could not evict a receipt".into(),
-                    ));
-                }
-                usage = receipt_usage(&tx)?;
-            }
-            let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
-            usage.next_access_sequence = access_sequence;
-            tx.execute(
-                "INSERT INTO retrieval_receipts(
-                    repository_identity,
-                    repository_generation,
-                    created_unix_millis,
-                    last_access_unix_millis,
-                    expires_unix_millis,
-                    access_sequence,
-                    logical_bytes
-                 ) VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
-                params![
-                    repository_identity,
-                    u64_to_i64(generation)?,
-                    now_unix_millis,
-                    expires_unix_millis,
-                    access_sequence,
-                    usize_to_i64(logical_bytes)?
-                ],
-            )?;
-            let row_id = tx.last_insert_rowid();
-            let receipt_id = format_receipt_id(&usage.namespace, row_id);
-            (
-                receipt_id,
-                PersistentReceiptRow {
-                    id: row_id,
-                    repository_identity,
-                    repository_generation: generation,
-                    created_unix_millis: now_unix_millis,
-                    last_access_unix_millis: now_unix_millis,
-                    expires_unix_millis,
-                    evidence_count: 0,
-                    evidence_bytes: 0,
-                },
-            )
+            None
         };
-
-        let previous = load_receipt_evidence(&tx, receipt.id)?;
+        let previous = if let Some((_, source)) = &source {
+            load_receipt_evidence(&tx, source.id)?
+        } else {
+            Vec::new()
+        };
+        let previous_bytes = previous.iter().try_fold(0usize, |total, evidence| {
+            total.checked_add(evidence.logical_bytes()).ok_or_else(|| {
+                Error::OperationFailure("retrieval receipt byte accounting overflow".into())
+            })
+        })?;
+        if source.as_ref().is_some_and(|(_, source)| {
+            previous.len() != source.evidence_count || previous_bytes != source.evidence_bytes
+        }) {
+            return Err(Error::OperationFailure(
+                "retrieval receipt storage bounds are inconsistent".into(),
+            ));
+        }
         let decisions = candidates
             .iter()
             .map(|candidate| decide(&previous, candidate, suppress_overlap))
@@ -289,9 +242,8 @@ impl Storage {
         let mut append_bytes = 0usize;
         for evidence in returned {
             let logical_bytes = evidence.logical_bytes();
-            if receipt.evidence_count.saturating_add(append.len()) >= MAX_EVIDENCE_PER_RECEIPT
-                || receipt
-                    .evidence_bytes
+            if previous.len().saturating_add(append.len()) >= MAX_EVIDENCE_PER_RECEIPT
+                || previous_bytes
                     .saturating_add(append_bytes)
                     .saturating_add(logical_bytes)
                     > MAX_EVIDENCE_BYTES_PER_RECEIPT
@@ -302,29 +254,94 @@ impl Storage {
             append.push((evidence, logical_bytes));
         }
 
-        usage = receipt_usage(&tx)?;
-        while usage.evidence_count.saturating_add(append.len()) > MAX_TOTAL_EVIDENCE
-            || usage.evidence_bytes.saturating_add(append_bytes) > MAX_TOTAL_EVIDENCE_BYTES
-        {
-            if !evict_oldest_receipt_except(&tx, Some(receipt.id))? {
+        // A caller-provided receipt is an immutable acknowledgement token. If
+        // this response does not extend caller knowledge, reuse that snapshot;
+        // otherwise persist a copy-on-write successor and leave the source
+        // untouched. A lost response can therefore be retried with the source
+        // without suppressing evidence the caller never observed.
+        if source.is_some() && append.is_empty() {
+            let receipt_id = source
+                .as_ref()
+                .map(|(receipt_id, _)| receipt_id.clone())
+                .expect("source checked above");
+            tx.commit()?;
+            return Ok(ReceiptEvaluation {
+                receipt_id,
+                decisions,
+            });
+        }
+
+        let header_bytes = RECEIPT_HEADER_FIXED_LOGICAL_BYTES
+            .checked_add(repository_identity.len())
+            .ok_or_else(|| {
+                Error::OperationFailure("retrieval receipt byte accounting overflow".into())
+            })?;
+        if header_bytes > MAX_TOTAL_RECEIPT_BYTES {
+            return Err(Error::OperationFailure(
+                "repository identity exceeds the retrieval receipt byte quota".into(),
+            ));
+        }
+        let retained_source = source.as_ref().map(|(_, source)| source.id);
+        loop {
+            let successor_count = previous.len().saturating_add(append.len());
+            let successor_bytes = previous_bytes.saturating_add(append_bytes);
+            let header_over_quota = usage.receipt_count >= MAX_RECEIPTS
+                || usage.receipt_bytes.saturating_add(header_bytes) > MAX_TOTAL_RECEIPT_BYTES;
+            let evidence_over_quota = usage.evidence_count.saturating_add(successor_count)
+                > MAX_TOTAL_EVIDENCE
+                || usage.evidence_bytes.saturating_add(successor_bytes) > MAX_TOTAL_EVIDENCE_BYTES;
+            if !header_over_quota && !evidence_over_quota {
                 break;
             }
-            usage = receipt_usage(&tx)?;
-        }
-        while usage.evidence_count.saturating_add(append.len()) > MAX_TOTAL_EVIDENCE
-            || usage.evidence_bytes.saturating_add(append_bytes) > MAX_TOTAL_EVIDENCE_BYTES
-        {
+            if evict_oldest_receipt_except(&tx, retained_source)? {
+                usage = receipt_usage(&tx)?;
+                continue;
+            }
+            if header_over_quota {
+                return Err(Error::OperationFailure(
+                    "retrieval receipt quota cannot preserve the source snapshot".into(),
+                ));
+            }
             let Some((_, removed_bytes)) = append.pop() else {
-                break;
+                return Err(Error::OperationFailure(
+                    "retrieval receipt evidence quota cannot preserve the source snapshot".into(),
+                ));
             };
             append_bytes = append_bytes.saturating_sub(removed_bytes);
         }
 
-        let append_count = append.len();
-        for (index, (evidence, logical_bytes)) in append.into_iter().enumerate() {
-            let ordinal = receipt.evidence_count.checked_add(index).ok_or_else(|| {
-                Error::OperationFailure("retrieval receipt ordinal overflow".into())
-            })?;
+        let evidence_count = previous.len().saturating_add(append.len());
+        let evidence_bytes = previous_bytes.saturating_add(append_bytes);
+        let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
+        tx.execute(
+            "INSERT INTO retrieval_receipts(
+                repository_identity,
+                repository_generation,
+                created_unix_millis,
+                last_access_unix_millis,
+                expires_unix_millis,
+                access_sequence,
+                logical_bytes,
+                evidence_count,
+                evidence_bytes
+             ) VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                repository_identity,
+                u64_to_i64(generation)?,
+                now_unix_millis,
+                expires_unix_millis,
+                access_sequence,
+                usize_to_i64(header_bytes)?,
+                usize_to_i64(evidence_count)?,
+                usize_to_i64(evidence_bytes)?,
+            ],
+        )?;
+        let row_id = tx.last_insert_rowid();
+        for (ordinal, evidence) in previous
+            .iter()
+            .chain(append.iter().map(|(evidence, _)| evidence))
+            .enumerate()
+        {
             tx.execute(
                 "INSERT INTO retrieval_receipt_evidence(
                     receipt_id,
@@ -338,61 +355,35 @@ impl Storage {
                     logical_bytes
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
-                    receipt.id,
+                    row_id,
                     usize_to_i64(ordinal)?,
-                    evidence.path,
+                    evidence.path.as_str(),
                     usize_to_i64(evidence.start_line)?,
                     usize_to_i64(evidence.end_line)?,
-                    evidence.content_hash,
+                    evidence.content_hash.as_str(),
                     evidence
                         .semantic_signature()
                         .map(|signature| signature as i64),
                     i64::from(evidence.exact_only()),
-                    usize_to_i64(logical_bytes)?
+                    usize_to_i64(evidence.logical_bytes())?
                 ],
             )?;
         }
-        if append_count > 0 {
-            let append_count = usize_to_i64(append_count)?;
-            let append_bytes = usize_to_i64(append_bytes)?;
+        if evidence_count > 0 {
             let updated = tx.execute(
-                "UPDATE retrieval_receipts
-                 SET evidence_count = evidence_count + ?1,
-                     evidence_bytes = evidence_bytes + ?2
-                 WHERE id = ?3",
-                params![append_count, append_bytes, receipt.id],
-            )?;
-            if updated != 1 {
-                return Err(Error::OperationFailure(
-                    "retrieval receipt disappeared before counter update".into(),
-                ));
-            }
-            tx.execute(
                 "UPDATE retrieval_receipt_usage
                  SET evidence_count = evidence_count + ?1,
                      evidence_bytes = evidence_bytes + ?2
                  WHERE id = 1",
-                params![append_count, append_bytes],
+                params![usize_to_i64(evidence_count)?, usize_to_i64(evidence_bytes)?],
             )?;
+            if updated != 1 {
+                return Err(Error::OperationFailure(
+                    "retrieval receipt usage row disappeared".into(),
+                ));
+            }
         }
-        let touch_due = now_unix_millis.saturating_sub(receipt.last_access_unix_millis)
-            >= RECEIPT_TOUCH_INTERVAL_MILLIS;
-        if requested_existing && (append_count > 0 || touch_due) {
-            let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
-            tx.execute(
-                "UPDATE retrieval_receipts
-                 SET last_access_unix_millis = ?1,
-                     expires_unix_millis = ?2,
-                     access_sequence = ?3
-                 WHERE id = ?4",
-                params![
-                    now_unix_millis,
-                    expires_unix_millis,
-                    access_sequence,
-                    receipt.id
-                ],
-            )?;
-        }
+        let receipt_id = format_receipt_id(&usage.namespace, row_id);
         tx.commit()?;
         Ok(ReceiptEvaluation {
             receipt_id,
@@ -591,17 +582,6 @@ impl Storage {
             }
             usage = receipt_usage(&tx)?;
         }
-        // Touch the source receipt so it is not prematurely evicted by LRU.
-        let source_expires_unix_millis = now_unix_millis
-            .checked_add(RECEIPT_TTL_MILLIS)
-            .ok_or_else(|| Error::OperationFailure("retrieval receipt expiry overflow".into()))?;
-        tx.execute(
-            "UPDATE retrieval_receipts
-             SET last_access_unix_millis = ?1,
-                 expires_unix_millis = ?2
-             WHERE id = ?3",
-            params![now_unix_millis, source_expires_unix_millis, source_row_id],
-        )?;
         let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
         tx.execute(
             "INSERT INTO retrieval_receipts(

@@ -97,8 +97,11 @@ cargo xtask check-test-architecture
 ```
 
 The source tree uses ordinary Rust modules for organization. The architecture
-check rejects any organizational `include!()` directive so the old namespace
-concatenation pattern cannot return.
+check resolves test targets through Cargo metadata, compares external modules
+through parsed Rust syntax, reads ignored tests from the compiled libtest
+inventory, and rejects actual `include!()` syntax without matching comments or
+strings. The raw SQLite read session is private to storage, so the compiler—not
+a source-text scan—enforces the service snapshot boundary.
 
 The runner sequences units, ordinary domain integration, and process-heavy
 tests. CI uses `cargo xtask test product --parallel` to overlap only the
@@ -410,7 +413,7 @@ Treat the SQLite schema and retrieval ordering as behavioral contracts, not
 implementation details. When changing them:
 
 - use a versioned migration and test both a new database and an upgraded one;
-- keep multi-query responses inside one `ReadSession` snapshot;
+- keep multi-query responses inside one storage-owned snapshot capability;
 - bind public pagination cursors to the committed generation and operation
   parameters, even when the underlying query uses a simpler keyset;
 - preserve deterministic ranking, overlap, and token-budget behavior when
@@ -466,10 +469,11 @@ core fields flattened in JSON, so CLI consumers receive `skip_reasons` without
 changing the established response shape.
 
 `CacheListRequest` and `CachePruneRequest` are the canonical cache operation
-inputs. The cache-list response retains its `CacheListReport` JSON shape and
-`cl2` cursor encoding because those are cache-format boundaries; the CLI and
-internal cache manager use the same request path for metadata and content
-compatibility filters.
+inputs. The cache-list response retains its `CacheListReport` JSON shape. New
+cursors use the shared checksummed envelope; the bounded `cl2` decoder remains
+available for one rolling-upgrade boundary and validates the complete legacy
+filter digest before resuming. The CLI and internal cache manager use the same
+request path for metadata and content compatibility filters.
 
 Explicit indexing scope adds public provenance fields to `ResponseMeta`,
 `StatusResponse`, and `CacheEntry`, plus the `IndexScopeMismatch` error variant.

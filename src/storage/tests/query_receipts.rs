@@ -235,13 +235,16 @@ fn query_receipt_migration_preserves_existing_index_and_rolls_back_conflicts() {
             before.languages.clone()
         )
     );
-    assert_eq!(migrated.meta().expect("migrated meta").schema_version, 10);
+    assert_eq!(
+        migrated.meta().expect("migrated meta").schema_version,
+        CURRENT_SCHEMA_VERSION
+    );
     let connection = Connection::open(&database).expect("inspect migration");
     assert_eq!(
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
             .expect("migration version"),
-        11
+        CURRENT_MIGRATION_VERSION
     );
     drop(connection);
     drop(migrated);
@@ -269,6 +272,7 @@ fn downgrade_query_receipt_schema(database: &Path, conflicting_table: bool) {
         .execute_batch(
             "DROP TABLE query_coverage_receipts;
              DROP TABLE query_coverage_receipt_usage;
+             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
              UPDATE meta SET schema_version = 9;
              PRAGMA user_version = 10;",
         )

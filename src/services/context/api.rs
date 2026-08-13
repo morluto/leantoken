@@ -261,6 +261,7 @@ impl Services {
         let operation = context_accounting_operation(&parsed.request);
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let (evaluation, baseline_source_tokens) =
@@ -294,7 +295,8 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,
@@ -323,7 +325,8 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,
@@ -354,7 +357,8 @@ impl Services {
             ServiceCallOptions::default(),
         )?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 this.context_sync(super::execution::ContextSyncRequest {
                     parsed,

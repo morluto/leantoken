@@ -738,6 +738,7 @@ mod tests {
             truncated: false,
             next_start_line: None,
             continuation_cursor: None,
+            continuation_verification: None,
             truncation_guidance: None,
             not_modified: false,
             content: Some(content.clone()),

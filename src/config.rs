@@ -182,8 +182,26 @@ enum DatabaseStorage {
 pub struct ApprovedRepositoryContext {
     /// Stable request name selected by MCP callers.
     pub name: String,
-    /// Approved absolute or primary-root-relative repository root.
-    pub root: PathBuf,
+    /// Canonical root validated against the context's declared capability.
+    pub root: ApprovedRepositoryRoot,
+}
+
+/// Canonical repository-context root admitted by configuration validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovedRepositoryRoot(PathBuf);
+
+impl ApprovedRepositoryRoot {
+    /// Borrow the canonical approved path.
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    /// Consume the capability and return its canonical path.
+    #[must_use]
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
 }
 
 impl Config {
@@ -483,9 +501,42 @@ impl Config {
                     "repository_contexts.{name}.root must not be empty"
                 )));
             }
+            let allow_external = table
+                .get("allow_external")
+                .map(|value| {
+                    value.as_bool().ok_or_else(|| {
+                        Error::InvalidConfiguration(format!(
+                            "repository_contexts.{name}.allow_external must be a boolean"
+                        ))
+                    })
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let configured_root = Path::new(root);
+            if configured_root.is_absolute() && !allow_external {
+                return Err(Error::InvalidConfiguration(format!(
+                    "repository_contexts.{name}.root must be primary-root-relative unless allow_external = true"
+                )));
+            }
+            let candidate = self.root.join(configured_root);
+            let canonical_root = candidate.canonicalize().map_err(|error| {
+                Error::InvalidConfiguration(format!(
+                    "repository_contexts.{name}.root could not be resolved: {error}"
+                ))
+            })?;
+            if !canonical_root.is_dir() {
+                return Err(Error::InvalidConfiguration(format!(
+                    "repository_contexts.{name}.root is not a directory"
+                )));
+            }
+            if !allow_external && !canonical_root.starts_with(&self.root) {
+                return Err(Error::InvalidConfiguration(format!(
+                    "repository_contexts.{name}.root escapes the primary repository; set allow_external = true only for an intentionally trusted external context"
+                )));
+            }
             result.push(ApprovedRepositoryContext {
                 name: name.to_owned(),
-                root: self.root.join(root),
+                root: ApprovedRepositoryRoot(canonical_root),
             });
         }
         result.sort_by(|left, right| left.name.cmp(&right.name));
@@ -1024,7 +1075,7 @@ mod tests {
         fs::write(
             root.path().join(REPOSITORY_CONFIG_FILE),
             format!(
-                "[repository_contexts.docs]\nroot = {:?}\n",
+                "[repository_contexts.docs]\nroot = {:?}\nallow_external = true\n",
                 sibling.path().to_string_lossy()
             ),
         )
@@ -1036,7 +1087,66 @@ mod tests {
             .expect("approved contexts");
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0].name, "docs");
-        assert_eq!(contexts[0].root, sibling.path());
+        assert_eq!(contexts[0].root.as_path(), sibling.path());
+    }
+
+    #[test]
+    fn repository_context_roots_require_an_explicit_external_capability() {
+        let root = tempfile::tempdir().expect("repository");
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).expect("nested repository");
+        let outside = tempfile::tempdir().expect("external repository");
+        let config_path = root.path().join(REPOSITORY_CONFIG_FILE);
+
+        fs::write(
+            &config_path,
+            "[repository_contexts.nested]\nroot = \"nested\"\n",
+        )
+        .expect("contained context config");
+        let config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let contexts = config
+            .approved_repository_contexts()
+            .expect("contained context");
+        assert_eq!(contexts[0].root.as_path(), nested.canonicalize().unwrap());
+
+        fs::write(
+            &config_path,
+            format!(
+                "[repository_contexts.absolute]\nroot = {:?}\n",
+                outside.path().to_string_lossy()
+            ),
+        )
+        .expect("absolute context config");
+        assert!(matches!(
+            config.approved_repository_contexts(),
+            Err(Error::InvalidConfiguration(message))
+                if message.contains("allow_external = true")
+        ));
+
+        fs::write(
+            &config_path,
+            "[repository_contexts.escape]\nroot = \"../outside\"\n",
+        )
+        .expect("escaping context config");
+        assert!(matches!(
+            config.approved_repository_contexts(),
+            Err(Error::InvalidConfiguration(message))
+                if message.contains("could not be resolved") || message.contains("escapes")
+        ));
+
+        fs::write(
+            &config_path,
+            format!(
+                "[repository_contexts.external]\nroot = {:?}\nallow_external = true\n",
+                outside.path().to_string_lossy()
+            ),
+        )
+        .expect("approved external context config");
+        let contexts = config
+            .approved_repository_contexts()
+            .expect("external capability");
+        assert_eq!(contexts[0].root.as_path(), outside.path());
     }
 
     #[test]

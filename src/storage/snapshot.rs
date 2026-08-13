@@ -8,12 +8,16 @@ use super::{
 use crate::Result;
 use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
 
-pub(crate) struct IndexSnapshot {
+/// Read-only view pinned to one committed repository generation.
+///
+/// The raw SQLite transaction remains storage-owned. Holding this value keeps
+/// every query on the same WAL snapshot until the value is dropped.
+pub struct StorageSnapshot {
     session: ReadSession,
     generation: u64,
 }
 
-impl IndexSnapshot {
+impl StorageSnapshot {
     pub(crate) fn open(storage: &Storage) -> Result<Self> {
         let session = storage.begin_read()?;
         let generation = session.repository_generation()?;
@@ -23,7 +27,9 @@ impl IndexSnapshot {
         })
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    /// Repository generation pinned by this snapshot.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
         self.generation
     }
 
@@ -65,11 +71,8 @@ impl IndexSnapshot {
         self.session.file_count()
     }
 
-    pub(crate) fn list_files(
-        &self,
-        max_results: usize,
-        cursor: Option<i64>,
-    ) -> Result<Vec<FileRecord>> {
+    /// Return files in increasing row-id order within this pinned generation.
+    pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
         self.session.list_files(max_results, cursor)
     }
 
@@ -371,5 +374,12 @@ impl IndexSnapshot {
         check: impl FnMut() -> Result<()>,
     ) -> Result<QueryPartition> {
         self.session.exact_query_partition(allows_path, check)
+    }
+}
+
+impl Storage {
+    /// Open a read capability pinned to one committed repository generation.
+    pub fn snapshot(&self) -> Result<StorageSnapshot> {
+        StorageSnapshot::open(self)
     }
 }

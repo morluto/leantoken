@@ -3,6 +3,15 @@ use super::*;
 impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
     pub fn new(config: Arc<Config>, storage: Storage) -> Result<Self> {
+        Self::new_with_pool(config, storage, Arc::new(LazyWorkerPool::new()))
+    }
+
+    /// Construct an indexer on a process-owned lazy worker pool.
+    pub(crate) fn new_with_pool(
+        config: Arc<Config>,
+        storage: Storage,
+        pool: Arc<LazyWorkerPool>,
+    ) -> Result<Self> {
         Self::validate_config(&config)?;
         let repository_root = Arc::new(Dir::open_ambient_dir(
             &config.root,
@@ -12,9 +21,10 @@ impl Indexer {
         Ok(Self {
             config,
             storage,
-            pool: Arc::new(LazyWorkerPool::new()),
+            pool,
             repository_root,
             progress,
+            import_projections_verified: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -205,7 +215,10 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let existing = self.existing_files(cancellation)?;
         let config_hash = self.config_hash();
-        let force = mode.is_rebuild() || baseline.config_hash != config_hash;
+        let force = mode.is_rebuild()
+            || baseline.config_hash != config_hash
+            || baseline.derivation_fingerprint
+                != crate::index_derivation::index_derivation_fingerprint();
 
         let mut repository_paths = HashSet::with_capacity(discovered.len());
         for file in &discovered {
@@ -219,6 +232,8 @@ impl Indexer {
                 deletions.push(path.clone());
             }
         }
+        let repository_membership_changed = repository_paths.len() != existing.len()
+            || existing.keys().any(|path| !repository_paths.contains(path));
 
         let mut unchanged = 0usize;
         let mut candidates = Vec::new();
@@ -346,6 +361,8 @@ impl Indexer {
         let staged = staged.finish()?;
         let staging = staged.diagnostics();
         check_cancelled(cancellation)?;
+        let publication_changed_import_semantics =
+            repository_membership_changed || !removed_paths.is_empty();
 
         // Phase 2: Publication inside BEGIN IMMEDIATE performs only fast
         // DELETE + INSERT operations via staged.apply.  The transaction
@@ -353,11 +370,18 @@ impl Indexer {
         let publication_started = Instant::now();
         let publish = |writer: &mut ReconciliationWriter<'_, '_>| {
             staged.apply(writer)?;
-            Ok(preparation)
+            let repaired_imports = self.verify_or_repair_import_projections(
+                writer,
+                cancellation,
+                publication_changed_import_semantics,
+            )?;
+            Ok((preparation, repaired_imports))
         };
         let observe_publication =
             |phase| observe_publication_phase(progress.as_ref(), cancellation, phase);
-        let (generation, preparation, mut publication_detail) = if profiling.is_collecting() {
+        let (generation, (preparation, repaired_imports), mut publication_detail) = if profiling
+            .is_collecting()
+        {
             self.storage
                 .publish_reconciliation_profiled_at_with_progress(
                     &baseline,
@@ -376,6 +400,13 @@ impl Indexer {
             )?;
             (generation, preparation, PublicationDiagnostics::default())
         };
+        self.mark_import_projections_verified();
+        if repaired_imports > 0 {
+            push_warning(
+                &mut warnings,
+                format!("repaired {repaired_imports} persisted import projections"),
+            );
+        }
         after_publication();
         if let Some(progress) = &mut progress {
             progress.complete(generation);

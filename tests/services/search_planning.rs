@@ -1,5 +1,234 @@
 use super::*;
 
+async fn cursor_fixture() -> (tempfile::TempDir, Services, SearchRequest) {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("create source directory");
+    for index in 0..3 {
+        std::fs::write(
+            root.path().join(format!("src/item_{index}.rs")),
+            "const NEEDLE_ALPHA: &str = \"needle_alpha\";\nconst NEEDLE_BETA: &str = \"needle_beta\";\n",
+        )
+        .expect("write search fixture");
+    }
+    std::fs::write(
+        root.path().join("outside.rs"),
+        "const NEEDLE_ALPHA: &str = \"needle_alpha\";\n",
+    )
+    .expect("write excluded search fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index fixture");
+    let mut request = search_limit_request(Some(1), Some(1_000), Some(0));
+    request.query = "needle_alpha".into();
+    request.mode = SearchMode::Auto;
+    request.case_sensitive = true;
+    request.include_paths = vec!["./src//**".into(), "src/**".into()];
+    (root, services, request)
+}
+
+async fn first_cursor(services: &Services, request: &SearchRequest) -> String {
+    services
+        .search(request.clone())
+        .await
+        .expect("first search page")
+        .meta
+        .next_cursor
+        .expect("search continuation")
+}
+
+#[tokio::test]
+async fn search_cursor_rejects_a_different_query_in_the_same_generation() {
+    let (_root, services, request) = cursor_fixture().await;
+    let cursor = first_cursor(&services, &request).await;
+
+    let mut changed = request;
+    changed.query = "needle_beta".into();
+    changed.cursor = Some(cursor);
+    let error = services
+        .search(changed)
+        .await
+        .expect_err("cursor must identify the original search stream");
+
+    assert!(matches!(error, Error::StaleCursor));
+}
+
+#[tokio::test]
+async fn search_cursor_binds_every_request_field_that_changes_the_stream() {
+    let (_root, services, request) = cursor_fixture().await;
+    let cursor = first_cursor(&services, &request).await;
+    let mut changed_requests = Vec::new();
+
+    let mut changed = request.clone();
+    changed.mode = SearchMode::Text;
+    changed_requests.push(("mode", changed));
+
+    let mut changed = request.clone();
+    changed.case_sensitive = false;
+    changed_requests.push(("case sensitivity", changed));
+
+    let mut changed = request.clone();
+    changed.include_paths = vec!["outside.rs".into()];
+    changed_requests.push(("include paths", changed));
+
+    let mut changed = request.clone();
+    changed.exclude_paths = vec!["src/item_2.rs".into()];
+    changed_requests.push(("exclude paths", changed));
+
+    let mut changed = request.clone();
+    changed.focus_paths = vec!["src/item_1.rs".into()];
+    changed_requests.push(("focus paths", changed));
+
+    let mut changed = request.clone();
+    changed.max_results = Some(2);
+    changed_requests.push(("result limit", changed));
+
+    let mut changed = request.clone();
+    changed.max_tokens = Some(999);
+    changed_requests.push(("token limit", changed));
+
+    let mut changed = request.clone();
+    changed.context_lines = Some(1);
+    changed_requests.push(("context lines", changed));
+
+    let mut changed = request.clone();
+    changed.prefer_structural = true;
+    changed_requests.push(("structural preference", changed));
+
+    for (field, mut changed) in changed_requests {
+        changed.cursor = Some(cursor.clone());
+        let error = services
+            .search(changed)
+            .await
+            .expect_err("changed request must reject the cursor");
+        assert!(matches!(error, Error::StaleCursor), "{field}: {error:?}");
+    }
+}
+
+#[tokio::test]
+async fn search_cursor_accepts_equivalent_normalized_path_patterns() {
+    let (_root, services, request) = cursor_fixture().await;
+    let first = services
+        .search(request.clone())
+        .await
+        .expect("first search page");
+    let first_path = first.hits[0].path.clone();
+
+    let mut next = request;
+    next.include_paths = vec!["src/**".into()];
+    next.cursor = first.meta.next_cursor;
+    let second = services
+        .search(next)
+        .await
+        .expect("equivalent continuation");
+
+    assert_eq!(second.hits.len(), 1);
+    assert_ne!(second.hits[0].path, first_path);
+}
+
+#[tokio::test]
+async fn search_cursor_rejects_another_repository_and_corrupted_payload() {
+    let (_first_root, first, request) = cursor_fixture().await;
+    let cursor = first_cursor(&first, &request).await;
+    let (_second_root, second, second_request) = cursor_fixture().await;
+    assert_eq!(
+        first
+            .status()
+            .await
+            .expect("first status")
+            .repository_generation,
+        second
+            .status()
+            .await
+            .expect("second status")
+            .repository_generation
+    );
+
+    let mut replayed = second_request;
+    replayed.cursor = Some(cursor.clone());
+    let error = second
+        .search(replayed)
+        .await
+        .expect_err("repository-bound cursor");
+    assert!(matches!(error, Error::StaleCursor));
+
+    let mut corrupted = cursor.into_bytes();
+    corrupted[12] = if corrupted[12] == b'A' { b'B' } else { b'A' };
+    let mut corrupted_request = request;
+    corrupted_request.cursor = Some(String::from_utf8(corrupted).expect("base64 cursor"));
+    let error = first
+        .search(corrupted_request)
+        .await
+        .expect_err("corrupted cursor");
+    assert!(matches!(error, Error::StaleCursor));
+}
+
+#[tokio::test]
+async fn search_cursor_is_bound_to_the_output_projection() {
+    let (_root, services, request) = cursor_fixture().await;
+    let cursor = first_cursor(&services, &request).await;
+
+    let mut compact = request.clone();
+    compact.cursor = Some(cursor.clone());
+    assert!(matches!(
+        services
+            .search_compact(compact)
+            .await
+            .expect_err("compact projection must reject full cursor"),
+        Error::StaleCursor
+    ));
+
+    let mut grouped = request;
+    grouped.cursor = Some(cursor);
+    assert!(matches!(
+        services
+            .search_grouped(grouped)
+            .await
+            .expect_err("grouped projection must reject full cursor"),
+        Error::StaleCursor
+    ));
+
+    let mut exhaustive = search_limit_request(Some(1), Some(1_000), Some(0));
+    exhaustive.query = "needle_alpha".into();
+    exhaustive.mode = SearchMode::Text;
+    exhaustive.case_sensitive = true;
+    exhaustive.all_occurrences = true;
+    exhaustive.include_paths = vec!["src/**".into()];
+    let full_cursor = first_cursor(&services, &exhaustive).await;
+    exhaustive.cursor = Some(full_cursor);
+    assert!(matches!(
+        services
+            .search_occurrences(exhaustive, SearchOccurrenceOutput::Excerpts)
+            .await
+            .expect_err("occurrence projection must reject full cursor"),
+        Error::StaleCursor
+    ));
+}
+
+#[tokio::test]
+async fn search_cursor_remains_valid_after_reopening_the_same_repository() {
+    let (root, services, request) = cursor_fixture().await;
+    let cursor = first_cursor(&services, &request).await;
+    drop(services);
+
+    let reopened = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+            .expect("reopened config"),
+    )
+    .expect("reopened services");
+    let mut next = request;
+    next.cursor = Some(cursor);
+    let response = reopened
+        .search(next)
+        .await
+        .expect("same stream after reopen");
+
+    assert_eq!(response.hits.len(), 1);
+}
+
 #[tokio::test]
 async fn search_applies_path_filters_before_candidate_limits() {
     let root = tempfile::tempdir().expect("temporary repository");

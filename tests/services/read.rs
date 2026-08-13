@@ -1756,6 +1756,107 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
 }
 
 #[tokio::test]
+async fn read_continuations_report_their_exact_content_identity_guarantee() {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let source = (1..=200)
+        .map(|line| format!("line {line:03} has stable prefix and suffix payload AAAA\n"))
+        .collect::<String>();
+    let (root, services) = indexed_source("verification.txt", source.as_bytes()).await;
+    let path = root.path().join("verification.txt");
+    let request = |cursor, policy| ReadRequest {
+        path: "verification.txt".into(),
+        start_line: None,
+        end_line: None,
+        symbol: None,
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: cursor,
+        max_tokens: Some(12),
+        expected_hash: None,
+        delta: false,
+        receipt_id: None,
+        policy,
+    };
+
+    let bounded = services
+        .read(request(None, leantoken::ReadPolicy::Bounded))
+        .await
+        .expect("bounded first page");
+    assert_eq!(
+        bounded.continuation_verification,
+        Some(leantoken::ReadContinuationVerification::PrefixStable)
+    );
+    let bounded_cursor = bounded.continuation_cursor.expect("bounded cursor");
+    let prefix_len = bounded.content.as_deref().expect("bounded content").len();
+    assert!(prefix_len + 8 < source.len());
+
+    let original_modified = std::fs::metadata(&path)
+        .expect("source metadata")
+        .modified()
+        .expect("source mtime");
+    let mutation_offset = source.len() - 5;
+    assert!(mutation_offset > prefix_len);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open source for in-place suffix edit");
+    file.seek(SeekFrom::Start(mutation_offset as u64))
+        .expect("seek to unread suffix");
+    file.write_all(b"BBBB")
+        .expect("replace equal-length unread suffix");
+    file.set_times(std::fs::FileTimes::new().set_modified(original_modified))
+        .expect("restore exact mtime");
+    drop(file);
+
+    let bounded_continuation = services
+        .read(request(
+            Some(bounded_cursor),
+            leantoken::ReadPolicy::Bounded,
+        ))
+        .await
+        .expect("prefix-stable continuation permits an undetectable suffix edit");
+    assert_eq!(
+        bounded_continuation.continuation_verification,
+        Some(leantoken::ReadContinuationVerification::PrefixStable)
+    );
+
+    std::fs::write(&path, &source).expect("restore source");
+    let full = services
+        .read(request(None, leantoken::ReadPolicy::Full))
+        .await
+        .expect("full first page");
+    assert_eq!(
+        full.continuation_verification,
+        Some(leantoken::ReadContinuationVerification::ContentSnapshot)
+    );
+    let full_cursor = full.continuation_cursor.expect("full cursor");
+    let full_prefix_len = full.content.as_deref().expect("full content").len();
+    assert!(mutation_offset > full_prefix_len);
+    let full_modified = std::fs::metadata(&path)
+        .expect("restored source metadata")
+        .modified()
+        .expect("restored source mtime");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open full-policy source");
+    file.seek(SeekFrom::Start(mutation_offset as u64))
+        .expect("seek to unread suffix");
+    file.write_all(b"CCCC")
+        .expect("replace full-policy unread suffix");
+    file.set_times(std::fs::FileTimes::new().set_modified(full_modified))
+        .expect("restore exact mtime");
+    drop(file);
+
+    let stale = services
+        .read(request(Some(full_cursor), leantoken::ReadPolicy::Full))
+        .await
+        .expect_err("content-snapshot continuation must reject a suffix edit");
+    assert!(matches!(stale, Error::StaleCursor));
+}
+
+#[tokio::test]
 async fn read_rejects_ignored_files() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join(".git")).expect("git marker");

@@ -2,8 +2,8 @@
 
 use serde_json::Value;
 
-use super::cursor::make_json_cursor;
-use super::execution::{JsonCursorVersion, JsonExecutionOptions};
+use super::cursor::{json_stream_id, make_json_cursor};
+use super::execution::JsonExecutionOptions;
 use super::keys::{KeyProjectionContext, project_key_page};
 use super::numeric::numeric_summary;
 use super::projection::{ProjectionState, project_json, projection_item_count};
@@ -15,6 +15,7 @@ use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS};
 use crate::model::{
     JsonFieldDiff, JsonIncompleteReason, JsonProjection, JsonResponse, TokenAccountingOperation,
 };
+use crate::services::cursor::StreamId;
 use crate::services::validation::check_cancelled;
 use crate::services::{ServiceCallOptions, Services};
 use crate::tokens::ResponseBudget;
@@ -28,9 +29,8 @@ struct JsonLimits {
 
 struct KeyResponseFit {
     source_hash: String,
-    query_hash: String,
+    stream_id: StreamId,
     offset: usize,
-    cursor_version: JsonCursorVersion,
 }
 
 struct JsonOperationResult {
@@ -46,7 +46,7 @@ struct QueryExecution<'a> {
     projection: JsonProjection,
     limits: &'a JsonLimits,
     cursor: Option<&'a super::cursor::JsonCursor>,
-    query_hash: &'a str,
+    stream_id: StreamId,
     execution: JsonExecutionOptions,
     generation: u64,
     measurements: &'a mut JsonMeasurementCache,
@@ -123,17 +123,20 @@ impl Services {
                 projection,
                 cursor,
                 query_hash,
-            } => self.execute_json_query(QueryExecution {
-                path,
-                selector,
-                projection,
-                limits: &limits,
-                cursor: cursor.as_ref(),
-                query_hash: &query_hash,
-                execution,
-                generation,
-                measurements: &mut measurements,
-            })?,
+            } => {
+                let stream_id = json_stream_id(self, &query_hash);
+                self.execute_json_query(QueryExecution {
+                    path,
+                    selector,
+                    projection,
+                    limits: &limits,
+                    cursor: cursor.as_ref(),
+                    stream_id,
+                    execution,
+                    generation,
+                    measurements: &mut measurements,
+                })?
+            }
             ParsedJsonOperation::NumericSummary { path, selector } => {
                 self.execute_json_numeric_summary(path, selector, generation)?
             }
@@ -182,7 +185,7 @@ impl Services {
             projection,
             limits,
             cursor,
-            query_hash,
+            stream_id,
             execution,
             generation,
             measurements,
@@ -193,7 +196,10 @@ impl Services {
         let source_hash = loaded.source().content_hash.clone();
         let (response, projected_tokens, key_response_fit) = match projection {
             JsonProjection::Keys => {
-                let offset = cursor.map_or(0, super::cursor::JsonCursor::offset);
+                let offset = cursor
+                    .map(|cursor| cursor.offset_for(&source_hash, stream_id))
+                    .transpose()?
+                    .unwrap_or(0);
                 let page = project_key_page(
                     self,
                     &value,
@@ -202,7 +208,7 @@ impl Services {
                     KeyProjectionContext::new(
                         cursor,
                         &source_hash,
-                        query_hash,
+                        stream_id,
                         execution,
                         measurements,
                     ),
@@ -221,9 +227,8 @@ impl Services {
                     tokens,
                     Some(KeyResponseFit {
                         source_hash,
-                        query_hash: query_hash.to_owned(),
+                        stream_id,
                         offset,
-                        cursor_version: execution.cursor_version(),
                     }),
                 )
             }
@@ -438,14 +443,9 @@ impl Services {
                 candidate.result_complete = remaining == 0;
                 candidate.incomplete_reason =
                     (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
-                candidate.meta.next_cursor = (remaining > 0).then(|| {
-                    make_json_cursor(
-                        context.cursor_version,
-                        &context.source_hash,
-                        &context.query_hash,
-                        consumed,
-                    )
-                });
+                candidate.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(context.stream_id, &context.source_hash, consumed))
+                    .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
                     JsonMeasurementKey::KeysPrefix(keep),
@@ -469,14 +469,9 @@ impl Services {
                 response.result_complete = remaining == 0;
                 response.incomplete_reason =
                     (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
-                response.meta.next_cursor = (remaining > 0).then(|| {
-                    make_json_cursor(
-                        context.cursor_version,
-                        &context.source_hash,
-                        &context.query_hash,
-                        consumed,
-                    )
-                });
+                response.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(context.stream_id, &context.source_hash, consumed))
+                    .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
                     JsonMeasurementKey::KeysPrefix(keep),
@@ -501,14 +496,9 @@ impl Services {
                 minimum.result_complete = remaining == 0;
                 minimum.incomplete_reason =
                     (remaining > 0).then_some(JsonIncompleteReason::MaxTokens);
-                minimum.meta.next_cursor = (remaining > 0).then(|| {
-                    make_json_cursor(
-                        context.cursor_version,
-                        &context.source_hash,
-                        &context.query_hash,
-                        consumed,
-                    )
-                });
+                minimum.meta.next_cursor = (remaining > 0)
+                    .then(|| make_json_cursor(context.stream_id, &context.source_hash, consumed))
+                    .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
                     JsonMeasurementKey::KeysPrefix(1),

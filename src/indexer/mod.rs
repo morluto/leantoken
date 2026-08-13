@@ -3,7 +3,10 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use cap_std::fs::Dir;
@@ -24,7 +27,8 @@ use crate::repository::{
     validate_relative,
 };
 use crate::storage::{
-    ChunkInput, ImportInput, ImportProjection, IndexedFile, PreparedReconciliation,
+    ChunkInput, ImportInput, ImportProjection, ImportProjectionValue, IndexedFile,
+    MAX_IMPORT_CANDIDATE_PATH_BYTES, MAX_IMPORT_CANDIDATES_PER_IMPORT, PreparedReconciliation,
     PublicationDiagnostics, ReconciliationPublicationPhase, ReconciliationWriter, ReferenceInput,
     Storage, StorageProfiling, SymbolInput, process_write_bytes,
 };

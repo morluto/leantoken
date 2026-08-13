@@ -29,6 +29,8 @@ struct BlockingExecutorInner {
     active: Arc<Semaphore>,
     execution: Arc<Semaphore>,
     queue_timeout: Duration,
+    active_capacity: usize,
+    execution_capacity: usize,
     #[cfg(test)]
     diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
 }
@@ -133,10 +135,21 @@ impl BlockingExecutor {
                 active: Arc::new(Semaphore::new(active_capacity)),
                 execution: Arc::new(Semaphore::new(execution_capacity)),
                 queue_timeout,
+                active_capacity,
+                execution_capacity,
                 #[cfg(test)]
                 diagnostics: Arc::new(Mutex::new(BlockingExecutorDiagnostics::default())),
             }),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn shares_capacity_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub(super) fn capacities(&self) -> (usize, usize) {
+        (self.inner.active_capacity, self.inner.execution_capacity)
     }
 
     pub(super) async fn run<T, F>(&self, cancellation: CancellationToken, operation: F) -> Result<T>

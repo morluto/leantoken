@@ -31,6 +31,11 @@ mod helpers;
 mod mapping;
 mod models;
 mod open;
+#[cfg(test)]
+use open::{AutoCheckpointCompletion, with_auto_checkpoint_suspended};
+mod projections;
+#[cfg(test)]
+use projections::{IMPORT_CANDIDATE_RESOLUTION_SQL, path_projection_is_current};
 mod publication;
 mod query_receipts;
 #[path = "read/counts.rs"]
@@ -59,11 +64,11 @@ pub(crate) use diagnostics::*;
 pub(crate) use helpers::*;
 pub(crate) use models::*;
 pub(crate) use receipts::*;
-pub(crate) use runtime::*;
+use runtime::*;
 pub(crate) use rusqlite::params;
 pub(crate) use schema::*;
 pub(crate) use scoped_regex::*;
-pub(crate) use snapshot::IndexSnapshot;
+pub(crate) use snapshot::StorageSnapshot as IndexSnapshot;
 pub(crate) use staging::PreparedReconciliation;
 
 pub use diagnostics::{
@@ -74,7 +79,6 @@ pub use models::{
     MetaRecord, ReferenceInput, ReferenceRecord, Storage, StorageCounts, SymbolHit, SymbolInput,
     SymbolRecord,
 };
-pub use runtime::ReadSession;
-
+pub use snapshot::StorageSnapshot;
 #[cfg(test)]
 mod tests;

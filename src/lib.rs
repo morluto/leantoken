@@ -18,6 +18,7 @@ pub mod doctor;
 pub mod episode;
 /// Error and result types shared across the crate.
 pub mod error;
+mod index_derivation;
 /// Repository discovery, parsing, and transactional reconciliation.
 pub mod indexer;
 mod invocation;

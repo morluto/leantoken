@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::collapsed::collapse_json;
 use super::cursor::{decode_json_cursor, json_query_hash, make_json_cursor};
-use super::execution::{JsonCursorVersion, JsonKeyOrder};
+use super::execution::JsonKeyOrder;
 use super::keys::key_entries;
 use super::projection::{ProjectionState, count_nodes, project_json};
 use super::schema::{build_schema_breadth_first, project_schema_page};
@@ -14,6 +14,7 @@ use super::validation::parse_json_request;
 use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
 use crate::model::{JsonOperation, JsonProjection, JsonRequest};
+use crate::services::cursor::{CursorKind, StreamIdentityBuilder};
 use crate::services::{ServiceCallOptions, Services};
 
 #[test]
@@ -83,7 +84,7 @@ fn shallow_keys_are_depth_ordered_and_preserve_pointer_escaping() {
 }
 
 #[test]
-fn v2_key_cursors_bind_depth_and_reject_legacy_ordering() {
+fn key_cursors_bind_depth_and_reject_another_ordering() {
     let operation = JsonOperation::Query {
         path: "report.json".into(),
         selector: None,
@@ -95,13 +96,24 @@ fn v2_key_cursors_bind_depth_and_reject_legacy_ordering() {
     assert_ne!(shallow, deep);
 
     let source = crate::text::hash("source");
-    let legacy = make_json_cursor(JsonCursorVersion::V1, &source, &shallow, 1);
+    let stream = |query_hash: &str| {
+        let mut stream = StreamIdentityBuilder::new(CursorKind::JsonKeys);
+        stream.field_str("query_hash", query_hash);
+        stream.finish()
+    };
+    let shallow_stream = stream(&shallow);
+    let cursor = make_json_cursor(shallow_stream, &source, 1).expect("cursor");
+    let decoded = decode_json_cursor(&cursor).expect("decode cursor");
+    assert_eq!(
+        decoded
+            .offset_for(&source, shallow_stream)
+            .expect("matching stream"),
+        1
+    );
     assert!(matches!(
-        decode_json_cursor(&legacy, JsonCursorVersion::V2),
+        decoded.offset_for(&source, stream(&deep)),
         Err(Error::StaleCursor)
     ));
-    let current = make_json_cursor(JsonCursorVersion::V2, &source, &shallow, 1);
-    assert!(decode_json_cursor(&current, JsonCursorVersion::V2).is_ok());
 }
 
 #[test]
@@ -191,11 +203,7 @@ async fn mcp_key_pages_preserve_shallow_parity_and_stale_cursor_boundaries() {
         );
         let next = response.meta.next_cursor;
         if let Some(cursor) = next {
-            let first = request.cursor.get_or_insert_with(|| cursor.clone()).clone();
             request.cursor = Some(cursor);
-            if pointers.len() == 2 {
-                assert!(first.starts_with("j2:"));
-            }
         } else {
             break request.cursor.expect("at least one cursor");
         }

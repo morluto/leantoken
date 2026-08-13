@@ -94,6 +94,8 @@ pub struct McpServices {
     pub(in crate::mcp) state_changed: Arc<tokio::sync::Notify>,
     pub(in crate::mcp) protocol_initialized: Arc<AtomicBool>,
     pub(in crate::mcp) initialized: Arc<tokio::sync::Notify>,
+    activation_requested: Arc<AtomicBool>,
+    activation: Arc<tokio::sync::Notify>,
 }
 
 /// Names the bounded set of repository runtimes approved for one MCP server.
@@ -182,6 +184,8 @@ impl McpServices {
             state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
+            activation_requested: Arc::new(AtomicBool::new(false)),
+            activation: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -193,6 +197,8 @@ impl McpServices {
             state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
+            activation_requested: Arc::new(AtomicBool::new(true)),
+            activation: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -201,6 +207,36 @@ impl McpServices {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    /// Request lazy startup for an approved repository context.
+    pub(in crate::mcp) fn request_activation(&self) -> bool {
+        let first = !self.activation_requested.swap(true, Ordering::AcqRel);
+        if first {
+            self.activation.notify_waiters();
+        }
+        first
+    }
+
+    /// Wait until a tool first selects this context or the server shuts down.
+    pub async fn wait_for_activation(&self, cancellation: CancellationToken) -> crate::Result<()> {
+        loop {
+            let activated = self.activation.notified();
+            tokio::pin!(activated);
+            activated.as_mut().enable();
+            if self.activation_requested.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(crate::Error::Cancelled),
+                _ = &mut activated => {}
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::mcp) fn activation_requested(&self) -> bool {
+        self.activation_requested.load(Ordering::Acquire)
     }
 
     pub(in crate::mcp) async fn wait_for_services(
@@ -245,6 +281,7 @@ impl McpServices {
 
     /// Make initialized retrieval services visible to MCP tool handlers.
     pub fn set_ready(&self, services: Arc<Services>) {
+        let _ = self.request_activation();
         let limits = McpLimitPolicy::from_config(services.config())
             .expect("Services always contains a validated configuration");
         *self

@@ -1,6 +1,28 @@
 use super::*;
 
 impl Indexer {
+    pub(super) fn verify_or_repair_import_projections(
+        &self,
+        writer: &mut ReconciliationWriter<'_, '_>,
+        cancellation: &CancellationToken,
+        publication_changed_import_semantics: bool,
+    ) -> Result<usize> {
+        if !publication_changed_import_semantics
+            && self.import_projections_verified.load(Ordering::Acquire)
+        {
+            return Ok(0);
+        }
+        writer.repair_import_projections(|seed| {
+            check_cancelled(cancellation)?;
+            Ok(import_candidates(&seed.source_path, &seed.raw_target))
+        })
+    }
+
+    pub(super) fn mark_import_projections_verified(&self) {
+        self.import_projections_verified
+            .store(true, Ordering::Release);
+    }
+
     pub(super) fn import_projections(
         &self,
         paths: &HashSet<String>,
@@ -17,13 +39,11 @@ impl Indexer {
             let source_path = source_path_overrides
                 .get(&seed.source_path)
                 .map_or(seed.source_path.as_str(), String::as_str);
-            let candidate_paths = import_candidates(source_path, &seed.raw_target);
-            let resolved_path = resolve_import_candidates(&candidate_paths, repository_paths);
+            let value = derive_import_projection(source_path, &seed.raw_target, repository_paths);
             projections.push(ImportProjection {
                 id: seed.id,
                 file_id: seed.file_id,
-                resolved_path,
-                candidate_paths,
+                value,
             });
         }
         Ok(projections)

@@ -70,6 +70,9 @@ pub struct DoctorReport {
     /// version this process can identify.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_content_version: Option<u32>,
+    /// Exact persisted-index derivation identity for this process's own launcher.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_derivation_fingerprint: Option<String>,
     /// Whether server-wide agent workflow guidance was present.
     pub instructions_loaded: bool,
     /// Exact MCP tool names exposed by the server.
@@ -477,6 +480,9 @@ fn run_with_transport(
         index_content_version: verified_registration
             .is_none()
             .then_some(INDEX_CONTENT_VERSION),
+        index_derivation_fingerprint: verified_registration
+            .is_none()
+            .then(|| crate::index_derivation::index_derivation_fingerprint().to_owned()),
         instructions_loaded,
         tools,
         result_mode,
@@ -692,6 +698,9 @@ pub fn print_report(report: &DoctorReport, json_output: bool) -> Result<()> {
             output,
             "  ◇ Index compatibility: not disclosed by configured launcher"
         )?;
+    }
+    if let Some(fingerprint) = &report.index_derivation_fingerprint {
+        writeln!(output, "  ✓ Index derivation: {fingerprint}")?;
     }
     writeln!(output, "  ✓ Agent guidance loaded")?;
     writeln!(output, "  ✓ Tool catalog: {} MCP tools", report.tools.len())?;
@@ -937,7 +946,7 @@ impl DoctorTransport {
         database_forwarding: DatabaseForwarding,
     ) -> Result<Self> {
         let launch_args = launcher_arguments(config, args, database_forwarding)?;
-        let command = launcher_command_from_root(&config.root, command);
+        let command = launcher_command_from_root(&config.root, command)?;
         let mut child = std::process::Command::new(command)
             .args(&launch_args)
             .current_dir(&config.root)
@@ -1066,12 +1075,33 @@ impl DoctorTransport {
     }
 }
 
-fn launcher_command_from_root(root: &std::path::Path, command: &OsStr) -> OsString {
+fn launcher_command_from_root(root: &std::path::Path, command: &OsStr) -> Result<OsString> {
     let path = std::path::Path::new(command);
     if path.is_relative() && path.components().count() > 1 {
-        root.join(path).into_os_string()
+        if path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(doctor_error(
+                "launch",
+                "relative launcher command must not contain parent-directory traversal",
+            ));
+        }
+        let resolved = root.join(path).canonicalize().map_err(|error| {
+            doctor_error(
+                "launch",
+                format!("could not resolve relative launcher command: {error}"),
+            )
+        })?;
+        if !resolved.starts_with(root) {
+            return Err(doctor_error(
+                "launch",
+                "relative launcher command resolves outside the repository",
+            ));
+        }
+        Ok(resolved.into_os_string())
     } else {
-        command.to_os_string()
+        Ok(command.to_os_string())
     }
 }
 
@@ -1245,22 +1275,57 @@ mod tests {
 
     #[test]
     fn path_bearing_relative_launchers_resolve_from_the_repository_root() {
-        let root = std::path::Path::new("workspace-root");
+        let root = tempfile::tempdir().expect("repository");
         let executable = if cfg!(windows) {
             "leantoken.exe"
         } else {
             "leantoken"
         };
         let relative = std::path::Path::new(".").join("bin").join(executable);
+        std::fs::create_dir(root.path().join("bin")).expect("launcher directory");
+        std::fs::write(root.path().join(&relative), "launcher").expect("launcher");
 
         assert_eq!(
-            launcher_command_from_root(root, relative.as_os_str()),
-            root.join(&relative).into_os_string()
+            launcher_command_from_root(root.path(), relative.as_os_str())
+                .expect("relative launcher"),
+            root.path()
+                .join(&relative)
+                .canonicalize()
+                .expect("canonical launcher")
+                .into_os_string()
         );
         assert_eq!(
-            launcher_command_from_root(root, OsStr::new(executable)),
+            launcher_command_from_root(root.path(), OsStr::new(executable)).expect("PATH launcher"),
             OsString::from(executable)
         );
+    }
+
+    #[test]
+    fn path_bearing_relative_launchers_cannot_escape_the_repository() {
+        let repository = tempfile::tempdir().expect("repository");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("leantoken"), "launcher").expect("outside launcher");
+
+        assert!(matches!(
+            launcher_command_from_root(repository.path(), OsStr::new("../bin/leantoken")),
+            Err(Error::DoctorFailure {
+                stage: "launch",
+                ..
+            })
+        ));
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), repository.path().join("linked"))
+                .expect("outside symlink");
+            assert!(matches!(
+                launcher_command_from_root(repository.path(), OsStr::new("linked/leantoken")),
+                Err(Error::DoctorFailure {
+                    stage: "launch",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

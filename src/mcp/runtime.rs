@@ -70,6 +70,7 @@ impl LeanTokenMcp {
                     .map(RetrievalPreparation::Unavailable);
             }
         };
+        let _ = mcp_services.request_activation();
         let state = mcp_services.get();
         if let Err(error) = validate(state.limits()) {
             return into_tool_error(error, self.result_mode).map(RetrievalPreparation::Unavailable);

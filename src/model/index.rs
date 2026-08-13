@@ -258,6 +258,12 @@ pub struct StatusResponse {
     /// Index-content compatibility version used by this binary.
     #[serde(default)]
     pub index_content_version: u32,
+    /// Exact runtime identity of code and dependencies that derive persisted rows.
+    #[serde(default)]
+    pub index_derivation_fingerprint: String,
+    /// Identity recorded with the currently committed rows, when initialized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persisted_index_derivation_fingerprint: Option<String>,
     /// Whether the cache covers the full ignore-visible repository.
     #[serde(default)]
     pub index_scope: IndexScopeMode,

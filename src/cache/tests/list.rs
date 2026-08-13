@@ -359,6 +359,32 @@ fn list_filters_summarizes_and_pages_with_filter_bound_cursors() {
 }
 
 #[test]
+fn list_accepts_the_previous_cl2_cursor_during_a_rolling_upgrade() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let root = temp.path().join("managed");
+    let manager = CacheManager::new(root.clone(), 10_000);
+    for id in [FIRST_ID, SECOND_ID] {
+        fs::create_dir_all(root.join(id)).expect("cache directory");
+        fs::write(root.join(id).join(DATABASE_NAME), id.as_bytes()).expect("cache fixture");
+    }
+    let request = CacheListRequest {
+        limit: 1,
+        ..CacheListRequest::default()
+    };
+    let legacy_cursor = make_previous_cache_list_cursor(&request, None, FIRST_ID);
+
+    let page = manager
+        .list_with(&CacheListRequest {
+            cursor: Some(legacy_cursor),
+            ..request
+        })
+        .expect("previous-version cursor");
+
+    assert_eq!(page.returned_entries(), 1);
+    assert_eq!(page.entries()[0].entry.id, SECOND_ID);
+}
+
+#[test]
 fn list_rejects_invalid_response_bounds_and_cursors() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let invalid_root = temp.path().join("not-a-directory");

@@ -41,7 +41,7 @@ pub(super) fn mcp_approved_repository_contexts_are_isolated() {
     std::fs::write(
         primary_root.path().join(".leantoken.toml"),
         format!(
-            "[repository_contexts.docs]\nroot = {:?}\n",
+            "[repository_contexts.docs]\nroot = {:?}\nallow_external = true\n",
             docs_root.path().to_string_lossy()
         ),
     )

@@ -18,9 +18,16 @@ impl fmt::Debug for Storage {
     }
 }
 
+#[cfg(test)]
+impl Storage {
+    pub(crate) fn reader_connection_capacity(&self) -> u32 {
+        self.readers.max_size()
+    }
+}
+
 /// One read-only connection held under a DEFERRED transaction so all queries
 /// on this session observe a single SQLite WAL snapshot.
-pub struct ReadSession {
+pub(super) struct ReadSession {
     pub(crate) conn: r2d2::PooledConnection<SqliteConnectionManager>,
     #[cfg(test)]
     pub(crate) diagnostics: Arc<StorageDiagnostics>,

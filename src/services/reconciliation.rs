@@ -10,6 +10,7 @@ use crate::{Error, IndexingMode, Result};
 
 use super::indexing::ActiveReconciliation;
 
+#[cfg(test)]
 pub(super) fn default_reconciliation_active_capacity() -> usize {
     super::executor::default_blocking_active_capacity()
 }
@@ -51,6 +52,7 @@ struct CoordinatorInner {
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
     active_requests: Arc<Semaphore>,
+    indexing_admission: Arc<Semaphore>,
     state: Mutex<CoordinatorState>,
     #[cfg(test)]
     before_scan: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
@@ -147,6 +149,8 @@ impl ReconciliationCoordinator {
         coordination: IndexCoordination,
         active_reconciliations: Arc<AtomicUsize>,
         reconciliation_changed: Arc<tokio::sync::Notify>,
+        active_requests: Arc<Semaphore>,
+        indexing_admission: Arc<Semaphore>,
     ) -> Self {
         Self {
             inner: Arc::new(CoordinatorInner {
@@ -154,7 +158,8 @@ impl ReconciliationCoordinator {
                 coordination,
                 active_reconciliations,
                 reconciliation_changed,
-                active_requests: Arc::new(Semaphore::new(default_reconciliation_active_capacity())),
+                active_requests,
+                indexing_admission,
                 state: Mutex::new(CoordinatorState {
                     next_wave_id: 1,
                     next_waiter_id: 1,
@@ -295,8 +300,24 @@ impl ReconciliationCoordinator {
         let runner_coordinator = self.clone();
         let indexer = self.inner.indexer.clone();
         let coordination = self.inner.coordination.clone();
+        let indexing_admission = Arc::clone(&self.inner.indexing_admission);
         tokio::spawn(async move {
+            let permit = tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => Err(Error::Cancelled),
+                permit = indexing_admission.acquire_owned() => {
+                    permit.map_err(|_| Error::McpRuntimeStopped)
+                }
+            };
+            let permit = match permit {
+                Ok(permit) => permit,
+                Err(error) => {
+                    coordinator.finish_wave(wave_id, Err(error));
+                    return;
+                }
+            };
             let result = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
                 let operation = coordination.acquire_operation(&cancellation)?;
                 if !runner_coordinator.mark_running(wave_id)? {
                     operation.release()?;

@@ -1,5 +1,4 @@
 use super::*;
-use std::num::NonZeroUsize;
 
 pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result<()> {
     const PRODUCTION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -88,30 +87,11 @@ pub(super) async fn run_mcp_runtime(
     // handling and sibling agents unless the user made concurrency explicit.
     config.max_index_workers =
         mcp_index_worker_limit(config.max_index_workers, !use_background_worker_default);
-
-    // Process-wide indexing budget: each approved context independently
-    // configures its own indexing workers. Log the aggregate so operators
-    // know the total process-wide concurrency. See issue #565: with K
-    // approved contexts the process-wide default is (1 + K) workers, and
-    // with explicit --max-index-workers=N, the total is (1 + K) * N.
-    let per_instance_workers = config.max_index_workers;
-    let context_count = approved_contexts.len();
-    let process_wide_workers = per_instance_workers.saturating_mul(context_count.saturating_add(1));
-    let cpu_capacity = std::thread::available_parallelism()
-        .map(NonZeroUsize::get)
-        .unwrap_or(1);
-    if process_wide_workers > cpu_capacity {
-        tracing::warn!(
-            process_wide_indexing_workers = process_wide_workers,
-            approved_context_count = context_count,
-            per_instance_workers,
-            cpu_capacity,
-            "process-wide indexing workers exceed CPU capacity; reduce approved              repository contexts or decrease --max-index-workers"
-        );
-    }
+    let process_runtime = leantoken::services::ServicesRuntime::new(config.max_index_workers)?;
+    let startup_runtime = process_runtime.clone();
     let startup = tokio::task::spawn_blocking(move || {
         startup_state.configure_limits(&config)?;
-        Services::open_cancellable(config, &startup_cancellation)
+        Services::open_cancellable_in_runtime(config, &startup_cancellation, startup_runtime)
     })
     .await;
     let services = match startup {
@@ -144,14 +124,28 @@ pub(super) async fn run_mcp_runtime(
         let startup_cancellation = context_cancellation.clone();
         let context_name = approved.name.clone();
         let context_cli = context_cli.clone();
+        let context_runtime = process_runtime.clone();
         context_tasks.push(tokio::spawn(async move {
+            if let Err(error) = context_state
+                .wait_for_activation(context_cancellation.clone())
+                .await
+            {
+                if !matches!(error, leantoken::Error::Cancelled) {
+                    context_state.set_failed(&error);
+                }
+                return;
+            }
+            let startup_state = context_state.clone();
             let startup = tokio::task::spawn_blocking(move || {
-                let mut config = context_cli.config_for_root(approved.root, None)?;
-                config.max_index_workers = mcp_index_worker_limit(
-                    config.max_index_workers,
-                    context_cli.max_index_workers.is_some(),
-                );
-                leantoken::services::Services::open_cancellable(config, &startup_cancellation)
+                let mut config =
+                    context_cli.config_for_root(approved.root.into_path_buf(), None)?;
+                config.max_index_workers = context_runtime.max_index_workers();
+                startup_state.configure_limits(&config)?;
+                leantoken::services::Services::open_cancellable_in_runtime(
+                    config,
+                    &startup_cancellation,
+                    context_runtime,
+                )
             })
             .await;
             match startup {

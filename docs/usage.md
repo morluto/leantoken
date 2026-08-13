@@ -893,10 +893,15 @@ contains every filtered symbol and import. Exact `total_symbols`,
 `symbol_counts_by_kind` cover the indexed subset and make its coverage auditable.
 `truncated_by_max_results` provides `meta.next_cursor` for another page, while
 `truncated_by_max_tokens` means the query must be repeated with a larger token
-budget to recover omitted entries. Outline cursors are bound to the repository
-generation, normalized path order, symbol filters, and projection. Each page
-repeats the same ordered `path_results`; the cursor's global entry offset maps
-deterministically through the indexed subset in that same request snapshot.
+budget to recover omitted entries. The normalized token budget is part of the
+outline stream identity: changing it while supplying a cursor fails stale, so
+raise the budget and restart from the first page. Outline cursors are bound to
+the repository, index scope, generation, normalized path order, symbol filters,
+projection, and token budget. Each page repeats the same ordered `path_results`;
+the cursor's global entry offset maps deterministically through the indexed
+subset in that same request snapshot. Receipt suppression is applied after this
+candidate traversal, so a copy-on-write receipt successor does not change the
+cursor's pre-suppression stream.
 
 Set `projection="signatures"` to exclude imports before result/token selection
 and omit symbol byte offsets. The response retains path, language,
@@ -967,8 +972,14 @@ indexed version (for example after an edit that has not been reindexed yet).
 `returned_start_line` and `returned_end_line` describe the current page.
 `status: "truncated"`, `truncated: true`, `next_start_line`, and
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
-are bound to the repository generation, path, and live full-file hash, so a
-stale cursor cannot combine pages from different file versions.
+are bound to the repository generation, path, and requested verification
+policy. `continuation_verification: "content_snapshot"` is emitted by `full`
+reads and commits to the complete live target, so a stale cursor cannot combine
+pages from different file versions. `"prefix_stable"` is emitted by `bounded`
+reads: it verifies the returned prefix plus size and modification time, but it
+cannot detect an equal-size, equal-mtime edit confined to the unread suffix.
+Those pages preserve bounded I/O and must not be interpreted as one immutable
+content snapshot.
 `truncation_guidance` reports the complete target and remaining source-token
 cost, estimated additional pages at the current budget, a bounded recommended
 budget for the next continuation, and the minimum pages allowed by the server's
@@ -1289,14 +1300,21 @@ they are explicitly approved in the primary repository configuration:
 ```toml
 [repository_contexts.docs]
 root = "../docs-repository"
+allow_external = true
 ```
 
 Context names are request-only identifiers; retrieval calls never accept a
-filesystem root. The primary workspace is selected when `repository_context`
-is omitted, while an approved name selects the corresponding repository. A
-maximum of eight additional contexts is accepted. Each context has its own
-index, generation, cache, and admission state; unknown names fail closed, and
-receipts remain bound to the selected repository identity and generation.
+filesystem root. Relative roots contained within the primary repository need no
+additional setting. Absolute roots, `..` escapes, and symlink-resolved roots
+outside the primary repository are rejected unless that context explicitly sets
+`allow_external = true`; this flag grants the repository configuration a local
+filesystem indexing capability and should be used only for a trusted path. All
+roots are canonicalized before runtime registration. The primary workspace is
+selected when `repository_context` is omitted, while an approved name selects
+the corresponding repository. A maximum of eight additional contexts is
+accepted. Each context has its own index and generation but shares the MCP
+process runtime admission budgets; unknown names fail closed, and receipts
+remain bound to the selected repository identity and generation.
 
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,

@@ -85,15 +85,12 @@ impl Indexer {
     }
 
     pub(super) fn config_hash(&self) -> String {
-        self.config_hash_for_content_marker(&format!(
-            "leantoken-index-content-v{INDEX_CONTENT_VERSION}"
-        ))
+        self.config_hash_for_derivation(crate::index_derivation::index_derivation_fingerprint())
     }
 
-    pub(super) fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
+    pub(super) fn config_hash_for_derivation(&self, derivation_fingerprint: &str) -> String {
         let input = format!(
-            "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
-            env!("CARGO_PKG_VERSION"),
+            "leantoken-index-config-v2\0{derivation_fingerprint}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             self.config.max_walk_entries,
             self.config.max_files,
             self.config.max_total_source_bytes,

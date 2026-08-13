@@ -385,7 +385,7 @@ async fn run_scenario(
     concurrency: usize,
     scenario: Scenario,
 ) -> ScenarioReport {
-    services.blocking_executor.reset_diagnostics();
+    services.runtime.blocking_executor.reset_diagnostics();
     services.storage.reset_diagnostics();
     let cpu_before = process_cpu_ticks();
     let wal_before = wal_bytes(database);
@@ -470,7 +470,7 @@ async fn run_scenario(
     sampler_cancellation.cancel();
     let resources = sampler.await.expect("resource sampler");
     let cpu_after = process_cpu_ticks();
-    let executor = services.blocking_executor.diagnostics();
+    let executor = services.runtime.blocking_executor.diagnostics();
     let storage = services.storage.diagnostics();
     let checkpoint = passive_checkpoint(database);
     let wal_after = wal_bytes(database);

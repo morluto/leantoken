@@ -30,6 +30,7 @@ mod change_receipt;
 mod concurrency_profile;
 mod context;
 mod coverage;
+pub(crate) mod cursor;
 mod execution_options;
 mod executor;
 mod files;
@@ -40,6 +41,7 @@ mod indexing;
 mod json;
 mod observer;
 mod outline;
+mod process_runtime;
 mod read;
 mod read_delta;
 mod receipt_rebase;
@@ -55,6 +57,7 @@ pub use context::ContextWorkflowOptions;
 pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
 pub(crate) use history::MAX_DIFF_SYMBOL_TARGETS;
 pub(crate) use json::{JsonExecutionOptions, MAX_JSON_DEPTH};
+pub use process_runtime::ServicesRuntime;
 
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 
@@ -121,7 +124,8 @@ pub struct Services {
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
     read_deltas: Arc<read_delta::ReadDeltaRegistry>,
-    blocking_executor: executor::BlockingExecutor,
+    runtime: ServicesRuntime,
+    _runtime_repository: process_runtime::RuntimeRepositoryRegistration,
     response_accountant: accounting::ResponseAccountant,
     observer: observer::ServiceObserver,
     reconciliation: reconciliation::ReconciliationCoordinator,
@@ -451,6 +455,9 @@ impl Services {
         readiness: IndexSnapshotReadiness,
         operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
+        let _snapshot_admission = Arc::clone(&self.runtime.snapshot_admission)
+            .try_acquire_owned()
+            .map_err(|_| Error::RetrievalOverloaded)?;
         for attempt in 0..3 {
             let snapshot = index_read::IndexReadSnapshot::open(&self.storage);
             let snapshot = match snapshot {

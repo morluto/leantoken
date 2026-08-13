@@ -31,15 +31,20 @@ impl Services {
         mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexReport> {
+        let _active = ActiveReconciliation::new(
+            Arc::clone(&self.active_reconciliations),
+            Arc::clone(&self.reconciliation_changed),
+        );
+        let indexing = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+            permit = Arc::clone(&self.runtime.indexing_admission).acquire_owned() => {
+                permit.map_err(|_| Error::McpRuntimeStopped)?
+            }
+        };
         let this = self.clone();
-        let active_reconciliations = Arc::clone(&self.active_reconciliations);
-        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
-        active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation {
-                count: active_reconciliations,
-                changed: reconciliation_changed,
-            };
+            let _indexing = indexing;
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
@@ -81,15 +86,20 @@ impl Services {
         paths: Vec<String>,
         cancellation: CancellationToken,
     ) -> Result<IndexReport> {
+        let _active = ActiveReconciliation::new(
+            Arc::clone(&self.active_reconciliations),
+            Arc::clone(&self.reconciliation_changed),
+        );
+        let indexing = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+            permit = Arc::clone(&self.runtime.indexing_admission).acquire_owned() => {
+                permit.map_err(|_| Error::McpRuntimeStopped)?
+            }
+        };
         let this = self.clone();
-        let active_reconciliations = Arc::clone(&self.active_reconciliations);
-        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
-        active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation {
-                count: active_reconciliations,
-                changed: reconciliation_changed,
-            };
+            let _indexing = indexing;
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer

@@ -116,6 +116,60 @@ async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence(
 }
 
 #[tokio::test]
+async fn continuation_streams_accept_the_receipt_successor_from_the_previous_page() {
+    let (_root, services) = indexed_source(
+        "paged.rs",
+        b"pub fn first_needle() {}\npub fn second_needle() {}\n",
+    )
+    .await;
+    let request = SearchRequest {
+        query: "needle".into(),
+        mode: SearchMode::Text,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(1),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let first = services.search(request.clone()).await.expect("first page");
+    let cursor = first.meta.next_cursor.expect("search continuation");
+    let receipt_id = first.meta.receipt_id.expect("search receipt");
+    let second = services
+        .search(SearchRequest {
+            cursor: Some(cursor),
+            receipt_id: Some(receipt_id),
+            ..request
+        })
+        .await
+        .expect("continue with acknowledged search receipt");
+    assert!(second.meta.next_cursor.is_none());
+
+    let (_root, services) = fixture().await;
+    let outline_request = outline_limit_request(Some(1), Some(1_000));
+    let first = services
+        .outline(outline_request.clone())
+        .await
+        .expect("first outline page");
+    let cursor = first.meta.next_cursor.expect("outline continuation");
+    let receipt_id = first.meta.receipt_id.expect("outline receipt");
+    services
+        .outline(OutlineRequest {
+            cursor: Some(cursor),
+            receipt_id: Some(receipt_id),
+            ..outline_request
+        })
+        .await
+        .expect("continue with acknowledged outline receipt");
+}
+
+#[tokio::test]
 async fn server_managed_receipt_survives_service_restart() {
     let (_root, services) = fixture().await;
     let config = services.config().clone();
@@ -411,12 +465,17 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
 
     let mut outline_request = outline_limit_request(Some(100), Some(2_000));
     outline_request.receipt_id = Some(receipt_id.clone());
-    let outline = services.outline(outline_request).await.expect("outline");
+    let outline = services
+        .outline(outline_request.clone())
+        .await
+        .expect("outline");
+    let successor_id = outline
+        .meta
+        .receipt_id
+        .clone()
+        .expect("outline successor receipt");
 
-    assert_eq!(
-        outline.meta.receipt_id.as_deref(),
-        Some(receipt_id.as_str())
-    );
+    assert_ne!(successor_id, receipt_id);
     assert!(outline.meta.receipt_suppressed_overlap > 0);
     assert!(
         outline
@@ -424,6 +483,27 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
             .iter()
             .flat_map(|file| &file.symbols)
             .all(|symbol| symbol.name != "greet")
+    );
+
+    let retry = services
+        .outline(outline_request.clone())
+        .await
+        .expect("retry from immutable source");
+    assert_eq!(
+        serde_json::to_value(&retry.files).expect("retry files"),
+        serde_json::to_value(&outline.files).expect("original files"),
+        "losing the first response must not suppress its undelivered evidence"
+    );
+
+    outline_request.receipt_id = Some(successor_id);
+    let acknowledged = services
+        .outline(outline_request)
+        .await
+        .expect("reuse acknowledged successor");
+    assert!(acknowledged.returned_symbols < outline.returned_symbols);
+    assert!(
+        acknowledged.meta.receipt_suppressed_exact + acknowledged.meta.receipt_suppressed_overlap
+            > outline.meta.receipt_suppressed_overlap
     );
 }
 

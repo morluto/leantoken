@@ -168,7 +168,10 @@ impl Indexer {
         check_cancelled(cancellation)?;
         let baseline = self.storage.meta()?;
         let config_hash = self.config_hash();
-        if baseline.config_hash != config_hash {
+        if baseline.config_hash != config_hash
+            || baseline.derivation_fingerprint
+                != crate::index_derivation::index_derivation_fingerprint()
+        {
             return self.reconcile_cancellable_report(IndexingMode::Rebuild, cancellation);
         }
 
@@ -440,36 +443,51 @@ impl Indexer {
         source_bytes.enforce()?;
         let staged = staged.finish()?;
         check_cancelled(cancellation)?;
+        let publication_changed_import_semantics =
+            !change_set.created.is_empty() || !deletions.is_empty();
 
         // Phase 2: Publication inside BEGIN IMMEDIATE.  Relocations and import
         // projection refresh remain inside the transaction because they
         // require live table state.  staged.apply performs only fast
         // DELETE + INSERT operations for the prepared files.
-        let (generation, _preparation) = self.storage.publish_reconciliation_at(
-            &baseline,
-            &config_hash,
-            IndexingMode::Reconcile,
-            |writer| {
-                for path in &deletions {
-                    if relocation_old_paths.contains(path) {
-                        continue;
+        let (generation, (_preparation, repaired_imports)) =
+            self.storage.publish_reconciliation_at(
+                &baseline,
+                &config_hash,
+                IndexingMode::Reconcile,
+                |writer| {
+                    for path in &deletions {
+                        if relocation_old_paths.contains(path) {
+                            continue;
+                        }
+                        writer.delete(path)?;
                     }
-                    writer.delete(path)?;
-                }
-                for relocation in &relocations {
-                    writer.relocate(
-                        &relocation.old_path,
-                        &relocation.new_file.relative_path,
-                        relocation.new_file.size_bytes,
-                        relocation.new_file.modified_ns,
-                        &relocation.expected_hash,
+                    for relocation in &relocations {
+                        writer.relocate(
+                            &relocation.old_path,
+                            &relocation.new_file.relative_path,
+                            relocation.new_file.size_bytes,
+                            relocation.new_file.modified_ns,
+                            &relocation.expected_hash,
+                        )?;
+                    }
+                    writer.refresh_import_projections(&import_projections)?;
+                    staged.apply(writer)?;
+                    let repaired_imports = self.verify_or_repair_import_projections(
+                        writer,
+                        cancellation,
+                        publication_changed_import_semantics,
                     )?;
-                }
-                writer.refresh_import_projections(&import_projections)?;
-                staged.apply(writer)?;
-                Ok(preparation)
-            },
-        )?;
+                    Ok((preparation, repaired_imports))
+                },
+            )?;
+        self.mark_import_projections_verified();
+        if repaired_imports > 0 {
+            push_warning(
+                &mut warnings,
+                format!("repaired {repaired_imports} persisted import projections"),
+            );
+        }
         after_publication();
         let files_removed = deletions.len();
         let files_indexed = updated_paths.len();

@@ -151,7 +151,12 @@ pub(super) struct ReadBudgetEstimate {
 
 #[derive(Debug, Clone)]
 pub(super) struct ReadCursor {
-    pub(super) generation: u64,
+    pub(super) envelope: crate::services::cursor::CursorEnvelope,
+    pub(super) state: ReadCursorState,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ReadCursorState {
     pub(super) target_start_line: usize,
     /// The requested target endpoint. `None` preserves an open-ended read even
     /// when a bounded page stopped before EOF.
@@ -166,6 +171,5 @@ pub(super) struct ReadCursor {
     pub(super) policy: ReadPolicy,
     pub(super) file_size: usize,
     pub(super) modified_ns: Option<u128>,
-    pub(super) path_hash: String,
 }
 use super::*;

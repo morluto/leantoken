@@ -1,6 +1,6 @@
 ---
 source: src/mcp/tests.rs
-assertion_line: 401
+assertion_line: 485
 expression: mcp_contract()
 ---
 {
@@ -1786,7 +1786,7 @@ expression: mcp_contract()
             ]
           },
           "ReadPolicy": {
-            "description": "I/O and verification policy for a live read.\n\n`Bounded` (default) stops reading after the requested page is satisfied,\nreports `index_state: unknown`, and emits a metadata-bound continuation\ncursor. `Full` hashes the complete live file, reports current/stale with\nlive and indexed hashes, and is required for delta requests.",
+            "description": "I/O and verification policy for a live read.\n\n`Bounded` (default) stops reading after the requested page is satisfied,\nreports `index_state: unknown`, and emits a prefix-stable continuation. It\ncannot prove that an unread suffix is unchanged. `Full` hashes the complete\nlive file, reports current/stale with live and indexed hashes, and emits a\ncontent-snapshot continuation. It is required for delta requests.",
             "oneOf": [
               {
                 "const": "bounded",

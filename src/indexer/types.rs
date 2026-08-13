@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-pub(super) const PREVIOUS_INDEX_CONTENT_MARKER: &str = "leantoken-index-content-v10";
+pub(super) const LEGACY_INDEX_DERIVATION: &str = "legacy-index-derivation";
 
 /// Owns discovery/parse publication for one repository cache.
 ///
@@ -15,6 +15,7 @@ pub struct Indexer {
     pub(super) pool: Arc<LazyWorkerPool>,
     pub(super) repository_root: Arc<Dir>,
     pub(super) progress: IndexProgressRegistry,
+    pub(super) import_projections_verified: Arc<AtomicBool>,
 }
 
 /// Phase and batch high-water diagnostics for one full reconciliation.
@@ -169,7 +170,7 @@ impl FilePreparationDiagnostics {
     }
 }
 
-pub(super) struct LazyWorkerPool {
+pub(crate) struct LazyWorkerPool {
     pub(super) pool: OnceLock<ThreadPool>,
     pub(super) init: Mutex<()>,
 }
@@ -234,7 +235,7 @@ impl ChangeSet {
 }
 
 impl LazyWorkerPool {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             pool: OnceLock::new(),
             init: Mutex::new(()),

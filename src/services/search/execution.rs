@@ -11,6 +11,7 @@ pub(super) struct ParsedSearchRequest {
     pub(super) request: SearchInput,
     pub(super) prepared: PreparedSearch,
     pub(super) output_shape: SearchOutputShape,
+    pub(super) stream_id: StreamId,
 }
 
 pub(super) struct LexicalSearchBatch {
@@ -34,12 +35,17 @@ impl Services {
         output_shape: SearchOutputShape,
     ) -> Result<ParsedSearchRequest> {
         validate_search_input(&request)?;
+        let cursor = ContinuationCursor::parse_optional(request.cursor.as_deref())?;
+        let patterns = SearchPatterns::parse(&request)?;
         let kind = parse_search_kind(&request, output_shape)?;
         let prepared = self.prepare_search(&request, &kind)?;
+        let request = SearchInput::from_request(request, kind, patterns, cursor);
+        let stream_id = search_stream_id(self, &request, &prepared, output_shape);
         Ok(ParsedSearchRequest {
-            request: SearchInput::from_request(request, kind),
+            request,
             prepared,
             output_shape,
+            stream_id,
         })
     }
 
@@ -84,7 +90,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        } = query;
         if let Some(PreparedQueryReceipt::Reuse {
             receipt_id,
             predicate,
@@ -98,7 +108,11 @@ impl Services {
                 cancellation,
             );
         }
-        let offset = parse_cursor(request.cursor.as_deref(), generation)?;
+        let offset = request
+            .cursor
+            .map(|cursor| cursor.position_for(CursorKind::Search, generation, stream_id))
+            .transpose()?
+            .unwrap_or(0);
         let mut hits = self.collect_structural_search_hits(
             session,
             request,
@@ -112,7 +126,11 @@ impl Services {
             generation,
             cancellation,
         };
-        let query = SearchQuery { request, prepared };
+        let query = SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        };
         let lexical = self.collect_lexical_search_hits(snapshot, query, scan)?;
         hits.extend(lexical.hits);
         let hits = order_search_hits(hits, request)?;
@@ -361,7 +379,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id: _,
+        } = query;
         let SearchScan {
             regex_planning,
             diagnostics,
@@ -595,7 +617,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        } = query;
         let OrderedSearchPage { hits, offset } = page;
         let total_candidates = hits.len();
         let (mut selected, consumed, _) = select_search_page(
@@ -613,6 +639,7 @@ impl Services {
             SearchResponseShape {
                 all: &hits,
                 request,
+                stream_id,
                 generation,
                 total_candidates,
                 offset,
@@ -636,7 +663,7 @@ impl Services {
         let receipt = self.evaluate_receipt(
             matches!(
                 output_shape,
-                SearchOutputShape::Full | SearchOutputShape::Compact
+                SearchOutputShape::Full | SearchOutputShape::Compact | SearchOutputShape::Grouped
             )
             .then_some(request.receipt_id.as_deref())
             .flatten(),
@@ -670,16 +697,18 @@ impl Services {
             .collect();
         let baseline_source_tokens =
             session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+        let next_cursor = has_more
+            .then(|| {
+                ContinuationCursor::at(CursorKind::Search, generation, stream_id, offset + consumed)
+                    .map(ContinuationCursor::encode)
+            })
+            .transpose()?;
         let mut response = SearchResponse {
             hits: selected,
             coverage,
             occurrences_returned,
             occurrences_total: request.kind.is_exhaustive().then_some(total_candidates),
-            meta: self.meta(
-                generation,
-                emitted_tokens,
-                has_more.then(|| make_cursor(generation, offset + consumed)),
-            ),
+            meta: self.meta(generation, emitted_tokens, next_cursor),
         };
         receipt.apply_meta(&mut response.meta);
         let query_receipt =
@@ -788,6 +817,7 @@ pub(super) struct SearchSnapshot<'a> {
 pub(super) struct SearchQuery<'a> {
     pub request: &'a SearchInput,
     pub prepared: &'a PreparedSearch,
+    pub stream_id: StreamId,
 }
 
 #[derive(Clone, Copy)]

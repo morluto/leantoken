@@ -9,7 +9,7 @@ pub(super) const PRUNABLE_ARTIFACTS: &[&str] = &[
     "index.sqlite-journal",
 ];
 pub(super) const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
-pub(super) const CACHE_LIST_CURSOR_PREFIX: &str = "cl2";
+pub(super) const LEGACY_CACHE_LIST_CURSOR_PREFIX: &str = "cl2";
 pub(super) const CACHE_LIST_CURSOR_HASH_CHARS: usize = 16;
 pub(super) const MAX_CACHE_LIST_CURSOR_BYTES: usize = 128;
 pub(super) const MAX_CACHE_COMPATIBILITY_FILTERS: usize = 5;

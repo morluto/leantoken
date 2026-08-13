@@ -264,6 +264,10 @@ impl SearchKind {
         }
     }
 
+    pub(super) const fn is_structural_preferred(&self) -> bool {
+        self.definition_preference().prefers_structural()
+    }
+
     pub(super) const fn query_receipt(&self) -> Option<&PreparedQueryReceipt> {
         match self {
             Self::Exhaustive { query_receipt, .. } => Some(query_receipt),
@@ -277,6 +281,29 @@ impl SearchKind {
     }
 }
 
+pub(super) struct SearchPatterns {
+    pub(super) include: Vec<String>,
+    pub(super) exclude: Vec<String>,
+    pub(super) focus: Vec<String>,
+}
+
+impl SearchPatterns {
+    pub(super) fn parse(request: &SearchRequest) -> Result<Self> {
+        Ok(Self {
+            include: canonical_patterns(&request.include_paths)?,
+            exclude: canonical_patterns(&request.exclude_paths)?,
+            focus: canonical_patterns(&request.focus_paths)?,
+        })
+    }
+}
+
+fn canonical_patterns(patterns: &[String]) -> Result<Vec<String>> {
+    let mut canonical = PathMatcher::new(patterns)?.canonical_strings();
+    canonical.sort_unstable();
+    canonical.dedup();
+    Ok(canonical)
+}
+
 pub(super) struct SearchInput {
     pub(super) query: String,
     pub(super) kind: SearchKind,
@@ -287,17 +314,22 @@ pub(super) struct SearchInput {
     pub(super) max_tokens: Option<usize>,
     pub(super) case_sensitive: bool,
     pub(super) receipt_id: Option<String>,
-    pub(super) cursor: Option<String>,
+    pub(super) cursor: Option<ContinuationCursor>,
 }
 
 impl SearchInput {
-    pub(super) fn from_request(request: SearchRequest, kind: SearchKind) -> Self {
+    pub(super) fn from_request(
+        request: SearchRequest,
+        kind: SearchKind,
+        patterns: SearchPatterns,
+        cursor: Option<ContinuationCursor>,
+    ) -> Self {
         let SearchRequest {
             query,
             mode: _,
-            include_paths,
-            exclude_paths,
-            focus_paths,
+            include_paths: _,
+            exclude_paths: _,
+            focus_paths: _,
             max_results,
             max_tokens,
             context_lines: _,
@@ -306,14 +338,14 @@ impl SearchInput {
             prefer_structural: _,
             receipt_id,
             query_receipt: _,
-            cursor,
+            cursor: _,
         } = request;
         Self {
             query,
             kind,
-            include_paths,
-            exclude_paths,
-            focus_paths,
+            include_paths: patterns.include,
+            exclude_paths: patterns.exclude,
+            focus_paths: patterns.focus,
             max_results,
             max_tokens,
             case_sensitive,
@@ -327,7 +359,22 @@ impl SearchInput {
 pub(super) enum SearchOutputShape {
     Full,
     Compact,
+    Grouped,
     OccurrenceGroups(SearchOccurrenceOutput),
+}
+
+impl SearchOutputShape {
+    pub(super) const fn stream_label(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+            Self::Grouped => "grouped",
+            Self::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => "occurrences-excerpts",
+            Self::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => {
+                "occurrences-coordinates"
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

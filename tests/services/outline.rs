@@ -297,6 +297,85 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
 }
 
 #[tokio::test]
+async fn outline_cursor_rejects_a_budget_change_that_would_reclassify_omitted_entries() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let parameters = (0..40)
+        .map(|index| format!("argument_{index}: usize"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    std::fs::write(
+        root.path().join("budget.rs"),
+        format!("fn expensive({parameters}) {{}}\nfn cheap() {{}}\nfn later() {{}}\n"),
+    )
+    .expect("outline fixture");
+    let services = Services::open(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    )
+    .expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+
+    let request = |max_results, max_tokens, cursor| OutlineRequest {
+        paths: vec!["budget.rs".into()],
+        symbol_name: None,
+        symbol_kind: None,
+        max_results: Some(max_results),
+        max_tokens: Some(max_tokens),
+        receipt_id: None,
+        cursor,
+    };
+    let complete = services
+        .outline(request(10, 32_000, None))
+        .await
+        .expect("complete outline");
+    let symbols = &complete.files[0].symbols;
+    assert_eq!(
+        symbols
+            .iter()
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>(),
+        ["expensive", "cheap", "later"]
+    );
+    let costs = symbols
+        .iter()
+        .map(|symbol| {
+            symbol
+                .signature
+                .as_deref()
+                .map_or(1, |signature| Tokenizer::default().count(signature))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        costs[0] > costs[1],
+        "fixture needs an expensive first entry"
+    );
+
+    let low_budget = costs[1];
+    let first = services
+        .outline(request(1, low_budget, None))
+        .await
+        .expect("token-limited first page");
+    assert_eq!(first.files[0].symbols[0].name, "cheap");
+    assert!(first.truncated_by_max_tokens);
+    assert!(first.truncated_by_max_results);
+    let cursor = first.meta.next_cursor.expect("later entry remains");
+
+    let stale = services
+        .outline(request(10, costs[0], Some(cursor)))
+        .await
+        .expect_err("changing the token budget changes the outline stream");
+    assert!(matches!(stale, Error::StaleCursor));
+
+    let restarted = services
+        .outline(request(1, costs[0], None))
+        .await
+        .expect("restart with larger budget");
+    assert_eq!(restarted.files[0].symbols[0].name, "expensive");
+}
+
+#[tokio::test]
 async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
     let root = tempfile::tempdir().expect("temporary repository");
     for (path, source) in [

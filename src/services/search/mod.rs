@@ -8,13 +8,13 @@ use regex_syntax::hir::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::cursor::{ContinuationCursor, CursorKind, StreamId, StreamIdentityBuilder};
 use super::execution_options::RetrievalExecution;
 use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, make_cursor, parse_cursor,
-    validate_cursor, validate_glob_patterns, validate_input,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, validate_input,
 };
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
@@ -53,6 +53,18 @@ impl Services {
         shape: SearchResponseShape<'_>,
         options: ServiceCallOptions,
     ) -> Result<()> {
+        let next_cursor = shape
+            .has_more
+            .then(|| {
+                ContinuationCursor::at(
+                    CursorKind::Search,
+                    shape.generation,
+                    shape.stream_id,
+                    shape.offset + shape.consumed,
+                )
+                .map(ContinuationCursor::encode)
+            })
+            .transpose()?;
         let provisional = |selected: &[CandidateSearchHit]| SearchResponse {
             hits: selected
                 .iter()
@@ -71,9 +83,7 @@ impl Services {
                     .iter()
                     .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
                     .sum(),
-                shape
-                    .has_more
-                    .then(|| make_cursor(shape.generation, shape.offset + shape.consumed)),
+                next_cursor.clone(),
             ),
         };
         let mut sized = provisional(selected);
@@ -197,6 +207,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.search_sync(
@@ -273,6 +284,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
@@ -354,7 +366,7 @@ impl Services {
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        let output_shape = SearchOutputShape::Full;
+        let output_shape = SearchOutputShape::Grouped;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
         self.apply_search_consistency(
@@ -365,6 +377,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
@@ -472,6 +485,7 @@ impl Services {
         .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let snapshot = this.search_sync(
@@ -532,7 +546,8 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -564,7 +579,8 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -598,6 +614,7 @@ impl Services {
             request,
             prepared,
             output_shape,
+            stream_id,
         } = parsed;
         let mut snapshot = self.consistent(|session| {
             let generation = session.generation();
@@ -610,6 +627,7 @@ impl Services {
                 execution::SearchQuery {
                     request: &request,
                     prepared: &prepared,
+                    stream_id,
                 },
                 output_shape,
                 execution,

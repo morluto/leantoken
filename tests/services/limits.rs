@@ -641,19 +641,36 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
 #[tokio::test]
 async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
     let (root, services) = fixture().await;
+    std::fs::write(
+        root.path().join("src/second.rs"),
+        "pub fn greet_again() { let _ = \"greet\"; }\n",
+    )
+    .expect("write second indexed source");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index second source");
     let generation = services
         .status()
         .await
         .expect("initial status")
         .repository_generation;
+    let request = search_limit_request(Some(1), Some(1_000), Some(0));
+    let cursor = services
+        .search(request.clone())
+        .await
+        .expect("pre-reconciliation search")
+        .meta
+        .next_cursor
+        .expect("pre-reconciliation cursor");
     std::fs::write(
         root.path().join("src/reconciled.rs"),
         "pub fn reconciled() {}\n",
     )
     .expect("write unindexed source");
 
-    let mut request = search_limit_request(Some(1), Some(1), Some(0));
-    request.cursor = Some(format!("{generation}:0"));
+    let mut request = request;
+    request.cursor = Some(cursor);
     let error = services
         .search_with_consistency_cancellable(
             request,

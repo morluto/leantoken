@@ -252,6 +252,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.read_sync(request, options, cancellation)
@@ -484,7 +485,13 @@ impl Services {
         let Some(indexed) = session.find_file(&request.path)? else {
             return Ok(None);
         };
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(
+            session,
+            indexed.id,
+            request,
+            generation,
+            read_stream_id(self, &request.path, request.policy),
+        )?;
         let target_end_line = match target.target_end_line {
             Some(end_line) => end_line,
             None => match session
@@ -562,7 +569,8 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let stream_id = read_stream_id(self, &request.path, request.policy);
+        let target = resolve_read_target(session, indexed.id, request, generation, stream_id)?;
 
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
@@ -667,21 +675,31 @@ impl Services {
                 )
             })
             .transpose()?;
-        let continuation_cursor = next_start_line.map(|next_start_line| {
-            ReadCursor {
-                generation,
-                target_start_line: target.target_start_line,
-                target_end_line: target.target_end_line,
-                next_start_line,
-                next_byte,
-                full_hash: snapshot.content_hash.clone(),
-                prefix_hash: prefix_hash.clone(),
-                policy,
-                file_size: snapshot.file_size,
-                modified_ns: snapshot.modified_ns,
-                path_hash: read_path_hash(&request.path),
+        let continuation_cursor = next_start_line
+            .map(|next_start_line| {
+                encode_read_cursor(
+                    generation,
+                    stream_id,
+                    ReadCursorState {
+                        target_start_line: target.target_start_line,
+                        target_end_line: target.target_end_line,
+                        next_start_line,
+                        next_byte,
+                        full_hash: snapshot.content_hash.clone(),
+                        prefix_hash: prefix_hash.clone(),
+                        policy,
+                        file_size: snapshot.file_size,
+                        modified_ns: snapshot.modified_ns,
+                    },
+                )
+            })
+            .transpose()?;
+        let continuation_verification = continuation_cursor.as_ref().map(|_| {
+            if policy.is_full() {
+                ReadContinuationVerification::ContentSnapshot
+            } else {
+                ReadContinuationVerification::PrefixStable
             }
-            .encode()
         });
         let content_hash = hash(content);
         let (index_stale, indexed_hash, index_state) = if policy.is_full() {
@@ -719,6 +737,7 @@ impl Services {
                 truncated,
                 next_start_line,
                 continuation_cursor,
+                continuation_verification,
                 truncation_guidance: None,
                 not_modified,
                 content: (!not_modified).then(|| content.to_string()),

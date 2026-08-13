@@ -9,7 +9,14 @@ pub(super) const INITIAL_INDEX_PROBE_INTERVAL: Duration = Duration::from_millis(
 
 impl Services {
     pub fn open(config: Config) -> Result<Self> {
-        match Self::open_managed(config.clone()) {
+        let runtime = ServicesRuntime::for_config(&config)?;
+        Self::open_in_runtime(config, runtime)
+    }
+
+    /// Open repository services on process-owned shared resource budgets.
+    pub fn open_in_runtime(config: Config, runtime: ServicesRuntime) -> Result<Self> {
+        runtime.validate_config(&config)?;
+        match Self::open_managed(config.clone(), runtime.clone()) {
             Ok(services) => Ok(services),
             Err(error) if should_use_repository_cache_fallback(&config, &error) => {
                 let fallback = prepare_repository_cache_fallback(&config)?;
@@ -18,26 +25,37 @@ impl Services {
                     fallback_database = %fallback.database_path.display(),
                     "managed cache is not writable; using repository-local fallback"
                 );
-                Self::open_managed(fallback)
+                Self::open_managed(fallback, runtime)
             }
             Err(error) => Err(error),
         }
     }
 
-    fn open_managed(config: Config) -> Result<Self> {
+    fn open_managed(config: Config, runtime: ServicesRuntime) -> Result<Self> {
         config.validate()?;
         reject_symlinked_managed_database_artifacts(&config)?;
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cancellation = CancellationToken::new();
         let cache_lease = coordination.acquire_cache_lease(&cancellation)?;
         let _initialization = coordination.acquire_initialization(&cancellation)?;
-        Self::open_once(&config, None, cache_lease)
+        Self::open_once(&config, None, cache_lease, runtime)
     }
 
     /// Open services under exclusive cache initialization ownership, retrying
     /// transient SQLite contention until the caller cancels.
     pub fn open_cancellable(config: Config, cancellation: &CancellationToken) -> Result<Self> {
-        match Self::open_cancellable_managed(config.clone(), cancellation) {
+        let runtime = ServicesRuntime::for_config(&config)?;
+        Self::open_cancellable_in_runtime(config, cancellation, runtime)
+    }
+
+    /// Open repository services cancellably on process-owned shared budgets.
+    pub fn open_cancellable_in_runtime(
+        config: Config,
+        cancellation: &CancellationToken,
+        runtime: ServicesRuntime,
+    ) -> Result<Self> {
+        runtime.validate_config(&config)?;
+        match Self::open_cancellable_managed(config.clone(), cancellation, runtime.clone()) {
             Ok(services) => Ok(services),
             Err(error) if should_use_repository_cache_fallback(&config, &error) => {
                 let fallback = prepare_repository_cache_fallback(&config)?;
@@ -46,13 +64,17 @@ impl Services {
                     fallback_database = %fallback.database_path.display(),
                     "managed cache is not writable; using repository-local fallback"
                 );
-                Self::open_cancellable_managed(fallback, cancellation)
+                Self::open_cancellable_managed(fallback, cancellation, runtime)
             }
             Err(error) => Err(error),
         }
     }
 
-    fn open_cancellable_managed(config: Config, cancellation: &CancellationToken) -> Result<Self> {
+    fn open_cancellable_managed(
+        config: Config,
+        cancellation: &CancellationToken,
+        runtime: ServicesRuntime,
+    ) -> Result<Self> {
         config.validate()?;
         reject_symlinked_managed_database_artifacts(&config)?;
         let coordination = IndexCoordination::for_database(&config.database_path);
@@ -63,7 +85,12 @@ impl Services {
 
         loop {
             validation::check_cancelled(cancellation)?;
-            match Self::open_once(&config, Some(STARTUP_BUSY_TIMEOUT), cache_lease.clone()) {
+            match Self::open_once(
+                &config,
+                Some(STARTUP_BUSY_TIMEOUT),
+                cache_lease.clone(),
+                runtime.clone(),
+            ) {
                 Ok(services) => return Ok(services),
                 Err(error) if is_database_contention(&error) => {
                     attempt = attempt.saturating_add(1);
@@ -88,19 +115,25 @@ impl Services {
         config: &Config,
         startup_timeout: Option<Duration>,
         cache_lease: CacheLease,
+        runtime: ServicesRuntime,
     ) -> Result<Self> {
         reject_symlinked_managed_database_artifacts(config)?;
+        let runtime_repository = runtime.register_repository()?;
+        let reader_connection_capacity = runtime_repository.reader_connection_capacity();
         let open_storage = || match startup_timeout {
-            Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
+            Some(timeout) => Storage::open_for_repository_scoped_with_runtime_limits(
                 &config.database_path,
                 &config.root,
                 config.index_scope().full_digest(),
                 timeout,
+                reader_connection_capacity,
             ),
-            None => Storage::open_for_repository_scoped(
+            None => Storage::open_for_repository_scoped_with_runtime_limits(
                 &config.database_path,
                 &config.root,
                 config.index_scope().full_digest(),
+                crate::storage::DEFAULT_BUSY_TIMEOUT,
+                reader_connection_capacity,
             ),
         };
         let storage = match open_storage() {
@@ -112,13 +145,29 @@ impl Services {
             }
             Err(error) => return Err(error),
         };
-        Self::from_parts(Arc::new(config.clone()), storage, cache_lease)
+        Self::from_parts(
+            Arc::new(config.clone()),
+            storage,
+            cache_lease,
+            runtime,
+            runtime_repository,
+        )
     }
 
-    fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
+    fn from_parts(
+        config: Arc<Config>,
+        storage: Storage,
+        cache_lease: CacheLease,
+        runtime: ServicesRuntime,
+        runtime_repository: process_runtime::RuntimeRepositoryRegistration,
+    ) -> Result<Self> {
         let tokenizer = config.tokenizer;
         let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
-        let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
+        let indexer = Indexer::new_with_pool(
+            Arc::clone(&config),
+            storage.clone(),
+            Arc::clone(&runtime.index_pool),
+        )?;
         let repository_root = indexer.repository_root();
         let coordination = IndexCoordination::for_database(&config.database_path);
         let active_reconciliations = Arc::new(AtomicUsize::new(0));
@@ -128,6 +177,8 @@ impl Services {
             coordination.clone(),
             Arc::clone(&active_reconciliations),
             Arc::clone(&reconciliation_changed),
+            Arc::clone(&runtime.reconciliation_admission),
+            Arc::clone(&runtime.indexing_admission),
         );
         let observer = observer::ServiceObserver::new(storage.clone(), tokenizer);
         Ok(Self {
@@ -140,7 +191,8 @@ impl Services {
             active_reconciliations,
             reconciliation_changed,
             read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
-            blocking_executor: executor::BlockingExecutor::default(),
+            runtime,
+            _runtime_repository: runtime_repository,
             response_accountant: accounting::ResponseAccountant::new(tokenizer),
             observer,
             reconciliation,

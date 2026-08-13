@@ -283,7 +283,8 @@ impl Services {
     /// Return cumulative source-token savings estimates for this repository and tokenizer.
     pub async fn token_savings(&self) -> Result<TokenSavingsResponse> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| this.token_savings_sync())
             .await
     }
@@ -297,7 +298,8 @@ impl Services {
     /// Return complete successful-response accounting.
     pub async fn token_savings_report(&self) -> Result<TokenSavingsReport> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| {
                 this.token_savings_report_sync()
             })
@@ -307,7 +309,8 @@ impl Services {
     /// Return response accounting plus directly observed service outcomes.
     pub async fn observed_token_savings_report(&self) -> Result<ObservedTokenSavingsReport> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| {
                 this.observed_token_savings_report_sync()
             })
@@ -320,7 +323,8 @@ impl Services {
         snapshot: Option<String>,
     ) -> Result<TokenSavingsSnapshotReport> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| {
                 this.observed_token_savings_snapshot_sync(snapshot)
             })
