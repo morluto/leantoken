@@ -213,14 +213,14 @@ fn cli_error_json_has_exact_safe_metadata() {
         (
             leantoken::Error::IndexNotReady,
             serde_json::json!({
-                "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                "error": "repository index is not ready; run `leantoken refresh` for direct CLI use or `leantoken doctor` to verify MCP readiness",
                 "category": "index_not_ready"
             }),
         ),
         (
             leantoken::Error::ReconciliationFailed(Arc::new(leantoken::Error::IndexNotReady)),
             serde_json::json!({
-                "error": "repository index is not ready; run `leantoken index` for direct CLI use or `leantoken doctor` to verify MCP readiness",
+                "error": "repository index is not ready; run `leantoken refresh` for direct CLI use or `leantoken doctor` to verify MCP readiness",
                 "category": "index_not_ready"
             }),
         ),

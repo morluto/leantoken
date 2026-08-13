@@ -19,8 +19,8 @@ use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::storage::{
-    ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
-    TokenSavingsRecord,
+    ArtifactStorage, InstrumentationStorage, ParserCoverageRows, ServiceFailureRecord, Storage,
+    StorageCounts, TokenSavingsObservation, TokenSavingsRecord,
 };
 use crate::{Config, Error, Result};
 
@@ -30,6 +30,7 @@ mod change_receipt;
 mod concurrency_profile;
 mod context;
 mod coverage;
+mod cursor;
 mod execution_options;
 mod executor;
 mod files;
@@ -114,13 +115,14 @@ pub(crate) fn validate_request_limit(
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
+    artifacts: ArtifactStorage,
+    instrumentation: InstrumentationStorage,
     indexer: Indexer,
     repository_root: Arc<Dir>,
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
-    read_deltas: Arc<read_delta::ReadDeltaRegistry>,
     blocking_executor: executor::BlockingExecutor,
     response_accountant: accounting::ResponseAccountant,
     observer: observer::ServiceObserver,
@@ -430,14 +432,14 @@ impl Services {
 
     pub(super) fn consistent<T>(
         &self,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::RequireReady, operation)
     }
 
     fn consistent_allow_empty<T>(
         &self,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::AllowEmpty, operation)
     }
@@ -449,10 +451,10 @@ impl Services {
     fn consistent_inner<T>(
         &self,
         readiness: IndexSnapshotReadiness,
-        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
+        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
     ) -> Result<T> {
         for attempt in 0..3 {
-            let snapshot = index_read::IndexReadSnapshot::open(&self.storage);
+            let snapshot = index_read::RepositoryGeneration::open(&self.storage);
             let snapshot = match snapshot {
                 Ok(snapshot) => snapshot,
                 Err(error) if is_database_contention(&error) => {
@@ -466,6 +468,11 @@ impl Services {
             let generation = snapshot.generation();
             if generation == 0 && matches!(readiness, IndexSnapshotReadiness::RequireReady) {
                 return Err(Error::IndexNotReady);
+            }
+            if matches!(readiness, IndexSnapshotReadiness::RequireReady)
+                && snapshot.semantics_fingerprint() != self.indexer.config_hash()
+            {
+                return Err(Error::RefreshRequired);
             }
             // Do not retry operation errors: after the first read, this session
             // is pinned and concurrent publication cannot have caused them.
@@ -591,9 +598,13 @@ impl Services {
     pub(crate) fn read_stored_receipt(
         &self,
         receipt_id: &str,
-        now_unix_millis: i64,
     ) -> Result<crate::receipt::StoredReceipt> {
-        self.storage.read_receipt(receipt_id, now_unix_millis)
+        let meta = self.storage.meta()?;
+        self.artifacts.read_receipt(
+            &self.repository_id(),
+            &meta.database_incarnation_id,
+            receipt_id,
+        )
     }
 
     /// Rejects retrieval bound to a different repository/worktree.

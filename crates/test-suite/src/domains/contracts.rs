@@ -44,7 +44,7 @@ async fn mcp_handoff_token_costs() {
     let tokenizer = config.tokenizer;
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Rebuild)
+        .refresh(leantoken::IndexingMode::Rebuild)
         .await
         .expect("cold index");
 

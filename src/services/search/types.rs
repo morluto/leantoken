@@ -290,6 +290,12 @@ pub(super) struct SearchInput {
     pub(super) cursor: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(super) struct SearchPosition {
+    #[serde(rename = "o")]
+    pub(super) offset: usize,
+}
+
 impl SearchInput {
     pub(super) fn from_request(request: SearchRequest, kind: SearchKind) -> Self {
         let SearchRequest {

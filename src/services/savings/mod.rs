@@ -290,7 +290,7 @@ impl Services {
 
     fn token_savings_sync(&self) -> Result<TokenSavingsResponse> {
         let tokenizer = self.config.tokenizer.name();
-        let stored = self.storage.token_savings(tokenizer)?;
+        let stored = self.instrumentation.token_savings(tokenizer)?;
         Ok(self.source_savings_from_records(&stored))
     }
 
@@ -329,9 +329,7 @@ impl Services {
 
     fn observed_token_savings_report_sync(&self) -> Result<ObservedTokenSavingsReport> {
         let tokenizer = self.config.tokenizer.name();
-        let session = super::index_read::IndexReadSnapshot::open(&self.storage)?;
-        let stored = session.token_savings(tokenizer)?;
-        let failures = session.service_failures(tokenizer)?;
+        let (stored, failures) = self.instrumentation.snapshot(tokenizer)?;
         self.observed_token_savings_report_from_records(&stored, failures)
     }
 
@@ -341,9 +339,7 @@ impl Services {
     ) -> Result<TokenSavingsSnapshotReport> {
         let tokenizer = self.config.tokenizer.name();
         let repository_id = self.repository_id();
-        let session = super::index_read::IndexReadSnapshot::open(&self.storage)?;
-        let current_records = session.token_savings(tokenizer)?;
-        let current_failures = session.service_failures(tokenizer)?;
+        let (current_records, current_failures) = self.instrumentation.snapshot(tokenizer)?;
         let current_state = savings_snapshot_state(
             repository_id.clone(),
             tokenizer.to_owned(),
@@ -466,7 +462,7 @@ impl Services {
 
     fn token_savings_report_sync(&self) -> Result<TokenSavingsReport> {
         let tokenizer = self.config.tokenizer.name();
-        let stored = self.storage.token_savings(tokenizer)?;
+        let stored = self.instrumentation.token_savings(tokenizer)?;
         Ok(self.token_savings_report_from_records(&stored))
     }
 
@@ -630,7 +626,7 @@ impl Services {
         expected_hash_not_modified: bool,
         expected_hash_suppressed_source_tokens: usize,
     ) {
-        match self.storage.record_token_savings(
+        match self.instrumentation.record_token_savings(
             self.config.tokenizer.name(),
             TokenSavingsObservation {
                 operation,

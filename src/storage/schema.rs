@@ -442,41 +442,26 @@ END;
 UPDATE meta SET schema_version = 10 WHERE id = 1;
 "#;
 
-pub(crate) const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS token_savings (
-    tokenizer TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    tracked_requests INTEGER NOT NULL DEFAULT 0,
-    response_tracked_requests INTEGER NOT NULL DEFAULT 0,
-    response_baseline_requests INTEGER NOT NULL DEFAULT 0,
-    baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
-    response_baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
-    emitted_source_tokens INTEGER NOT NULL DEFAULT 0,
-    estimated_source_tokens_saved INTEGER NOT NULL DEFAULT 0,
-    response_source_tokens INTEGER NOT NULL DEFAULT 0,
-    path_and_metadata_tokens INTEGER NOT NULL DEFAULT 0,
-    protocol_tokens INTEGER NOT NULL DEFAULT 0,
-    total_response_tokens INTEGER NOT NULL DEFAULT 0,
-    receipt_suppressed_exact INTEGER NOT NULL DEFAULT 0,
-    receipt_suppressed_overlap INTEGER NOT NULL DEFAULT 0,
-    expected_hash_not_modified_responses INTEGER NOT NULL DEFAULT 0,
-    expected_hash_suppressed_source_tokens INTEGER NOT NULL DEFAULT 0,
-    useful_requests INTEGER NOT NULL DEFAULT 0,
-    incomplete_requests INTEGER NOT NULL DEFAULT 0,
-    unsupported_requests INTEGER NOT NULL DEFAULT 0,
-    hash_suppressed_requests INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(tokenizer, operation)
-);
+pub(crate) const AUXILIARY_STORAGE_SPLIT_SQL: &str = r#"
+DROP TABLE IF EXISTS token_savings;
+DROP TABLE IF EXISTS service_failures;
+UPDATE meta SET schema_version = 11 WHERE id = 1;
 "#;
 
-pub(crate) const SERVICE_FAILURES_TABLE_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS service_failures (
-    tokenizer TEXT NOT NULL,
-    operation TEXT NOT NULL,
-    error_category TEXT NOT NULL,
-    failed_requests INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY(tokenizer, operation, error_category)
-);
+pub(crate) const IMMUTABLE_ARTIFACT_STORAGE_SQL: &str = r#"
+DROP TABLE IF EXISTS retrieval_receipt_evidence;
+DROP TABLE IF EXISTS retrieval_receipts;
+DROP TABLE IF EXISTS retrieval_receipt_usage;
+DROP TABLE IF EXISTS read_delta_bases;
+DROP TABLE IF EXISTS read_delta_base_usage;
+DROP TABLE IF EXISTS query_coverage_receipts;
+DROP TABLE IF EXISTS query_coverage_receipt_usage;
+UPDATE meta SET schema_version = 12 WHERE id = 1;
+"#;
+
+pub(crate) const DATABASE_INCARNATION_SQL: &str = r#"
+ALTER TABLE meta ADD COLUMN database_incarnation_id TEXT NOT NULL DEFAULT '';
+UPDATE meta SET schema_version = 13 WHERE id = 1;
 "#;
 
 pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
@@ -491,8 +476,11 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(READ_DELTA_BASES_SQL),
     M::up(RECEIPT_EXACT_ONLY_SQL),
     M::up(QUERY_COVERAGE_RECEIPTS_SQL),
+    M::up(AUXILIARY_STORAGE_SPLIT_SQL),
+    M::up(IMMUTABLE_ARTIFACT_STORAGE_SQL),
+    M::up(DATABASE_INCARNATION_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 11;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 14;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 use super::*;

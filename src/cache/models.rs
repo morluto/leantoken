@@ -7,6 +7,14 @@ pub(super) const PRUNABLE_ARTIFACTS: &[&str] = &[
     WAL_NAME,
     "index.sqlite-shm",
     "index.sqlite-journal",
+    "index.sqlite.artifacts.sqlite",
+    "index.sqlite.artifacts.sqlite-wal",
+    "index.sqlite.artifacts.sqlite-shm",
+    "index.sqlite.artifacts.sqlite-journal",
+    "index.sqlite.instrumentation.sqlite",
+    "index.sqlite.instrumentation.sqlite-wal",
+    "index.sqlite.instrumentation.sqlite-shm",
+    "index.sqlite.instrumentation.sqlite-journal",
 ];
 pub(super) const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 pub(super) const CACHE_LIST_CURSOR_PREFIX: &str = "cl2";

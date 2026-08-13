@@ -14,7 +14,7 @@ async fn context_required_evidence_reports_bounded_path_inspection() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(500);
@@ -55,9 +55,6 @@ async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("normalized read");

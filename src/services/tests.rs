@@ -72,23 +72,11 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("initial index");
     services.reconciliation.reset_diagnostics();
     (root, services)
-}
-
-fn root_files_request() -> FilesRequest {
-    FilesRequest {
-        operation: FileOperation::Tree,
-        path: None,
-        query: None,
-        pattern: None,
-        max_results: Some(10),
-        cursor: None,
-        depth: Some(0),
-    }
 }
 
 #[tokio::test]
@@ -141,7 +129,7 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
 #[tokio::test]
 async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
     let (_root, services) = indexed_services().await;
-    let request = ReadRequest {
+    let request: WorktreeReadRequest = ReadRequest {
         path: "lib.rs".into(),
         start_line: Some(1),
         end_line: Some(1),
@@ -151,17 +139,15 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         continuation_cursor: None,
         max_tokens: Some(100),
         expected_hash: None,
-        delta: false,
-        receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
-    };
+    }
+    .into();
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
         protocol: crate::tokens::McpProtocolShape::Modern,
     };
     let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
     let successful = services
-        .read_with_options(request.clone(), shaped_options)
+        .read_worktree_with_options(request.clone(), shaped_options)
         .await
         .expect("unbounded MCP-shaped read");
     let visible_tokens = services
@@ -201,7 +187,7 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         .expect("savings before rejected call")
         .tracked_requests;
     let error = services
-        .read_with_options(request, shaped_options.with_max_response_tokens(limit))
+        .read_worktree_with_options(request, shaped_options.with_max_response_tokens(limit))
         .await
         .expect_err("MCP wrapper must be reserved before receipt persistence");
     match error {
@@ -567,83 +553,6 @@ async fn caller_after_a_cancelled_waiting_wave_uses_a_fresh_wave() {
 }
 
 #[tokio::test]
-async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval() {
-    let root = tempfile::tempdir().expect("root");
-    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-    let held_operation = services
-        .coordination
-        .acquire_operation(&CancellationToken::new())
-        .expect("hold operation lock");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-    let call_services = services.clone();
-    let call = tokio::spawn(async move {
-        call_services
-            .files_with_options_consistency_cancellable(
-                root_files_request(),
-                IndexConsistency::ReconcileWorkingTree,
-                ServiceCallOptions::new().with_initial_reconciliation_deadline(deadline),
-                CancellationToken::new(),
-            )
-            .await
-    });
-    wait_until_with_timer(|| {
-        let diagnostics = services.reconciliation.diagnostics();
-        diagnostics.requests == 1 && diagnostics.active_waves == 1
-    })
-    .await;
-
-    tokio::time::pause();
-    tokio::time::advance(std::time::Duration::from_secs(30)).await;
-    assert!(matches!(
-        call.await.expect("join timed-out retrieval"),
-        Err(Error::IndexNotReady)
-    ));
-    assert_eq!(
-        services
-            .storage
-            .repository_generation()
-            .expect("generation after timeout"),
-        0
-    );
-
-    tokio::time::resume();
-    held_operation.release().expect("release operation lock");
-    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
-    let diagnostics = services.reconciliation.diagnostics();
-    assert_eq!(diagnostics.pending_waiters, 0);
-    assert_eq!(diagnostics.timed_out_waiters, 1);
-    assert_eq!(diagnostics.cancelled_waiters, 0);
-    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
-}
-
-#[tokio::test]
-async fn generation_zero_reconciliation_can_complete_before_its_deadline() {
-    let root = tempfile::tempdir().expect("root");
-    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-
-    let response = services
-        .files_with_options_consistency_cancellable(
-            root_files_request(),
-            IndexConsistency::ReconcileWorkingTree,
-            ServiceCallOptions::new().with_initial_reconciliation_deadline(
-                tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("cold reconciliation before deadline");
-
-    assert_eq!(response.meta.repository_generation, 1);
-    assert_eq!(services.reconciliation.diagnostics().timed_out_waiters, 0);
-}
-
-#[tokio::test]
 async fn committed_generation_reconciliation_keeps_waiting_past_cold_deadline() {
     let (_root, services) = indexed_services().await;
     let held_operation = services
@@ -824,7 +733,7 @@ async fn initial_index_wait_returns_after_publication_lock_releases() {
     let publisher = tokio::task::spawn_blocking(move || {
         publisher_services
             .storage
-            .full_reconcile("published", Vec::new())
+            .full_reconcile(&publisher_services.indexer.config_hash(), Vec::new())
             .expect("publish generation");
         published_tx.send(()).expect("announce publication");
         release_rx.recv().expect("release permission");
@@ -896,6 +805,27 @@ async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
     assert!(matches!(result, Error::IndexNotReady));
 }
 
+#[tokio::test(start_paused = true)]
+async fn initial_index_wait_treats_an_incompatible_generation_as_unready() {
+    let root = tempfile::tempdir().expect("root");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .storage
+        .full_reconcile("obsolete-projection", Vec::new())
+        .expect("obsolete generation");
+
+    let result = tokio::time::timeout(
+        INITIAL_INDEX_IDLE_GRACE + INITIAL_INDEX_PROBE_INTERVAL,
+        services.wait_for_initial_index_cancellable(CancellationToken::new()),
+    )
+    .await
+    .expect("incompatible generation wait must be bounded")
+    .expect_err("incompatible generation remains unready without a refresh");
+    assert!(matches!(result, Error::IndexNotReady));
+}
+
 #[tokio::test]
 async fn index_search_read_and_hash_delta() {
     let root = tempfile::tempdir().expect("root");
@@ -908,7 +838,7 @@ async fn index_search_read_and_hash_delta() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -945,9 +875,6 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read");
@@ -962,9 +889,6 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash),
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read delta");
@@ -986,7 +910,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
     let file = services
@@ -994,7 +918,10 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .find_file("lib.rs")
         .expect("find file")
         .expect("indexed file");
-    let session = services.storage.begin_read().expect("read session");
+    let session = services
+        .storage
+        .begin_generation_read()
+        .expect("read session");
     let crate::symbol_identity::SymbolResolution::Unique(large) =
         session.find_symbol(file.id, "large").expect("find symbol")
     else {
@@ -1010,7 +937,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+    let session = crate::services::index_read::RepositoryGeneration::open(&services.storage)
         .expect("read snapshot");
     let bounded = services
         .adaptive_context_excerpts(
@@ -1100,7 +1027,7 @@ async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -1190,7 +1117,7 @@ async fn cancellable_service_stops_before_blocking_work() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -1294,7 +1221,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
     let services = Services::open(config).expect("services");
     let first = services
         .storage
-        .full_reconcile("hash-a", Vec::new())
+        .full_reconcile(&services.indexer.config_hash(), Vec::new())
         .expect("initial generation");
     assert_eq!(first, 1);
 
@@ -1307,7 +1234,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
             assert_eq!(session.generation(), first);
             services
                 .storage
-                .full_reconcile("hash-b", Vec::new())
+                .full_reconcile(&services.indexer.config_hash(), Vec::new())
                 .expect("concurrent publish");
             assert_eq!(
                 session.generation(),
@@ -1337,7 +1264,7 @@ fn pinned_snapshot_operation_errors_are_not_retried() {
     let services = Services::open(config).expect("services");
     services
         .storage
-        .full_reconcile("hash-a", Vec::new())
+        .full_reconcile(&services.indexer.config_hash(), Vec::new())
         .expect("initial generation");
     let calls = Cell::new(0);
 
@@ -1383,7 +1310,7 @@ async fn regex_retained_chunk_overflow_is_not_reported_as_complete() {
         .collect();
     services
         .storage
-        .full_reconcile("hash-a", files)
+        .full_reconcile(&services.indexer.config_hash(), files)
         .expect("indexed fixture");
 
     let error = services
@@ -1440,7 +1367,7 @@ async fn regex_candidate_chunk_overflow_reports_the_fts_bound() {
     services
         .storage
         .full_reconcile(
-            "hash-a",
+            &services.indexer.config_hash(),
             vec![IndexedFile {
                 path: "large.rs".into(),
                 language: Some("rust".into()),

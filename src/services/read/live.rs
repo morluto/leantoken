@@ -19,17 +19,13 @@ pub(in crate::services) fn open_live_file(services: &Services, path: &str) -> Re
 }
 
 pub(super) fn resolve_read_target(
-    session: &IndexReadSnapshot,
+    session: &RepositoryGeneration,
     file_id: i64,
     request: &ReadInput,
-    generation: u64,
 ) -> Result<ResolvedReadTarget> {
     let target = match &request.mode {
-        ReadMode::Direct(ReadTargetInput::Continuation(cursor)) => {
-            validate_read_cursor(cursor, generation, &request.path)?;
-            if cursor.policy != request.policy {
-                return Err(Error::StaleCursor);
-            }
+        ReadMode::Direct(ReadTargetInput::Continuation(encoded)) => {
+            let cursor = open_read_cursor(session, encoded, &request.path, request.policy)?;
             return Ok(ResolvedReadTarget {
                 target_start_line: cursor.target_start_line,
                 target_end_line: cursor.target_end_line,

@@ -41,24 +41,24 @@ pub enum EpisodeAdapterArg {
     ContextUtilizationV1,
 }
 
-impl From<EpisodeAuditArgs> for crate::episode::EpisodeAuditRequest {
+impl From<EpisodeAuditArgs> for leantoken_lab::EpisodeAuditRequest {
     fn from(args: EpisodeAuditArgs) -> Self {
         Self {
             adapter: match args.adapter {
                 EpisodeAdapterArg::MultiAgentSuiteV1 => {
-                    crate::episode::EpisodeAdapter::MultiAgentSuiteV1
+                    leantoken_lab::EpisodeAdapter::MultiAgentSuiteV1
                 }
                 EpisodeAdapterArg::ModelAbTrajectoryV1 => {
-                    crate::episode::EpisodeAdapter::ModelAbTrajectoryV1
+                    leantoken_lab::EpisodeAdapter::ModelAbTrajectoryV1
                 }
                 EpisodeAdapterArg::McpWireReportV2 => {
-                    crate::episode::EpisodeAdapter::McpWireReportV2
+                    leantoken_lab::EpisodeAdapter::McpWireReportV2
                 }
                 EpisodeAdapterArg::CodexHostReceiptV1 => {
-                    crate::episode::EpisodeAdapter::CodexHostReceiptV1
+                    leantoken_lab::EpisodeAdapter::CodexHostReceiptV1
                 }
                 EpisodeAdapterArg::ContextUtilizationV1 => {
-                    crate::episode::EpisodeAdapter::ContextUtilizationV1
+                    leantoken_lab::EpisodeAdapter::ContextUtilizationV1
                 }
             },
             input: args.input,

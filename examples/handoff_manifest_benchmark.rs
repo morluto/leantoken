@@ -330,7 +330,7 @@ async fn fixture() -> AnyResult<(tempfile::TempDir, Services)> {
         Some(temporary.path().join("cache/index.sqlite")),
     )?;
     let services = Services::open(config)?;
-    services.index(leantoken::IndexingMode::Reconcile).await?;
+    services.refresh(leantoken::IndexingMode::Reconcile).await?;
     Ok((temporary, services))
 }
 
@@ -499,9 +499,6 @@ async fn exact_rereads(
                     continuation_cursor: None,
                     max_tokens: Some(32_000),
                     expected_hash: None,
-                    delta: false,
-                    receipt_id: None,
-                    policy: leantoken::model::ReadPolicy::default(),
                 })
                 .await?,
         );

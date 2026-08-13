@@ -86,7 +86,7 @@ async fn main() -> AnyResult<()> {
     });
     let services = Services::open(Config::discover(&repository, Some(database))?)?;
     if !args.skip_index {
-        services.index(leantoken::IndexingMode::Reconcile).await?;
+        services.refresh(leantoken::IndexingMode::Reconcile).await?;
     }
 
     let recorded = services

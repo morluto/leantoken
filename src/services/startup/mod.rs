@@ -90,6 +90,18 @@ impl Services {
         cache_lease: CacheLease,
     ) -> Result<Self> {
         reject_symlinked_managed_database_artifacts(config)?;
+        // Migration 12 moves these best-effort counters out of the generation
+        // database. Preserve them before Storage runs that destructive step.
+        let migration = {
+            let instrumentation =
+                InstrumentationStorage::open(&config.instrumentation_database_path());
+            instrumentation.migrate_legacy_primary(&config.database_path)
+        };
+        if let Err(error) = migration
+            && !(config.database_is_managed_cache() && is_database_corruption(&error))
+        {
+            return Err(error);
+        }
         let open_storage = || match startup_timeout {
             Some(timeout) => Storage::open_for_repository_scoped_with_startup_timeout(
                 &config.database_path,
@@ -107,7 +119,7 @@ impl Services {
             Ok(storage) => storage,
             Err(error) if config.database_is_managed_cache() && is_database_corruption(&error) => {
                 tracing::warn!(database = %config.database_path.display(), "rebuilding corrupt managed index");
-                remove_database_artifacts(&config.database_path)?;
+                remove_managed_database_artifacts(config)?;
                 open_storage()?
             }
             Err(error) => return Err(error),
@@ -117,6 +129,8 @@ impl Services {
 
     fn from_parts(config: Arc<Config>, storage: Storage, cache_lease: CacheLease) -> Result<Self> {
         let tokenizer = config.tokenizer;
+        let artifacts = ArtifactStorage::open(&config.artifact_database_path());
+        let instrumentation = InstrumentationStorage::open(&config.instrumentation_database_path());
         let context_exclude_paths = validation::PathMatcher::new(&config.context_exclude_paths)?;
         let indexer = Indexer::new(Arc::clone(&config), storage.clone())?;
         let repository_root = indexer.repository_root();
@@ -129,17 +143,18 @@ impl Services {
             Arc::clone(&active_reconciliations),
             Arc::clone(&reconciliation_changed),
         );
-        let observer = observer::ServiceObserver::new(storage.clone(), tokenizer);
+        let observer = observer::ServiceObserver::new(instrumentation.clone(), tokenizer);
         Ok(Self {
             config,
             storage,
+            artifacts,
+            instrumentation,
             indexer,
             repository_root,
             coordination,
             _cache_lease: cache_lease,
             active_reconciliations,
             reconciliation_changed,
-            read_deltas: Arc::new(read_delta::ReadDeltaRegistry::default()),
             blocking_executor: executor::BlockingExecutor::default(),
             response_accountant: accounting::ResponseAccountant::new(tokenizer),
             observer,
@@ -153,13 +168,26 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
     if !config.database_is_managed_cache() {
         return Ok(());
     }
-    for suffix in ["", "-wal", "-shm", "-journal"]
-        .into_iter()
-        .chain(crate::coordination::COORDINATION_LOCK_SUFFIXES)
-    {
+    let instrumentation = config.instrumentation_database_path();
+    let artifacts = config.artifact_database_path();
+    let databases = [
+        config.database_path.as_path(),
+        instrumentation.as_path(),
+        artifacts.as_path(),
+    ];
+    let database_artifacts = databases.into_iter().flat_map(|database| {
+        ["", "-wal", "-shm", "-journal"].map(move |suffix| {
+            let mut path = database.as_os_str().to_os_string();
+            path.push(suffix);
+            std::path::PathBuf::from(path)
+        })
+    });
+    let coordination_artifacts = crate::coordination::COORDINATION_LOCK_SUFFIXES.map(|suffix| {
         let mut path = config.database_path.as_os_str().to_os_string();
         path.push(suffix);
-        let path = std::path::PathBuf::from(path);
+        std::path::PathBuf::from(path)
+    });
+    for path in database_artifacts.chain(coordination_artifacts) {
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
@@ -167,7 +195,7 @@ fn reject_symlinked_managed_database_artifacts(config: &Config) -> Result<()> {
         };
         if metadata.file_type().is_symlink() {
             return Err(Error::InvalidConfiguration(
-                "managed index database and coordination artifacts must not be symlinks".into(),
+                "managed database and coordination artifacts must not be symlinks".into(),
             ));
         }
     }
@@ -291,10 +319,11 @@ fn ensure_real_directories(repository: &Dir, relative: &std::path::Path) -> Resu
 }
 
 fn is_database_corruption(error: &Error) -> bool {
-    matches!(
-        sqlite_error_code(error),
-        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
-    )
+    matches!(error, Error::InvalidIndexGeneration { .. })
+        || matches!(
+            sqlite_error_code(error),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+        )
 }
 
 fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
@@ -306,6 +335,17 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+    }
+    Ok(())
+}
+
+fn remove_managed_database_artifacts(config: &Config) -> Result<()> {
+    for database in [
+        config.database_path.clone(),
+        config.artifact_database_path(),
+        config.instrumentation_database_path(),
+    ] {
+        remove_database_artifacts(&database)?;
     }
     Ok(())
 }
@@ -472,6 +512,49 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn managed_instrumentation_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external instrumentation sentinel").expect("sentinel");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        let instrumentation = config.instrumentation_database_path();
+        symlink(target.path(), instrumentation).expect("instrumentation symlink");
+        config.mark_database_as_managed_platform();
+
+        let error = Services::open(config).expect_err("managed instrumentation symlink rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external instrumentation sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_artifact_symlink_is_rejected_without_mutating_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("repository");
+        let target = tempfile::NamedTempFile::new().expect("external target");
+        fs::write(target.path(), b"external artifact sentinel").expect("sentinel");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        symlink(target.path(), config.artifact_database_path()).expect("artifact symlink");
+        config.mark_database_as_managed_platform();
+
+        let error = Services::open(config).expect_err("managed artifact symlink rejected");
+        assert!(matches!(error, Error::InvalidConfiguration(_)), "{error}");
+        assert_eq!(
+            fs::read(target.path()).expect("sentinel contents"),
+            b"external artifact sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn managed_coordination_symlink_is_rejected_before_acquiring_locks() {
         use std::os::unix::fs::symlink;
 
@@ -489,6 +572,54 @@ mod tests {
         assert_eq!(
             fs::read(target.path()).expect("sentinel contents"),
             b"external coordination sentinel"
+        );
+    }
+
+    #[test]
+    fn managed_corruption_rebuild_discards_auxiliary_generation_databases() {
+        use crate::receipt::ReceiptEvidence;
+
+        let root = tempfile::tempdir().expect("repository");
+        let mut config =
+            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+        config.mark_database_as_managed_platform();
+        let artifacts_path = config.artifact_database_path();
+        let instrumentation_path = config.instrumentation_database_path();
+        let receipt_id = ArtifactStorage::open(&artifacts_path)
+            .evaluate_receipt(
+                "repository",
+                "old-incarnation",
+                None,
+                1,
+                &[ReceiptEvidence::new(
+                    "src/lib.rs",
+                    1,
+                    2,
+                    "old-generation",
+                    Some("fn old_generation() {}"),
+                )],
+                true,
+            )
+            .expect("old receipt")
+            .receipt_id;
+        fs::write(&instrumentation_path, b"not sqlite").expect("old instrumentation");
+        fs::write(&config.database_path, b"not sqlite").expect("corrupt index");
+
+        drop(Services::open(config).expect("rebuild managed index"));
+
+        assert!(matches!(
+            ArtifactStorage::open(&artifacts_path).read_receipt(
+                "repository",
+                "old-incarnation",
+                &receipt_id,
+            ),
+            Err(Error::UnknownReceipt(_))
+        ));
+        assert_eq!(
+            fs::read(&instrumentation_path)
+                .expect("rebuilt instrumentation")
+                .get(..16),
+            Some(&b"SQLite format 3\0"[..])
         );
     }
 }

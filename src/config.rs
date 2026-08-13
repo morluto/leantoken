@@ -27,8 +27,6 @@ const REPOSITORY_CONFIG_FILE: &str = ".leantoken.toml";
 const MAX_REPOSITORY_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONTEXT_EXCLUDE_PATHS: usize = 256;
 const MAX_CONTEXT_PATH_PATTERN_BYTES: usize = 4 * 1024;
-pub(crate) const MAX_REPOSITORY_CONTEXTS: usize = 8;
-const MAX_REPOSITORY_CONTEXT_NAME_BYTES: usize = 64;
 const MANAGED_CACHE_HASH_BYTES: usize = 16;
 const FALLBACK_CACHE_DIRECTORY: &str = ".leantoken";
 pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
@@ -175,15 +173,6 @@ enum DatabaseStorage {
     Explicit,
     ManagedPlatform,
     ManagedRepositoryFallback,
-}
-
-/// A repository root explicitly approved by the primary repository's config.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApprovedRepositoryContext {
-    /// Stable request name selected by MCP callers.
-    pub name: String,
-    /// Approved absolute or primary-root-relative repository root.
-    pub root: PathBuf,
 }
 
 impl Config {
@@ -387,6 +376,16 @@ impl Config {
     }
 
     #[must_use]
+    pub(crate) fn instrumentation_database_path(&self) -> PathBuf {
+        auxiliary_database_path(&self.database_path, "instrumentation")
+    }
+
+    #[must_use]
+    pub(crate) fn artifact_database_path(&self) -> PathBuf {
+        auxiliary_database_path(&self.database_path, "artifacts")
+    }
+
+    #[must_use]
     pub(crate) fn is_database_artifact_path(&self, candidate: &Path) -> bool {
         let fallback_cache = self.root.join(FALLBACK_CACHE_DIRECTORY);
         if self.database_storage.is_managed()
@@ -395,13 +394,24 @@ impl Config {
         {
             return true;
         }
-        if candidate == self.database_path {
+        let instrumentation = self.instrumentation_database_path();
+        let artifacts = self.artifact_database_path();
+        if candidate == self.database_path || candidate == instrumentation || candidate == artifacts
+        {
             return true;
         }
-        ["-wal", "-shm", "-journal"].into_iter().any(|suffix| {
-            let mut sidecar = self.database_path.as_os_str().to_os_string();
-            sidecar.push(suffix);
-            candidate.as_os_str() == sidecar
+        [
+            self.database_path.as_path(),
+            instrumentation.as_path(),
+            artifacts.as_path(),
+        ]
+        .into_iter()
+        .any(|database| {
+            ["-wal", "-shm", "-journal"].into_iter().any(|suffix| {
+                let mut sidecar = database.as_os_str().to_os_string();
+                sidecar.push(suffix);
+                candidate.as_os_str() == sidecar
+            })
         }) || is_coordination_sidecar_for_database(candidate, &self.database_path)
             || is_recognized_stale_coordination_sidecar(candidate)
     }
@@ -433,64 +443,12 @@ impl Config {
     pub(crate) fn mark_database_as_managed_platform(&mut self) {
         self.database_storage = DatabaseStorage::ManagedPlatform;
     }
+}
 
-    /// Return named repository roots approved by this repository's config.
-    ///
-    /// Contexts are names and canonical roots only. Callers must construct a
-    /// normal `Config` for every returned root before opening services.
-    pub fn approved_repository_contexts(&self) -> Result<Vec<ApprovedRepositoryContext>> {
-        let Some(document) = load_repository_config_document(&self.root)? else {
-            return Ok(Vec::new());
-        };
-        let Some(contexts) = document.get("repository_contexts") else {
-            return Ok(Vec::new());
-        };
-        let contexts = contexts.as_table().ok_or_else(|| {
-            Error::InvalidConfiguration(
-                "repository_contexts must be a table of named context tables".into(),
-            )
-        })?;
-        if contexts.len() > MAX_REPOSITORY_CONTEXTS {
-            return Err(Error::InvalidConfiguration(format!(
-                "repository_contexts must not contain more than {MAX_REPOSITORY_CONTEXTS} entries"
-            )));
-        }
-        let mut result = Vec::with_capacity(contexts.len());
-        for (name, item) in contexts {
-            if name == "default"
-                || name.is_empty()
-                || name.trim() != name
-                || name.len() > MAX_REPOSITORY_CONTEXT_NAME_BYTES
-                || name.contains(['/', '\\'])
-            {
-                return Err(Error::InvalidConfiguration(format!(
-                    "repository context name `{name}` is invalid"
-                )));
-            }
-            let table = item.as_table().ok_or_else(|| {
-                Error::InvalidConfiguration(format!("repository_contexts.{name} must be a table"))
-            })?;
-            let root = table
-                .get("root")
-                .and_then(toml_edit::Item::as_str)
-                .ok_or_else(|| {
-                    Error::InvalidConfiguration(format!(
-                        "repository_contexts.{name}.root must be a string"
-                    ))
-                })?;
-            if root.trim().is_empty() {
-                return Err(Error::InvalidConfiguration(format!(
-                    "repository_contexts.{name}.root must not be empty"
-                )));
-            }
-            result.push(ApprovedRepositoryContext {
-                name: name.to_owned(),
-                root: self.root.join(root),
-            });
-        }
-        result.sort_by(|left, right| left.name.cmp(&right.name));
-        Ok(result)
-    }
+fn auxiliary_database_path(index: &Path, role: &str) -> PathBuf {
+    let mut path = index.as_os_str().to_os_string();
+    path.push(format!(".{role}.sqlite"));
+    PathBuf::from(path)
 }
 
 impl DatabaseStorage {
@@ -925,6 +883,10 @@ mod tests {
         assert!(config.is_database_artifact(".leantoken/index.sqlite"));
         assert!(config.is_database_artifact(".leantoken/index.sqlite-wal"));
         assert!(config.is_database_artifact(".leantoken/index.sqlite-journal"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.instrumentation.sqlite"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.instrumentation.sqlite-wal"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.artifacts.sqlite"));
+        assert!(config.is_database_artifact(".leantoken/index.sqlite.artifacts.sqlite-shm"));
         assert!(!config.is_database_artifact(".leantoken.toml"));
     }
 
@@ -1015,44 +977,6 @@ mod tests {
                 .to_string()
                 .contains("context.exclude_paths` must be an array")
         );
-    }
-
-    #[test]
-    fn repository_config_loads_bounded_approved_contexts() {
-        let root = tempfile::tempdir().expect("repository");
-        let sibling = tempfile::tempdir().expect("approved repository");
-        fs::write(
-            root.path().join(REPOSITORY_CONFIG_FILE),
-            format!(
-                "[repository_contexts.docs]\nroot = {:?}\n",
-                sibling.path().to_string_lossy()
-            ),
-        )
-        .expect("repository config");
-        let config =
-            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        let contexts = config
-            .approved_repository_contexts()
-            .expect("approved contexts");
-        assert_eq!(contexts.len(), 1);
-        assert_eq!(contexts[0].name, "docs");
-        assert_eq!(contexts[0].root, sibling.path());
-    }
-
-    #[test]
-    fn repository_config_rejects_default_context_name() {
-        let root = tempfile::tempdir().expect("repository");
-        fs::write(
-            root.path().join(REPOSITORY_CONFIG_FILE),
-            "[repository_contexts.default]\nroot = \"../other\"\n",
-        )
-        .expect("repository config");
-        let config =
-            Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-        let error = config
-            .approved_repository_contexts()
-            .expect_err("reserved context name");
-        assert!(matches!(error, Error::InvalidConfiguration(_)));
     }
 
     #[test]

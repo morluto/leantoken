@@ -484,7 +484,7 @@ pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation
     )
     .expect("old fixture");
     let database = root.path().join("index.sqlite");
-    let initial = run(root.path(), &database, &["index"]);
+    let initial = run(root.path(), &database, &["refresh"]);
     assert_eq!(initial["repository_generation"], 1);
     assert_eq!(database_state(&database).map(|state| state.1), Some(1));
 

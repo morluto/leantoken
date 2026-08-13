@@ -5,10 +5,6 @@ pub struct OutlineArgs {
     /// Paths to outline.
     pub paths: Vec<String>,
 
-    /// Consistency boundary for this retrieval.
-    #[command(flatten)]
-    pub index_consistency: RetrievalConsistencyArgs,
-
     /// Filter by symbol name.
     #[arg(long)]
     pub symbol_name: Option<String>,

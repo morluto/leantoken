@@ -1,13 +1,8 @@
 use super::*;
-use crate::model::ReadPolicy;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct ReadMcpRequest {
-    /// Optional name of an approved repository context.
-    #[serde(default)]
-    #[schemars(schema_with = "repository_context_schema")]
-    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -29,24 +24,6 @@ pub(in crate::mcp) struct ReadMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
     pub(in crate::mcp) expected_hash: Option<String>,
-    /// Record this target and prefer a cheaper follow-up. Without `expected_hash`,
-    /// select the latest compatible base for this exact target.
-    #[serde(default)]
-    pub(in crate::mcp) delta: bool,
-    /// Suppress evidence already returned under this server-managed receipt.
-    #[serde(default)]
-    #[schemars(length(max = 128))]
-    pub(in crate::mcp) receipt_id: Option<String>,
-    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
-    #[serde(default)]
-    #[schemars(schema_with = "index_consistency_schema")]
-    pub(in crate::mcp) consistency: IndexConsistency,
-    /// I/O and verification policy. `bounded` (default) stops after the
-    /// requested page and reports `index_state: unknown`. `full` hashes the
-    /// complete live file, reports current/stale with indexed hashes, and is
-    /// required for `delta: true`.
-    #[serde(default)]
-    pub(in crate::mcp) policy: ReadPolicy,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -109,15 +86,7 @@ impl ReadMcpRequest {
         Ok(())
     }
 
-    pub(in crate::mcp) fn into_parts(
-        self,
-    ) -> (
-        ReadRequest,
-        IndexConsistency,
-        ServiceCallOptions,
-        Option<String>,
-    ) {
-        let receipt_resource = self.receipt_id.is_some();
+    pub(in crate::mcp) fn into_parts(self) -> (ReadRequest, ServiceCallOptions, Option<String>) {
         let (start_line, end_line, symbol, heading, heading_occurrence, continuation_cursor) =
             match self.target {
                 ReadMcpTarget::Symbol { identity } => (
@@ -149,16 +118,8 @@ impl ReadMcpRequest {
                 continuation_cursor,
                 max_tokens: self.max_tokens,
                 expected_hash: self.expected_hash,
-                delta: self.delta,
-                receipt_id: self.receipt_id,
-                policy: self.policy,
             },
-            self.consistency,
-            if receipt_resource {
-                service_call_options_with_receipt(self.max_response_tokens)
-            } else {
-                service_call_options(self.max_response_tokens)
-            },
+            service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )
     }

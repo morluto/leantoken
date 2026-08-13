@@ -1,15 +1,11 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    io::{BufRead, Write},
+    collections::HashSet,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
-    time::{Duration, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
-use command_group::CommandGroup;
 use ignore::WalkBuilder;
 use tokio_util::sync::CancellationToken;
-use wait_timeout::ChildExt;
 
 use crate::config::DiscoveryLimits;
 use crate::error::IndexLimitKind;
@@ -17,27 +13,17 @@ use crate::{Error, Result};
 
 #[path = "discovery.rs"]
 mod discovery;
-#[path = "git/command.rs"]
-mod git_command;
-#[path = "git/diff.rs"]
-mod git_diff;
-#[path = "git/models.rs"]
-mod git_models;
-#[path = "git/objects.rs"]
-mod git_objects;
-#[path = "git/status.rs"]
-mod git_status;
 #[path = "path.rs"]
 mod path;
 #[path = "scope.rs"]
 mod scope;
 
 pub(crate) use discovery::*;
-pub(crate) use git_command::*;
-pub(crate) use git_diff::*;
-pub(crate) use git_models::*;
-pub(crate) use git_objects::*;
-pub(crate) use git_status::*;
+pub(crate) use leantoken_git::{
+    GitBlob, GitBlobBatch, GitCommitMetadata, GitWorkingTreeStatus, git_blobs_at_resolved_revision,
+    git_blobs_at_revision, git_branch_name, git_commit_metadata, git_diff_hunks_scoped,
+    git_diff_identity, git_head_revision, git_line_history, git_working_tree_status,
+};
 pub(crate) use path::*;
 
 pub use discovery::{
@@ -45,11 +31,63 @@ pub use discovery::{
     discover_files_cancellable, discover_files_with_limits, discover_files_with_limits_and_policy,
     discover_files_with_limits_cancellable,
 };
-pub use git_diff::{
-    git_diff_hunks, git_diff_hunks_between, git_diff_paths, git_diff_paths_between,
-};
-pub use git_models::{GitDiffResult, GitHunkRange};
-pub use git_status::git_changed_paths;
+pub use leantoken_git::{GitDiffResult, GitHunkRange};
+
+/// Resolve paths changed between a Git revision and the working tree.
+pub fn git_diff_paths(root: &Path, base_revision: &str, max: usize) -> Result<GitDiffResult> {
+    Ok(leantoken_git::git_diff_paths(root, base_revision, max)?)
+}
+
+/// Resolve paths changed between two immutable Git revisions.
+pub fn git_diff_paths_between(
+    root: &Path,
+    base_revision: &str,
+    head_revision: &str,
+    max: usize,
+) -> Result<GitDiffResult> {
+    Ok(leantoken_git::git_diff_paths_between(
+        root,
+        base_revision,
+        head_revision,
+        max,
+    )?)
+}
+
+/// Resolve target-side hunk ranges from a revision to the working tree.
+pub fn git_diff_hunks(root: &Path, base_revision: &str, max: usize) -> Result<Vec<GitHunkRange>> {
+    Ok(leantoken_git::git_diff_hunks(root, base_revision, max)?)
+}
+
+/// Resolve target-side hunk ranges between two immutable revisions.
+pub fn git_diff_hunks_between(
+    root: &Path,
+    base_revision: &str,
+    head_revision: &str,
+    max: usize,
+) -> Result<Vec<GitHunkRange>> {
+    Ok(leantoken_git::git_diff_hunks_between(
+        root,
+        base_revision,
+        head_revision,
+        max,
+    )?)
+}
+
+/// Return bounded working-tree changes, or an empty set when Git is unavailable.
+pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
+    Ok(leantoken_git::git_changed_paths(root, max)?)
+}
+
+pub(crate) fn git_blob_at_revision(
+    root: &Path,
+    revision: &str,
+    path: &str,
+    max_bytes: usize,
+) -> Result<leantoken_git::GitBlob> {
+    Ok(leantoken_git::git_blob_at_revision(
+        root, revision, path, max_bytes,
+    )?)
+}
 pub use path::{
     RepositoryPath, RepositoryPattern, RepositoryPatternSet, normalize_relative, resolve_existing,
     slash_path, validate_relative,

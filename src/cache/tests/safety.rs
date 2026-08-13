@@ -179,6 +179,55 @@ fn unexpected_content_is_never_removed_automatically() {
 }
 
 #[test]
+fn auxiliary_database_artifacts_are_accounted_for_and_prunable() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let repository = temp.path().join("repository");
+    fs::create_dir(&repository).expect("repository");
+    let repository = fs::canonicalize(repository).expect("canonical repository");
+    let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+    let (id, database) = create_current_cache(&manager, &repository, 100);
+    let directory = database.parent().expect("cache directory");
+    let auxiliary = [
+        "index.sqlite.artifacts.sqlite",
+        "index.sqlite.artifacts.sqlite-wal",
+        "index.sqlite.artifacts.sqlite-shm",
+        "index.sqlite.artifacts.sqlite-journal",
+        "index.sqlite.instrumentation.sqlite",
+        "index.sqlite.instrumentation.sqlite-wal",
+        "index.sqlite.instrumentation.sqlite-shm",
+        "index.sqlite.instrumentation.sqlite-journal",
+    ];
+    for artifact in auxiliary {
+        fs::write(directory.join(artifact), b"managed sidecar").expect("auxiliary artifact");
+    }
+
+    let listed = manager
+        .list_with(&CacheListRequest::default())
+        .expect("cache list");
+    let entry = listed
+        .entries()
+        .iter()
+        .find(|entry| entry.entry.id == id)
+        .expect("managed cache");
+    assert_eq!(entry.entry.state, CacheState::Current, "{entry:#?}");
+    assert!(entry.entry.size_bytes > fs::metadata(&database).expect("index metadata").len());
+
+    let mut prune = request();
+    prune.max_total_bytes = Some(0);
+    prune.dry_run = false;
+    prune.yes = true;
+    let report = manager.prune(&prune).expect("prune cache");
+
+    assert_eq!(
+        report.results[0].outcome.action(),
+        CachePruneAction::Deleted
+    );
+    for artifact in auxiliary {
+        assert!(!directory.join(artifact).exists(), "remaining {artifact}");
+    }
+}
+
+#[test]
 fn future_schema_and_mismatched_identity_are_never_removed_automatically() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let root = temp.path().join("managed");

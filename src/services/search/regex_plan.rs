@@ -389,7 +389,7 @@ pub(in crate::services) fn compile_literal_regex(
 }
 
 pub(in crate::services) struct LiteralFullScan<'a> {
-    pub(in crate::services) session: &'a IndexReadSnapshot,
+    pub(in crate::services) session: &'a RepositoryGeneration,
     pub(in crate::services) query: &'a str,
     pub(in crate::services) matcher: &'a regex::Regex,
     pub(in crate::services) include_paths: &'a [String],
@@ -440,7 +440,7 @@ impl Services {
 
     pub(super) fn regex_hits(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &SearchInput,
         regex: &regex::Regex,
         max_candidates: Option<usize>,
@@ -717,7 +717,7 @@ impl Services {
 }
 use super::*;
 pub(super) struct RegexCandidateParams<'a, 'b> {
-    pub session: &'a IndexReadSnapshot,
+    pub session: &'a RepositoryGeneration,
     pub regex: &'a regex::Regex,
     pub max_candidates: Option<usize>,
     pub cancellation: &'a CancellationToken,

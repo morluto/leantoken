@@ -1,8 +1,7 @@
 use super::*;
 
-mod query_receipts;
-mod read_delta;
-mod receipts;
+mod artifacts;
+mod instrumentation;
 
 #[test]
 pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
@@ -138,7 +137,7 @@ pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
             ],
         )
         .expect("index fixture");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
 
     let error = session
         .select_scoped_regex_candidate_ids("\"needle\"", 1, 10, &[], &[], |_| true)
@@ -161,7 +160,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
     storage
         .full_reconcile("config", vec![sample_file("alpha.rs", "fn alpha() {}\n")])
         .expect("initial publication");
-    let pinned = storage.begin_read().expect("pinned read");
+    let pinned = storage.begin_generation_read().expect("pinned read");
     assert_eq!(
         pinned.repository_generation().expect("pinned generation"),
         1
@@ -196,7 +195,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
         1
     );
     let current = storage
-        .begin_read()
+        .begin_generation_read()
         .expect("current read")
         .parser_coverage_rows(|_| "fixture".to_owned())
         .expect("current parser coverage");
@@ -425,7 +424,9 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
                 .collect(),
         )
         .expect("backlogged generation");
-    let reader = storage.begin_read().expect("latest pinned reader");
+    let reader = storage
+        .begin_generation_read()
+        .expect("latest pinned reader");
     assert_eq!(
         reader.repository_generation().expect("pinned generation"),
         1
@@ -467,7 +468,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
+pub(crate) fn startup_rejects_a_damaged_path_projection() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -505,34 +506,13 @@ pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verifi
         .len();
     assert!(wal_bytes_before > 0);
 
-    let repaired = Storage::open(&database).expect("repair storage on reopen");
-
-    let writer = repaired
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let (files, paths) = writer
-        .query_row(
-            "SELECT (SELECT count(*) FROM files),
-                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-        )
-        .expect("repaired projection counts");
-    assert_eq!(paths, files);
-    assert!(
-        writer
-            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
-            .expect("restored auto-checkpoint policy")
-            > 0
-    );
-    let wal_bytes_after = fs::metadata(wal_path(&database))
-        .expect("WAL after repair")
-        .len();
-    assert_eq!(
-        wal_bytes_after, 0,
-        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
-    );
+    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
+    assert!(matches!(
+        error,
+        Error::InvalidIndexGeneration {
+            projection: "repository path"
+        }
+    ));
 }
 
 #[test]
@@ -544,7 +524,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
         .full_reconcile("config", vec![sample_file("pinned.rs", "old snapshot\n")])
         .expect("initial generation");
 
-    let reader = storage.begin_read().expect("long-lived reader");
+    let reader = storage.begin_generation_read().expect("long-lived reader");
     assert_eq!(reader.repository_generation().expect("pin snapshot"), 1);
     assert!(
         reader
@@ -624,7 +604,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 }
 
 #[test]
-pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
+pub(crate) fn startup_rejects_a_damaged_fts_projection() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -657,15 +637,13 @@ pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check
     );
     drop(storage);
 
-    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
-
-    assert_eq!(
-        reopened
-            .search_word("repaired_fts_needle", 10)
-            .expect("search rebuilt index")[0]
-            .path,
-        "needle.rs"
-    );
+    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
+    assert!(matches!(
+        error,
+        Error::InvalidIndexGeneration {
+            projection: "full-text search"
+        }
+    ));
 }
 
 pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {
@@ -783,7 +761,7 @@ pub(crate) fn enclosing_symbol_lookup_benchmark_rejects_unproven_nesting_depth()
     storage
         .full_reconcile("benchmark", files)
         .expect("index fixture");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
     let file_ids = (0..32)
         .map(|file_index| {
             session
@@ -888,7 +866,7 @@ pub(crate) fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
     storage
         .full_reconcile("config", vec![sample_file("source.rs", "fn source() {}\n")])
         .expect("index source");
-    let session = storage.begin_read().expect("read session");
+    let session = storage.begin_generation_read().expect("read session");
     let file_id = session
         .find_file("source.rs")
         .expect("find source")
@@ -1161,7 +1139,7 @@ pub(crate) fn readers_see_old_generation_until_streamed_publication_commits() {
     let (generation, ()) = storage
         .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
-            let reader = storage.begin_read()?;
+            let reader = storage.begin_generation_read()?;
             assert_eq!(reader.repository_generation()?, 1);
             assert!(reader.find_file("old.rs")?.is_some());
             assert!(reader.find_file("new.rs")?.is_none());
@@ -1237,114 +1215,6 @@ pub(crate) fn repository_binding_updates_last_access_once_per_open() {
 }
 
 #[test]
-pub(crate) fn token_savings_accounting_skips_a_busy_local_writer() {
-    let directory = tempfile::tempdir().expect("directory");
-    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
-    let meta = ResponseMeta {
-        repository_id: "repository".into(),
-        repository_generation: 1,
-        freshness: crate::model::Freshness::Current,
-        index_scope: crate::model::IndexScopeMode::Full,
-        index_scope_digest: None,
-        source_tokens: 2,
-        protocol_tokens: 3,
-        path_and_metadata_tokens: 5,
-        total_response_tokens: 10,
-        tokenizer: "cl100k_base".into(),
-        token_count_exact: true,
-        receipt_id: None,
-        receipt_suppressed_exact: 0,
-        receipt_suppressed_overlap: 0,
-        receipt_near_duplicates: 0,
-        next_cursor: None,
-    };
-    let writer = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-    assert!(
-        !storage
-            .record_token_savings(
-                "cl100k_base",
-                TokenSavingsObservation {
-                    operation: TokenAccountingOperation::Search,
-                    baseline_source_tokens: Some(10),
-                    meta: &meta,
-                    classification: TokenSavingsRequestClass::Useful,
-                    expected_hash_not_modified: false,
-                    expected_hash_suppressed_source_tokens: 0,
-                },
-            )
-            .expect("best-effort accounting")
-    );
-    assert!(
-        !storage
-            .record_service_failure(
-                "cl100k_base",
-                TokenAccountingOperation::Search,
-                "invalid_input",
-            )
-            .expect("best-effort failure accounting")
-    );
-    drop(writer);
-    assert!(
-        storage
-            .record_token_savings(
-                "cl100k_base",
-                TokenSavingsObservation {
-                    operation: TokenAccountingOperation::Search,
-                    baseline_source_tokens: Some(10),
-                    meta: &meta,
-                    classification: TokenSavingsRequestClass::HashSuppressed,
-                    expected_hash_not_modified: true,
-                    expected_hash_suppressed_source_tokens: 8,
-                },
-            )
-            .expect("available accounting")
-    );
-    assert!(
-        storage
-            .record_service_failure(
-                "cl100k_base",
-                TokenAccountingOperation::Search,
-                "invalid_input",
-            )
-            .expect("available failure accounting")
-    );
-    let records = storage
-        .token_savings("cl100k_base")
-        .expect("stored accounting");
-    let record = records.get("search").expect("search accounting");
-    assert_eq!(record.tracked_requests, 0);
-    assert_eq!(record.response_tracked_requests, 1);
-    assert_eq!(record.response_baseline_requests, 1);
-    assert_eq!(record.baseline_source_tokens, 0);
-    assert_eq!(record.response_baseline_source_tokens, 10);
-    assert_eq!(record.emitted_source_tokens, 0);
-    assert_eq!(record.response_source_tokens, 2);
-    assert_eq!(record.path_and_metadata_tokens, 5);
-    assert_eq!(record.protocol_tokens, 3);
-    assert_eq!(record.total_response_tokens, 10);
-    assert_eq!(record.expected_hash_not_modified_responses, 1);
-    assert_eq!(record.expected_hash_suppressed_source_tokens, 8);
-    assert_eq!(record.hash_suppressed_requests, 1);
-    let failures = storage
-        .begin_read()
-        .expect("failure read session")
-        .service_failures("cl100k_base")
-        .expect("stored failure accounting");
-    assert_eq!(
-        failures,
-        vec![ServiceFailureRecord {
-            operation: "search".into(),
-            error_category: "invalid_input".into(),
-            failed_requests: 1,
-        }]
-    );
-}
-
-#[test]
 pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
@@ -1376,7 +1246,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
 
     assert_eq!(
         storage
-            .begin_read()
+            .begin_generation_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "cl100k_base")
             .expect("whole-file tokens"),
@@ -1384,7 +1254,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     );
     assert_eq!(
         storage
-            .begin_read()
+            .begin_generation_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
             .expect("mismatched tokenizer"),
@@ -1412,7 +1282,7 @@ pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
     ));
     storage.full_reconcile("config", files).expect("reconcile");
 
-    let session = storage.begin_read().expect("session");
+    let session = storage.begin_generation_read().expect("session");
     let first = session
         .list_glob_paths("src/target_*.rs", None, None, 2)
         .expect("first glob page");

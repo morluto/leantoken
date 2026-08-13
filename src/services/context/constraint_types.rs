@@ -11,7 +11,7 @@ pub(super) struct ContextConstraintExpansion {
 
 #[derive(Clone, Copy)]
 pub(super) struct ConstraintCandidateExpansion<'a> {
-    pub(super) session: &'a IndexReadSnapshot,
+    pub(super) session: &'a RepositoryGeneration,
     pub(super) request: &'a ContextRequest,
     pub(super) queries: &'a [ContextQuery],
     pub(super) path_scorer: &'a ContextPathScorer,
@@ -60,7 +60,7 @@ pub(super) fn retain_required_evidence_plan(
 }
 
 pub(super) struct FocusExpansion<'a> {
-    pub(super) session: &'a IndexReadSnapshot,
+    pub(super) session: &'a RepositoryGeneration,
     pub(super) request: &'a ContextRequest,
     pub(super) queries: &'a [ContextQuery],
     pub(super) path_scorer: &'a ContextPathScorer,

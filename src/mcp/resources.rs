@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use super::*;
 use crate::receipt::StoredReceipt;
 
@@ -17,8 +15,6 @@ struct ReceiptResource<'a> {
     repository_id: &'a str,
     repository_identity: &'a str,
     repository_generation: u64,
-    created_unix_millis: i64,
-    expires_unix_millis: i64,
     evidence_count: usize,
     evidence: Vec<ReceiptResourceEvidence<'a>>,
     complete: bool,
@@ -51,15 +47,6 @@ fn parse_receipt_uri(uri: &str) -> Option<&str> {
     Some(receipt_id)
 }
 
-fn now_unix_millis() -> Result<i64, ErrorData> {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| ErrorData::internal_error("system clock precedes the Unix epoch", None))?
-        .as_millis();
-    i64::try_from(millis)
-        .map_err(|_| ErrorData::internal_error("system clock exceeds supported range", None))
-}
-
 fn resource_not_found(uri: &str) -> ErrorData {
     ErrorData::resource_not_found(
         "retrieval receipt resource not found",
@@ -80,8 +67,6 @@ fn resource_value<'a>(
         repository_id,
         repository_identity: &receipt.repository_identity,
         repository_generation: receipt.repository_generation,
-        created_unix_millis: receipt.created_unix_millis,
-        expires_unix_millis: receipt.expires_unix_millis,
         evidence_count: receipt.evidence.len(),
         evidence: receipt
             .evidence
@@ -151,43 +136,27 @@ impl LeanTokenMcp {
                 })),
             )
         })?;
-        let now = now_unix_millis()?;
-        let mut last_error = None;
-        let mut found = None;
-        for (_, mcp_services) in self.contexts.all() {
-            let state = mcp_services.get();
-            let services = match state {
-                McpServiceState::Ready { services, .. } => services,
-                _ => continue,
-            };
-            let repository_id = services.repository_id();
-            let candidate = tokio::task::spawn_blocking({
-                let services = Arc::clone(&services);
-                let receipt_id = receipt_id.clone();
-                move || services.read_stored_receipt(&receipt_id, now)
-            })
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "receipt resource read task failed");
+        let services = match self.services.get() {
+            McpServiceState::Ready { services, .. } => services,
+            _ => return Err(resource_not_found(&uri)),
+        };
+        let repository_id = services.repository_id();
+        let receipt = tokio::task::spawn_blocking({
+            let services = Arc::clone(&services);
+            let receipt_id = receipt_id.clone();
+            move || services.read_stored_receipt(&receipt_id)
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "receipt resource read task failed");
+            ErrorData::internal_error("retrieval receipt read failed", None)
+        })?
+        .map_err(|error| match error {
+            crate::Error::UnknownReceipt(_) => resource_not_found(&uri),
+            other => {
+                tracing::error!(%other, "receipt resource read failed");
                 ErrorData::internal_error("retrieval receipt read failed", None)
-            })?;
-            match candidate {
-                Ok(receipt) => {
-                    found = Some((repository_id, receipt));
-                    break;
-                }
-                Err(crate::Error::UnknownReceipt(_)) => {}
-                Err(other) => {
-                    tracing::error!(%other, "receipt resource read failed");
-                    // Continue checking remaining contexts; a storage error in
-                    // one repository should not hide a valid receipt in another.
-                    last_error = Some(other);
-                }
             }
-        }
-        let (repository_id, receipt) = found.ok_or_else(|| match last_error {
-            Some(_) => ErrorData::internal_error("retrieval receipt read failed", None),
-            None => resource_not_found(&uri),
         })?;
         let text = serde_json::to_string(&resource_value(&receipt, &repository_id, &uri)).map_err(
             |error| {

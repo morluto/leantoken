@@ -1,4 +1,4 @@
-impl ReadSession {
+impl GenerationReadTransaction {
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
         self.search_word_page(query, max_results, 0)
     }
@@ -579,3 +579,42 @@ fn unicode_literal_matcher(query: &str) -> Result<regex::Regex> {
         .build()?)
 }
 use super::*;
+
+impl GenerationReadTransaction {
+    pub(crate) fn exact_query_partition(
+        &self,
+        mut allows_path: impl FnMut(&str) -> bool,
+        mut check: impl FnMut() -> Result<()>,
+    ) -> Result<crate::query_receipt::QueryPartition> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT path, content_hash FROM files ORDER BY path")?;
+        let mut rows = statement.query([])?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"leantoken-exact-query-partition-v1\0");
+        let mut file_count = 0usize;
+        while let Some(row) = rows.next()? {
+            check()?;
+            let path: String = row.get(0)?;
+            if !allows_path(&path) {
+                continue;
+            }
+            let content_hash: String = row.get(1)?;
+            hash_query_partition_bytes(&mut hasher, path.as_bytes());
+            hash_query_partition_bytes(&mut hasher, content_hash.as_bytes());
+            file_count = file_count
+                .checked_add(1)
+                .ok_or_else(|| Error::OperationFailure("query partition count overflow".into()))?;
+        }
+        hasher.update(&(file_count as u64).to_le_bytes());
+        Ok(crate::query_receipt::QueryPartition {
+            digest: hasher.finalize().to_hex().to_string(),
+            file_count,
+        })
+    }
+}
+
+fn hash_query_partition_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}

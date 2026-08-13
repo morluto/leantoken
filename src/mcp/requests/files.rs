@@ -14,10 +14,6 @@ pub(in crate::mcp) enum FilesMcpProjection {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct FilesMcpRequest {
-    /// Optional name of an approved repository context.
-    #[serde(default)]
-    #[schemars(schema_with = "repository_context_schema")]
-    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -47,9 +43,6 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(length(max = 4096))]
         cursor: Option<String>,
         #[serde(default)]
-        #[schemars(schema_with = "index_consistency_schema")]
-        consistency: IndexConsistency,
-        #[serde(default)]
         projection: FilesMcpProjection,
     },
     Find {
@@ -66,9 +59,6 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(length(max = 4096))]
         cursor: Option<String>,
         #[serde(default)]
-        #[schemars(schema_with = "index_consistency_schema")]
-        consistency: IndexConsistency,
-        #[serde(default)]
         projection: FilesMcpProjection,
     },
     Glob {
@@ -84,9 +74,6 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[serde(default)]
         #[schemars(length(max = 4096))]
         cursor: Option<String>,
-        #[serde(default)]
-        #[schemars(schema_with = "index_consistency_schema")]
-        consistency: IndexConsistency,
         #[serde(default)]
         projection: FilesMcpProjection,
     },
@@ -141,7 +128,6 @@ impl FilesMcpRequest {
     ) -> (
         FilesRequest,
         FilesMcpProjection,
-        IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
@@ -154,7 +140,6 @@ impl FilesMcpRequest {
             cursor,
             depth,
             projection,
-            consistency,
             max_response_tokens,
         ) = match self.operation {
             FilesMcpOperation::Tree {
@@ -163,7 +148,6 @@ impl FilesMcpRequest {
                 max_results,
                 max_response_tokens,
                 cursor,
-                consistency,
                 projection,
             } => (
                 FileOperation::Tree,
@@ -174,7 +158,6 @@ impl FilesMcpRequest {
                 cursor,
                 depth,
                 projection,
-                consistency,
                 max_response_tokens,
             ),
             FilesMcpOperation::Find {
@@ -182,7 +165,6 @@ impl FilesMcpRequest {
                 max_results,
                 max_response_tokens,
                 cursor,
-                consistency,
                 projection,
             } => (
                 FileOperation::Find,
@@ -193,7 +175,6 @@ impl FilesMcpRequest {
                 cursor,
                 None,
                 projection,
-                consistency,
                 max_response_tokens,
             ),
             FilesMcpOperation::Glob {
@@ -201,7 +182,6 @@ impl FilesMcpRequest {
                 max_results,
                 max_response_tokens,
                 cursor,
-                consistency,
                 projection,
             } => (
                 FileOperation::Glob,
@@ -212,7 +192,6 @@ impl FilesMcpRequest {
                 cursor,
                 None,
                 projection,
-                consistency,
                 max_response_tokens,
             ),
         };
@@ -227,7 +206,6 @@ impl FilesMcpRequest {
                 depth,
             },
             projection,
-            consistency,
             service_call_options(max_response_tokens),
             self.expected_repository_id,
         )

@@ -7,11 +7,12 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
-use super::index_read::IndexReadSnapshot;
-use super::read_delta::ReadDeltaInput;
+use super::index_read::RepositoryGeneration;
+use super::read_delta::{ReadDeltaInput, evaluate as evaluate_read_delta};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input, validate_optional_input,
+    MAX_CURSOR_BYTES, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
+    validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -25,6 +26,7 @@ pub(super) const MAX_CONTEXT_RANGE_LINES: usize = 128;
 
 mod cursor;
 mod excerpts;
+mod generation;
 mod live;
 mod types;
 
@@ -36,7 +38,23 @@ pub(super) use types::{
     AdaptiveExcerptRequest, NewReadTarget, StoredExcerpt, StoredExcerptRequest,
 };
 
-fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
+fn parse_read_request(request: ReadRequest) -> Result<ReadInput> {
+    parse_read_input(request, false, None, ReadPolicy::Bounded)
+}
+
+fn parse_worktree_read_request(request: WorktreeReadRequest) -> Result<ReadInput> {
+    let (read, delta, delta_base_artifact_id, receipt_id, policy) = request.into_read_request();
+    let mut input = parse_read_input(read, delta, receipt_id, policy)?;
+    input.delta_base_artifact_id = delta_base_artifact_id;
+    Ok(input)
+}
+
+fn parse_read_input(
+    mut request: ReadRequest,
+    delta: bool,
+    receipt_id: Option<String>,
+    policy: ReadPolicy,
+) -> Result<ReadInput> {
     validate_input(&request.path, "path", MAX_PATH_BYTES)?;
     validate_relative(&request.path)?;
     // Bound caller-owned input before normalization so a large whitespace
@@ -67,21 +85,22 @@ fn parse_read_request(mut request: ReadRequest) -> Result<ReadInput> {
     validate_optional_input(
         request.continuation_cursor.as_deref(),
         "continuation cursor",
-        256,
+        MAX_CURSOR_BYTES,
     )?;
-    let mode = parse_read_mode(&request)?;
+    let mode = parse_read_mode(&request, delta, policy)?;
     request.path = normalize_relative(&request.path)?;
     Ok(ReadInput {
         path: request.path,
         mode,
         max_tokens: request.max_tokens,
         expected_hash: request.expected_hash,
-        receipt_id: request.receipt_id,
-        policy: request.policy,
+        delta_base_artifact_id: None,
+        receipt_id,
+        policy,
     })
 }
 
-fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
+fn parse_read_mode(request: &ReadRequest, delta: bool, policy: ReadPolicy) -> Result<ReadMode> {
     if request.heading_occurrence == Some(0) {
         return Err(Error::InvalidInput {
             field: "heading occurrence",
@@ -115,13 +134,13 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             reason: "must use either a continuation cursor or a new target, not both",
         });
     }
-    if request.delta && request.continuation_cursor.is_some() {
+    if delta && request.continuation_cursor.is_some() {
         return Err(Error::InvalidInput {
             field: "delta",
             reason: "is supported only for a new line, symbol, or heading target",
         });
     }
-    if request.delta && !matches!(request.policy, ReadPolicy::Full) {
+    if delta && !matches!(policy, ReadPolicy::Full) {
         return Err(Error::InvalidInput {
             field: "policy",
             reason: "delta reads require full verification",
@@ -129,7 +148,7 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
     }
     if let Some(cursor) = &request.continuation_cursor {
         return Ok(ReadMode::Direct(ReadTargetInput::Continuation(
-            decode_read_cursor(cursor)?,
+            cursor.clone(),
         )));
     }
     let target = if let Some(symbol) = &request.symbol {
@@ -155,7 +174,7 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
             end: request.end_line,
         }
     };
-    Ok(if request.delta {
+    Ok(if delta {
         ReadMode::Delta(target)
     } else {
         ReadMode::Direct(ReadTargetInput::New(target))
@@ -163,93 +182,64 @@ fn parse_read_mode(request: &ReadRequest) -> Result<ReadMode> {
 }
 
 impl Services {
-    pub async fn read(&self, request: ReadRequest) -> Result<ReadResponse> {
-        self.read_with_options(request, ServiceCallOptions::new())
+    /// Read current worktree source with explicitly weaker snapshot guarantees.
+    pub async fn read_worktree(&self, request: WorktreeReadRequest) -> Result<ReadResponse> {
+        self.read_worktree_with_options(request, ServiceCallOptions::new())
             .await
     }
 
-    /// Read live source under explicit serialized-response controls.
-    pub async fn read_with_options(
+    /// Read current worktree source under explicit serialized-response controls.
+    pub async fn read_worktree_with_options(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
         options: ServiceCallOptions,
     ) -> Result<ReadResponse> {
-        self.read_execute(
+        self.read_worktree_execute(
             request,
             RetrievalExecution::direct(options, CancellationToken::new()),
         )
         .await
     }
 
-    /// Read source after applying the requested index consistency boundary.
-    pub async fn read_with_consistency_cancellable(
+    /// Read current worktree source with caller-owned cancellation.
+    pub async fn read_worktree_cancellable(
         &self,
-        request: ReadRequest,
-        consistency: IndexConsistency,
+        request: WorktreeReadRequest,
         cancellation: CancellationToken,
     ) -> Result<ReadResponse> {
-        self.read_execute(
-            request,
-            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
-        )
-        .await
-    }
-
-    /// Read source under consistency and serialized-response controls.
-    pub async fn read_with_options_consistency_cancellable(
-        &self,
-        request: ReadRequest,
-        consistency: IndexConsistency,
-        options: ServiceCallOptions,
-        cancellation: CancellationToken,
-    ) -> Result<ReadResponse> {
-        self.read_execute(
-            request,
-            RetrievalExecution::consistent(consistency, options, cancellation),
-        )
-        .await
-    }
-
-    pub async fn read_cancellable(
-        &self,
-        request: ReadRequest,
-        cancellation: CancellationToken,
-    ) -> Result<ReadResponse> {
-        self.read_execute(
+        self.read_worktree_execute(
             request,
             RetrievalExecution::direct(ServiceCallOptions::new(), cancellation),
         )
         .await
     }
 
-    async fn read_execute(
+    /// Read current worktree source under response controls and cancellation.
+    pub async fn read_worktree_with_options_cancellable(
         &self,
-        request: ReadRequest,
+        request: WorktreeReadRequest,
+        options: ServiceCallOptions,
+        cancellation: CancellationToken,
+    ) -> Result<ReadResponse> {
+        self.read_worktree_execute(request, RetrievalExecution::direct(options, cancellation))
+            .await
+    }
+
+    async fn read_worktree_execute(
+        &self,
+        request: WorktreeReadRequest,
         execution: RetrievalExecution,
     ) -> Result<ReadResponse> {
         let operation = TokenAccountingOperation::Read;
-        let request = self.observe_service_result(operation, parse_read_request(request))?;
+        let request =
+            self.observe_service_result(operation, parse_worktree_read_request(request))?;
         let RetrievalExecution {
-            consistency,
+            consistency: _,
             options,
             cancellation,
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        if let Some(consistency) = consistency {
-            self.observe_service_result(
-                operation,
-                self.token_limit(request.max_tokens, self.config.default_read_tokens),
-            )?;
-            let consistency_result = self
-                .apply_consistency_with_initial_deadline(
-                    consistency,
-                    cancellation.clone(),
-                    options.initial_reconciliation_deadline(),
-                )
-                .await;
-            self.observe_service_result(operation, consistency_result)?;
-        }
         let this = self.clone();
         let result = self
             .blocking_executor
@@ -268,17 +258,24 @@ impl Services {
     ) -> Result<ReadResponse> {
         check_cancelled(cancellation)?;
         let max_tokens = self.token_limit(request.max_tokens, self.config.default_read_tokens)?;
-        let materialized = self.consistent(|session| {
+        let (materialized, database_incarnation_id) = self.consistent(|session| {
             let generation = session.generation();
             check_cancelled(cancellation)?;
-            self.read_at_generation_with_options(session, &request, generation, max_tokens, options)
+            Ok((
+                self.read_at_generation_with_options(
+                    session, &request, generation, max_tokens, options,
+                )?,
+                session.database_incarnation_id().to_owned(),
+            ))
         })?;
         let mut response = materialized.response;
         let direct_response = response.clone();
         if let ReadMode::Delta(target) = &request.mode {
-            let evaluation = self.read_deltas.evaluate(ReadDeltaInput {
+            let evaluation = evaluate_read_delta(ReadDeltaInput {
                 repository_id: &response.meta.repository_id,
-                storage: &self.storage,
+                database_incarnation_id: &database_incarnation_id,
+                artifacts: &self.artifacts,
+                base_artifact_id: request.delta_base_artifact_id.as_deref(),
                 path: &request.path,
                 target,
                 expected_hash: request.expected_hash.as_deref(),
@@ -350,6 +347,7 @@ impl Services {
         let receipt = self.evaluate_read_receipt(
             request.receipt_id.as_deref(),
             response.meta.repository_generation,
+            &database_incarnation_id,
             &receipt_candidates,
         )?;
         if receipt
@@ -398,7 +396,7 @@ impl Services {
 
     fn read_at_generation_with_options(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
         generation: u64,
         max_tokens: usize,
@@ -416,7 +414,7 @@ impl Services {
             return Ok(materialized);
         }
 
-        let budget_estimate = self.read_budget_estimate(session, request, generation)?;
+        let budget_estimate = self.read_budget_estimate(session, request)?;
         self.apply_read_budget_guidance(&mut materialized, budget_estimate.as_ref(), max_tokens);
         let returned_items = usize::from(!materialized.response.not_modified);
         if self.response_fits_with_receipt_reserve(
@@ -477,14 +475,13 @@ impl Services {
 
     fn read_budget_estimate(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
-        generation: u64,
     ) -> Result<Option<ReadBudgetEstimate>> {
         let Some(indexed) = session.find_file(&request.path)? else {
             return Ok(None);
         };
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request)?;
         let target_end_line = match target.target_end_line {
             Some(end_line) => end_line,
             None => match session
@@ -554,7 +551,7 @@ impl Services {
 
     fn read_at_generation(
         &self,
-        session: &IndexReadSnapshot,
+        session: &RepositoryGeneration,
         request: &ReadInput,
         generation: u64,
         max_tokens: usize,
@@ -562,7 +559,7 @@ impl Services {
         let indexed = session
             .find_file(&request.path)?
             .ok_or_else(|| Error::NotIndexed(request.path.clone()))?;
-        let target = resolve_read_target(session, indexed.id, request, generation)?;
+        let target = resolve_read_target(session, indexed.id, request)?;
 
         let file = open_live_file(self, &request.path)?;
         let observation = observe_live_range(
@@ -667,22 +664,26 @@ impl Services {
                 )
             })
             .transpose()?;
-        let continuation_cursor = next_start_line.map(|next_start_line| {
-            ReadCursor {
-                generation,
-                target_start_line: target.target_start_line,
-                target_end_line: target.target_end_line,
-                next_start_line,
-                next_byte,
-                full_hash: snapshot.content_hash.clone(),
-                prefix_hash: prefix_hash.clone(),
-                policy,
-                file_size: snapshot.file_size,
-                modified_ns: snapshot.modified_ns,
-                path_hash: read_path_hash(&request.path),
-            }
-            .encode()
-        });
+        let continuation_cursor = next_start_line
+            .map(|next_start_line| {
+                seal_read_cursor(
+                    session,
+                    &request.path,
+                    policy,
+                    ReadCursor {
+                        target_start_line: target.target_start_line,
+                        target_end_line: target.target_end_line,
+                        next_start_line,
+                        next_byte,
+                        full_hash: snapshot.content_hash.clone(),
+                        prefix_hash: prefix_hash.clone(),
+                        policy,
+                        file_size: snapshot.file_size,
+                        modified_ns: snapshot.modified_ns,
+                    },
+                )
+            })
+            .transpose()?;
         let content_hash = hash(content);
         let (index_stale, indexed_hash, index_state) = if policy.is_full() {
             let live_hash = snapshot.content_hash.as_deref().unwrap_or("");
@@ -712,6 +713,7 @@ impl Services {
             response: ReadResponse {
                 path: request.path.clone(),
                 status,
+                source: ReadSource::Worktree,
                 target_start_line: target.target_start_line,
                 target_end_line: observed_target_end_line,
                 returned_start_line,
@@ -820,9 +822,6 @@ mod tests {
             continuation_cursor: None,
             max_tokens: None,
             expected_hash: None,
-            delta: false,
-            receipt_id: None,
-            policy: ReadPolicy::Bounded,
         };
 
         assert!(matches!(

@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use leantoken::model::ReadRequest;
+use leantoken::model::WorktreeReadRequest;
 use leantoken::repository::{DiscoveredFile, discover_files};
 use leantoken::services::Services;
 use leantoken::{Config, DiscoveryLimits};
@@ -178,7 +178,7 @@ async fn run_profile(args: &Args) -> AnyResult<Report> {
     let config = Config::discover(&snapshot.root, Some(snapshot.database.clone()))?;
     let services = Services::open(config)?;
     let index_start = Instant::now();
-    services.index(leantoken::IndexingMode::Rebuild).await?;
+    services.refresh(leantoken::IndexingMode::Rebuild).await?;
     let initial_index_ms = index_start.elapsed().as_secs_f64() * 1_000.0;
 
     let targets = read_targets(&snapshot.root)?;
@@ -347,7 +347,11 @@ async fn prewarm_service(
     max_tokens: usize,
 ) -> AnyResult<()> {
     for target in targets {
-        black_box(services.read(read_request(target, max_tokens)).await?);
+        black_box(
+            services
+                .read_worktree(read_request(target, max_tokens))
+                .await?,
+        );
     }
     Ok(())
 }
@@ -399,7 +403,9 @@ async fn measure_service_reads(
     for sample in 0..samples {
         let target = &targets[sample % targets.len()];
         let request_start = Instant::now();
-        let response = services.read(read_request(target, max_tokens)).await?;
+        let response = services
+            .read_worktree(read_request(target, max_tokens))
+            .await?;
         let request_duration = request_start.elapsed();
         let serialization_start = Instant::now();
         let wire = serde_json::to_vec(&response)?;
@@ -427,8 +433,8 @@ async fn measure_service_reads(
     })
 }
 
-fn read_request(target: &ReadTarget, max_tokens: usize) -> ReadRequest {
-    ReadRequest {
+fn read_request(target: &ReadTarget, max_tokens: usize) -> WorktreeReadRequest {
+    WorktreeReadRequest {
         path: target.relative_path.clone(),
         start_line: None,
         end_line: None,
@@ -439,6 +445,7 @@ fn read_request(target: &ReadTarget, max_tokens: usize) -> ReadRequest {
         max_tokens: Some(max_tokens),
         expected_hash: None,
         delta: false,
+        delta_base_artifact_id: None,
         receipt_id: None,
         // This profile measures the historical exact freshness contract.
         policy: leantoken::model::ReadPolicy::Full,
@@ -458,21 +465,25 @@ async fn verify_live_change(
     target: &ReadTarget,
     max_tokens: usize,
 ) -> AnyResult<LiveChangeCheck> {
-    let before = services.read(read_request(target, max_tokens)).await?;
+    let before = services
+        .read_worktree(read_request(target, max_tokens))
+        .await?;
     OpenOptions::new()
         .append(true)
         .open(&target.absolute_path)?
         .write_all(b"\n")?;
-    let stale = services.read(read_request(target, max_tokens)).await?;
+    let stale = services
+        .read_worktree(read_request(target, max_tokens))
+        .await?;
     if !stale.index_stale || stale.meta.repository_generation != before.meta.repository_generation {
         return Err(invalid_data(
             "live read did not preserve generation while reporting stale content",
         ));
     }
-    services
-        .index_paths(vec![target.relative_path.clone()])
+    services.refresh(leantoken::IndexingMode::Reconcile).await?;
+    let current = services
+        .read_worktree(read_request(target, max_tokens))
         .await?;
-    let current = services.read(read_request(target, max_tokens)).await?;
     if current.index_stale
         || current.meta.repository_generation <= before.meta.repository_generation
         || current.indexed_hash == stale.indexed_hash

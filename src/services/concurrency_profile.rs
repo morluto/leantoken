@@ -248,7 +248,7 @@ async fn profile_repository(
     let services = Arc::new(Services::open(config).expect("services"));
     let index_started = Instant::now();
     let index = services
-        .index(IndexingMode::Reconcile)
+        .refresh(IndexingMode::Reconcile)
         .await
         .expect("index repository");
     let index_milliseconds = index_started.elapsed().as_millis();
@@ -440,7 +440,8 @@ async fn run_scenario(
             Some(tokio::spawn(async move {
                 barrier.wait().await;
                 let started = Instant::now();
-                let result = services.index_paths(vec![source_path]).await.map(|_| ());
+                let _ = source_path;
+                let result = services.refresh(IndexingMode::Reconcile).await.map(|_| ());
                 (started.elapsed().as_millis(), result)
             }))
         } else {
@@ -632,9 +633,6 @@ fn read_request(source_path: &str) -> ReadRequest {
         continuation_cursor: None,
         max_tokens: Some(1_000),
         expected_hash: None,
-        delta: false,
-        receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
     }
 }
 

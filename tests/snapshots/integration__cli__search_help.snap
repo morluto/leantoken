@@ -1,6 +1,6 @@
 ---
 source: tests/cli.rs
-assertion_line: 38
+assertion_line: 46
 expression: "help(&[\"search\"])"
 ---
 Search the repository for terms, symbols, or references
@@ -12,25 +12,16 @@ Arguments:
           Search query
 
 Options:
-      --consistency <CONSISTENCY>
-          Index consistency boundary applied before retrieval
-
-          Possible values:
-          - indexed_generation:     Query the latest completed index generation without scanning live changes
-          - reconcile_working_tree: Reconcile the live working tree before retrieval
-
-          [default: reconcile_working_tree]
-
-      --root <PATH>
-          Repository root path
-
-          [default: .]
-
   -m, --mode <MODE>
           Search mode
 
           [default: auto]
           [possible values: auto, text, regex, identifier, symbol, reference]
+
+      --root <PATH>
+          Repository root path
+
+          [default: .]
 
       --projection <PROJECTION>
           Result shape; occurrences and coordinates require --all-occurrences

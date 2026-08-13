@@ -17,7 +17,7 @@ async fn multi_path_outline_reports_each_path_without_aborting_indexed_results()
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -161,7 +161,7 @@ async fn outline_distinguishes_parse_completeness_from_result_completeness() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -319,7 +319,7 @@ async fn fixture_outlines_deduplicate_methods_and_report_receiver_owners() {
     )
     .expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixtures");
 

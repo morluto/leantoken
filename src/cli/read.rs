@@ -72,10 +72,6 @@ pub struct ReadArgs {
     /// File path to read.
     pub path: String,
 
-    /// Consistency boundary for this retrieval.
-    #[command(flatten)]
-    pub index_consistency: RetrievalConsistencyArgs,
-
     /// Line range as START:END.
     #[arg(short, long, value_name = "START:END")]
     pub lines: Option<LineRange>,
@@ -133,9 +129,6 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
-            delta: false,
-            receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
         }
     }
 }

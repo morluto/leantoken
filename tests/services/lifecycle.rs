@@ -1,4 +1,5 @@
 use super::*;
+use std::time::Instant;
 
 #[tokio::test]
 async fn oversized_query_is_rejected_without_stopping_services() {
@@ -109,9 +110,9 @@ async fn concurrent_queries_observe_one_committed_generation_during_reconciliati
     let indexing_services = std::sync::Arc::clone(&services);
     let indexing = tokio::spawn(async move {
         indexing_services
-            .index_paths(vec!["src/lib.rs".into()])
+            .refresh(leantoken::IndexingMode::Reconcile)
             .await
-            .expect("reconcile")
+            .expect("refresh")
     });
     let mut queries = tokio::task::JoinSet::new();
     // Stay within the documented portable minimum execution bound so a slow
@@ -176,7 +177,7 @@ async fn managed_corrupt_index_is_deleted_and_rebuilt() {
 
     let services = Services::open(config).expect("recover managed cache");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("rebuild index");
     assert_eq!(services.status().await.expect("status").file_count, 1);
@@ -187,6 +188,48 @@ async fn managed_corrupt_index_is_deleted_and_rebuilt() {
             > 32
     );
     drop(services);
+    std::fs::remove_dir_all(database_parent).expect("remove managed cache fixture");
+}
+
+#[tokio::test]
+async fn managed_invalid_projection_discards_the_whole_generation() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn recovered() {}\n").expect("source");
+    let config = Config::discover(root.path(), None).expect("config");
+    let database = config.database_path.clone();
+    let database_parent = database.parent().expect("database parent").to_owned();
+
+    let services = Services::open(config.clone()).expect("open managed cache");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("initial generation");
+    drop(services);
+
+    let connection = rusqlite::Connection::open(&database).expect("raw index");
+    connection
+        .execute(
+            "DELETE FROM path_entries WHERE file_id = (SELECT id FROM files LIMIT 1)",
+            [],
+        )
+        .expect("damage projection");
+    drop(connection);
+
+    let recovered = Services::open(config).expect("discard invalid managed generation");
+    assert_eq!(
+        recovered
+            .status()
+            .await
+            .expect("empty replacement status")
+            .repository_generation,
+        0
+    );
+    recovered
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("publish replacement generation");
+    assert_eq!(recovered.status().await.expect("status").file_count, 1);
+    drop(recovered);
     std::fs::remove_dir_all(database_parent).expect("remove managed cache fixture");
 }
 
@@ -254,7 +297,7 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
     let services = Services::open(config).expect("services");
 
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
     let initial_report = services.parser_coverage().await.expect("initial coverage");
@@ -298,7 +341,7 @@ async fn parser_coverage_reports_across_incremental_row_generations() {
     let updated_rust = "pub fn ready() -> bool { false }\n";
     std::fs::write(root.path().join("lib.rs"), updated_rust).expect("updated rust source");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("incremental index");
     let connection = rusqlite::Connection::open(database).expect("database");
@@ -356,7 +399,7 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     let indexing_services = services.clone();
     let indexing = tokio::spawn(async move {
         indexing_services
-            .index(leantoken::IndexingMode::Reconcile)
+            .refresh(leantoken::IndexingMode::Reconcile)
             .await
     });
     tokio::task::yield_now().await;
@@ -377,4 +420,122 @@ async fn first_index_reports_uninitialized_while_reconciling() {
     assert_eq!(after.index_state, IndexState::Ready);
     assert_eq!(after.freshness, Freshness::Current);
     assert_eq!(after.index_progress, None);
+}
+
+#[tokio::test]
+async fn tokenizer_configuration_is_scoped_to_each_service() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("lib.rs"),
+        "fn independent_token_budget() { println!(\"hello\"); }\n",
+    )
+    .expect("source");
+    let mut exact_config =
+        Config::discover(root.path(), Some(root.path().join("exact.sqlite"))).expect("config");
+    exact_config.tokenizer = leantoken::tokens::Tokenizer::O200kBase;
+    let mut estimate_config =
+        Config::discover(root.path(), Some(root.path().join("estimate.sqlite"))).expect("config");
+    estimate_config.tokenizer = leantoken::tokens::Tokenizer::Estimate;
+    let exact = Services::open(exact_config).expect("exact services");
+    let estimate = Services::open(estimate_config).expect("estimate services");
+    exact
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("exact refresh");
+    estimate
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("estimate refresh");
+    let request = ContextRequest {
+        task: "change independent_token_budget".into(),
+        token_budget: 100,
+        include_paths: Vec::new(),
+        must_include_paths: Vec::new(),
+        must_include_symbols: Vec::new(),
+        required_evidence: Vec::new(),
+        max_fragments: None,
+        plan_only: false,
+        focus_paths: Vec::new(),
+        strict_focus_paths: false,
+        minimum_fragments_per_focus_path: None,
+        focus_symbols: Vec::new(),
+        exclude_paths: Vec::new(),
+        known_hashes: Vec::new(),
+        receipt_id: None,
+        prior_repository_generation: None,
+        base_revision: None,
+        changed_paths: Vec::new(),
+        strict_changed_paths: false,
+        explain_diagnostics: false,
+    };
+
+    let (exact_response, estimate_response) =
+        tokio::join!(exact.context(request.clone()), estimate.context(request),);
+
+    let exact_response = exact_response.expect("exact context");
+    let estimate_response = estimate_response.expect("estimate context");
+    assert_response_token_accounting!(exact_response, Tokenizer::O200kBase);
+    assert_response_token_accounting!(estimate_response, Tokenizer::Estimate);
+}
+
+#[tokio::test]
+
+async fn status_reports_reconciling_when_shared_operation_lock_is_held() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("refresh");
+
+    let before = services.status().await.expect("status before");
+    assert_eq!(before.freshness, Freshness::Current);
+    assert_eq!(before.index_state, IndexState::Ready);
+    assert!(before.repository_generation >= 1);
+
+    let coordination = IndexCoordination::for_database(&database);
+    let _operation = coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold shared operation lock");
+
+    let during = services.status().await.expect("status during lock");
+    assert_eq!(
+        during.freshness,
+        Freshness::Reconciling,
+        "followers must see reconciling via the shared operation lock"
+    );
+    assert_eq!(during.index_state, IndexState::Ready);
+    assert_eq!(during.repository_generation, before.repository_generation);
+}
+
+#[test]
+fn read_only_status_does_not_wait_for_an_active_writer() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write");
+    let database = root.path().join("index.sqlite");
+    let config = Config::discover(root.path(), Some(database.clone())).expect("config");
+    let services = Services::open(config.clone()).expect("services");
+
+    let connection = rusqlite::Connection::open(&database).expect("writer connection");
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("hold writer transaction");
+
+    let started = Instant::now();
+    let status = Services::status_without_initializing(config).expect("read-only status");
+    assert!(
+        started.elapsed().as_secs() < 1,
+        "status waited on writer for {:?}",
+        started.elapsed()
+    );
+    assert_eq!(status.repository_generation, 0);
+    assert_eq!(status.index_state, IndexState::Uninitialized);
+
+    drop(services);
+    connection
+        .execute_batch("ROLLBACK")
+        .expect("release writer transaction");
 }

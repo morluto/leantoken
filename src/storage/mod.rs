@@ -26,16 +26,17 @@ use crate::{Error, Result, RetrievalLimitKind};
 
 mod accounting;
 mod api;
+mod artifacts;
 mod diagnostics;
+mod generation_read;
 mod helpers;
+mod instrumentation;
 mod mapping;
 mod models;
 mod open;
 mod publication;
-mod query_receipts;
 #[path = "read/counts.rs"]
 mod read_counts;
-mod read_delta;
 #[path = "read/files.rs"]
 mod read_files;
 #[path = "read/imports.rs"]
@@ -46,24 +47,23 @@ mod read_meta;
 mod read_search;
 #[path = "read/syntax.rs"]
 mod read_syntax;
-mod receipts;
 mod runtime;
 mod schema;
 mod scoped_regex;
-mod session;
 mod snapshot;
 mod staging;
 mod writer;
 
+pub(crate) use artifacts::ArtifactStorage;
 pub(crate) use diagnostics::*;
 pub(crate) use helpers::*;
+pub(crate) use instrumentation::InstrumentationStorage;
 pub(crate) use models::*;
-pub(crate) use receipts::*;
 pub(crate) use runtime::*;
 pub(crate) use rusqlite::params;
 pub(crate) use schema::*;
 pub(crate) use scoped_regex::*;
-pub(crate) use snapshot::IndexSnapshot;
+pub(crate) use snapshot::RepositoryGeneration;
 pub(crate) use staging::PreparedReconciliation;
 
 pub use diagnostics::{
@@ -74,7 +74,7 @@ pub use models::{
     MetaRecord, ReferenceInput, ReferenceRecord, Storage, StorageCounts, SymbolHit, SymbolInput,
     SymbolRecord,
 };
-pub use runtime::ReadSession;
+pub use runtime::GenerationReadTransaction;
 
 #[cfg(test)]
 mod tests;

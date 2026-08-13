@@ -148,7 +148,7 @@ async fn modern_rmcp_contract_uses_native_result_and_cache_fields() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -205,7 +205,7 @@ async fn mcp_transport_enforces_request_limit_boundaries() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -327,7 +327,7 @@ async fn omitted_mcp_limits_use_customized_service_defaults() {
     config.context_lines = 0;
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -583,7 +583,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -632,9 +632,9 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert!(instructions.contains("plan_only=false"));
     assert!(instructions.contains("For a known scope"));
     assert!(instructions.contains("Use native tools for edits, builds, tests"));
-    assert!(instructions.contains("consistency=reconcile_working_tree"));
+    assert!(instructions.contains("explicitly refresh"));
     assert!(instructions.contains("status=retryable"));
-    assert!(instructions.contains("configured repository_context names"));
+    assert!(instructions.contains("this process's repository"));
     assert!(instructions.contains("Use savings for token statistics"));
 
     let tool_page = client
@@ -947,7 +947,7 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         "pub fn newly_committed_package() {}\n",
     )
     .expect("write source after initial index");
-    let reconcile_working_tree_arguments = serde_json::json!({
+    let removed_consistency_arguments = serde_json::json!({
         "operation": {
             "kind": "identifier",
             "query": "newly_committed_package",
@@ -957,18 +957,16 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         }
     })
     .as_object()
-    .expect("working-tree search arguments")
+    .expect("removed consistency arguments")
     .clone();
     let response = client
         .peer()
         .call_tool(
-            CallToolRequestParams::new("search").with_arguments(reconcile_working_tree_arguments),
+            CallToolRequestParams::new("search").with_arguments(removed_consistency_arguments),
         )
         .await
-        .expect("working-tree search");
-    assert_ne!(response.is_error, Some(true));
-    let structured = response.structured_content.expect("structured response");
-    assert_eq!(structured["hits"][0]["path"], "new_package.rs");
+        .expect("removed consistency input returns a tool result");
+    assert_eq!(response.is_error, Some(true));
 
     let invalid_arguments = serde_json::json!({
         "path": "../secret",
@@ -1308,7 +1306,7 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     std::fs::remove_file(&indexed_path).expect("remove indexed fixture");
@@ -1326,8 +1324,32 @@ async fn mcp_path_errors_redact_external_and_absolute_paths() {
         .expect("initialize MCP client");
     let mut server = server_start.await.expect("join server startup");
 
+    let published = client
+        .peer()
+        .call_tool(
+            CallToolRequestParams::new("read").with_arguments(
+                serde_json::json!({
+                    "path": "escape.rs",
+                    "target": {"kind": "lines", "start": 1, "end": 1}
+                })
+                .as_object()
+                .expect("read arguments")
+                .clone(),
+            ),
+        )
+        .await
+        .expect("read published generation");
+    assert_eq!(published.is_error, Some(false));
+    let published_wire = serde_json::to_string(&published).expect("serialize published read");
+    assert!(published_wire.contains("indexed_before_escape"));
+    for marker in [
+        external_path.to_str().expect("external UTF-8"),
+        "sensitive-marker",
+    ] {
+        assert!(!published_wire.contains(marker), "leaked marker {marker}");
+    }
+
     for requested in [
-        "escape.rs",
         "/home/example/sensitive-marker.rs",
         r"C:\Users\example\sensitive-marker.rs",
     ] {
@@ -1535,7 +1557,7 @@ async fn pending_and_empty_indexes_return_successful_retry_guidance() {
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished());
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
     let ready = waiting

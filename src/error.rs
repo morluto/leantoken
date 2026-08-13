@@ -241,6 +241,9 @@ pub enum Error {
     RepositoryTraversal(#[from] ignore::Error),
     #[error("path is not indexed: {0}")]
     NotIndexed(String),
+    /// A persisted index generation failed one of its derived-projection checks.
+    #[error("index generation is invalid: {projection} projection failed validation")]
+    InvalidIndexGeneration { projection: &'static str },
     /// Requested symbol was absent from an indexed file.
     #[error("symbol is not indexed in {path}: {symbol}")]
     SymbolNotFound {
@@ -488,6 +491,9 @@ pub enum Error {
     RetrievalQueueTimeout,
     #[error("repository index is not ready")]
     IndexNotReady,
+    /// The committed derived projection uses incompatible content semantics.
+    #[error("repository projection requires refresh")]
+    RefreshRequired,
     #[error(
         "reconciliation plan is stale: expected generation {expected}, found generation {actual}"
     )]
@@ -561,6 +567,8 @@ impl Error {
             Self::AmbiguousSymbol { .. } => "symbol_ambiguous",
             Self::HeadingNotFound { .. } => "heading_not_found",
             Self::IndexNotReady => "index_not_ready",
+            Self::RefreshRequired => "refresh_required",
+            Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleCursor => "stale_cursor",
             Self::UnknownReceipt(_) => "unknown_receipt",
             Self::StaleReceipt { .. } => "stale_receipt",
@@ -653,6 +661,8 @@ impl Error {
             Self::RetrievalOverloaded => "retrieval_overloaded",
             Self::RetrievalQueueTimeout => "retrieval_queue_timeout",
             Self::IndexNotReady => "index_not_ready",
+            Self::RefreshRequired => "refresh_required",
+            Self::InvalidIndexGeneration { .. } => "invalid_index_generation",
             Self::StaleReconciliation { .. } => "stale_reconciliation",
             Self::ReconciliationFailed(_) => "reconciliation_failed",
             Self::RetryableConflict(_) => "retryable_conflict",
@@ -689,6 +699,27 @@ impl Error {
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl From<leantoken_git::Error> for Error {
+    fn from(error: leantoken_git::Error) -> Self {
+        match error {
+            leantoken_git::Error::InvalidInput { field, reason } => {
+                Self::InvalidInput { field, reason }
+            }
+            leantoken_git::Error::RequestLimitExceeded {
+                field,
+                requested,
+                limit,
+            } => Self::RequestLimitExceeded {
+                field,
+                requested,
+                limit,
+            },
+            leantoken_git::Error::OperationFailure(message) => Self::OperationFailure(message),
+            leantoken_git::Error::Io(error) => Self::Io(error),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

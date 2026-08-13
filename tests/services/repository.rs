@@ -85,7 +85,7 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
     )
     .expect("scoped services");
     scoped
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("scoped index");
 
@@ -133,9 +133,9 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
     )
     .expect("outside-scope change");
     scoped
-        .index_paths(vec!["third_party/dependency/new.rs".into()])
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
-        .expect("outside-scope targeted reconciliation");
+        .expect("refresh outside-scope change");
     assert_eq!(
         scoped
             .status()
@@ -151,9 +151,9 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
     )
     .expect("included change");
     scoped
-        .index_paths(vec!["src/new.rs".into()])
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
-        .expect("included targeted reconciliation");
+        .expect("refresh included change");
     assert_eq!(
         scoped
             .status()
@@ -168,12 +168,9 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
     )
     .expect("rename across scope");
     scoped
-        .index_paths(vec![
-            "src/new.rs".into(),
-            "third_party/dependency/moved.rs".into(),
-        ])
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
-        .expect("cross-scope rename reconciliation");
+        .expect("refresh cross-scope rename");
     assert_eq!(
         scoped
             .status()
@@ -187,7 +184,7 @@ async fn scoped_index_preserves_selected_retrievals_and_discloses_negative_evide
         Config::discover(root.path(), Some(cache.path().join("full.sqlite"))).expect("full config"),
     )
     .expect("full services");
-    full.index(leantoken::IndexingMode::Reconcile)
+    full.refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("full index");
     let full_result = full.search(request).await.expect("full search");
@@ -220,7 +217,7 @@ async fn same_repository_services_share_committed_generations() {
             .expect("second services");
 
     let indexed = first
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
     let observed = second.status().await.expect("follower status");
@@ -252,8 +249,8 @@ async fn independent_repositories_index_concurrently_without_result_leakage() {
     .expect("second services");
 
     let (first_index, second_index) = tokio::join!(
-        first.index(leantoken::IndexingMode::Reconcile),
-        second.index(leantoken::IndexingMode::Reconcile)
+        first.refresh(leantoken::IndexingMode::Reconcile),
+        second.refresh(leantoken::IndexingMode::Reconcile)
     );
     first_index.expect("first index");
     second_index.expect("second index");
@@ -298,7 +295,7 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
         .expect("config");
     let services = Services::open(config).expect("services");
     services
-        .index(leantoken::IndexingMode::Reconcile)
+        .refresh(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -326,7 +323,7 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
 }
 
 #[tokio::test]
-async fn database_artifact_notifications_do_not_publish_a_generation() {
+async fn unchanged_refresh_does_not_publish_a_generation() {
     let (_root, services) = fixture().await;
     let before = services
         .status()
@@ -335,18 +332,14 @@ async fn database_artifact_notifications_do_not_publish_a_generation() {
         .repository_generation;
 
     let response = services
-        .index_paths_report(vec![
-            "index.sqlite".into(),
-            "index.sqlite-wal".into(),
-            "index.sqlite-shm".into(),
-        ])
+        .refresh_report(leantoken::IndexingMode::Reconcile)
         .await
-        .expect("ignore database artifacts");
+        .expect("unchanged refresh");
 
     assert_eq!(response.repository_generation, before);
     assert_eq!(response.files_indexed, 0);
     assert_eq!(response.files_removed, 0);
-    assert_eq!(response.files_unchanged, 0);
+    assert_eq!(response.files_unchanged, 1);
     assert_eq!(response.files_skipped, 0);
     assert_eq!(
         response
@@ -365,4 +358,52 @@ async fn database_artifact_notifications_do_not_publish_a_generation() {
             .repository_generation,
         before
     );
+}
+
+#[tokio::test]
+async fn incompatible_projection_semantics_require_refresh_before_retrieval() {
+    let (root, services) = fixture().await;
+    let database = root.path().join("index.sqlite");
+    rusqlite::Connection::open(&database)
+        .expect("raw database")
+        .execute(
+            "UPDATE meta SET config_hash = 'obsolete-projection' WHERE id = 1",
+            [],
+        )
+        .expect("mark obsolete projection");
+
+    let error = services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect_err("obsolete projection must not be retrieved");
+    assert!(matches!(error, Error::RefreshRequired));
+
+    services
+        .refresh(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("rebuild obsolete projection");
+    services
+        .read(ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+        })
+        .await
+        .expect("retrieval after refresh");
 }

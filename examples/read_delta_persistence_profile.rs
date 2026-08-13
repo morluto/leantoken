@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use leantoken::Config;
-use leantoken::model::{ReadDeltaOutcome, ReadRequest, ReadResponse, ReadStatus};
+use leantoken::model::{ReadDeltaOutcome, ReadResponse, ReadStatus, WorktreeReadRequest};
 use leantoken::services::Services;
 use serde::Serialize;
 
@@ -92,7 +92,7 @@ async fn main() -> AnyResult<()> {
     let source = generated_source(args.lines);
     fs::write(&source_path, &source)?;
     let services = open_services(root, &database)?;
-    services.index(leantoken::IndexingMode::Reconcile).await?;
+    services.refresh(leantoken::IndexingMode::Reconcile).await?;
     drop(services);
     let database_bytes_after_index = file_bytes(&database);
     let wal_bytes_after_index = file_bytes(&wal_path(&database));
@@ -135,7 +135,7 @@ async fn profile_seed(root: &Path, database: &Path) -> AnyResult<(PhaseReport, S
     let before_write = linux_process_write_bytes();
     let services = open_services(root, database)?;
     let started = Instant::now();
-    let response = services.read(request(None)).await?;
+    let response = services.read_worktree(request(None)).await?;
     let elapsed = started.elapsed().as_micros();
     if response.truncated || response.status != ReadStatus::Content {
         return Err("seed must return complete full content".into());
@@ -171,7 +171,7 @@ async fn profile_restarts(
         let services = open_services(root, database)?;
         let started = Instant::now();
         let response = services
-            .read(request(expected_hash.map(str::to_owned)))
+            .read_worktree(request(expected_hash.map(str::to_owned)))
             .await?;
         samples.push(started.elapsed().as_micros());
         observe(&response, &mut totals);
@@ -193,8 +193,8 @@ fn open_services(root: &Path, database: &Path) -> AnyResult<Services> {
     )?)?)
 }
 
-fn request(expected_hash: Option<String>) -> ReadRequest {
-    ReadRequest {
+fn request(expected_hash: Option<String>) -> WorktreeReadRequest {
+    WorktreeReadRequest {
         path: "profile.rs".into(),
         start_line: None,
         end_line: None,
@@ -205,6 +205,7 @@ fn request(expected_hash: Option<String>) -> ReadRequest {
         max_tokens: Some(32_000),
         expected_hash,
         delta: true,
+        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::Full,
     }

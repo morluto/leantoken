@@ -1,5 +1,9 @@
 use super::*;
 
+/// Changes when persisted projections no longer have the retrieval semantics
+/// expected by the current service layer.
+const PROJECTION_SEMANTICS_VERSION: u32 = 2;
+
 impl Indexer {
     /// Remove metadata-only watcher events before parse and publication.
     pub(super) fn remove_content_stable_candidates(
@@ -84,7 +88,7 @@ impl Indexer {
         Ok(result)
     }
 
-    pub(super) fn config_hash(&self) -> String {
+    pub(crate) fn config_hash(&self) -> String {
         self.config_hash_for_content_marker(&format!(
             "leantoken-index-content-v{INDEX_CONTENT_VERSION}"
         ))
@@ -92,7 +96,7 @@ impl Indexer {
 
     pub(super) fn config_hash_for_content_marker(&self, index_content_marker: &str) -> String {
         let input = format!(
-            "{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "leantoken-projection-semantics-v{PROJECTION_SEMANTICS_VERSION}\0{index_content_marker}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             env!("CARGO_PKG_VERSION"),
             self.config.max_walk_entries,
             self.config.max_files,

@@ -1,219 +1,124 @@
-<!-- Translated from README.md at d1f1bdcc10e38894b0151c67f80990199305bf26. -->
+<!-- 루트 README와 함께 갱신합니다. 기술 사양의 기준 문서는 영어판입니다. -->
 <div align="center">
 
-<h1>LeanToken</h1>
+# LeanToken
 
-**AI 코딩 토큰 하나하나를 더 가치 있게**
+**명시적인 소스 토큰 예산을 제공하는 에이전트용 코드 인텔리전스.**
 
-코딩 에이전트를 위한 로컬 우선 코드 인텔리전스 도구입니다. CLI와 MCP 서버를 통해
-코드를 검색하고, 구조를 살펴보고, 정확한 범위를 읽고, Git 기록을 탐색할 수 있습니다.
+`mcp-name: io.github.morluto/leantoken`
 
 **언어:** [English](../../../README.md) · [简体中文](../zh-CN/README.md) · [日本語](../ja-JP/README.md) · 한국어
 
-<img src="../../../assets/leantoken-hero-v3.jpg" alt="대규모 코드베이스를 AI 에이전트에게 필요한 파일과 코드로 좁혀 주는 LeanToken" width="100%">
+<img src="../../../assets/leantoken-hero-v3.jpg" alt="저장소를 에이전트가 읽어야 할 코드로 좁히는 LeanToken" width="100%">
 
 [![npm](https://img.shields.io/npm/v/leantoken?logo=npm&label=npm)](https://www.npmjs.com/package/leantoken)
-[![npm downloads](https://img.shields.io/npm/dm/leantoken?logo=npm&label=downloads)](https://www.npmjs.com/package/leantoken)
 [![Rust 1.95+](https://img.shields.io/badge/Rust-1.95%2B-000000?logo=rust)](https://www.rust-lang.org/)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#라이선스)
 
-[빠른 시작](#빠른-시작) · [LeanToken을 사용하는 이유](#leantoken을-사용하는-이유) · [도구](#사용할-수-있는-도구) · [CLI](#cli-사용법) · [작동 방식](#작동-방식) · [문서](#문서)
-
 </div>
 
----
+LeanToken은 로컬에서 불변 저장소 generation을 만들고, 같은 generation에서 제한된 검색,
+아웃라인, 읽기 작업을 제공합니다. CLI와 MCP 서버는 같은 애플리케이션 서비스를 호출하며
+소스 코드는 로컬에 남습니다.
 
-> **번역 안내:** [영문 README](../../../README.md)가 최신이자 가장 완전한 기준입니다.
-> 이 페이지는 설치와 일상적인 사용에 필요한 핵심 내용을 다룹니다. 버전, 안전성,
-> 고급 검색 동작에 관한 세부 사항은 영문 문서를 기준으로 합니다.
-
-> **측정된 토큰 절감량:** 60회 통제 실험에서 LeanToken은 에이전트의 기본 도구보다
-> 제한적인 저장소 탐색 시 모델 입력 토큰을 20.1%, 광범위한 탐색 시 37.6% 적게
-> 사용했습니다. 자세한 내용은 [측정 방법](../../measurement.md)을 참고하세요.
+영문 README와 그 문서 링크가 완전한 기술 사양의 기준입니다. 이 페이지는 일상적인 사용에 필요한
+현재 내용을 한국어로 정리합니다.
 
 ## 빠른 시작
 
-Claude Code, Cursor, OpenCode, Codex, Gemini CLI 또는 Antigravity에 LeanToken을
-추가합니다.
+지원되는 코딩 클라이언트에 LeanToken을 설정합니다.
 
 ```bash
 npx leantoken setup
 ```
 
-설정 마법사는 감지된 클라이언트를 표시하지만 기본적으로 아무것도 선택하지 않습니다.
-LeanToken을 사용할 코딩 에이전트를 직접 선택할 수 있으며, 파일을 쓰기 전에 정확한
-설정 경로와 MCP 실행 명령을 보여 주고 확인을 요청합니다. `npx` 기반 설정은 실행된
-LeanToken의 정확한 버전을 고정하므로 클라이언트를 다시 시작해도 조용히 업그레이드되지
-않습니다.
-
-설정한 클라이언트를 다시 시작하거나 새로고침한 뒤 저장소에서 연결과 첫 검색을
-확인합니다.
+클라이언트를 재시작한 뒤 저장소에서 연결을 확인합니다.
 
 ```bash
 npx leantoken doctor
 ```
 
-예를 들어 *편집하기 전에 요청 취소와 관련된 코드를 찾아 줘* 같은 넓은 작업을 요청해
-보세요. LeanToken은 에이전트가 `leantoken.context`로 시작하도록 돕고, 편집, 빌드,
-테스트에는 기존 도구를 그대로 사용할 수 있게 합니다.
-
-LeanToken이 관측한 저장소별 토큰 사용량을 확인합니다.
+CLI를 직접 사용할 수도 있습니다.
 
 ```bash
-npx leantoken savings
+npx leantoken refresh
+npx leantoken search RepositoryGeneration
+npx leantoken outline src/storage/snapshot.rs
+npx leantoken read src/storage/snapshot.rs --lines 1:120
 ```
 
-| 특징 | 설명 |
-| --- | --- |
-| **기본적으로 로컬 실행** | 소스는 로컬 데이터베이스에 인덱싱됩니다. LeanToken은 읽기 전용 탐색 및 검색 계층입니다. |
-| **명시적인 토큰 예산** | 모든 응답에 토큰 한도가 있어 큰 파일이 요청 전체를 차지하지 않습니다. |
-| **에이전트 워크플로에 최적화** | 전용 도구로 파일 탐색, 코드 검색, 구조 확인, 정확한 범위 읽기, 기록 추적, JSON 질의, 토큰 사용량 확인을 수행합니다. |
+`--allow-broad-root`를 명시하지 않으면 LeanToken은 파일 시스템 루트, 홈 디렉터리 및 홈
+디렉터리의 상위를 거부합니다. 설정은 바꿀 파일을 미리 보여 주고 확인을 요구하며, 자동화에서는
+클라이언트를 명시적으로 선택해야 합니다.
 
-### 자동 설정 및 제거
+## 검색 모델
 
-마법사를 건너뛰고 클라이언트를 명시적으로 선택하거나 지원되는 모든 클라이언트를
-설정합니다.
+`refresh`가 공개 경계입니다.
 
-```bash
-npx leantoken setup --claude --codex --yes
-npx leantoken setup --all --yes
+```text
+저장소 파일 -> 제한된 수집 -> 완전한 파생 generation
+            -> 원자적 공개 -> search / outline / read
 ```
 
-파일을 변경하지 않고 동일한 설정 계획을 미리 봅니다.
+한 번의 검색은 하나의 커밋된 generation만 관찰하며, 서로 다른 공개의 파일을 섞지 않습니다.
+워처와 호환성 조정 모드는 새로 고침을 요청할 수 있지만, 정확성은 파일 시스템 이벤트와의 경쟁에
+의존하지 않습니다. 작업 트리를 바꾼 뒤에는 `refresh`를 호출하세요.
 
-```bash
-npx leantoken setup --codex --cursor --dry-run
-```
+공개 `read`는 인덱싱된 generation의 내용을 반환합니다. 커밋되지 않은 작업 트리 바이트를
+의도적으로 읽는 라이브러리 호출자는 약한 보장을 이해한 상태에서 명시적으로
+`Services::read_worktree`를 사용합니다.
 
-LeanToken이 관리하는 통합을 제거합니다.
+MCP 프로세스 하나는 저장소 루트 하나를 담당합니다. 여러 저장소에는 여러 프로세스를 시작하여
+리소스와 장애를 분명하게 격리하세요.
 
-```bash
-npx leantoken remove
-```
-
-## 일반적인 에이전트 워크플로
-
-LeanToken은 저장소 전체를 한 번에 쏟아붓는 방식보다 작은 증거 순환으로 사용할 때 가장
-효과적입니다.
-
-1. **자율 탐색을 한 번의 호출로 시작하기.** 범위가 넓고 불확실한 작업은
-   `context`와 `plan_only: false`로 시작하고 반환된 소스를 바로 사용합니다.
-   커버리지가 구현 또는 회귀 테스트 담당 파일의 구체적인 누락을 표시할 때만
-   초점을 맞춘 후속 호출을 최대 한 번 수행합니다. 비용이나 위험이 큰 검색을
-   사람이 검토하는 경우에는 계속 `plan_only: true`로 미리 볼 수 있습니다.
-2. **소스를 다시 보내지 않고 계속하기.** 다음 context 호출에 이전 `receipt_id`를
-   전달하거나 반환된 조각 해시를 `known_hashes`로 전달합니다.
-3. **관측된 실패 조사하기.** `investigation` 워크플로를 사용하고
-   `workflow_evidence`에는 직접 관측한 실패, 경로, 심볼 또는 테스트 의도만 제공합니다.
-4. **변경 검토하기.** `review` 워크플로에서 `base_revision`을 `BASE..HEAD`로,
-   `strict_changed_paths`를 `true`로 설정합니다.
-
-## LeanToken을 사용하는 이유
-
-대부분의 에이전트는 넓게 검색한 다음 파일 전체를 읽습니다. LeanToken은 이 작업을
-단계적으로 좁힙니다.
-
-| 일반적인 저장소 탐색 | LeanToken 사용 |
-| --- | --- |
-| 넓은 디렉터리 목록 스캔 | 간결한 트리에서 관련 경로 찾기 |
-| 구조를 찾기 위해 파일 전체 읽기 | 파일 전체를 불러오지 않고 정의와 import 확인 |
-| 매 턴 같은 코드 다시 보내기 | 변경되지 않은 증거의 중복 전송 방지 |
-| 큰 파일이 요청을 가득 채우게 두기 | 소스를 정확한 예산 안에 유지하고 응답 오버헤드를 별도로 보고 |
-| 중요한 파일 추측하기 | 작업과 관련성이 높은 코드의 순위 산정 |
-
-코딩 에이전트는 계속해서 편집, 명령, 테스트, 대화를 담당합니다. LeanToken은 그 작업에
-필요한 코드를 찾아 반환합니다.
-
-## 사용할 수 있는 도구
+## 사용 가능한 도구
 
 | 도구 | 용도 |
 | --- | --- |
-| `leantoken.context` | 넓은 작업의 기본 시작점입니다. 토큰 예산 안에서 순위가 매겨진 증거를 미리 보거나 가져옵니다. |
-| `leantoken.search` | 텍스트, 정규식, 식별자, 심볼 또는 참조를 순위 기반으로 검색합니다. |
-| `leantoken.files` | ignore 규칙을 반영하는 간결한 경로 탐색입니다. |
-| `leantoken.outline` | 파일 전체를 읽지 않고 정의, 시그니처, import, 범위를 확인합니다. |
-| `leantoken.read` | 하나의 정확한 심볼 또는 포함 행 범위를 읽습니다. |
-| `leantoken.history` | 변경 불가능한 Git 리비전 사이에서 파싱된 심볼을 읽고, 일괄 비교하고, 추적합니다. |
-| `leantoken.json` | 제한된 현재 JSON을 질의, 요약 또는 비교합니다. |
-| `leantoken.savings` | 응답 통계, 해시 억제, 실패, 관측 한계를 보고합니다. |
+| `leantoken.files` | 소스를 읽지 않고 인덱싱된 경로를 찾습니다. |
+| `leantoken.search` | 텍스트, 정규식, 식별자, 심볼, 참조를 검색합니다. |
+| `leantoken.outline` | 정의, 시그니처, import, 범위를 살펴봅니다. |
+| `leantoken.read` | 인덱싱된 정확한 범위, 심볼, 제목을 읽습니다. |
+| `leantoken.history` | 제한된 Git 기록과 diff를 조사합니다. |
+| `leantoken.json` | 제한된 라이브 JSON 구조를 질의합니다. |
+| `leantoken.context` | 작업에 대한 순위가 매겨진 증거를 구성합니다. |
+| `leantoken.receipt_rebase` | 불변 증거를 새 generation으로 리베이스합니다. |
+| `leantoken.savings` | 검색과 토큰의 관측값을 보고합니다. |
 
-## CLI 사용법
+`files`, `search`, `outline`, `read`가 검색 커널입니다. `context`는 이 기본 연산을
+조정합니다. Git, JSON, 설정, 업데이트, 캐시 관리, 오프라인 분석은 각각 별도 소유자가
+있습니다.
 
-`npx`로 직접 실행합니다.
+## 토큰, 커서, 수명 주기
 
-```bash
-npx leantoken status
-npx leantoken savings
-npx leantoken doctor
-npx leantoken --root /path/to/repo search handle_request
-```
+소스 예산과 직렬화된 응답 예산은 분리됩니다. `max_tokens`는 반환 소스를,
+`max_response_tokens`는 전체 JSON 응답을 제한합니다. 페이지 커서는 저장소, generation,
+정규화된 요청, 위치에 묶이므로 다른 내용이나 인수로 조용히 이어질 수 없습니다. 클라이언트는
+이미 가진 콘텐츠 해시를 전달해 재전송을 피할 수 있습니다. 검색 증거와 쿼리 증명은 가변 세션이
+아닌 불변의 콘텐츠 주소화 아티팩트입니다.
 
-또는 전역 바이너리를 설치합니다.
-
-```bash
-npm install --global leantoken@latest
-
-leantoken --root /path/to/repo index
-leantoken --root /path/to/repo search handle_request --mode identifier --max-tokens 800
-leantoken --root /path/to/repo context \
-  --task "fix request cancellation during shutdown" \
-  --budget 2000
-```
-
-## 설치 및 업데이트
-
-npm 패키지에는 다음 플랫폼용 네이티브 바이너리가 포함됩니다.
-
-- macOS ARM64 및 x64
-- glibc Linux ARM64 및 x64
-- Windows x64
-
-musl Linux를 포함한 다른 대상은 소스에서 빌드해야 합니다. Rust 1.95 이상과 네이티브
-C/C++ 툴체인을 설치한 뒤 다음 명령을 실행하세요.
+설정, 캐시, 사설 런타임 정리는 `--dry-run`으로 미리 볼 수 있습니다. 관리되는 클라이언트
+설정은 선택한 버전에 고정되며 자동으로 업데이트되지 않습니다.
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
-```
-
-기존 클라이언트 통합을 명시적으로 업데이트합니다.
-
-```bash
+npx leantoken setup --claude --codex --yes
 npx --yes leantoken@latest setup --refresh --yes
 ```
 
-고정된 MCP 설정은 조용히 `@latest`로 이동하지 않습니다. 롤백, 캐시 관리, 버전 세부
-사항은 [사용 가이드](../../usage.md)를 참고하세요.
-
-## 작동 방식
-
-```text
-저장소
-  │
-  ▼
-파일 탐색 ──► 코드 구조 추출 ──► 로컬 검색 인덱스
-                                  │
-                                  ▼
-에이전트 요청 ──► 순위 / 정확한 검색 ──► 토큰 예산 안의 대상 코드
-```
-
-LeanToken은 소스를 한 번 인덱싱한 뒤 간결한 경로, 순위가 매겨진 일치 항목, 구조
-개요, 정확한 소스 범위, 작업별 컨텍스트를 제공합니다. 여러 턴에 걸쳐 변경되지 않은
-증거를 다시 보내는 것도 피합니다.
-
 ## 문서
 
-| 가이드 | 내용 |
+| 문서 | 내용 |
 | --- | --- |
-| [사용법 및 도구 참고서](../../usage.md) | 명령, MCP 도구, 요청 옵션, 예시 |
-| [아키텍처 및 신뢰성](../../architecture.md) | 구성 요소, 데이터 흐름, 저장소, 실패 동작 |
-| [로드맵](../../roadmap.md) | 현재 방향과 계획된 작업 |
-| [개발 및 테스트](../../development.md) | 로컬 설정, 검증, 릴리스 워크플로 |
-| [벤치마크 방법론](../../../benchmarks/README.md) | 토큰 효율 측정 및 해석 |
-| [측정 도구](../../measurement.md) | 실험, 전송 비용, 프로파일링 도구 |
+| [사용법](../../usage.md) | 현재 CLI 및 MCP 동작 |
+| [아키텍처](../../architecture.md) | generation, 저장소, 제한 계약 |
+| [개발](../../development.md) | 테스트 소유권과 기여 절차 |
+| [벤치마크](../../../benchmarks/README.md) | 선택적 평가 도구와 증거 정책 |
+| [릴리스](../../releases.md) | 배포와 복구 절차 |
+| [변경 로그](../../../CHANGELOG.md) | 릴리스된 변경 |
+
+계획은 GitHub 이슈와 pull request에서 관리합니다. 과거 설계와 실험 서술은 최신 문서로
+유지하지 않고 Git 기록에 남깁니다.
 
 ## 라이선스
 
-다음 중 하나를 선택하여 사용할 수 있습니다.
-
-- [Apache License, Version 2.0](../../../LICENSE-APACHE)
-- [MIT License](../../../LICENSE-MIT)
+MIT License 또는 Apache License 2.0 중 하나를 선택해 사용할 수 있습니다.

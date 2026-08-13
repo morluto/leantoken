@@ -144,13 +144,11 @@ pub enum WatcherMessage {
     ReconcileRequired,
 }
 
-/// One coalesced watcher reconciliation selected after quiet-time and backoff.
+/// One coalesced request to refresh the repository after quiet-time and backoff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatcherAction {
-    /// Reconcile the sorted set of changed repository-relative paths.
-    Paths(Vec<String>),
-    /// Reconcile full repository visibility and contents.
-    Full,
+    /// Acquire and atomically publish a complete repository generation.
+    Refresh,
 }
 
 #[derive(Debug)]
