@@ -195,6 +195,52 @@ fn recreated_primary_database_cannot_use_old_sidecar_artifacts() {
 }
 
 #[test]
+fn recreated_primary_database_reclaims_old_sidecar_quota() {
+    let directory = tempfile::tempdir().expect("directory");
+    let index_path = directory.path().join("index.sqlite");
+    let artifact_path = directory.path().join("index.artifacts.sqlite");
+    let index = Storage::open(&index_path).expect("first index");
+    let first_incarnation = index
+        .meta()
+        .expect("first metadata")
+        .database_incarnation_id;
+    let artifacts = ArtifactStorage::open(&artifact_path);
+
+    for index in 0..256 {
+        artifacts
+            .evaluate_receipt(
+                "repository",
+                &first_incarnation,
+                None,
+                index as u64,
+                &[evidence(&format!("old-{index}"))],
+                true,
+            )
+            .expect("fill old incarnation quota");
+    }
+    drop(index);
+
+    std::fs::remove_file(&index_path).expect("remove only primary database");
+    let recreated = Storage::open(&index_path).expect("recreated index");
+    let recreated_incarnation = recreated
+        .meta()
+        .expect("recreated metadata")
+        .database_incarnation_id;
+    assert_ne!(recreated_incarnation, first_incarnation);
+
+    artifacts
+        .evaluate_receipt(
+            "repository",
+            &recreated_incarnation,
+            None,
+            1,
+            &[evidence("new")],
+            true,
+        )
+        .expect("new incarnation must not inherit old quota usage");
+}
+
+#[test]
 fn legacy_mutable_state_is_absent_from_the_repository_index() {
     let directory = tempfile::tempdir().expect("directory");
     let index = Storage::open(directory.path().join("index.sqlite")).expect("index");
