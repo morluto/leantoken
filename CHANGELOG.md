@@ -1,6 +1,27 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.26] - 2026-08-13
+### Bug Fixes
+
+- **ci:** Refresh gitleaks fingerprint for re-added regex trial report
+- Enforce exact context excerpt caps (#573) ([#573](https://github.com/morluto/leantoken/pull/573))
+- Generalize context owner selection (#571) ([#571](https://github.com/morluto/leantoken/pull/571))
+- Derive query receipt semantics fingerprint from computation (#569) ([#569](https://github.com/morluto/leantoken/pull/569))
+- Verify FTS index integrity on database open (#570) ([#570](https://github.com/morluto/leantoken/pull/570))
+- Warn when process-wide indexing workers exceed CPU capacity (#568) ([#568](https://github.com/morluto/leantoken/pull/568))
+- Neutralize Git pathspec magic and external diff helpers (#567) ([#567](https://github.com/morluto/leantoken/pull/567))
+### Features
+
+- Index C call references (#575) ([#575](https://github.com/morluto/leantoken/pull/575))
+- Expose reference search capability (#574) ([#574](https://github.com/morluto/leantoken/pull/574))
+### Refactoring
+
+- Make retrieval and index invariants authoritative (#576) ([#576](https://github.com/morluto/leantoken/pull/576))
+- Make repository generations the retrieval boundary (#572) ([#572](https://github.com/morluto/leantoken/pull/572))
+- **test:** Consolidate redundant unit tests and tighten CI topology ownership (#478) ([#478](https://github.com/morluto/leantoken/pull/478))
+- Replace boolean domain flags with typed enums (#479) ([#479](https://github.com/morluto/leantoken/pull/479))
+
 ## [0.1.25] - 2026-08-09
 ### Bug Fixes
 
