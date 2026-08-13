@@ -1087,13 +1087,19 @@ fn launcher_command_from_root(root: &std::path::Path, command: &OsStr) -> Result
                 "relative launcher command must not contain parent-directory traversal",
             ));
         }
-        let resolved = root.join(path).canonicalize().map_err(|error| {
+        let canonical_root = root.canonicalize().map_err(|error| {
+            doctor_error(
+                "launch",
+                format!("could not resolve repository root: {error}"),
+            )
+        })?;
+        let resolved = canonical_root.join(path).canonicalize().map_err(|error| {
             doctor_error(
                 "launch",
                 format!("could not resolve relative launcher command: {error}"),
             )
         })?;
-        if !resolved.starts_with(root) {
+        if !resolved.starts_with(&canonical_root) {
             return Err(doctor_error(
                 "launch",
                 "relative launcher command resolves outside the repository",
