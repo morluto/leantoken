@@ -242,74 +242,77 @@
 <a href=#242 id=242 data-nosnippet>242</a>                occurrence_group_key(<span class="kw-2">&amp;</span>candidate.hit, SearchOccurrenceOutput::Excerpts),
 <a href=#243 id=243 data-nosnippet>243</a>            ),
 <a href=#244 id=244 data-nosnippet>244</a>            SearchOutputShape::Full
-<a href=#245 id=245 data-nosnippet>245</a>            | SearchOutputShape::Compact
-<a href=#246 id=246 data-nosnippet>246</a>            | SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="prelude-val">None</span>,
-<a href=#247 id=247 data-nosnippet>247</a>        };
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span>count = <span class="kw">match </span>output_shape {
-<a href=#249 id=249 data-nosnippet>249</a>            SearchOutputShape::Full =&gt; tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt),
-<a href=#250 id=250 data-nosnippet>250</a>            SearchOutputShape::Compact =&gt; <span class="number">0</span>,
-<a href=#251 id=251 data-nosnippet>251</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="number">0</span>,
-<a href=#252 id=252 data-nosnippet>252</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts)
-<a href=#253 id=253 data-nosnippet>253</a>                <span class="kw">if </span>group_key
-<a href=#254 id=254 data-nosnippet>254</a>                    .as_ref()
-<a href=#255 id=255 data-nosnippet>255</a>                    .is_some_and(|key| charged_occurrence_groups.contains(key)) =&gt;
-<a href=#256 id=256 data-nosnippet>256</a>            {
-<a href=#257 id=257 data-nosnippet>257</a>                <span class="number">0
-<a href=#258 id=258 data-nosnippet>258</a>            </span>}
-<a href=#259 id=259 data-nosnippet>259</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) =&gt; {
-<a href=#260 id=260 data-nosnippet>260</a>                tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt)
-<a href=#261 id=261 data-nosnippet>261</a>            }
-<a href=#262 id=262 data-nosnippet>262</a>        };
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">if </span>emitted_tokens.saturating_add(count) &gt; token_limit {
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">if </span>selected.is_empty() {
-<a href=#265 id=265 data-nosnippet>265</a>                <span class="comment">// An empty page still makes cursor progress.  The documented
-<a href=#266 id=266 data-nosnippet>266</a>                // contract permits a token budget to filter every candidate
-<a href=#267 id=267 data-nosnippet>267</a>                // on a page; only preserve an unconsumed candidate when a
-<a href=#268 id=268 data-nosnippet>268</a>                // preceding selected hit has exhausted this page's budget.
-<a href=#269 id=269 data-nosnippet>269</a>                </span>consumed += <span class="number">1</span>;
-<a href=#270 id=270 data-nosnippet>270</a>                <span class="kw">continue</span>;
-<a href=#271 id=271 data-nosnippet>271</a>            }
-<a href=#272 id=272 data-nosnippet>272</a>            <span class="comment">// Keep the first hit that cannot fit on this page at the cursor
-<a href=#273 id=273 data-nosnippet>273</a>            // boundary. A fresh page has its own source-token allowance; if
-<a href=#274 id=274 data-nosnippet>274</a>            // we consumed this hit here, pagination could skip it forever.
-<a href=#275 id=275 data-nosnippet>275</a>            </span><span class="kw">break</span>;
-<a href=#276 id=276 data-nosnippet>276</a>        }
-<a href=#277 id=277 data-nosnippet>277</a>        consumed += <span class="number">1</span>;
-<a href=#278 id=278 data-nosnippet>278</a>        emitted_tokens += count;
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = group_key {
-<a href=#280 id=280 data-nosnippet>280</a>            charged_occurrence_groups.insert(key);
-<a href=#281 id=281 data-nosnippet>281</a>        }
-<a href=#282 id=282 data-nosnippet>282</a>        selected.push(candidate);
-<a href=#283 id=283 data-nosnippet>283</a>    }
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="prelude-val">Ok</span>((selected, consumed, emitted_tokens))
-<a href=#285 id=285 data-nosnippet>285</a>}
-<a href=#286 id=286 data-nosnippet>286</a>
-<a href=#287 id=287 data-nosnippet>287</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>selected_search_source_tokens(
-<a href=#288 id=288 data-nosnippet>288</a>    selected: <span class="kw-2">&amp;</span>[CandidateSearchHit],
-<a href=#289 id=289 data-nosnippet>289</a>    output_shape: SearchOutputShape,
-<a href=#290 id=290 data-nosnippet>290</a>    tokenizer: <span class="kw-2">&amp;</span><span class="kw">crate</span>::tokens::Tokenizer,
-<a href=#291 id=291 data-nosnippet>291</a>) -&gt; usize {
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">match </span>output_shape {
-<a href=#293 id=293 data-nosnippet>293</a>        SearchOutputShape::Full =&gt; selected
-<a href=#294 id=294 data-nosnippet>294</a>            .iter()
-<a href=#295 id=295 data-nosnippet>295</a>            .map(|candidate| tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt))
-<a href=#296 id=296 data-nosnippet>296</a>            .sum(),
-<a href=#297 id=297 data-nosnippet>297</a>        SearchOutputShape::Compact =&gt; <span class="number">0</span>,
-<a href=#298 id=298 data-nosnippet>298</a>        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="number">0</span>,
-<a href=#299 id=299 data-nosnippet>299</a>        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) =&gt; {
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="kw">let </span><span class="kw-2">mut </span>seen = HashSet::new();
-<a href=#301 id=301 data-nosnippet>301</a>            selected
-<a href=#302 id=302 data-nosnippet>302</a>                .iter()
-<a href=#303 id=303 data-nosnippet>303</a>                .filter(|candidate| {
-<a href=#304 id=304 data-nosnippet>304</a>                    seen.insert(occurrence_group_key(
-<a href=#305 id=305 data-nosnippet>305</a>                        <span class="kw-2">&amp;</span>candidate.hit,
-<a href=#306 id=306 data-nosnippet>306</a>                        SearchOccurrenceOutput::Excerpts,
-<a href=#307 id=307 data-nosnippet>307</a>                    ))
-<a href=#308 id=308 data-nosnippet>308</a>                })
-<a href=#309 id=309 data-nosnippet>309</a>                .map(|candidate| tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt))
-<a href=#310 id=310 data-nosnippet>310</a>                .sum()
-<a href=#311 id=311 data-nosnippet>311</a>        }
-<a href=#312 id=312 data-nosnippet>312</a>    }
-<a href=#313 id=313 data-nosnippet>313</a>}
-<a href=#314 id=314 data-nosnippet>314</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#245 id=245 data-nosnippet>245</a>            | SearchOutputShape::Grouped
+<a href=#246 id=246 data-nosnippet>246</a>            | SearchOutputShape::Compact
+<a href=#247 id=247 data-nosnippet>247</a>            | SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="prelude-val">None</span>,
+<a href=#248 id=248 data-nosnippet>248</a>        };
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">let </span>count = <span class="kw">match </span>output_shape {
+<a href=#250 id=250 data-nosnippet>250</a>            SearchOutputShape::Full | SearchOutputShape::Grouped =&gt; {
+<a href=#251 id=251 data-nosnippet>251</a>                tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt)
+<a href=#252 id=252 data-nosnippet>252</a>            }
+<a href=#253 id=253 data-nosnippet>253</a>            SearchOutputShape::Compact =&gt; <span class="number">0</span>,
+<a href=#254 id=254 data-nosnippet>254</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="number">0</span>,
+<a href=#255 id=255 data-nosnippet>255</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts)
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="kw">if </span>group_key
+<a href=#257 id=257 data-nosnippet>257</a>                    .as_ref()
+<a href=#258 id=258 data-nosnippet>258</a>                    .is_some_and(|key| charged_occurrence_groups.contains(key)) =&gt;
+<a href=#259 id=259 data-nosnippet>259</a>            {
+<a href=#260 id=260 data-nosnippet>260</a>                <span class="number">0
+<a href=#261 id=261 data-nosnippet>261</a>            </span>}
+<a href=#262 id=262 data-nosnippet>262</a>            SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) =&gt; {
+<a href=#263 id=263 data-nosnippet>263</a>                tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt)
+<a href=#264 id=264 data-nosnippet>264</a>            }
+<a href=#265 id=265 data-nosnippet>265</a>        };
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">if </span>emitted_tokens.saturating_add(count) &gt; token_limit {
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">if </span>selected.is_empty() {
+<a href=#268 id=268 data-nosnippet>268</a>                <span class="comment">// An empty page still makes cursor progress.  The documented
+<a href=#269 id=269 data-nosnippet>269</a>                // contract permits a token budget to filter every candidate
+<a href=#270 id=270 data-nosnippet>270</a>                // on a page; only preserve an unconsumed candidate when a
+<a href=#271 id=271 data-nosnippet>271</a>                // preceding selected hit has exhausted this page's budget.
+<a href=#272 id=272 data-nosnippet>272</a>                </span>consumed += <span class="number">1</span>;
+<a href=#273 id=273 data-nosnippet>273</a>                <span class="kw">continue</span>;
+<a href=#274 id=274 data-nosnippet>274</a>            }
+<a href=#275 id=275 data-nosnippet>275</a>            <span class="comment">// Keep the first hit that cannot fit on this page at the cursor
+<a href=#276 id=276 data-nosnippet>276</a>            // boundary. A fresh page has its own source-token allowance; if
+<a href=#277 id=277 data-nosnippet>277</a>            // we consumed this hit here, pagination could skip it forever.
+<a href=#278 id=278 data-nosnippet>278</a>            </span><span class="kw">break</span>;
+<a href=#279 id=279 data-nosnippet>279</a>        }
+<a href=#280 id=280 data-nosnippet>280</a>        consumed += <span class="number">1</span>;
+<a href=#281 id=281 data-nosnippet>281</a>        emitted_tokens += count;
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = group_key {
+<a href=#283 id=283 data-nosnippet>283</a>            charged_occurrence_groups.insert(key);
+<a href=#284 id=284 data-nosnippet>284</a>        }
+<a href=#285 id=285 data-nosnippet>285</a>        selected.push(candidate);
+<a href=#286 id=286 data-nosnippet>286</a>    }
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="prelude-val">Ok</span>((selected, consumed, emitted_tokens))
+<a href=#288 id=288 data-nosnippet>288</a>}
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>selected_search_source_tokens(
+<a href=#291 id=291 data-nosnippet>291</a>    selected: <span class="kw-2">&amp;</span>[CandidateSearchHit],
+<a href=#292 id=292 data-nosnippet>292</a>    output_shape: SearchOutputShape,
+<a href=#293 id=293 data-nosnippet>293</a>    tokenizer: <span class="kw-2">&amp;</span><span class="kw">crate</span>::tokens::Tokenizer,
+<a href=#294 id=294 data-nosnippet>294</a>) -&gt; usize {
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">match </span>output_shape {
+<a href=#296 id=296 data-nosnippet>296</a>        SearchOutputShape::Full | SearchOutputShape::Grouped =&gt; selected
+<a href=#297 id=297 data-nosnippet>297</a>            .iter()
+<a href=#298 id=298 data-nosnippet>298</a>            .map(|candidate| tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt))
+<a href=#299 id=299 data-nosnippet>299</a>            .sum(),
+<a href=#300 id=300 data-nosnippet>300</a>        SearchOutputShape::Compact =&gt; <span class="number">0</span>,
+<a href=#301 id=301 data-nosnippet>301</a>        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) =&gt; <span class="number">0</span>,
+<a href=#302 id=302 data-nosnippet>302</a>        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) =&gt; {
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="kw">let </span><span class="kw-2">mut </span>seen = HashSet::new();
+<a href=#304 id=304 data-nosnippet>304</a>            selected
+<a href=#305 id=305 data-nosnippet>305</a>                .iter()
+<a href=#306 id=306 data-nosnippet>306</a>                .filter(|candidate| {
+<a href=#307 id=307 data-nosnippet>307</a>                    seen.insert(occurrence_group_key(
+<a href=#308 id=308 data-nosnippet>308</a>                        <span class="kw-2">&amp;</span>candidate.hit,
+<a href=#309 id=309 data-nosnippet>309</a>                        SearchOccurrenceOutput::Excerpts,
+<a href=#310 id=310 data-nosnippet>310</a>                    ))
+<a href=#311 id=311 data-nosnippet>311</a>                })
+<a href=#312 id=312 data-nosnippet>312</a>                .map(|candidate| tokenizer.count(<span class="kw-2">&amp;</span>candidate.hit.excerpt))
+<a href=#313 id=313 data-nosnippet>313</a>                .sum()
+<a href=#314 id=314 data-nosnippet>314</a>        }
+<a href=#315 id=315 data-nosnippet>315</a>    }
+<a href=#316 id=316 data-nosnippet>316</a>}
+<a href=#317 id=317 data-nosnippet>317</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

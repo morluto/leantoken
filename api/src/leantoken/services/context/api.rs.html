@@ -261,114 +261,118 @@
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>operation = context_accounting_operation(<span class="kw-2">&amp;</span>parsed.request);
 <a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
 <a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span>result = <span class="self">self
-<a href=#264 id=264 data-nosnippet>264</a>            </span>.blocking_executor
-<a href=#265 id=265 data-nosnippet>265</a>            .run(cancellation, <span class="kw">move </span>|cancellation| {
-<a href=#266 id=266 data-nosnippet>266</a>                <span class="kw">let </span>(evaluation, baseline_source_tokens) =
-<a href=#267 id=267 data-nosnippet>267</a>                    this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
-<a href=#268 id=268 data-nosnippet>268</a>                        parsed,
-<a href=#269 id=269 data-nosnippet>269</a>                        retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
-<a href=#270 id=270 data-nosnippet>270</a>                            options,
-<a href=#271 id=271 data-nosnippet>271</a>                            cancellation,
-<a href=#272 id=272 data-nosnippet>272</a>                            diagnostics: CandidateDiagnostics::Omit,
-<a href=#273 id=273 data-nosnippet>273</a>                            signals: ContextSignals::PRODUCTION,
-<a href=#274 id=274 data-nosnippet>274</a>                        },
-<a href=#275 id=275 data-nosnippet>275</a>                    })<span class="question-mark">?</span>;
-<a href=#276 id=276 data-nosnippet>276</a>                <span class="prelude-val">Ok</span>(AccountedContextResponse {
-<a href=#277 id=277 data-nosnippet>277</a>                    response: evaluation.response,
-<a href=#278 id=278 data-nosnippet>278</a>                    baseline_source_tokens,
-<a href=#279 id=279 data-nosnippet>279</a>                    operation,
-<a href=#280 id=280 data-nosnippet>280</a>                })
-<a href=#281 id=281 data-nosnippet>281</a>            })
-<a href=#282 id=282 data-nosnippet>282</a>            .<span class="kw">await</span>;
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="self">self</span>.observe_service_result(operation, result)
-<a href=#284 id=284 data-nosnippet>284</a>    }
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// Retrieve context and expose pre-selection candidate paths for evaluation.
-<a href=#287 id=287 data-nosnippet>287</a>    ///
-<a href=#288 id=288 data-nosnippet>288</a>    /// Production adapters should use [`Self::context`]. This method exists for
-<a href=#289 id=289 data-nosnippet>289</a>    /// frozen retrieval benchmarks and does not alter the MCP response schema.
-<a href=#290 id=290 data-nosnippet>290</a>    </span><span class="kw">pub async fn </span>context_evaluation(<span class="kw-2">&amp;</span><span class="self">self</span>, request: ContextRequest) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
-<a href=#292 id=292 data-nosnippet>292</a>            request,
-<a href=#293 id=293 data-nosnippet>293</a>            ContextExecution::new(ContextWorkflow::Implementation),
-<a href=#294 id=294 data-nosnippet>294</a>            ServiceCallOptions::default(),
-<a href=#295 id=295 data-nosnippet>295</a>        )<span class="question-mark">?</span>;
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="self">self</span>.blocking_executor
-<a href=#298 id=298 data-nosnippet>298</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
-<a href=#299 id=299 data-nosnippet>299</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
-<a href=#300 id=300 data-nosnippet>300</a>                    parsed,
-<a href=#301 id=301 data-nosnippet>301</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
-<a href=#302 id=302 data-nosnippet>302</a>                        options: ServiceCallOptions::default(),
-<a href=#303 id=303 data-nosnippet>303</a>                        cancellation,
-<a href=#304 id=304 data-nosnippet>304</a>                        diagnostics: CandidateDiagnostics::Collect,
-<a href=#305 id=305 data-nosnippet>305</a>                        signals: ContextSignals::PRODUCTION,
-<a href=#306 id=306 data-nosnippet>306</a>                    },
-<a href=#307 id=307 data-nosnippet>307</a>                })
-<a href=#308 id=308 data-nosnippet>308</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
-<a href=#309 id=309 data-nosnippet>309</a>            })
-<a href=#310 id=310 data-nosnippet>310</a>            .<span class="kw">await
-<a href=#311 id=311 data-nosnippet>311</a>    </span>}
-<a href=#312 id=312 data-nosnippet>312</a>
-<a href=#313 id=313 data-nosnippet>313</a>    <span class="doccomment">/// Evaluate typed workflow evidence while exposing pre-selection candidates.
-<a href=#314 id=314 data-nosnippet>314</a>    </span><span class="kw">pub async fn </span>context_evaluation_with_workflow_evidence(
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#316 id=316 data-nosnippet>316</a>        request: ContextRequest,
-<a href=#317 id=317 data-nosnippet>317</a>        workflow_evidence: WorkflowEvidence,
-<a href=#318 id=318 data-nosnippet>318</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
-<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
-<a href=#320 id=320 data-nosnippet>320</a>            request,
-<a href=#321 id=321 data-nosnippet>321</a>            ContextExecution::new(ContextWorkflow::Implementation)
-<a href=#322 id=322 data-nosnippet>322</a>                .with_workflow_evidence(workflow_evidence),
-<a href=#323 id=323 data-nosnippet>323</a>            ServiceCallOptions::default(),
-<a href=#324 id=324 data-nosnippet>324</a>        )<span class="question-mark">?</span>;
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="self">self</span>.blocking_executor
-<a href=#327 id=327 data-nosnippet>327</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
-<a href=#328 id=328 data-nosnippet>328</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
-<a href=#329 id=329 data-nosnippet>329</a>                    parsed,
-<a href=#330 id=330 data-nosnippet>330</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
-<a href=#331 id=331 data-nosnippet>331</a>                        options: ServiceCallOptions::default(),
-<a href=#332 id=332 data-nosnippet>332</a>                        cancellation,
-<a href=#333 id=333 data-nosnippet>333</a>                        diagnostics: CandidateDiagnostics::Collect,
-<a href=#334 id=334 data-nosnippet>334</a>                        signals: ContextSignals::PRODUCTION,
-<a href=#335 id=335 data-nosnippet>335</a>                    },
-<a href=#336 id=336 data-nosnippet>336</a>                })
-<a href=#337 id=337 data-nosnippet>337</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
-<a href=#338 id=338 data-nosnippet>338</a>            })
-<a href=#339 id=339 data-nosnippet>339</a>            .<span class="kw">await
-<a href=#340 id=340 data-nosnippet>340</a>    </span>}
-<a href=#341 id=341 data-nosnippet>341</a>
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Retrieve context under one evaluation-only dependency or caller policy.
-<a href=#343 id=343 data-nosnippet>343</a>    ///
-<a href=#344 id=344 data-nosnippet>344</a>    /// This API is not exposed through CLI or MCP adapters. It exists so frozen
-<a href=#345 id=345 data-nosnippet>345</a>    /// ablations can compare additive signals without approximating selection.
-<a href=#346 id=346 data-nosnippet>346</a>    </span><span class="kw">pub async fn </span>context_signal_evaluation(
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#348 id=348 data-nosnippet>348</a>        request: ContextRequest,
-<a href=#349 id=349 data-nosnippet>349</a>        policy: ContextSignalPolicy,
-<a href=#350 id=350 data-nosnippet>350</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
-<a href=#352 id=352 data-nosnippet>352</a>            request,
-<a href=#353 id=353 data-nosnippet>353</a>            ContextExecution::new(ContextWorkflow::Implementation),
-<a href=#354 id=354 data-nosnippet>354</a>            ServiceCallOptions::default(),
-<a href=#355 id=355 data-nosnippet>355</a>        )<span class="question-mark">?</span>;
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
-<a href=#357 id=357 data-nosnippet>357</a>        <span class="self">self</span>.blocking_executor
-<a href=#358 id=358 data-nosnippet>358</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
-<a href=#359 id=359 data-nosnippet>359</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
-<a href=#360 id=360 data-nosnippet>360</a>                    parsed,
-<a href=#361 id=361 data-nosnippet>361</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
-<a href=#362 id=362 data-nosnippet>362</a>                        options: ServiceCallOptions::default(),
-<a href=#363 id=363 data-nosnippet>363</a>                        cancellation,
-<a href=#364 id=364 data-nosnippet>364</a>                        diagnostics: CandidateDiagnostics::Collect,
-<a href=#365 id=365 data-nosnippet>365</a>                        signals: ContextSignals::evaluation(policy),
-<a href=#366 id=366 data-nosnippet>366</a>                    },
-<a href=#367 id=367 data-nosnippet>367</a>                })
-<a href=#368 id=368 data-nosnippet>368</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
-<a href=#369 id=369 data-nosnippet>369</a>            })
-<a href=#370 id=370 data-nosnippet>370</a>            .<span class="kw">await
-<a href=#371 id=371 data-nosnippet>371</a>    </span>}
-<a href=#372 id=372 data-nosnippet>372</a>}
-<a href=#373 id=373 data-nosnippet>373</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#264 id=264 data-nosnippet>264</a>            </span>.runtime
+<a href=#265 id=265 data-nosnippet>265</a>            .blocking_executor
+<a href=#266 id=266 data-nosnippet>266</a>            .run(cancellation, <span class="kw">move </span>|cancellation| {
+<a href=#267 id=267 data-nosnippet>267</a>                <span class="kw">let </span>(evaluation, baseline_source_tokens) =
+<a href=#268 id=268 data-nosnippet>268</a>                    this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
+<a href=#269 id=269 data-nosnippet>269</a>                        parsed,
+<a href=#270 id=270 data-nosnippet>270</a>                        retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
+<a href=#271 id=271 data-nosnippet>271</a>                            options,
+<a href=#272 id=272 data-nosnippet>272</a>                            cancellation,
+<a href=#273 id=273 data-nosnippet>273</a>                            diagnostics: CandidateDiagnostics::Omit,
+<a href=#274 id=274 data-nosnippet>274</a>                            signals: ContextSignals::PRODUCTION,
+<a href=#275 id=275 data-nosnippet>275</a>                        },
+<a href=#276 id=276 data-nosnippet>276</a>                    })<span class="question-mark">?</span>;
+<a href=#277 id=277 data-nosnippet>277</a>                <span class="prelude-val">Ok</span>(AccountedContextResponse {
+<a href=#278 id=278 data-nosnippet>278</a>                    response: evaluation.response,
+<a href=#279 id=279 data-nosnippet>279</a>                    baseline_source_tokens,
+<a href=#280 id=280 data-nosnippet>280</a>                    operation,
+<a href=#281 id=281 data-nosnippet>281</a>                })
+<a href=#282 id=282 data-nosnippet>282</a>            })
+<a href=#283 id=283 data-nosnippet>283</a>            .<span class="kw">await</span>;
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="self">self</span>.observe_service_result(operation, result)
+<a href=#285 id=285 data-nosnippet>285</a>    }
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="doccomment">/// Retrieve context and expose pre-selection candidate paths for evaluation.
+<a href=#288 id=288 data-nosnippet>288</a>    ///
+<a href=#289 id=289 data-nosnippet>289</a>    /// Production adapters should use [`Self::context`]. This method exists for
+<a href=#290 id=290 data-nosnippet>290</a>    /// frozen retrieval benchmarks and does not alter the MCP response schema.
+<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="kw">pub async fn </span>context_evaluation(<span class="kw-2">&amp;</span><span class="self">self</span>, request: ContextRequest) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
+<a href=#293 id=293 data-nosnippet>293</a>            request,
+<a href=#294 id=294 data-nosnippet>294</a>            ContextExecution::new(ContextWorkflow::Implementation),
+<a href=#295 id=295 data-nosnippet>295</a>            ServiceCallOptions::default(),
+<a href=#296 id=296 data-nosnippet>296</a>        )<span class="question-mark">?</span>;
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="self">self</span>.runtime
+<a href=#299 id=299 data-nosnippet>299</a>            .blocking_executor
+<a href=#300 id=300 data-nosnippet>300</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
+<a href=#301 id=301 data-nosnippet>301</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
+<a href=#302 id=302 data-nosnippet>302</a>                    parsed,
+<a href=#303 id=303 data-nosnippet>303</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
+<a href=#304 id=304 data-nosnippet>304</a>                        options: ServiceCallOptions::default(),
+<a href=#305 id=305 data-nosnippet>305</a>                        cancellation,
+<a href=#306 id=306 data-nosnippet>306</a>                        diagnostics: CandidateDiagnostics::Collect,
+<a href=#307 id=307 data-nosnippet>307</a>                        signals: ContextSignals::PRODUCTION,
+<a href=#308 id=308 data-nosnippet>308</a>                    },
+<a href=#309 id=309 data-nosnippet>309</a>                })
+<a href=#310 id=310 data-nosnippet>310</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
+<a href=#311 id=311 data-nosnippet>311</a>            })
+<a href=#312 id=312 data-nosnippet>312</a>            .<span class="kw">await
+<a href=#313 id=313 data-nosnippet>313</a>    </span>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// Evaluate typed workflow evidence while exposing pre-selection candidates.
+<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">pub async fn </span>context_evaluation_with_workflow_evidence(
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#318 id=318 data-nosnippet>318</a>        request: ContextRequest,
+<a href=#319 id=319 data-nosnippet>319</a>        workflow_evidence: WorkflowEvidence,
+<a href=#320 id=320 data-nosnippet>320</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
+<a href=#322 id=322 data-nosnippet>322</a>            request,
+<a href=#323 id=323 data-nosnippet>323</a>            ContextExecution::new(ContextWorkflow::Implementation)
+<a href=#324 id=324 data-nosnippet>324</a>                .with_workflow_evidence(workflow_evidence),
+<a href=#325 id=325 data-nosnippet>325</a>            ServiceCallOptions::default(),
+<a href=#326 id=326 data-nosnippet>326</a>        )<span class="question-mark">?</span>;
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="self">self</span>.runtime
+<a href=#329 id=329 data-nosnippet>329</a>            .blocking_executor
+<a href=#330 id=330 data-nosnippet>330</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
+<a href=#331 id=331 data-nosnippet>331</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
+<a href=#332 id=332 data-nosnippet>332</a>                    parsed,
+<a href=#333 id=333 data-nosnippet>333</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
+<a href=#334 id=334 data-nosnippet>334</a>                        options: ServiceCallOptions::default(),
+<a href=#335 id=335 data-nosnippet>335</a>                        cancellation,
+<a href=#336 id=336 data-nosnippet>336</a>                        diagnostics: CandidateDiagnostics::Collect,
+<a href=#337 id=337 data-nosnippet>337</a>                        signals: ContextSignals::PRODUCTION,
+<a href=#338 id=338 data-nosnippet>338</a>                    },
+<a href=#339 id=339 data-nosnippet>339</a>                })
+<a href=#340 id=340 data-nosnippet>340</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
+<a href=#341 id=341 data-nosnippet>341</a>            })
+<a href=#342 id=342 data-nosnippet>342</a>            .<span class="kw">await
+<a href=#343 id=343 data-nosnippet>343</a>    </span>}
+<a href=#344 id=344 data-nosnippet>344</a>
+<a href=#345 id=345 data-nosnippet>345</a>    <span class="doccomment">/// Retrieve context under one evaluation-only dependency or caller policy.
+<a href=#346 id=346 data-nosnippet>346</a>    ///
+<a href=#347 id=347 data-nosnippet>347</a>    /// This API is not exposed through CLI or MCP adapters. It exists so frozen
+<a href=#348 id=348 data-nosnippet>348</a>    /// ablations can compare additive signals without approximating selection.
+<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="kw">pub async fn </span>context_signal_evaluation(
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#351 id=351 data-nosnippet>351</a>        request: ContextRequest,
+<a href=#352 id=352 data-nosnippet>352</a>        policy: ContextSignalPolicy,
+<a href=#353 id=353 data-nosnippet>353</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ContextEvaluation&gt; {
+<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span>parsed = <span class="self">self</span>.parse_context_input(
+<a href=#355 id=355 data-nosnippet>355</a>            request,
+<a href=#356 id=356 data-nosnippet>356</a>            ContextExecution::new(ContextWorkflow::Implementation),
+<a href=#357 id=357 data-nosnippet>357</a>            ServiceCallOptions::default(),
+<a href=#358 id=358 data-nosnippet>358</a>        )<span class="question-mark">?</span>;
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="self">self</span>.runtime
+<a href=#361 id=361 data-nosnippet>361</a>            .blocking_executor
+<a href=#362 id=362 data-nosnippet>362</a>            .run(CancellationToken::new(), <span class="kw">move </span>|cancellation| {
+<a href=#363 id=363 data-nosnippet>363</a>                this.context_sync(<span class="kw">super</span>::execution::ContextSyncRequest {
+<a href=#364 id=364 data-nosnippet>364</a>                    parsed,
+<a href=#365 id=365 data-nosnippet>365</a>                    retrieval: <span class="kw">super</span>::execution::ContextRetrieval {
+<a href=#366 id=366 data-nosnippet>366</a>                        options: ServiceCallOptions::default(),
+<a href=#367 id=367 data-nosnippet>367</a>                        cancellation,
+<a href=#368 id=368 data-nosnippet>368</a>                        diagnostics: CandidateDiagnostics::Collect,
+<a href=#369 id=369 data-nosnippet>369</a>                        signals: ContextSignals::evaluation(policy),
+<a href=#370 id=370 data-nosnippet>370</a>                    },
+<a href=#371 id=371 data-nosnippet>371</a>                })
+<a href=#372 id=372 data-nosnippet>372</a>                .map(|(evaluation, <span class="kw">_</span>)| evaluation)
+<a href=#373 id=373 data-nosnippet>373</a>            })
+<a href=#374 id=374 data-nosnippet>374</a>            .<span class="kw">await
+<a href=#375 id=375 data-nosnippet>375</a>    </span>}
+<a href=#376 id=376 data-nosnippet>376</a>}
+<a href=#377 id=377 data-nosnippet>377</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>

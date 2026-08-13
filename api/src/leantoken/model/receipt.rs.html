@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 <a href=#9 id=9 data-nosnippet>9</a></span><span class="doccomment">/// Explicit request to carry only exactly unchanged evidence into a new generation.
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub struct </span>ReceiptRebaseRequest {
-<a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Immutable evidence artifact from an earlier repository generation.
+<a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Opaque server-managed receipt from an earlier repository generation.
 <a href=#12 id=12 data-nosnippet>12</a>    </span><span class="kw">pub </span>receipt_id: String,
 <a href=#13 id=13 data-nosnippet>13</a>    <span class="doccomment">/// Maximum examples retained for each outcome; counts and the digest remain complete.
 <a href=#14 id=14 data-nosnippet>14</a>    </span><span class="attr">#[serde(default, skip_serializing_if = <span class="string">"Option::is_none"</span>)]

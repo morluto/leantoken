@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span><span class="kw">super</span>::selection::ParsedJsonSelector;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>super::{MAX_ARRAY_SAMPLE_SIZE, MAX_JSON_DEPTH, MAX_JSON_ITEMS, MAX_JSON_SELECTORS};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::model::{JsonOperation, JsonProjection, JsonRequest};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::repository::validate_relative;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::repository::{normalize_relative, validate_relative};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::services::validation::{MAX_PATH_BYTES, validate_input};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::services::{validate_positive_request_limit, validate_request_limit};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>crate::{Error, <span class="prelude-ty">Result</span>};
@@ -56,15 +56,15 @@
 <a href=#56 id=56 data-nosnippet>56</a>        validate_request_limit(<span class="string">"depth"</span>, depth, MAX_JSON_DEPTH)<span class="question-mark">?</span>;
 <a href=#57 id=57 data-nosnippet>57</a>    }
 <a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span>query_hash = json_query_hash(<span class="kw-2">&amp;</span>request.operation, execution)<span class="question-mark">?</span>;
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>operation = <span class="kw">match </span>request.operation {
-<a href=#61 id=61 data-nosnippet>61</a>        JsonOperation::Query {
-<a href=#62 id=62 data-nosnippet>62</a>            path,
-<a href=#63 id=63 data-nosnippet>63</a>            selector,
-<a href=#64 id=64 data-nosnippet>64</a>            projection,
-<a href=#65 id=65 data-nosnippet>65</a>        } =&gt; {
-<a href=#66 id=66 data-nosnippet>66</a>            validate_input(<span class="kw-2">&amp;</span>path, <span class="string">"path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
-<a href=#67 id=67 data-nosnippet>67</a>            validate_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span>operation = <span class="kw">match </span>request.operation {
+<a href=#60 id=60 data-nosnippet>60</a>        JsonOperation::Query {
+<a href=#61 id=61 data-nosnippet>61</a>            path,
+<a href=#62 id=62 data-nosnippet>62</a>            selector,
+<a href=#63 id=63 data-nosnippet>63</a>            projection,
+<a href=#64 id=64 data-nosnippet>64</a>        } =&gt; {
+<a href=#65 id=65 data-nosnippet>65</a>            validate_input(<span class="kw-2">&amp;</span>path, <span class="string">"path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
+<a href=#66 id=66 data-nosnippet>66</a>            validate_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+<a href=#67 id=67 data-nosnippet>67</a>            <span class="kw">let </span>path = normalize_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
 <a href=#68 id=68 data-nosnippet>68</a>            <span class="kw">if </span>execution.depth().is_some() &amp;&amp; projection != JsonProjection::Keys {
 <a href=#69 id=69 data-nosnippet>69</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
 <a href=#70 id=70 data-nosnippet>70</a>                    field: <span class="string">"depth"</span>,
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="kw">let </span>cursor = request
 <a href=#75 id=75 data-nosnippet>75</a>                .cursor
 <a href=#76 id=76 data-nosnippet>76</a>                .as_deref()
-<a href=#77 id=77 data-nosnippet>77</a>                .map(|cursor| decode_json_cursor(cursor, execution.cursor_version()))
+<a href=#77 id=77 data-nosnippet>77</a>                .map(decode_json_cursor)
 <a href=#78 id=78 data-nosnippet>78</a>                .transpose()<span class="question-mark">?</span>;
 <a href=#79 id=79 data-nosnippet>79</a>            <span class="kw">if </span>cursor.is_some() &amp;&amp; projection != JsonProjection::Keys {
 <a href=#80 id=80 data-nosnippet>80</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
@@ -82,73 +82,84 @@
 <a href=#82 id=82 data-nosnippet>82</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
 <a href=#83 id=83 data-nosnippet>83</a>                });
 <a href=#84 id=84 data-nosnippet>84</a>            }
-<a href=#85 id=85 data-nosnippet>85</a>            ParsedJsonOperation::Query {
-<a href=#86 id=86 data-nosnippet>86</a>                path,
-<a href=#87 id=87 data-nosnippet>87</a>                selector: selector.map(ParsedJsonSelector::parse).transpose()<span class="question-mark">?</span>,
-<a href=#88 id=88 data-nosnippet>88</a>                projection,
-<a href=#89 id=89 data-nosnippet>89</a>                cursor,
-<a href=#90 id=90 data-nosnippet>90</a>                query_hash,
-<a href=#91 id=91 data-nosnippet>91</a>            }
-<a href=#92 id=92 data-nosnippet>92</a>        }
-<a href=#93 id=93 data-nosnippet>93</a>        JsonOperation::NumericSummary { path, selector } =&gt; {
-<a href=#94 id=94 data-nosnippet>94</a>            validate_input(<span class="kw-2">&amp;</span>path, <span class="string">"path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
-<a href=#95 id=95 data-nosnippet>95</a>            validate_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
-<a href=#96 id=96 data-nosnippet>96</a>            <span class="kw">if </span>execution.depth().is_some() {
-<a href=#97 id=97 data-nosnippet>97</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#98 id=98 data-nosnippet>98</a>                    field: <span class="string">"depth"</span>,
-<a href=#99 id=99 data-nosnippet>99</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
-<a href=#100 id=100 data-nosnippet>100</a>                });
-<a href=#101 id=101 data-nosnippet>101</a>            }
-<a href=#102 id=102 data-nosnippet>102</a>            <span class="kw">if </span>request.cursor.is_some() {
-<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#104 id=104 data-nosnippet>104</a>                    field: <span class="string">"cursor"</span>,
-<a href=#105 id=105 data-nosnippet>105</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
-<a href=#106 id=106 data-nosnippet>106</a>                });
-<a href=#107 id=107 data-nosnippet>107</a>            }
-<a href=#108 id=108 data-nosnippet>108</a>            ParsedJsonOperation::NumericSummary {
-<a href=#109 id=109 data-nosnippet>109</a>                path,
-<a href=#110 id=110 data-nosnippet>110</a>                selector: selector.map(ParsedJsonSelector::parse).transpose()<span class="question-mark">?</span>,
-<a href=#111 id=111 data-nosnippet>111</a>            }
-<a href=#112 id=112 data-nosnippet>112</a>        }
-<a href=#113 id=113 data-nosnippet>113</a>        JsonOperation::DiffFields {
-<a href=#114 id=114 data-nosnippet>114</a>            base_path,
-<a href=#115 id=115 data-nosnippet>115</a>            head_path,
-<a href=#116 id=116 data-nosnippet>116</a>            selectors,
-<a href=#117 id=117 data-nosnippet>117</a>            projection,
-<a href=#118 id=118 data-nosnippet>118</a>        } =&gt; {
-<a href=#119 id=119 data-nosnippet>119</a>            validate_input(<span class="kw-2">&amp;</span>base_path, <span class="string">"base path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
-<a href=#120 id=120 data-nosnippet>120</a>            validate_input(<span class="kw-2">&amp;</span>head_path, <span class="string">"head path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
-<a href=#121 id=121 data-nosnippet>121</a>            validate_relative(<span class="kw-2">&amp;</span>base_path)<span class="question-mark">?</span>;
-<a href=#122 id=122 data-nosnippet>122</a>            validate_relative(<span class="kw-2">&amp;</span>head_path)<span class="question-mark">?</span>;
-<a href=#123 id=123 data-nosnippet>123</a>            validate_positive_request_limit(<span class="string">"selectors"</span>, selectors.len(), MAX_JSON_SELECTORS)<span class="question-mark">?</span>;
-<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">if </span>execution.depth().is_some() {
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#126 id=126 data-nosnippet>126</a>                    field: <span class="string">"depth"</span>,
-<a href=#127 id=127 data-nosnippet>127</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
-<a href=#128 id=128 data-nosnippet>128</a>                });
-<a href=#129 id=129 data-nosnippet>129</a>            }
-<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">if </span>request.cursor.is_some() {
-<a href=#131 id=131 data-nosnippet>131</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#132 id=132 data-nosnippet>132</a>                    field: <span class="string">"cursor"</span>,
-<a href=#133 id=133 data-nosnippet>133</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
-<a href=#134 id=134 data-nosnippet>134</a>                });
-<a href=#135 id=135 data-nosnippet>135</a>            }
-<a href=#136 id=136 data-nosnippet>136</a>            ParsedJsonOperation::DiffFields {
-<a href=#137 id=137 data-nosnippet>137</a>                base_path,
-<a href=#138 id=138 data-nosnippet>138</a>                head_path,
-<a href=#139 id=139 data-nosnippet>139</a>                selectors: selectors
-<a href=#140 id=140 data-nosnippet>140</a>                    .into_iter()
-<a href=#141 id=141 data-nosnippet>141</a>                    .map(ParsedJsonSelector::parse)
-<a href=#142 id=142 data-nosnippet>142</a>                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
-<a href=#143 id=143 data-nosnippet>143</a>                projection,
-<a href=#144 id=144 data-nosnippet>144</a>            }
-<a href=#145 id=145 data-nosnippet>145</a>        }
-<a href=#146 id=146 data-nosnippet>146</a>    };
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="prelude-val">Ok</span>(ParsedJsonRequest {
-<a href=#148 id=148 data-nosnippet>148</a>        operation,
-<a href=#149 id=149 data-nosnippet>149</a>        max_tokens: request.max_tokens,
-<a href=#150 id=150 data-nosnippet>150</a>        max_items: request.max_items,
-<a href=#151 id=151 data-nosnippet>151</a>        array_sample_size: request.array_sample_size,
-<a href=#152 id=152 data-nosnippet>152</a>    })
-<a href=#153 id=153 data-nosnippet>153</a>}
+<a href=#85 id=85 data-nosnippet>85</a>            <span class="kw">let </span>query_hash = json_query_hash(
+<a href=#86 id=86 data-nosnippet>86</a>                <span class="kw-2">&amp;</span>JsonOperation::Query {
+<a href=#87 id=87 data-nosnippet>87</a>                    path: path.clone(),
+<a href=#88 id=88 data-nosnippet>88</a>                    selector: selector.clone(),
+<a href=#89 id=89 data-nosnippet>89</a>                    projection,
+<a href=#90 id=90 data-nosnippet>90</a>                },
+<a href=#91 id=91 data-nosnippet>91</a>                execution,
+<a href=#92 id=92 data-nosnippet>92</a>            )<span class="question-mark">?</span>;
+<a href=#93 id=93 data-nosnippet>93</a>            ParsedJsonOperation::Query {
+<a href=#94 id=94 data-nosnippet>94</a>                path,
+<a href=#95 id=95 data-nosnippet>95</a>                selector: selector.map(ParsedJsonSelector::parse).transpose()<span class="question-mark">?</span>,
+<a href=#96 id=96 data-nosnippet>96</a>                projection,
+<a href=#97 id=97 data-nosnippet>97</a>                cursor,
+<a href=#98 id=98 data-nosnippet>98</a>                query_hash,
+<a href=#99 id=99 data-nosnippet>99</a>            }
+<a href=#100 id=100 data-nosnippet>100</a>        }
+<a href=#101 id=101 data-nosnippet>101</a>        JsonOperation::NumericSummary { path, selector } =&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>            validate_input(<span class="kw-2">&amp;</span>path, <span class="string">"path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
+<a href=#103 id=103 data-nosnippet>103</a>            validate_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+<a href=#104 id=104 data-nosnippet>104</a>            <span class="kw">let </span>path = normalize_relative(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+<a href=#105 id=105 data-nosnippet>105</a>            <span class="kw">if </span>execution.depth().is_some() {
+<a href=#106 id=106 data-nosnippet>106</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#107 id=107 data-nosnippet>107</a>                    field: <span class="string">"depth"</span>,
+<a href=#108 id=108 data-nosnippet>108</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
+<a href=#109 id=109 data-nosnippet>109</a>                });
+<a href=#110 id=110 data-nosnippet>110</a>            }
+<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">if </span>request.cursor.is_some() {
+<a href=#112 id=112 data-nosnippet>112</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#113 id=113 data-nosnippet>113</a>                    field: <span class="string">"cursor"</span>,
+<a href=#114 id=114 data-nosnippet>114</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
+<a href=#115 id=115 data-nosnippet>115</a>                });
+<a href=#116 id=116 data-nosnippet>116</a>            }
+<a href=#117 id=117 data-nosnippet>117</a>            ParsedJsonOperation::NumericSummary {
+<a href=#118 id=118 data-nosnippet>118</a>                path,
+<a href=#119 id=119 data-nosnippet>119</a>                selector: selector.map(ParsedJsonSelector::parse).transpose()<span class="question-mark">?</span>,
+<a href=#120 id=120 data-nosnippet>120</a>            }
+<a href=#121 id=121 data-nosnippet>121</a>        }
+<a href=#122 id=122 data-nosnippet>122</a>        JsonOperation::DiffFields {
+<a href=#123 id=123 data-nosnippet>123</a>            base_path,
+<a href=#124 id=124 data-nosnippet>124</a>            head_path,
+<a href=#125 id=125 data-nosnippet>125</a>            selectors,
+<a href=#126 id=126 data-nosnippet>126</a>            projection,
+<a href=#127 id=127 data-nosnippet>127</a>        } =&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>            validate_input(<span class="kw-2">&amp;</span>base_path, <span class="string">"base path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
+<a href=#129 id=129 data-nosnippet>129</a>            validate_input(<span class="kw-2">&amp;</span>head_path, <span class="string">"head path"</span>, MAX_PATH_BYTES)<span class="question-mark">?</span>;
+<a href=#130 id=130 data-nosnippet>130</a>            validate_relative(<span class="kw-2">&amp;</span>base_path)<span class="question-mark">?</span>;
+<a href=#131 id=131 data-nosnippet>131</a>            validate_relative(<span class="kw-2">&amp;</span>head_path)<span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">let </span>base_path = normalize_relative(<span class="kw-2">&amp;</span>base_path)<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>            <span class="kw">let </span>head_path = normalize_relative(<span class="kw-2">&amp;</span>head_path)<span class="question-mark">?</span>;
+<a href=#134 id=134 data-nosnippet>134</a>            validate_positive_request_limit(<span class="string">"selectors"</span>, selectors.len(), MAX_JSON_SELECTORS)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>            <span class="kw">if </span>execution.depth().is_some() {
+<a href=#136 id=136 data-nosnippet>136</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#137 id=137 data-nosnippet>137</a>                    field: <span class="string">"depth"</span>,
+<a href=#138 id=138 data-nosnippet>138</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
+<a href=#139 id=139 data-nosnippet>139</a>                });
+<a href=#140 id=140 data-nosnippet>140</a>            }
+<a href=#141 id=141 data-nosnippet>141</a>            <span class="kw">if </span>request.cursor.is_some() {
+<a href=#142 id=142 data-nosnippet>142</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#143 id=143 data-nosnippet>143</a>                    field: <span class="string">"cursor"</span>,
+<a href=#144 id=144 data-nosnippet>144</a>                    reason: <span class="string">"is supported only for query operations with the keys projection"</span>,
+<a href=#145 id=145 data-nosnippet>145</a>                });
+<a href=#146 id=146 data-nosnippet>146</a>            }
+<a href=#147 id=147 data-nosnippet>147</a>            ParsedJsonOperation::DiffFields {
+<a href=#148 id=148 data-nosnippet>148</a>                base_path,
+<a href=#149 id=149 data-nosnippet>149</a>                head_path,
+<a href=#150 id=150 data-nosnippet>150</a>                selectors: selectors
+<a href=#151 id=151 data-nosnippet>151</a>                    .into_iter()
+<a href=#152 id=152 data-nosnippet>152</a>                    .map(ParsedJsonSelector::parse)
+<a href=#153 id=153 data-nosnippet>153</a>                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
+<a href=#154 id=154 data-nosnippet>154</a>                projection,
+<a href=#155 id=155 data-nosnippet>155</a>            }
+<a href=#156 id=156 data-nosnippet>156</a>        }
+<a href=#157 id=157 data-nosnippet>157</a>    };
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="prelude-val">Ok</span>(ParsedJsonRequest {
+<a href=#159 id=159 data-nosnippet>159</a>        operation,
+<a href=#160 id=160 data-nosnippet>160</a>        max_tokens: request.max_tokens,
+<a href=#161 id=161 data-nosnippet>161</a>        max_items: request.max_items,
+<a href=#162 id=162 data-nosnippet>162</a>        array_sample_size: request.array_sample_size,
+<a href=#163 id=163 data-nosnippet>163</a>    })
+<a href=#164 id=164 data-nosnippet>164</a>}
 </code></pre></div></section></main></body></html>

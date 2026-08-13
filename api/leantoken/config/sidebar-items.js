@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Config","DiscoveryLimits"]};
+window.SIDEBAR_ITEMS = {"struct":["ApprovedRepositoryContext","ApprovedRepositoryRoot","Config","DiscoveryLimits"]};

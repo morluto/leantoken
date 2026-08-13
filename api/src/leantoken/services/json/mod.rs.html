@@ -98,16 +98,17 @@
 <a href=#98 id=98 data-nosnippet>98</a>        <span class="self">self</span>.observe_service_result(operation, <span class="self">self</span>.validate_call_options(options))<span class="question-mark">?</span>;
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>this = <span class="self">self</span>.clone();
 <a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span>result = <span class="self">self
-<a href=#101 id=101 data-nosnippet>101</a>            </span>.blocking_executor
-<a href=#102 id=102 data-nosnippet>102</a>            .run(cancellation, <span class="kw">move </span>|cancellation| {
-<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">let </span>request = validation::parse_json_request(request, execution)<span class="question-mark">?</span>;
-<a href=#104 id=104 data-nosnippet>104</a>                this.json_sync(request, options, execution, cancellation)
-<a href=#105 id=105 data-nosnippet>105</a>            })
-<a href=#106 id=106 data-nosnippet>106</a>            .<span class="kw">await</span>;
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="self">self</span>.observe_service_result(operation, result)
-<a href=#108 id=108 data-nosnippet>108</a>    }
-<a href=#109 id=109 data-nosnippet>109</a>}
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a><span class="attr">#[cfg(test)]
-<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">mod </span>tests;
+<a href=#101 id=101 data-nosnippet>101</a>            </span>.runtime
+<a href=#102 id=102 data-nosnippet>102</a>            .blocking_executor
+<a href=#103 id=103 data-nosnippet>103</a>            .run(cancellation, <span class="kw">move </span>|cancellation| {
+<a href=#104 id=104 data-nosnippet>104</a>                <span class="kw">let </span>request = validation::parse_json_request(request, execution)<span class="question-mark">?</span>;
+<a href=#105 id=105 data-nosnippet>105</a>                this.json_sync(request, options, execution, cancellation)
+<a href=#106 id=106 data-nosnippet>106</a>            })
+<a href=#107 id=107 data-nosnippet>107</a>            .<span class="kw">await</span>;
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="self">self</span>.observe_service_result(operation, result)
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="attr">#[cfg(test)]
+<a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
