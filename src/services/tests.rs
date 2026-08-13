@@ -239,6 +239,30 @@ fn snapshot_capacity_is_enforced_across_repository_services() {
     assert_eq!(runtime.diagnostics().active_snapshots, 0);
 }
 
+#[test]
+fn stored_receipt_reads_share_snapshot_capacity() {
+    let root = tempfile::tempdir().expect("repository");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let runtime = ServicesRuntime::new(1).expect("process runtime");
+    let mut config = config;
+    config.max_index_workers = 1;
+    let services = Services::open_in_runtime(config, runtime.clone()).expect("services");
+    let permits = (0..runtime.diagnostics().snapshot_capacity)
+        .map(|_| {
+            Arc::clone(&runtime.snapshot_admission)
+                .try_acquire_owned()
+                .expect("snapshot permit")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        services.read_stored_receipt("r0123456789abcdef0123456789abcdef0123456789abcdef", 0),
+        Err(Error::RetrievalOverloaded)
+    ));
+    drop(permits);
+}
+
 fn root_files_request() -> FilesRequest {
     FilesRequest {
         operation: FileOperation::Tree,

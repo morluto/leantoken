@@ -179,6 +179,52 @@ async fn prepared_retrieval_selects_the_approved_context() {
     assert_eq!(prepared.services.repository_id(), expected_id);
 }
 
+#[tokio::test]
+async fn receipt_resource_lookup_requests_dormant_context_activation() {
+    let root = tempfile::tempdir().expect("primary repository");
+    let primary = Arc::new(
+        Services::open(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+                .expect("primary config"),
+        )
+        .expect("primary services"),
+    );
+    let server = LeanTokenMcp::new(primary);
+    let context = McpServices::starting_default();
+    server
+        .contexts
+        .register("docs".into(), context.clone())
+        .expect("approved context");
+
+    let call = tokio::spawn({
+        let server = server.clone();
+        async move {
+            server
+                .read_receipt_resource(
+                    "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .into(),
+                    None,
+                )
+                .await
+        }
+    });
+    for _ in 0..100 {
+        if context.activation_requested() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(context.activation_requested());
+    context.set_failed(&crate::Error::OperationFailure(
+        "test startup failure".into(),
+    ));
+    let error = call
+        .await
+        .expect("receipt lookup joins")
+        .expect_err("unknown receipt");
+    assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+}
+
 #[test]
 fn cloned_servers_share_admission_but_separate_instances_do_not() {
     let (server, _) = LeanTokenMcp::pending();

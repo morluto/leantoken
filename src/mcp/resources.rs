@@ -154,8 +154,23 @@ impl LeanTokenMcp {
         let now = now_unix_millis()?;
         let mut last_error = None;
         let mut found = None;
-        for (_, mcp_services) in self.contexts.all() {
-            let state = mcp_services.get();
+        let contexts = self.contexts.all();
+        for (_, mcp_services) in &contexts {
+            let _ = mcp_services.request_activation();
+        }
+        let cancellation = CancellationToken::new();
+        let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
+        for (_, mcp_services) in contexts {
+            let state = match mcp_services
+                .wait_for_services(mcp_services.get(), cancellation.clone(), deadline)
+                .await
+            {
+                Ok(state) => state,
+                Err(error) => {
+                    tracing::debug!(%error, "approved repository context unavailable for receipt lookup");
+                    continue;
+                }
+            };
             let services = match state {
                 McpServiceState::Ready { services, .. } => services,
                 _ => continue,

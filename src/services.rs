@@ -600,6 +600,9 @@ impl Services {
         receipt_id: &str,
         now_unix_millis: i64,
     ) -> Result<crate::receipt::StoredReceipt> {
+        let _snapshot_admission = Arc::clone(&self.runtime.snapshot_admission)
+            .try_acquire_owned()
+            .map_err(|_| Error::RetrievalOverloaded)?;
         self.storage.read_receipt(receipt_id, now_unix_millis)
     }
 

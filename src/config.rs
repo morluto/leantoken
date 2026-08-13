@@ -1087,7 +1087,10 @@ mod tests {
             .expect("approved contexts");
         assert_eq!(contexts.len(), 1);
         assert_eq!(contexts[0].name, "docs");
-        assert_eq!(contexts[0].root.as_path(), sibling.path());
+        assert_eq!(
+            fs::canonicalize(contexts[0].root.as_path()).expect("canonical context root"),
+            fs::canonicalize(sibling.path()).expect("canonical approved repository")
+        );
     }
 
     #[test]
