@@ -868,7 +868,7 @@
 <a href=#868 id=868 data-nosnippet>868</a>    </span><span class="kw">fn </span>pull_request_selection_is_owner_specific() {
 <a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>plan = build_plan(
 <a href=#870 id=870 data-nosnippet>870</a>            <span class="kw-2">&amp;</span>workspace_root(),
-<a href=#871 id=871 data-nosnippet>871</a>            input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/testing.md"</span>]),
+<a href=#871 id=871 data-nosnippet>871</a>            input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/development.md"</span>]),
 <a href=#872 id=872 data-nosnippet>872</a>        )
 <a href=#873 id=873 data-nosnippet>873</a>        .expect(<span class="string">"plan"</span>);
 <a href=#874 id=874 data-nosnippet>874</a>        <span class="macro">assert!</span>(plan.selected_lanes.iter().all(|lane| {
@@ -960,7 +960,7 @@
 <a href=#960 id=960 data-nosnippet>960</a>
 <a href=#961 id=961 data-nosnippet>961</a>    <span class="attr">#[test]
 <a href=#962 id=962 data-nosnippet>962</a>    </span><span class="kw">fn </span>full_run_is_additive_and_missing_base_fails_conservatively() {
-<a href=#963 id=963 data-nosnippet>963</a>        <span class="kw">let </span><span class="kw-2">mut </span>full = input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/testing.md"</span>]);
+<a href=#963 id=963 data-nosnippet>963</a>        <span class="kw">let </span><span class="kw-2">mut </span>full = input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/development.md"</span>]);
 <a href=#964 id=964 data-nosnippet>964</a>        full.full_run = <span class="bool-val">true</span>;
 <a href=#965 id=965 data-nosnippet>965</a>        <span class="kw">let </span>full_plan = build_plan(<span class="kw-2">&amp;</span>workspace_root(), full).expect(<span class="string">"full plan"</span>);
 <a href=#966 id=966 data-nosnippet>966</a>        <span class="macro">assert!</span>(
@@ -969,7 +969,7 @@
 <a href=#969 id=969 data-nosnippet>969</a>            </span>})
 <a href=#970 id=970 data-nosnippet>970</a>        );
 <a href=#971 id=971 data-nosnippet>971</a>
-<a href=#972 id=972 data-nosnippet>972</a>        <span class="kw">let </span><span class="kw-2">mut </span>missing = input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/testing.md"</span>]);
+<a href=#972 id=972 data-nosnippet>972</a>        <span class="kw">let </span><span class="kw-2">mut </span>missing = input(Event::PullRequest, <span class="kw-2">&amp;</span>[<span class="string">"docs/development.md"</span>]);
 <a href=#973 id=973 data-nosnippet>973</a>        missing.base_revision = <span class="prelude-val">None</span>;
 <a href=#974 id=974 data-nosnippet>974</a>        <span class="kw">let </span>plan = build_plan(<span class="kw-2">&amp;</span>workspace_root(), missing).expect(<span class="string">"fallback plan"</span>);
 <a href=#975 id=975 data-nosnippet>975</a>        <span class="macro">assert!</span>(plan.fallback_reason.is_some());
@@ -1049,8 +1049,8 @@
 <a href=#1049 id=1049 data-nosnippet>1049</a>            <span class="macro">vec!</span>[<span class="string">"src/café.rs"</span>, <span class="string">"docs/a\tb.md"</span>]
 <a href=#1050 id=1050 data-nosnippet>1050</a>        );
 <a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="macro">assert_eq!</span>(
-<a href=#1052 id=1052 data-nosnippet>1052</a>            parse_changed_paths(<span class="string">b"src/lib.rs\ndocs/testing.md\n"</span>),
-<a href=#1053 id=1053 data-nosnippet>1053</a>            <span class="macro">vec!</span>[<span class="string">"src/lib.rs"</span>, <span class="string">"docs/testing.md"</span>]
+<a href=#1052 id=1052 data-nosnippet>1052</a>            parse_changed_paths(<span class="string">b"src/lib.rs\ndocs/development.md\n"</span>),
+<a href=#1053 id=1053 data-nosnippet>1053</a>            <span class="macro">vec!</span>[<span class="string">"src/lib.rs"</span>, <span class="string">"docs/development.md"</span>]
 <a href=#1054 id=1054 data-nosnippet>1054</a>        );
 <a href=#1055 id=1055 data-nosnippet>1055</a>    }
 <a href=#1056 id=1056 data-nosnippet>1056</a>
@@ -1076,7 +1076,7 @@
 <a href=#1076 id=1076 data-nosnippet>1076</a>    </span><span class="kw">fn </span>malformed_plan_cannot_unselect_a_required_merge_group_lane() {
 <a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = build_plan(
 <a href=#1078 id=1078 data-nosnippet>1078</a>            <span class="kw-2">&amp;</span>workspace_root(),
-<a href=#1079 id=1079 data-nosnippet>1079</a>            input(Event::MergeGroup, <span class="kw-2">&amp;</span>[<span class="string">"docs/testing.md"</span>]),
+<a href=#1079 id=1079 data-nosnippet>1079</a>            input(Event::MergeGroup, <span class="kw-2">&amp;</span>[<span class="string">"docs/development.md"</span>]),
 <a href=#1080 id=1080 data-nosnippet>1080</a>        )
 <a href=#1081 id=1081 data-nosnippet>1081</a>        .expect(<span class="string">"plan"</span>);
 <a href=#1082 id=1082 data-nosnippet>1082</a>        plan.selected_lanes

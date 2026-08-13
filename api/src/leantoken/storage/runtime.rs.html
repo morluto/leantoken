@@ -19,14 +19,14 @@
 <a href=#19 id=19 data-nosnippet>19</a>}
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// One read-only connection held under a DEFERRED transaction so all queries
-<a href=#22 id=22 data-nosnippet>22</a>/// on this session observe a single SQLite WAL snapshot.
-<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">pub struct </span>ReadSession {
+<a href=#22 id=22 data-nosnippet>22</a>/// on this generation transaction observe a single SQLite WAL snapshot.
+<a href=#23 id=23 data-nosnippet>23</a></span><span class="kw">pub struct </span>GenerationReadTransaction {
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) conn: r2d2::PooledConnection&lt;SqliteConnectionManager&gt;,
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="attr">#[cfg(test)]
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) diagnostics: Arc&lt;StorageDiagnostics&gt;,
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">impl </span>Drop <span class="kw">for </span>ReadSession {
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">impl </span>Drop <span class="kw">for </span>GenerationReadTransaction {
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#31 id=31 data-nosnippet>31</a>        <span class="kw">let _ </span>= <span class="self">self</span>.conn.execute_batch(<span class="string">"ROLLBACK"</span>);
 <a href=#32 id=32 data-nosnippet>32</a>        <span class="attr">#[cfg(test)]

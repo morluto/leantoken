@@ -290,7 +290,7 @@
 <a href=#290 id=290 data-nosnippet>290</a>
 <a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">fn </span>token_savings_sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TokenSavingsResponse&gt; {
 <a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span>stored = <span class="self">self</span>.storage.token_savings(tokenizer)<span class="question-mark">?</span>;
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span>stored = <span class="self">self</span>.instrumentation.token_savings(tokenizer)<span class="question-mark">?</span>;
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.source_savings_from_records(<span class="kw-2">&amp;</span>stored))
 <a href=#295 id=295 data-nosnippet>295</a>    }
 <a href=#296 id=296 data-nosnippet>296</a>
@@ -329,329 +329,325 @@
 <a href=#329 id=329 data-nosnippet>329</a>
 <a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">fn </span>observed_token_savings_report_sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ObservedTokenSavingsReport&gt; {
 <a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>session = <span class="kw">super</span>::index_read::IndexReadSnapshot::open(<span class="kw-2">&amp;</span><span class="self">self</span>.storage)<span class="question-mark">?</span>;
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>stored = session.token_savings(tokenizer)<span class="question-mark">?</span>;
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>failures = session.service_failures(tokenizer)<span class="question-mark">?</span>;
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="self">self</span>.observed_token_savings_report_from_records(<span class="kw-2">&amp;</span>stored, failures)
-<a href=#336 id=336 data-nosnippet>336</a>    }
-<a href=#337 id=337 data-nosnippet>337</a>
-<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">fn </span>observed_token_savings_snapshot_sync(
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#340 id=340 data-nosnippet>340</a>        snapshot: <span class="prelude-ty">Option</span>&lt;String&gt;,
-<a href=#341 id=341 data-nosnippet>341</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TokenSavingsSnapshotReport&gt; {
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
-<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>repository_id = <span class="self">self</span>.repository_id();
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>session = <span class="kw">super</span>::index_read::IndexReadSnapshot::open(<span class="kw-2">&amp;</span><span class="self">self</span>.storage)<span class="question-mark">?</span>;
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>current_records = session.token_savings(tokenizer)<span class="question-mark">?</span>;
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>current_failures = session.service_failures(tokenizer)<span class="question-mark">?</span>;
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>current_state = savings_snapshot_state(
-<a href=#348 id=348 data-nosnippet>348</a>            repository_id.clone(),
-<a href=#349 id=349 data-nosnippet>349</a>            tokenizer.to_owned(),
-<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw-2">&amp;</span>current_records,
-<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw-2">&amp;</span>current_failures,
-<a href=#352 id=352 data-nosnippet>352</a>        );
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>next_snapshot = encode_savings_snapshot(<span class="kw-2">&amp;</span>current_state)<span class="question-mark">?</span>;
-<a href=#354 id=354 data-nosnippet>354</a>        <span class="kw">let </span>(records, failures, window) = <span class="kw">if let </span><span class="prelude-val">Some</span>(snapshot) = snapshot {
-<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw">let </span>base = decode_savings_snapshot(<span class="kw-2">&amp;</span>snapshot)<span class="question-mark">?</span>;
-<a href=#356 id=356 data-nosnippet>356</a>            <span class="kw">if </span>base.repository_id != repository_id || base.tokenizer != tokenizer {
-<a href=#357 id=357 data-nosnippet>357</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(snapshot_invalid());
-<a href=#358 id=358 data-nosnippet>358</a>            }
-<a href=#359 id=359 data-nosnippet>359</a>            (
-<a href=#360 id=360 data-nosnippet>360</a>                subtract_savings_records(<span class="kw-2">&amp;</span>current_records, base.records)<span class="question-mark">?</span>,
-<a href=#361 id=361 data-nosnippet>361</a>                subtract_service_failures(<span class="kw-2">&amp;</span>current_failures, base.failures)<span class="question-mark">?</span>,
-<a href=#362 id=362 data-nosnippet>362</a>                TokenSavingsWindow::Delta,
-<a href=#363 id=363 data-nosnippet>363</a>            )
-<a href=#364 id=364 data-nosnippet>364</a>        } <span class="kw">else </span>{
-<a href=#365 id=365 data-nosnippet>365</a>            (
-<a href=#366 id=366 data-nosnippet>366</a>                current_records,
-<a href=#367 id=367 data-nosnippet>367</a>                current_failures,
-<a href=#368 id=368 data-nosnippet>368</a>                TokenSavingsWindow::Lifetime,
-<a href=#369 id=369 data-nosnippet>369</a>            )
-<a href=#370 id=370 data-nosnippet>370</a>        };
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(TokenSavingsSnapshotReport {
-<a href=#372 id=372 data-nosnippet>372</a>            observed: <span class="self">self</span>.observed_token_savings_report_from_records(<span class="kw-2">&amp;</span>records, failures)<span class="question-mark">?</span>,
-<a href=#373 id=373 data-nosnippet>373</a>            snapshot: next_snapshot,
-<a href=#374 id=374 data-nosnippet>374</a>            window,
-<a href=#375 id=375 data-nosnippet>375</a>        })
-<a href=#376 id=376 data-nosnippet>376</a>    }
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">fn </span>observed_token_savings_report_from_records(
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#380 id=380 data-nosnippet>380</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
-<a href=#381 id=381 data-nosnippet>381</a>        failures: Vec&lt;ServiceFailureRecord&gt;,
-<a href=#382 id=382 data-nosnippet>382</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ObservedTokenSavingsReport&gt; {
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">let </span>report = <span class="self">self</span>.token_savings_report_from_records(stored);
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>expected_hash_not_modified_responses = stored
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>(stored, failures) = <span class="self">self</span>.instrumentation.snapshot(tokenizer)<span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="self">self</span>.observed_token_savings_report_from_records(<span class="kw-2">&amp;</span>stored, failures)
+<a href=#334 id=334 data-nosnippet>334</a>    }
+<a href=#335 id=335 data-nosnippet>335</a>
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">fn </span>observed_token_savings_snapshot_sync(
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#338 id=338 data-nosnippet>338</a>        snapshot: <span class="prelude-ty">Option</span>&lt;String&gt;,
+<a href=#339 id=339 data-nosnippet>339</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TokenSavingsSnapshotReport&gt; {
+<a href=#340 id=340 data-nosnippet>340</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>repository_id = <span class="self">self</span>.repository_id();
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>(current_records, current_failures) = <span class="self">self</span>.instrumentation.snapshot(tokenizer)<span class="question-mark">?</span>;
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>current_state = savings_snapshot_state(
+<a href=#344 id=344 data-nosnippet>344</a>            repository_id.clone(),
+<a href=#345 id=345 data-nosnippet>345</a>            tokenizer.to_owned(),
+<a href=#346 id=346 data-nosnippet>346</a>            <span class="kw-2">&amp;</span>current_records,
+<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw-2">&amp;</span>current_failures,
+<a href=#348 id=348 data-nosnippet>348</a>        );
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span>next_snapshot = encode_savings_snapshot(<span class="kw-2">&amp;</span>current_state)<span class="question-mark">?</span>;
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">let </span>(records, failures, window) = <span class="kw">if let </span><span class="prelude-val">Some</span>(snapshot) = snapshot {
+<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>base = decode_savings_snapshot(<span class="kw-2">&amp;</span>snapshot)<span class="question-mark">?</span>;
+<a href=#352 id=352 data-nosnippet>352</a>            <span class="kw">if </span>base.repository_id != repository_id || base.tokenizer != tokenizer {
+<a href=#353 id=353 data-nosnippet>353</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(snapshot_invalid());
+<a href=#354 id=354 data-nosnippet>354</a>            }
+<a href=#355 id=355 data-nosnippet>355</a>            (
+<a href=#356 id=356 data-nosnippet>356</a>                subtract_savings_records(<span class="kw-2">&amp;</span>current_records, base.records)<span class="question-mark">?</span>,
+<a href=#357 id=357 data-nosnippet>357</a>                subtract_service_failures(<span class="kw-2">&amp;</span>current_failures, base.failures)<span class="question-mark">?</span>,
+<a href=#358 id=358 data-nosnippet>358</a>                TokenSavingsWindow::Delta,
+<a href=#359 id=359 data-nosnippet>359</a>            )
+<a href=#360 id=360 data-nosnippet>360</a>        } <span class="kw">else </span>{
+<a href=#361 id=361 data-nosnippet>361</a>            (
+<a href=#362 id=362 data-nosnippet>362</a>                current_records,
+<a href=#363 id=363 data-nosnippet>363</a>                current_failures,
+<a href=#364 id=364 data-nosnippet>364</a>                TokenSavingsWindow::Lifetime,
+<a href=#365 id=365 data-nosnippet>365</a>            )
+<a href=#366 id=366 data-nosnippet>366</a>        };
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="prelude-val">Ok</span>(TokenSavingsSnapshotReport {
+<a href=#368 id=368 data-nosnippet>368</a>            observed: <span class="self">self</span>.observed_token_savings_report_from_records(<span class="kw-2">&amp;</span>records, failures)<span class="question-mark">?</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            snapshot: next_snapshot,
+<a href=#370 id=370 data-nosnippet>370</a>            window,
+<a href=#371 id=371 data-nosnippet>371</a>        })
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">fn </span>observed_token_savings_report_from_records(
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#376 id=376 data-nosnippet>376</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
+<a href=#377 id=377 data-nosnippet>377</a>        failures: Vec&lt;ServiceFailureRecord&gt;,
+<a href=#378 id=378 data-nosnippet>378</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ObservedTokenSavingsReport&gt; {
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>report = <span class="self">self</span>.token_savings_report_from_records(stored);
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>expected_hash_not_modified_responses = stored
+<a href=#381 id=381 data-nosnippet>381</a>            .values()
+<a href=#382 id=382 data-nosnippet>382</a>            .map(|record| record.expected_hash_not_modified_responses)
+<a href=#383 id=383 data-nosnippet>383</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>expected_hash_suppressed_source_tokens = stored
 <a href=#385 id=385 data-nosnippet>385</a>            .values()
-<a href=#386 id=386 data-nosnippet>386</a>            .map(|record| record.expected_hash_not_modified_responses)
+<a href=#386 id=386 data-nosnippet>386</a>            .map(|record| record.expected_hash_suppressed_source_tokens)
 <a href=#387 id=387 data-nosnippet>387</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>expected_hash_suppressed_source_tokens = stored
-<a href=#389 id=389 data-nosnippet>389</a>            .values()
-<a href=#390 id=390 data-nosnippet>390</a>            .map(|record| record.expected_hash_suppressed_source_tokens)
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>failed_service_requests = failures
+<a href=#389 id=389 data-nosnippet>389</a>            .iter()
+<a href=#390 id=390 data-nosnippet>390</a>            .map(|record| record.failed_requests)
 <a href=#391 id=391 data-nosnippet>391</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>failed_service_requests = failures
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>unsupported_failures = failures
 <a href=#393 id=393 data-nosnippet>393</a>            .iter()
-<a href=#394 id=394 data-nosnippet>394</a>            .map(|record| record.failed_requests)
-<a href=#395 id=395 data-nosnippet>395</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">let </span>unsupported_failures = failures
-<a href=#397 id=397 data-nosnippet>397</a>            .iter()
-<a href=#398 id=398 data-nosnippet>398</a>            .filter(|record| record.error_category == <span class="string">"unsupported_language"</span>)
-<a href=#399 id=399 data-nosnippet>399</a>            .map(|record| record.failed_requests)
-<a href=#400 id=400 data-nosnippet>400</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>failed_by_operation_and_category = failures
-<a href=#402 id=402 data-nosnippet>402</a>            .into_iter()
-<a href=#403 id=403 data-nosnippet>403</a>            .map(service_failure_observation)
-<a href=#404 id=404 data-nosnippet>404</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>useful = stored
+<a href=#394 id=394 data-nosnippet>394</a>            .filter(|record| record.error_category == <span class="string">"unsupported_language"</span>)
+<a href=#395 id=395 data-nosnippet>395</a>            .map(|record| record.failed_requests)
+<a href=#396 id=396 data-nosnippet>396</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
+<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>failed_by_operation_and_category = failures
+<a href=#398 id=398 data-nosnippet>398</a>            .into_iter()
+<a href=#399 id=399 data-nosnippet>399</a>            .map(service_failure_observation)
+<a href=#400 id=400 data-nosnippet>400</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>useful = stored
+<a href=#402 id=402 data-nosnippet>402</a>            .values()
+<a href=#403 id=403 data-nosnippet>403</a>            .map(|record| record.useful_requests)
+<a href=#404 id=404 data-nosnippet>404</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>incomplete = stored
 <a href=#406 id=406 data-nosnippet>406</a>            .values()
-<a href=#407 id=407 data-nosnippet>407</a>            .map(|record| record.useful_requests)
+<a href=#407 id=407 data-nosnippet>407</a>            .map(|record| record.incomplete_requests)
 <a href=#408 id=408 data-nosnippet>408</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>incomplete = stored
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>successful_unsupported = stored
 <a href=#410 id=410 data-nosnippet>410</a>            .values()
-<a href=#411 id=411 data-nosnippet>411</a>            .map(|record| record.incomplete_requests)
+<a href=#411 id=411 data-nosnippet>411</a>            .map(|record| record.unsupported_requests)
 <a href=#412 id=412 data-nosnippet>412</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>successful_unsupported = stored
-<a href=#414 id=414 data-nosnippet>414</a>            .values()
-<a href=#415 id=415 data-nosnippet>415</a>            .map(|record| record.unsupported_requests)
-<a href=#416 id=416 data-nosnippet>416</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>unsupported = successful_unsupported.saturating_add(unsupported_failures);
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>hash_suppressed = stored
-<a href=#419 id=419 data-nosnippet>419</a>            .values()
-<a href=#420 id=420 data-nosnippet>420</a>            .map(|record| record.hash_suppressed_requests)
-<a href=#421 id=421 data-nosnippet>421</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
-<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span>classified = useful
-<a href=#423 id=423 data-nosnippet>423</a>            .saturating_add(incomplete)
-<a href=#424 id=424 data-nosnippet>424</a>            .saturating_add(unsupported)
-<a href=#425 id=425 data-nosnippet>425</a>            .saturating_add(hash_suppressed);
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="prelude-val">Ok</span>(ObservedTokenSavingsReport {
-<a href=#427 id=427 data-nosnippet>427</a>            observations: TokenSavingsObservations {
-<a href=#428 id=428 data-nosnippet>428</a>                observation_scope: OBSERVATION_SCOPE.to_owned(),
-<a href=#429 id=429 data-nosnippet>429</a>                successful_response_records: report.response_accounting.tracked_requests,
-<a href=#430 id=430 data-nosnippet>430</a>                responses_with_baseline: report.response_accounting.baseline_requests,
-<a href=#431 id=431 data-nosnippet>431</a>                failed_service_requests,
-<a href=#432 id=432 data-nosnippet>432</a>                expected_hash_not_modified_responses,
-<a href=#433 id=433 data-nosnippet>433</a>                expected_hash_suppressed_source_tokens,
-<a href=#434 id=434 data-nosnippet>434</a>                request_classification: TokenSavingsRequestClassification {
-<a href=#435 id=435 data-nosnippet>435</a>                    useful,
-<a href=#436 id=436 data-nosnippet>436</a>                    incomplete,
-<a href=#437 id=437 data-nosnippet>437</a>                    unsupported,
-<a href=#438 id=438 data-nosnippet>438</a>                    hash_suppressed,
-<a href=#439 id=439 data-nosnippet>439</a>                    unclassified: report
-<a href=#440 id=440 data-nosnippet>440</a>                        .response_accounting
-<a href=#441 id=441 data-nosnippet>441</a>                        .tracked_requests
-<a href=#442 id=442 data-nosnippet>442</a>                        .saturating_sub(classified),
-<a href=#443 id=443 data-nosnippet>443</a>                    failed: failed_service_requests.saturating_sub(unsupported_failures),
-<a href=#444 id=444 data-nosnippet>444</a>                },
-<a href=#445 id=445 data-nosnippet>445</a>                failed_by_operation_and_category,
-<a href=#446 id=446 data-nosnippet>446</a>                unobserved: UNOBSERVED_OUTCOMES.map(str::to_owned).to_vec(),
-<a href=#447 id=447 data-nosnippet>447</a>            },
-<a href=#448 id=448 data-nosnippet>448</a>            observed_task_savings: ObservedTaskSavings {
-<a href=#449 id=449 data-nosnippet>449</a>                status: TaskSavingsObservationStatus::Unavailable,
-<a href=#450 id=450 data-nosnippet>450</a>                observed_tasks: <span class="number">0</span>,
-<a href=#451 id=451 data-nosnippet>451</a>                task_successes: <span class="prelude-val">None</span>,
-<a href=#452 id=452 data-nosnippet>452</a>                task_failures: <span class="prelude-val">None</span>,
-<a href=#453 id=453 data-nosnippet>453</a>                relevant_retrieval_responses: <span class="prelude-val">None</span>,
-<a href=#454 id=454 data-nosnippet>454</a>                unknown_relevance_responses: report.response_accounting.tracked_requests,
-<a href=#455 id=455 data-nosnippet>455</a>                failed_retrieval_calls: failed_service_requests,
-<a href=#456 id=456 data-nosnippet>456</a>                failure_response_tokens: <span class="prelude-val">None</span>,
-<a href=#457 id=457 data-nosnippet>457</a>                retry_calls: <span class="prelude-val">None</span>,
-<a href=#458 id=458 data-nosnippet>458</a>                superseded_calls: <span class="prelude-val">None</span>,
-<a href=#459 id=459 data-nosnippet>459</a>                net_tokens_saved: <span class="prelude-val">None</span>,
-<a href=#460 id=460 data-nosnippet>460</a>                savings_rate_basis_points: <span class="prelude-val">None</span>,
-<a href=#461 id=461 data-nosnippet>461</a>                exclusion_basis: TASK_SAVINGS_EXCLUSION_BASIS.to_owned(),
-<a href=#462 id=462 data-nosnippet>462</a>            },
-<a href=#463 id=463 data-nosnippet>463</a>            report,
-<a href=#464 id=464 data-nosnippet>464</a>        })
-<a href=#465 id=465 data-nosnippet>465</a>    }
-<a href=#466 id=466 data-nosnippet>466</a>
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">fn </span>token_savings_report_sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TokenSavingsReport&gt; {
-<a href=#468 id=468 data-nosnippet>468</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
-<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw">let </span>stored = <span class="self">self</span>.storage.token_savings(tokenizer)<span class="question-mark">?</span>;
-<a href=#470 id=470 data-nosnippet>470</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.token_savings_report_from_records(<span class="kw-2">&amp;</span>stored))
-<a href=#471 id=471 data-nosnippet>471</a>    }
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">fn </span>token_savings_report_from_records(
-<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#475 id=475 data-nosnippet>475</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
-<a href=#476 id=476 data-nosnippet>476</a>    ) -&gt; TokenSavingsReport {
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracked_requests = <span class="number">0u64</span>;
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_requests = <span class="number">0u64</span>;
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_source_tokens = <span class="number">0u64</span>;
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">let </span><span class="kw-2">mut </span>response_source_tokens = <span class="number">0u64</span>;
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span><span class="kw-2">mut </span>path_and_metadata_tokens = <span class="number">0u64</span>;
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span><span class="kw-2">mut </span>protocol_tokens = <span class="number">0u64</span>;
-<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span><span class="kw-2">mut </span>total_response_tokens = <span class="number">0u64</span>;
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span><span class="kw-2">mut </span>receipt_suppressed_exact = <span class="number">0u64</span>;
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span><span class="kw-2">mut </span>receipt_suppressed_overlap = <span class="number">0u64</span>;
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>by_operation = TokenAccountingOperation::ALL
-<a href=#487 id=487 data-nosnippet>487</a>            .into_iter()
-<a href=#488 id=488 data-nosnippet>488</a>            .map(|operation| {
-<a href=#489 id=489 data-nosnippet>489</a>                <span class="kw">let </span>record = stored.get(operation.as_str()).cloned().unwrap_or_default();
-<a href=#490 id=490 data-nosnippet>490</a>                tracked_requests =
-<a href=#491 id=491 data-nosnippet>491</a>                    tracked_requests.saturating_add(record.response_tracked_requests);
-<a href=#492 id=492 data-nosnippet>492</a>                baseline_requests =
-<a href=#493 id=493 data-nosnippet>493</a>                    baseline_requests.saturating_add(record.response_baseline_requests);
-<a href=#494 id=494 data-nosnippet>494</a>                baseline_source_tokens =
-<a href=#495 id=495 data-nosnippet>495</a>                    baseline_source_tokens.saturating_add(record.response_baseline_source_tokens);
-<a href=#496 id=496 data-nosnippet>496</a>                response_source_tokens =
-<a href=#497 id=497 data-nosnippet>497</a>                    response_source_tokens.saturating_add(record.response_source_tokens);
-<a href=#498 id=498 data-nosnippet>498</a>                path_and_metadata_tokens =
-<a href=#499 id=499 data-nosnippet>499</a>                    path_and_metadata_tokens.saturating_add(record.path_and_metadata_tokens);
-<a href=#500 id=500 data-nosnippet>500</a>                protocol_tokens = protocol_tokens.saturating_add(record.protocol_tokens);
-<a href=#501 id=501 data-nosnippet>501</a>                total_response_tokens =
-<a href=#502 id=502 data-nosnippet>502</a>                    total_response_tokens.saturating_add(record.total_response_tokens);
-<a href=#503 id=503 data-nosnippet>503</a>                receipt_suppressed_exact =
-<a href=#504 id=504 data-nosnippet>504</a>                    receipt_suppressed_exact.saturating_add(record.receipt_suppressed_exact);
-<a href=#505 id=505 data-nosnippet>505</a>                receipt_suppressed_overlap =
-<a href=#506 id=506 data-nosnippet>506</a>                    receipt_suppressed_overlap.saturating_add(record.receipt_suppressed_overlap);
-<a href=#507 id=507 data-nosnippet>507</a>                ResponseTokenAccountingByOperation {
-<a href=#508 id=508 data-nosnippet>508</a>                    operation,
-<a href=#509 id=509 data-nosnippet>509</a>                    tracked_requests: record.response_tracked_requests,
-<a href=#510 id=510 data-nosnippet>510</a>                    baseline_requests: record.response_baseline_requests,
-<a href=#511 id=511 data-nosnippet>511</a>                    baseline_source_tokens: record.response_baseline_source_tokens,
-<a href=#512 id=512 data-nosnippet>512</a>                    response_source_tokens: record.response_source_tokens,
-<a href=#513 id=513 data-nosnippet>513</a>                    path_and_metadata_tokens: record.path_and_metadata_tokens,
-<a href=#514 id=514 data-nosnippet>514</a>                    protocol_tokens: record.protocol_tokens,
-<a href=#515 id=515 data-nosnippet>515</a>                    total_response_tokens: record.total_response_tokens,
-<a href=#516 id=516 data-nosnippet>516</a>                    estimated_net_tokens_saved: signed_token_difference(
-<a href=#517 id=517 data-nosnippet>517</a>                        record.response_baseline_source_tokens,
-<a href=#518 id=518 data-nosnippet>518</a>                        record.total_response_tokens,
-<a href=#519 id=519 data-nosnippet>519</a>                    ),
-<a href=#520 id=520 data-nosnippet>520</a>                    receipt_suppressed_exact: record.receipt_suppressed_exact,
-<a href=#521 id=521 data-nosnippet>521</a>                    receipt_suppressed_overlap: record.receipt_suppressed_overlap,
-<a href=#522 id=522 data-nosnippet>522</a>                }
-<a href=#523 id=523 data-nosnippet>523</a>            })
-<a href=#524 id=524 data-nosnippet>524</a>            .collect();
-<a href=#525 id=525 data-nosnippet>525</a>        TokenSavingsReport {
-<a href=#526 id=526 data-nosnippet>526</a>            response_accounting: ResponseTokenAccounting {
-<a href=#527 id=527 data-nosnippet>527</a>                accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
-<a href=#528 id=528 data-nosnippet>528</a>                estimate_basis: RESPONSE_ACCOUNTING_ESTIMATE_BASIS.to_owned(),
-<a href=#529 id=529 data-nosnippet>529</a>                tracked_requests,
-<a href=#530 id=530 data-nosnippet>530</a>                baseline_requests,
-<a href=#531 id=531 data-nosnippet>531</a>                baseline_source_tokens,
-<a href=#532 id=532 data-nosnippet>532</a>                response_source_tokens,
-<a href=#533 id=533 data-nosnippet>533</a>                path_and_metadata_tokens,
-<a href=#534 id=534 data-nosnippet>534</a>                protocol_tokens,
-<a href=#535 id=535 data-nosnippet>535</a>                total_response_tokens,
-<a href=#536 id=536 data-nosnippet>536</a>                estimated_net_tokens_saved: signed_token_difference(
-<a href=#537 id=537 data-nosnippet>537</a>                    baseline_source_tokens,
-<a href=#538 id=538 data-nosnippet>538</a>                    total_response_tokens,
-<a href=#539 id=539 data-nosnippet>539</a>                ),
-<a href=#540 id=540 data-nosnippet>540</a>                receipt_suppressed_exact,
-<a href=#541 id=541 data-nosnippet>541</a>                receipt_suppressed_overlap,
-<a href=#542 id=542 data-nosnippet>542</a>                by_operation,
-<a href=#543 id=543 data-nosnippet>543</a>            },
-<a href=#544 id=544 data-nosnippet>544</a>        }
-<a href=#545 id=545 data-nosnippet>545</a>    }
-<a href=#546 id=546 data-nosnippet>546</a>
-<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">fn </span>source_savings_from_records(
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#549 id=549 data-nosnippet>549</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
-<a href=#550 id=550 data-nosnippet>550</a>    ) -&gt; TokenSavingsResponse {
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracked_requests = <span class="number">0u64</span>;
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_source_tokens = <span class="number">0u64</span>;
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">let </span><span class="kw-2">mut </span>emitted_source_tokens = <span class="number">0u64</span>;
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span><span class="kw-2">mut </span>estimated_source_tokens_saved = <span class="number">0u64</span>;
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>by_operation = TokenSavingsOperation::ALL
-<a href=#557 id=557 data-nosnippet>557</a>            .into_iter()
-<a href=#558 id=558 data-nosnippet>558</a>            .map(|operation| {
-<a href=#559 id=559 data-nosnippet>559</a>                <span class="kw">let </span>record = stored.get(operation.as_str()).cloned().unwrap_or_default();
-<a href=#560 id=560 data-nosnippet>560</a>                tracked_requests = tracked_requests.saturating_add(record.tracked_requests);
-<a href=#561 id=561 data-nosnippet>561</a>                baseline_source_tokens =
-<a href=#562 id=562 data-nosnippet>562</a>                    baseline_source_tokens.saturating_add(record.baseline_source_tokens);
-<a href=#563 id=563 data-nosnippet>563</a>                emitted_source_tokens =
-<a href=#564 id=564 data-nosnippet>564</a>                    emitted_source_tokens.saturating_add(record.emitted_source_tokens);
-<a href=#565 id=565 data-nosnippet>565</a>                estimated_source_tokens_saved = estimated_source_tokens_saved
-<a href=#566 id=566 data-nosnippet>566</a>                    .saturating_add(record.estimated_source_tokens_saved);
-<a href=#567 id=567 data-nosnippet>567</a>                TokenSavingsByOperation {
-<a href=#568 id=568 data-nosnippet>568</a>                    operation,
-<a href=#569 id=569 data-nosnippet>569</a>                    tracked_requests: record.tracked_requests,
-<a href=#570 id=570 data-nosnippet>570</a>                    baseline_source_tokens: record.baseline_source_tokens,
-<a href=#571 id=571 data-nosnippet>571</a>                    emitted_source_tokens: record.emitted_source_tokens,
-<a href=#572 id=572 data-nosnippet>572</a>                    estimated_source_tokens_saved: record.estimated_source_tokens_saved,
-<a href=#573 id=573 data-nosnippet>573</a>                }
-<a href=#574 id=574 data-nosnippet>574</a>            })
-<a href=#575 id=575 data-nosnippet>575</a>            .collect();
-<a href=#576 id=576 data-nosnippet>576</a>        TokenSavingsResponse {
-<a href=#577 id=577 data-nosnippet>577</a>            tokenizer: tokenizer.to_owned(),
-<a href=#578 id=578 data-nosnippet>578</a>            token_count_exact: <span class="self">self</span>.config.tokenizer.is_exact(),
-<a href=#579 id=579 data-nosnippet>579</a>            estimate_basis: TOKEN_SAVINGS_ESTIMATE_BASIS.to_owned(),
-<a href=#580 id=580 data-nosnippet>580</a>            tracked_requests,
-<a href=#581 id=581 data-nosnippet>581</a>            baseline_source_tokens,
-<a href=#582 id=582 data-nosnippet>582</a>            emitted_source_tokens,
-<a href=#583 id=583 data-nosnippet>583</a>            estimated_source_tokens_saved,
-<a href=#584 id=584 data-nosnippet>584</a>            by_operation,
-<a href=#585 id=585 data-nosnippet>585</a>        }
-<a href=#586 id=586 data-nosnippet>586</a>    }
-<a href=#587 id=587 data-nosnippet>587</a>
-<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings(
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#590 id=590 data-nosnippet>590</a>        operation: TokenAccountingOperation,
-<a href=#591 id=591 data-nosnippet>591</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#592 id=592 data-nosnippet>592</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
-<a href=#593 id=593 data-nosnippet>593</a>    ) {
-<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">let </span>classification = <span class="kw">if </span>meta.next_cursor.is_some() {
-<a href=#595 id=595 data-nosnippet>595</a>            TokenSavingsRequestClass::Incomplete
-<a href=#596 id=596 data-nosnippet>596</a>        } <span class="kw">else </span>{
-<a href=#597 id=597 data-nosnippet>597</a>            TokenSavingsRequestClass::Useful
-<a href=#598 id=598 data-nosnippet>598</a>        };
-<a href=#599 id=599 data-nosnippet>599</a>        <span class="self">self</span>.record_token_savings_classified(
-<a href=#600 id=600 data-nosnippet>600</a>            operation,
-<a href=#601 id=601 data-nosnippet>601</a>            baseline_source_tokens,
-<a href=#602 id=602 data-nosnippet>602</a>            meta,
-<a href=#603 id=603 data-nosnippet>603</a>            classification,
-<a href=#604 id=604 data-nosnippet>604</a>        );
-<a href=#605 id=605 data-nosnippet>605</a>    }
-<a href=#606 id=606 data-nosnippet>606</a>
-<a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings_classified(
-<a href=#608 id=608 data-nosnippet>608</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#609 id=609 data-nosnippet>609</a>        operation: TokenAccountingOperation,
-<a href=#610 id=610 data-nosnippet>610</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#611 id=611 data-nosnippet>611</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
-<a href=#612 id=612 data-nosnippet>612</a>        classification: TokenSavingsRequestClass,
-<a href=#613 id=613 data-nosnippet>613</a>    ) {
-<a href=#614 id=614 data-nosnippet>614</a>        <span class="self">self</span>.record_token_savings_with_expected_hash(
-<a href=#615 id=615 data-nosnippet>615</a>            operation,
-<a href=#616 id=616 data-nosnippet>616</a>            baseline_source_tokens,
-<a href=#617 id=617 data-nosnippet>617</a>            meta,
-<a href=#618 id=618 data-nosnippet>618</a>            classification,
-<a href=#619 id=619 data-nosnippet>619</a>            <span class="bool-val">false</span>,
-<a href=#620 id=620 data-nosnippet>620</a>            <span class="number">0</span>,
-<a href=#621 id=621 data-nosnippet>621</a>        );
-<a href=#622 id=622 data-nosnippet>622</a>    }
-<a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings_with_expected_hash(
-<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#626 id=626 data-nosnippet>626</a>        operation: TokenAccountingOperation,
-<a href=#627 id=627 data-nosnippet>627</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#628 id=628 data-nosnippet>628</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
-<a href=#629 id=629 data-nosnippet>629</a>        classification: TokenSavingsRequestClass,
-<a href=#630 id=630 data-nosnippet>630</a>        expected_hash_not_modified: bool,
-<a href=#631 id=631 data-nosnippet>631</a>        expected_hash_suppressed_source_tokens: usize,
-<a href=#632 id=632 data-nosnippet>632</a>    ) {
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">match </span><span class="self">self</span>.storage.record_token_savings(
-<a href=#634 id=634 data-nosnippet>634</a>            <span class="self">self</span>.config.tokenizer.name(),
-<a href=#635 id=635 data-nosnippet>635</a>            TokenSavingsObservation {
-<a href=#636 id=636 data-nosnippet>636</a>                operation,
-<a href=#637 id=637 data-nosnippet>637</a>                baseline_source_tokens,
-<a href=#638 id=638 data-nosnippet>638</a>                meta,
-<a href=#639 id=639 data-nosnippet>639</a>                classification,
-<a href=#640 id=640 data-nosnippet>640</a>                expected_hash_not_modified,
-<a href=#641 id=641 data-nosnippet>641</a>                expected_hash_suppressed_source_tokens,
-<a href=#642 id=642 data-nosnippet>642</a>            },
-<a href=#643 id=643 data-nosnippet>643</a>        ) {
-<a href=#644 id=644 data-nosnippet>644</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>) =&gt; {}
-<a href=#645 id=645 data-nosnippet>645</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>) =&gt; <span class="macro">tracing::debug!</span>(
-<a href=#646 id=646 data-nosnippet>646</a>                operation = operation.as_str(),
-<a href=#647 id=647 data-nosnippet>647</a>                <span class="string">"token-savings accounting skipped a busy writer"
-<a href=#648 id=648 data-nosnippet>648</a>            </span>),
-<a href=#649 id=649 data-nosnippet>649</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">tracing::warn!</span>(
-<a href=#650 id=650 data-nosnippet>650</a>                %error,
-<a href=#651 id=651 data-nosnippet>651</a>                operation = operation.as_str(),
-<a href=#652 id=652 data-nosnippet>652</a>                <span class="string">"token-savings accounting was skipped"
-<a href=#653 id=653 data-nosnippet>653</a>            </span>),
-<a href=#654 id=654 data-nosnippet>654</a>        }
-<a href=#655 id=655 data-nosnippet>655</a>    }
-<a href=#656 id=656 data-nosnippet>656</a>}
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>unsupported = successful_unsupported.saturating_add(unsupported_failures);
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>hash_suppressed = stored
+<a href=#415 id=415 data-nosnippet>415</a>            .values()
+<a href=#416 id=416 data-nosnippet>416</a>            .map(|record| record.hash_suppressed_requests)
+<a href=#417 id=417 data-nosnippet>417</a>            .fold(<span class="number">0u64</span>, u64::saturating_add);
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>classified = useful
+<a href=#419 id=419 data-nosnippet>419</a>            .saturating_add(incomplete)
+<a href=#420 id=420 data-nosnippet>420</a>            .saturating_add(unsupported)
+<a href=#421 id=421 data-nosnippet>421</a>            .saturating_add(hash_suppressed);
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="prelude-val">Ok</span>(ObservedTokenSavingsReport {
+<a href=#423 id=423 data-nosnippet>423</a>            observations: TokenSavingsObservations {
+<a href=#424 id=424 data-nosnippet>424</a>                observation_scope: OBSERVATION_SCOPE.to_owned(),
+<a href=#425 id=425 data-nosnippet>425</a>                successful_response_records: report.response_accounting.tracked_requests,
+<a href=#426 id=426 data-nosnippet>426</a>                responses_with_baseline: report.response_accounting.baseline_requests,
+<a href=#427 id=427 data-nosnippet>427</a>                failed_service_requests,
+<a href=#428 id=428 data-nosnippet>428</a>                expected_hash_not_modified_responses,
+<a href=#429 id=429 data-nosnippet>429</a>                expected_hash_suppressed_source_tokens,
+<a href=#430 id=430 data-nosnippet>430</a>                request_classification: TokenSavingsRequestClassification {
+<a href=#431 id=431 data-nosnippet>431</a>                    useful,
+<a href=#432 id=432 data-nosnippet>432</a>                    incomplete,
+<a href=#433 id=433 data-nosnippet>433</a>                    unsupported,
+<a href=#434 id=434 data-nosnippet>434</a>                    hash_suppressed,
+<a href=#435 id=435 data-nosnippet>435</a>                    unclassified: report
+<a href=#436 id=436 data-nosnippet>436</a>                        .response_accounting
+<a href=#437 id=437 data-nosnippet>437</a>                        .tracked_requests
+<a href=#438 id=438 data-nosnippet>438</a>                        .saturating_sub(classified),
+<a href=#439 id=439 data-nosnippet>439</a>                    failed: failed_service_requests.saturating_sub(unsupported_failures),
+<a href=#440 id=440 data-nosnippet>440</a>                },
+<a href=#441 id=441 data-nosnippet>441</a>                failed_by_operation_and_category,
+<a href=#442 id=442 data-nosnippet>442</a>                unobserved: UNOBSERVED_OUTCOMES.map(str::to_owned).to_vec(),
+<a href=#443 id=443 data-nosnippet>443</a>            },
+<a href=#444 id=444 data-nosnippet>444</a>            observed_task_savings: ObservedTaskSavings {
+<a href=#445 id=445 data-nosnippet>445</a>                status: TaskSavingsObservationStatus::Unavailable,
+<a href=#446 id=446 data-nosnippet>446</a>                observed_tasks: <span class="number">0</span>,
+<a href=#447 id=447 data-nosnippet>447</a>                task_successes: <span class="prelude-val">None</span>,
+<a href=#448 id=448 data-nosnippet>448</a>                task_failures: <span class="prelude-val">None</span>,
+<a href=#449 id=449 data-nosnippet>449</a>                relevant_retrieval_responses: <span class="prelude-val">None</span>,
+<a href=#450 id=450 data-nosnippet>450</a>                unknown_relevance_responses: report.response_accounting.tracked_requests,
+<a href=#451 id=451 data-nosnippet>451</a>                failed_retrieval_calls: failed_service_requests,
+<a href=#452 id=452 data-nosnippet>452</a>                failure_response_tokens: <span class="prelude-val">None</span>,
+<a href=#453 id=453 data-nosnippet>453</a>                retry_calls: <span class="prelude-val">None</span>,
+<a href=#454 id=454 data-nosnippet>454</a>                superseded_calls: <span class="prelude-val">None</span>,
+<a href=#455 id=455 data-nosnippet>455</a>                net_tokens_saved: <span class="prelude-val">None</span>,
+<a href=#456 id=456 data-nosnippet>456</a>                savings_rate_basis_points: <span class="prelude-val">None</span>,
+<a href=#457 id=457 data-nosnippet>457</a>                exclusion_basis: TASK_SAVINGS_EXCLUSION_BASIS.to_owned(),
+<a href=#458 id=458 data-nosnippet>458</a>            },
+<a href=#459 id=459 data-nosnippet>459</a>            report,
+<a href=#460 id=460 data-nosnippet>460</a>        })
+<a href=#461 id=461 data-nosnippet>461</a>    }
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="kw">fn </span>token_savings_report_sync(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TokenSavingsReport&gt; {
+<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>stored = <span class="self">self</span>.instrumentation.token_savings(tokenizer)<span class="question-mark">?</span>;
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.token_savings_report_from_records(<span class="kw-2">&amp;</span>stored))
+<a href=#467 id=467 data-nosnippet>467</a>    }
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">fn </span>token_savings_report_from_records(
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#471 id=471 data-nosnippet>471</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
+<a href=#472 id=472 data-nosnippet>472</a>    ) -&gt; TokenSavingsReport {
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracked_requests = <span class="number">0u64</span>;
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_requests = <span class="number">0u64</span>;
+<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_source_tokens = <span class="number">0u64</span>;
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">let </span><span class="kw-2">mut </span>response_source_tokens = <span class="number">0u64</span>;
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span><span class="kw-2">mut </span>path_and_metadata_tokens = <span class="number">0u64</span>;
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span><span class="kw-2">mut </span>protocol_tokens = <span class="number">0u64</span>;
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span><span class="kw-2">mut </span>total_response_tokens = <span class="number">0u64</span>;
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">let </span><span class="kw-2">mut </span>receipt_suppressed_exact = <span class="number">0u64</span>;
+<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span><span class="kw-2">mut </span>receipt_suppressed_overlap = <span class="number">0u64</span>;
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>by_operation = TokenAccountingOperation::ALL
+<a href=#483 id=483 data-nosnippet>483</a>            .into_iter()
+<a href=#484 id=484 data-nosnippet>484</a>            .map(|operation| {
+<a href=#485 id=485 data-nosnippet>485</a>                <span class="kw">let </span>record = stored.get(operation.as_str()).cloned().unwrap_or_default();
+<a href=#486 id=486 data-nosnippet>486</a>                tracked_requests =
+<a href=#487 id=487 data-nosnippet>487</a>                    tracked_requests.saturating_add(record.response_tracked_requests);
+<a href=#488 id=488 data-nosnippet>488</a>                baseline_requests =
+<a href=#489 id=489 data-nosnippet>489</a>                    baseline_requests.saturating_add(record.response_baseline_requests);
+<a href=#490 id=490 data-nosnippet>490</a>                baseline_source_tokens =
+<a href=#491 id=491 data-nosnippet>491</a>                    baseline_source_tokens.saturating_add(record.response_baseline_source_tokens);
+<a href=#492 id=492 data-nosnippet>492</a>                response_source_tokens =
+<a href=#493 id=493 data-nosnippet>493</a>                    response_source_tokens.saturating_add(record.response_source_tokens);
+<a href=#494 id=494 data-nosnippet>494</a>                path_and_metadata_tokens =
+<a href=#495 id=495 data-nosnippet>495</a>                    path_and_metadata_tokens.saturating_add(record.path_and_metadata_tokens);
+<a href=#496 id=496 data-nosnippet>496</a>                protocol_tokens = protocol_tokens.saturating_add(record.protocol_tokens);
+<a href=#497 id=497 data-nosnippet>497</a>                total_response_tokens =
+<a href=#498 id=498 data-nosnippet>498</a>                    total_response_tokens.saturating_add(record.total_response_tokens);
+<a href=#499 id=499 data-nosnippet>499</a>                receipt_suppressed_exact =
+<a href=#500 id=500 data-nosnippet>500</a>                    receipt_suppressed_exact.saturating_add(record.receipt_suppressed_exact);
+<a href=#501 id=501 data-nosnippet>501</a>                receipt_suppressed_overlap =
+<a href=#502 id=502 data-nosnippet>502</a>                    receipt_suppressed_overlap.saturating_add(record.receipt_suppressed_overlap);
+<a href=#503 id=503 data-nosnippet>503</a>                ResponseTokenAccountingByOperation {
+<a href=#504 id=504 data-nosnippet>504</a>                    operation,
+<a href=#505 id=505 data-nosnippet>505</a>                    tracked_requests: record.response_tracked_requests,
+<a href=#506 id=506 data-nosnippet>506</a>                    baseline_requests: record.response_baseline_requests,
+<a href=#507 id=507 data-nosnippet>507</a>                    baseline_source_tokens: record.response_baseline_source_tokens,
+<a href=#508 id=508 data-nosnippet>508</a>                    response_source_tokens: record.response_source_tokens,
+<a href=#509 id=509 data-nosnippet>509</a>                    path_and_metadata_tokens: record.path_and_metadata_tokens,
+<a href=#510 id=510 data-nosnippet>510</a>                    protocol_tokens: record.protocol_tokens,
+<a href=#511 id=511 data-nosnippet>511</a>                    total_response_tokens: record.total_response_tokens,
+<a href=#512 id=512 data-nosnippet>512</a>                    estimated_net_tokens_saved: signed_token_difference(
+<a href=#513 id=513 data-nosnippet>513</a>                        record.response_baseline_source_tokens,
+<a href=#514 id=514 data-nosnippet>514</a>                        record.total_response_tokens,
+<a href=#515 id=515 data-nosnippet>515</a>                    ),
+<a href=#516 id=516 data-nosnippet>516</a>                    receipt_suppressed_exact: record.receipt_suppressed_exact,
+<a href=#517 id=517 data-nosnippet>517</a>                    receipt_suppressed_overlap: record.receipt_suppressed_overlap,
+<a href=#518 id=518 data-nosnippet>518</a>                }
+<a href=#519 id=519 data-nosnippet>519</a>            })
+<a href=#520 id=520 data-nosnippet>520</a>            .collect();
+<a href=#521 id=521 data-nosnippet>521</a>        TokenSavingsReport {
+<a href=#522 id=522 data-nosnippet>522</a>            response_accounting: ResponseTokenAccounting {
+<a href=#523 id=523 data-nosnippet>523</a>                accounting_scope: RESPONSE_ACCOUNTING_SCOPE.to_owned(),
+<a href=#524 id=524 data-nosnippet>524</a>                estimate_basis: RESPONSE_ACCOUNTING_ESTIMATE_BASIS.to_owned(),
+<a href=#525 id=525 data-nosnippet>525</a>                tracked_requests,
+<a href=#526 id=526 data-nosnippet>526</a>                baseline_requests,
+<a href=#527 id=527 data-nosnippet>527</a>                baseline_source_tokens,
+<a href=#528 id=528 data-nosnippet>528</a>                response_source_tokens,
+<a href=#529 id=529 data-nosnippet>529</a>                path_and_metadata_tokens,
+<a href=#530 id=530 data-nosnippet>530</a>                protocol_tokens,
+<a href=#531 id=531 data-nosnippet>531</a>                total_response_tokens,
+<a href=#532 id=532 data-nosnippet>532</a>                estimated_net_tokens_saved: signed_token_difference(
+<a href=#533 id=533 data-nosnippet>533</a>                    baseline_source_tokens,
+<a href=#534 id=534 data-nosnippet>534</a>                    total_response_tokens,
+<a href=#535 id=535 data-nosnippet>535</a>                ),
+<a href=#536 id=536 data-nosnippet>536</a>                receipt_suppressed_exact,
+<a href=#537 id=537 data-nosnippet>537</a>                receipt_suppressed_overlap,
+<a href=#538 id=538 data-nosnippet>538</a>                by_operation,
+<a href=#539 id=539 data-nosnippet>539</a>            },
+<a href=#540 id=540 data-nosnippet>540</a>        }
+<a href=#541 id=541 data-nosnippet>541</a>    }
+<a href=#542 id=542 data-nosnippet>542</a>
+<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">fn </span>source_savings_from_records(
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#545 id=545 data-nosnippet>545</a>        stored: <span class="kw-2">&amp;</span>HashMap&lt;String, TokenSavingsRecord&gt;,
+<a href=#546 id=546 data-nosnippet>546</a>    ) -&gt; TokenSavingsResponse {
+<a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>tokenizer = <span class="self">self</span>.config.tokenizer.name();
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracked_requests = <span class="number">0u64</span>;
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">let </span><span class="kw-2">mut </span>baseline_source_tokens = <span class="number">0u64</span>;
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">let </span><span class="kw-2">mut </span>emitted_source_tokens = <span class="number">0u64</span>;
+<a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">let </span><span class="kw-2">mut </span>estimated_source_tokens_saved = <span class="number">0u64</span>;
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>by_operation = TokenSavingsOperation::ALL
+<a href=#553 id=553 data-nosnippet>553</a>            .into_iter()
+<a href=#554 id=554 data-nosnippet>554</a>            .map(|operation| {
+<a href=#555 id=555 data-nosnippet>555</a>                <span class="kw">let </span>record = stored.get(operation.as_str()).cloned().unwrap_or_default();
+<a href=#556 id=556 data-nosnippet>556</a>                tracked_requests = tracked_requests.saturating_add(record.tracked_requests);
+<a href=#557 id=557 data-nosnippet>557</a>                baseline_source_tokens =
+<a href=#558 id=558 data-nosnippet>558</a>                    baseline_source_tokens.saturating_add(record.baseline_source_tokens);
+<a href=#559 id=559 data-nosnippet>559</a>                emitted_source_tokens =
+<a href=#560 id=560 data-nosnippet>560</a>                    emitted_source_tokens.saturating_add(record.emitted_source_tokens);
+<a href=#561 id=561 data-nosnippet>561</a>                estimated_source_tokens_saved = estimated_source_tokens_saved
+<a href=#562 id=562 data-nosnippet>562</a>                    .saturating_add(record.estimated_source_tokens_saved);
+<a href=#563 id=563 data-nosnippet>563</a>                TokenSavingsByOperation {
+<a href=#564 id=564 data-nosnippet>564</a>                    operation,
+<a href=#565 id=565 data-nosnippet>565</a>                    tracked_requests: record.tracked_requests,
+<a href=#566 id=566 data-nosnippet>566</a>                    baseline_source_tokens: record.baseline_source_tokens,
+<a href=#567 id=567 data-nosnippet>567</a>                    emitted_source_tokens: record.emitted_source_tokens,
+<a href=#568 id=568 data-nosnippet>568</a>                    estimated_source_tokens_saved: record.estimated_source_tokens_saved,
+<a href=#569 id=569 data-nosnippet>569</a>                }
+<a href=#570 id=570 data-nosnippet>570</a>            })
+<a href=#571 id=571 data-nosnippet>571</a>            .collect();
+<a href=#572 id=572 data-nosnippet>572</a>        TokenSavingsResponse {
+<a href=#573 id=573 data-nosnippet>573</a>            tokenizer: tokenizer.to_owned(),
+<a href=#574 id=574 data-nosnippet>574</a>            token_count_exact: <span class="self">self</span>.config.tokenizer.is_exact(),
+<a href=#575 id=575 data-nosnippet>575</a>            estimate_basis: TOKEN_SAVINGS_ESTIMATE_BASIS.to_owned(),
+<a href=#576 id=576 data-nosnippet>576</a>            tracked_requests,
+<a href=#577 id=577 data-nosnippet>577</a>            baseline_source_tokens,
+<a href=#578 id=578 data-nosnippet>578</a>            emitted_source_tokens,
+<a href=#579 id=579 data-nosnippet>579</a>            estimated_source_tokens_saved,
+<a href=#580 id=580 data-nosnippet>580</a>            by_operation,
+<a href=#581 id=581 data-nosnippet>581</a>        }
+<a href=#582 id=582 data-nosnippet>582</a>    }
+<a href=#583 id=583 data-nosnippet>583</a>
+<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings(
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#586 id=586 data-nosnippet>586</a>        operation: TokenAccountingOperation,
+<a href=#587 id=587 data-nosnippet>587</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#588 id=588 data-nosnippet>588</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
+<a href=#589 id=589 data-nosnippet>589</a>    ) {
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>classification = <span class="kw">if </span>meta.next_cursor.is_some() {
+<a href=#591 id=591 data-nosnippet>591</a>            TokenSavingsRequestClass::Incomplete
+<a href=#592 id=592 data-nosnippet>592</a>        } <span class="kw">else </span>{
+<a href=#593 id=593 data-nosnippet>593</a>            TokenSavingsRequestClass::Useful
+<a href=#594 id=594 data-nosnippet>594</a>        };
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="self">self</span>.record_token_savings_classified(
+<a href=#596 id=596 data-nosnippet>596</a>            operation,
+<a href=#597 id=597 data-nosnippet>597</a>            baseline_source_tokens,
+<a href=#598 id=598 data-nosnippet>598</a>            meta,
+<a href=#599 id=599 data-nosnippet>599</a>            classification,
+<a href=#600 id=600 data-nosnippet>600</a>        );
+<a href=#601 id=601 data-nosnippet>601</a>    }
+<a href=#602 id=602 data-nosnippet>602</a>
+<a href=#603 id=603 data-nosnippet>603</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings_classified(
+<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#605 id=605 data-nosnippet>605</a>        operation: TokenAccountingOperation,
+<a href=#606 id=606 data-nosnippet>606</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#607 id=607 data-nosnippet>607</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
+<a href=#608 id=608 data-nosnippet>608</a>        classification: TokenSavingsRequestClass,
+<a href=#609 id=609 data-nosnippet>609</a>    ) {
+<a href=#610 id=610 data-nosnippet>610</a>        <span class="self">self</span>.record_token_savings_with_expected_hash(
+<a href=#611 id=611 data-nosnippet>611</a>            operation,
+<a href=#612 id=612 data-nosnippet>612</a>            baseline_source_tokens,
+<a href=#613 id=613 data-nosnippet>613</a>            meta,
+<a href=#614 id=614 data-nosnippet>614</a>            classification,
+<a href=#615 id=615 data-nosnippet>615</a>            <span class="bool-val">false</span>,
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="number">0</span>,
+<a href=#617 id=617 data-nosnippet>617</a>        );
+<a href=#618 id=618 data-nosnippet>618</a>    }
+<a href=#619 id=619 data-nosnippet>619</a>
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>record_token_savings_with_expected_hash(
+<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#622 id=622 data-nosnippet>622</a>        operation: TokenAccountingOperation,
+<a href=#623 id=623 data-nosnippet>623</a>        baseline_source_tokens: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#624 id=624 data-nosnippet>624</a>        meta: <span class="kw-2">&amp;</span>ResponseMeta,
+<a href=#625 id=625 data-nosnippet>625</a>        classification: TokenSavingsRequestClass,
+<a href=#626 id=626 data-nosnippet>626</a>        expected_hash_not_modified: bool,
+<a href=#627 id=627 data-nosnippet>627</a>        expected_hash_suppressed_source_tokens: usize,
+<a href=#628 id=628 data-nosnippet>628</a>    ) {
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">match </span><span class="self">self</span>.instrumentation.record_token_savings(
+<a href=#630 id=630 data-nosnippet>630</a>            <span class="self">self</span>.config.tokenizer.name(),
+<a href=#631 id=631 data-nosnippet>631</a>            TokenSavingsObservation {
+<a href=#632 id=632 data-nosnippet>632</a>                operation,
+<a href=#633 id=633 data-nosnippet>633</a>                baseline_source_tokens,
+<a href=#634 id=634 data-nosnippet>634</a>                meta,
+<a href=#635 id=635 data-nosnippet>635</a>                classification,
+<a href=#636 id=636 data-nosnippet>636</a>                expected_hash_not_modified,
+<a href=#637 id=637 data-nosnippet>637</a>                expected_hash_suppressed_source_tokens,
+<a href=#638 id=638 data-nosnippet>638</a>            },
+<a href=#639 id=639 data-nosnippet>639</a>        ) {
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>) =&gt; {}
+<a href=#641 id=641 data-nosnippet>641</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>) =&gt; <span class="macro">tracing::debug!</span>(
+<a href=#642 id=642 data-nosnippet>642</a>                operation = operation.as_str(),
+<a href=#643 id=643 data-nosnippet>643</a>                <span class="string">"token-savings accounting skipped a busy writer"
+<a href=#644 id=644 data-nosnippet>644</a>            </span>),
+<a href=#645 id=645 data-nosnippet>645</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">tracing::warn!</span>(
+<a href=#646 id=646 data-nosnippet>646</a>                %error,
+<a href=#647 id=647 data-nosnippet>647</a>                operation = operation.as_str(),
+<a href=#648 id=648 data-nosnippet>648</a>                <span class="string">"token-savings accounting was skipped"
+<a href=#649 id=649 data-nosnippet>649</a>            </span>),
+<a href=#650 id=650 data-nosnippet>650</a>        }
+<a href=#651 id=651 data-nosnippet>651</a>    }
+<a href=#652 id=652 data-nosnippet>652</a>}
 </code></pre></div></section></main></body></html>

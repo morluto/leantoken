@@ -389,7 +389,7 @@
 <a href=#389 id=389 data-nosnippet>389</a>}
 <a href=#390 id=390 data-nosnippet>390</a>
 <a href=#391 id=391 data-nosnippet>391</a><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) <span class="kw">struct </span>LiteralFullScan&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RepositoryGeneration,
 <a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) query: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
 <a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) matcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>regex::Regex,
 <a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::services) include_paths: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[String],
@@ -440,7 +440,7 @@
 <a href=#440 id=440 data-nosnippet>440</a>
 <a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>regex_hits(
 <a href=#442 id=442 data-nosnippet>442</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#443 id=443 data-nosnippet>443</a>        session: <span class="kw-2">&amp;</span>IndexReadSnapshot,
+<a href=#443 id=443 data-nosnippet>443</a>        session: <span class="kw-2">&amp;</span>RepositoryGeneration,
 <a href=#444 id=444 data-nosnippet>444</a>        request: <span class="kw-2">&amp;</span>SearchInput,
 <a href=#445 id=445 data-nosnippet>445</a>        regex: <span class="kw-2">&amp;</span>regex::Regex,
 <a href=#446 id=446 data-nosnippet>446</a>        max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
@@ -717,7 +717,7 @@
 <a href=#717 id=717 data-nosnippet>717</a>}
 <a href=#718 id=718 data-nosnippet>718</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#719 id=719 data-nosnippet>719</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RegexCandidateParams&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
-<a href=#720 id=720 data-nosnippet>720</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>IndexReadSnapshot,
+<a href=#720 id=720 data-nosnippet>720</a>    <span class="kw">pub </span>session: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RepositoryGeneration,
 <a href=#721 id=721 data-nosnippet>721</a>    <span class="kw">pub </span>regex: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>regex::Regex,
 <a href=#722 id=722 data-nosnippet>722</a>    <span class="kw">pub </span>max_candidates: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">pub </span>cancellation: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CancellationToken,
