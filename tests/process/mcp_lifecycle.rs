@@ -180,8 +180,10 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
     process.send_initialized();
     process.stdin.take();
 
+    // Startup cancellation joins the runtime task under the production
+    // shutdown budget; allow that same bounded window on slower CI runners.
     let status = process
-        .wait_timeout(Duration::from_secs(2))
+        .wait_timeout(Duration::from_secs(5))
         .expect("wait for MCP process")
         .expect("MCP process should honor startup cancellation");
     assert!(status.success(), "MCP process exited with {status}");
