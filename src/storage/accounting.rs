@@ -1,4 +1,4 @@
-impl InstrumentationStorage {
+impl Storage {
     pub(crate) fn record_token_savings(
         &self,
         tokenizer: &str,
@@ -273,7 +273,7 @@ impl InstrumentationStorage {
         &self,
         tokenizer: &str,
     ) -> Result<HashMap<String, TokenSavingsRecord>> {
-        self.snapshot(tokenizer).map(|(records, _)| records)
+        self.begin_read()?.token_savings(tokenizer)
     }
 }
 use super::*;

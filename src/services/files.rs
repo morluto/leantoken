@@ -9,12 +9,11 @@ use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use tokio_util::sync::CancellationToken;
 
-use super::cursor::request_digest;
+use super::cursor::{CursorEnvelope, CursorKind, StreamId, StreamIdentityBuilder};
 use super::execution_options::RetrievalExecution;
-use super::index_read::{FilePathRecord, RepositoryGeneration};
+use super::index_read::{FilePathRecord, IndexReadSnapshot};
 use super::validation::{
-    MAX_CURSOR_BYTES, MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled,
-    validate_optional_input,
+    MAX_PATH_BYTES, MAX_PATTERN_BYTES, MAX_QUERY_BYTES, check_cancelled, validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -24,24 +23,21 @@ use crate::{Error, Result};
 
 /// Page size for bounded lean scans over the indexed file table (find / glob fallback).
 pub(super) const FILE_LIST_PAGE_SIZE: usize = 1_000;
+const MAX_FILES_CURSOR_BYTES: usize = MAX_PATH_BYTES * 2 + 64;
 
 struct FilePage {
     entries: Vec<FileEntry>,
     next: Option<FileCursor>,
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
 enum FileCursor {
-    #[serde(rename = "p")]
     Path {
-        #[serde(rename = "p")]
+        operation: PathOperation,
         path: String,
     },
-    #[serde(rename = "f")]
     Fuzzy {
-        #[serde(rename = "s")]
         score: u32,
-        #[serde(rename = "p")]
         path: String,
     },
 }
@@ -104,21 +100,42 @@ fn fuzzy_path_class(path: &str) -> FuzzyPathClass {
     FuzzyPathClass::General
 }
 
-struct FilesInput {
-    query: FilesQuery,
-    max_results: Option<usize>,
-    cursor: Option<String>,
+#[derive(Clone, Copy)]
+enum PathOperation {
+    Tree,
+    Glob,
 }
 
-#[derive(serde::Serialize)]
+struct FilesInput {
+    query: FilesQuery,
+    limit: usize,
+    cursor: Option<CursorEnvelope>,
+    stream_id: StreamId,
+}
+
 enum FilesQuery {
     Tree { root: String, depth: Option<usize> },
     Find { query: String },
     Glob { pattern: String },
 }
 
+#[derive(Clone, Copy)]
+enum FilesOutput {
+    Entries,
+    Paths,
+}
+
+impl FilesOutput {
+    const fn stream_label(self) -> &'static str {
+        match self {
+            Self::Entries => "entries",
+            Self::Paths => "paths",
+        }
+    }
+}
+
 impl FilesInput {
-    fn parse(request: FilesRequest) -> Result<Self> {
+    fn parse(services: &Services, request: FilesRequest, output: FilesOutput) -> Result<Self> {
         let FilesRequest {
             operation,
             path,
@@ -131,7 +148,10 @@ impl FilesInput {
         validate_optional_input(path.as_deref(), "path", MAX_PATH_BYTES)?;
         validate_optional_input(query.as_deref(), "query", MAX_QUERY_BYTES)?;
         validate_optional_input(pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
-        validate_optional_input(cursor.as_deref(), "cursor", MAX_CURSOR_BYTES)?;
+        let cursor = cursor
+            .as_deref()
+            .map(|cursor| CursorEnvelope::parse(cursor, MAX_FILES_CURSOR_BYTES))
+            .transpose()?;
         let query = match operation {
             FileOperation::Tree => FilesQuery::Tree {
                 root: normalize_tree_root(path.as_deref())?,
@@ -152,15 +172,51 @@ impl FilesInput {
                         reason: "is required for glob",
                     },
                 )?;
-                crate::repository::RepositoryPattern::parse(&pattern)?;
-                FilesQuery::Glob { pattern }
+                let pattern = crate::repository::RepositoryPattern::parse(&pattern)?;
+                FilesQuery::Glob {
+                    pattern: pattern.as_str().to_owned(),
+                }
             }
         };
+        let limit = services.result_limit(max_results)?;
+        let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::Files);
+        match &query {
+            FilesQuery::Tree { root, depth } => {
+                stream.field_str("operation", "tree");
+                stream.field_str("root", root);
+                stream.field_optional_usize("depth", *depth);
+            }
+            FilesQuery::Find { query } => {
+                stream.field_str("operation", "find");
+                stream.field_str("query", query);
+            }
+            FilesQuery::Glob { pattern } => {
+                stream.field_str("operation", "glob");
+                stream.field_str("pattern", pattern);
+            }
+        }
+        stream.field_str("output", output.stream_label());
         Ok(Self {
             query,
-            max_results,
+            limit,
             cursor,
+            stream_id: stream.finish(),
         })
+    }
+
+    fn cursor(&self, generation: u64) -> Result<Option<FileCursor>> {
+        let Some(cursor) = &self.cursor else {
+            return Ok(None);
+        };
+        let cursor = FileCursor::decode_payload(cursor.payload_for(
+            CursorKind::Files,
+            generation,
+            self.stream_id,
+        )?)?;
+        if cursor.operation() != self.query.operation() {
+            return Err(Error::StaleCursor);
+        }
+        Ok(Some(cursor))
     }
 }
 
@@ -174,8 +230,69 @@ impl FilesQuery {
     }
 }
 
+impl FileCursor {
+    fn operation(&self) -> FileOperation {
+        match self {
+            Self::Path {
+                operation: PathOperation::Tree,
+                ..
+            } => FileOperation::Tree,
+            Self::Path {
+                operation: PathOperation::Glob,
+                ..
+            } => FileOperation::Glob,
+            Self::Fuzzy { .. } => FileOperation::Find,
+        }
+    }
+
+    fn encode(self, generation: u64, stream_id: StreamId) -> Result<String> {
+        let mut payload = Vec::new();
+        match self {
+            Self::Path { operation, path } => {
+                payload.push(match operation {
+                    PathOperation::Tree => 1,
+                    PathOperation::Glob => 2,
+                });
+                payload.extend_from_slice(path.as_bytes());
+            }
+            Self::Fuzzy { score, path } => {
+                payload.push(3);
+                payload.extend_from_slice(&score.to_le_bytes());
+                payload.extend_from_slice(path.as_bytes());
+            }
+        }
+        CursorEnvelope::new(CursorKind::Files, generation, stream_id, payload)
+            .map(CursorEnvelope::encode)
+    }
+
+    fn decode_payload(payload: &[u8]) -> Result<Self> {
+        let (&tag, payload) = payload.split_first().ok_or(Error::StaleCursor)?;
+        let (operation, score, path) = match tag {
+            1 => (Some(PathOperation::Tree), None, payload),
+            2 => (Some(PathOperation::Glob), None, payload),
+            3 if payload.len() >= size_of::<u32>() => {
+                let (score, path) = payload.split_at(size_of::<u32>());
+                (
+                    None,
+                    Some(u32::from_le_bytes(
+                        score.try_into().map_err(|_| Error::StaleCursor)?,
+                    )),
+                    path,
+                )
+            }
+            _ => return Err(Error::StaleCursor),
+        };
+        let path = String::from_utf8(path.to_vec()).map_err(|_| Error::StaleCursor)?;
+        match (operation, score) {
+            (Some(operation), None) => Ok(Self::Path { operation, path }),
+            (None, Some(score)) => Ok(Self::Fuzzy { score, path }),
+            _ => Err(Error::StaleCursor),
+        }
+    }
+}
+
 fn tree_entries(
-    session: &RepositoryGeneration,
+    session: &IndexReadSnapshot,
     root: &str,
     depth: Option<usize>,
     cursor: Option<FileCursor>,
@@ -207,6 +324,7 @@ fn tree_entries(
         .then(|| entries.last())
         .flatten()
         .map(|entry| FileCursor::Path {
+            operation: PathOperation::Tree,
             path: entry.path.clone(),
         });
     Ok(FilePage { entries, next })
@@ -223,7 +341,7 @@ fn normalize_tree_root(root: Option<&str>) -> Result<String> {
 }
 
 fn fuzzy_entries(
-    session: &RepositoryGeneration,
+    session: &IndexReadSnapshot,
     query: &str,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -283,7 +401,7 @@ fn fuzzy_entries(
 }
 
 fn glob_entries(
-    session: &RepositoryGeneration,
+    session: &IndexReadSnapshot,
     pattern: &str,
     cursor: Option<FileCursor>,
     limit: usize,
@@ -318,6 +436,7 @@ fn glob_entries(
             .then(|| entries.last())
             .flatten()
             .map(|entry| FileCursor::Path {
+                operation: PathOperation::Glob,
                 path: entry.path.clone(),
             });
         return Ok(FilePage { entries, next });
@@ -343,7 +462,7 @@ fn glob_entries(
         }
         Ok(())
     })?;
-    Ok(finish_path_page(entries, limit))
+    Ok(finish_path_page(entries, limit, PathOperation::Glob))
 }
 
 /// Map a globset-style pattern to one or two SQLite `GLOB` patterns.
@@ -390,7 +509,7 @@ fn sql_glob_patterns(pattern: &str) -> Option<(String, Option<String>)> {
 }
 
 fn for_each_file_path(
-    session: &RepositoryGeneration,
+    session: &IndexReadSnapshot,
     cancellation: &CancellationToken,
     mut visitor: impl FnMut(FilePathRecord) -> Result<()>,
 ) -> Result<()> {
@@ -432,13 +551,18 @@ fn retain_path_entry(
     }
 }
 
-fn finish_path_page(entries: BTreeMap<String, FileEntry>, limit: usize) -> FilePage {
+fn finish_path_page(
+    entries: BTreeMap<String, FileEntry>,
+    limit: usize,
+    operation: PathOperation,
+) -> FilePage {
     let has_more = entries.len() > limit;
     let entries = entries.into_values().take(limit).collect::<Vec<_>>();
     let next = has_more
         .then(|| entries.last())
         .flatten()
         .map(|entry| FileCursor::Path {
+            operation,
             path: entry.path.clone(),
         });
     FilePage { entries, next }
@@ -446,25 +570,20 @@ fn finish_path_page(entries: BTreeMap<String, FileEntry>, limit: usize) -> FileP
 
 fn files_page(
     input: &FilesInput,
-    session: &RepositoryGeneration,
-    limit: usize,
+    session: &IndexReadSnapshot,
     cancellation: &CancellationToken,
 ) -> Result<(FilePage, FileOperation)> {
-    let cursor = input
-        .cursor
-        .as_deref()
-        .map(|cursor| {
-            session.open_cursor::<FileCursor>(cursor, "files", &request_digest(&input.query)?)
-        })
-        .transpose()?;
+    let cursor = input.cursor(session.generation())?;
     let operation = input.query.operation();
     let page = match &input.query {
         FilesQuery::Tree { root, depth } => {
-            tree_entries(session, root, *depth, cursor, limit, cancellation)?
+            tree_entries(session, root, *depth, cursor, input.limit, cancellation)?
         }
-        FilesQuery::Find { query } => fuzzy_entries(session, query, cursor, limit, cancellation)?,
+        FilesQuery::Find { query } => {
+            fuzzy_entries(session, query, cursor, input.limit, cancellation)?
+        }
         FilesQuery::Glob { pattern } => {
-            glob_entries(session, pattern, cursor, limit, cancellation)?
+            glob_entries(session, pattern, cursor, input.limit, cancellation)?
         }
     };
     Ok((page, operation))
@@ -490,15 +609,33 @@ impl Services {
         .await
     }
 
-    /// Discover paths under response controls and cancellation.
-    pub async fn files_with_options_cancellable(
+    /// Discover paths after applying the requested index consistency boundary.
+    pub async fn files_with_consistency_cancellable(
         &self,
         request: FilesRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<FilesResponse> {
+        self.files_execute(
+            request,
+            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
+        )
+        .await
+    }
+
+    /// Discover paths under consistency and serialized-response controls.
+    pub async fn files_with_options_consistency_cancellable(
+        &self,
+        request: FilesRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesResponse> {
-        self.files_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.files_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     pub async fn files_cancellable(
@@ -532,15 +669,19 @@ impl Services {
         .await
     }
 
-    /// Discover path-only results under response controls and cancellation.
-    pub async fn files_paths_with_options_cancellable(
+    /// Discover path-only results after applying the requested consistency boundary.
+    pub async fn files_paths_with_options_consistency_cancellable(
         &self,
         request: FilesRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<FilesPathsResponse> {
-        self.files_paths_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.files_paths_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     async fn files_paths_execute(
@@ -550,19 +691,32 @@ impl Services {
     ) -> Result<FilesPathsResponse> {
         let operation = TokenAccountingOperation::Files;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.observe_service_result(operation, check_cancelled(&cancellation))?;
-        let input = self.observe_service_result(operation, FilesInput::parse(request))?;
-        let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
+        let input = self.observe_service_result(
+            operation,
+            FilesInput::parse(self, request, FilesOutput::Paths),
+        )?;
+        if let Some(consistency) = consistency {
+            let consistency_result = self
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.files_paths_sync(input, limit, options, cancellation)
+                this.files_paths_sync(input, options, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -575,19 +729,32 @@ impl Services {
     ) -> Result<FilesResponse> {
         let operation = TokenAccountingOperation::Files;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
         self.observe_service_result(operation, check_cancelled(&cancellation))?;
-        let input = self.observe_service_result(operation, FilesInput::parse(request))?;
-        let limit = self.observe_service_result(operation, self.result_limit(input.max_results))?;
+        let input = self.observe_service_result(
+            operation,
+            FilesInput::parse(self, request, FilesOutput::Entries),
+        )?;
+        if let Some(consistency) = consistency {
+            let consistency_result = self
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.files_sync(input, limit, options, cancellation)
+                this.files_sync(input, options, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -596,25 +763,28 @@ impl Services {
     fn files_sync(
         &self,
         input: FilesInput,
-        limit: usize,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<FilesResponse> {
         check_cancelled(cancellation)?;
         let mut response = self.consistent(|session| {
-            let (page, operation) = files_page(&input, session, limit, cancellation)?;
+            let (page, operation) = files_page(&input, session, cancellation)?;
             let generation = session.generation();
+            let next_cursor = page
+                .next
+                .map(|next| next.encode(generation, input.stream_id))
+                .transpose()?;
             let mut response = FilesResponse {
                 entries: page.entries,
-                meta: self.meta(
-                    generation,
-                    0,
-                    page.next
-                        .map(|next| encode_files_cursor(session, &input.query, next))
-                        .transpose()?,
-                ),
+                meta: self.meta(generation, 0, next_cursor),
             };
-            self.fit_files_response(&mut response, session, &input.query, operation, options)?;
+            self.fit_files_response(
+                &mut response,
+                operation,
+                generation,
+                input.stream_id,
+                options,
+            )?;
             Ok(response)
         })?;
         self.finalize_bounded_response(&mut response, options)?;
@@ -625,31 +795,28 @@ impl Services {
     fn files_paths_sync(
         &self,
         input: FilesInput,
-        limit: usize,
         options: ServiceCallOptions,
         cancellation: &CancellationToken,
     ) -> Result<FilesPathsResponse> {
         check_cancelled(cancellation)?;
         let mut response = self.consistent(|session| {
-            let (page, operation) = files_page(&input, session, limit, cancellation)?;
+            let (page, operation) = files_page(&input, session, cancellation)?;
             let generation = session.generation();
             let entries = page.entries;
+            let next_cursor = page
+                .next
+                .map(|next| next.encode(generation, input.stream_id))
+                .transpose()?;
             let mut response = FilesPathsResponse {
                 paths: entries.iter().map(|entry| entry.path.clone()).collect(),
-                meta: self.meta(
-                    generation,
-                    0,
-                    page.next
-                        .map(|next| encode_files_cursor(session, &input.query, next))
-                        .transpose()?,
-                ),
+                meta: self.meta(generation, 0, next_cursor),
             };
             self.fit_files_paths_response(
                 &mut response,
                 &entries,
-                session,
-                &input.query,
                 operation,
+                generation,
+                input.stream_id,
                 options,
             )?;
             Ok(response)
@@ -662,9 +829,9 @@ impl Services {
     fn fit_files_response(
         &self,
         response: &mut FilesResponse,
-        generation: &RepositoryGeneration,
-        query: &FilesQuery,
         operation: FileOperation,
+        generation: u64,
+        stream_id: StreamId,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
@@ -683,11 +850,7 @@ impl Services {
                 .entries
                 .last()
                 .map(|entry| {
-                    encode_files_cursor(
-                        generation,
-                        query,
-                        files_cursor_for_entry(&operation, entry),
-                    )
+                    files_cursor_for_entry(&operation, entry).encode(generation, stream_id)
                 })
                 .transpose()?;
             self.finalized_response_tokens(&candidate, options)
@@ -698,27 +861,27 @@ impl Services {
                 .entries
                 .last()
                 .map(|entry| {
-                    encode_files_cursor(
-                        generation,
-                        query,
-                        files_cursor_for_entry(&operation, entry),
-                    )
+                    files_cursor_for_entry(&operation, entry).encode(generation, stream_id)
                 })
                 .transpose()?;
             return Ok(());
         }
 
-        let mut minimum = original.clone();
-        minimum.entries.truncate(1);
-        if let Some(entry) = original.entries.first()
-            && original.entries.len() > 1
-        {
-            minimum.meta.next_cursor = Some(encode_files_cursor(
-                generation,
-                query,
-                files_cursor_for_entry(&operation, entry),
-            )?);
-        }
+        let minimum = original
+            .entries
+            .first()
+            .map(|entry| {
+                let mut minimum = original.clone();
+                minimum.entries.truncate(1);
+                if original.entries.len() > 1 {
+                    minimum.meta.next_cursor = Some(
+                        files_cursor_for_entry(&operation, entry).encode(generation, stream_id)?,
+                    );
+                }
+                Ok::<_, Error>(minimum)
+            })
+            .transpose()?
+            .unwrap_or(original);
         Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 
@@ -726,9 +889,9 @@ impl Services {
         &self,
         response: &mut FilesPathsResponse,
         entries: &[FileEntry],
-        generation: &RepositoryGeneration,
-        query: &FilesQuery,
         operation: FileOperation,
+        generation: u64,
+        stream_id: StreamId,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
@@ -746,11 +909,7 @@ impl Services {
             candidate.meta.next_cursor = entries
                 .get(keep.saturating_sub(1))
                 .map(|entry| {
-                    encode_files_cursor(
-                        generation,
-                        query,
-                        files_cursor_for_entry(&operation, entry),
-                    )
+                    files_cursor_for_entry(&operation, entry).encode(generation, stream_id)
                 })
                 .transpose()?;
             self.finalized_response_tokens(&candidate, options)
@@ -760,34 +919,38 @@ impl Services {
             response.meta.next_cursor = entries
                 .get(keep - 1)
                 .map(|entry| {
-                    encode_files_cursor(
-                        generation,
-                        query,
-                        files_cursor_for_entry(&operation, entry),
-                    )
+                    files_cursor_for_entry(&operation, entry).encode(generation, stream_id)
                 })
                 .transpose()?;
             return Ok(());
         }
 
-        let mut minimum = original.clone();
-        minimum.paths.truncate(1);
-        if let Some(entry) = entries.first()
-            && original.paths.len() > 1
-        {
-            minimum.meta.next_cursor = Some(encode_files_cursor(
-                generation,
-                query,
-                files_cursor_for_entry(&operation, entry),
-            )?);
-        }
+        let minimum = entries
+            .first()
+            .map(|entry| {
+                let mut minimum = original.clone();
+                minimum.paths.truncate(1);
+                if original.paths.len() > 1 {
+                    minimum.meta.next_cursor = Some(
+                        files_cursor_for_entry(&operation, entry).encode(generation, stream_id)?,
+                    );
+                }
+                Ok::<_, Error>(minimum)
+            })
+            .transpose()?
+            .unwrap_or(original);
         Err(self.response_budget_error(&minimum, max_response_tokens, options)?)
     }
 }
 
 fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileCursor {
     match operation {
-        FileOperation::Tree | FileOperation::Glob => FileCursor::Path {
+        FileOperation::Tree => FileCursor::Path {
+            operation: PathOperation::Tree,
+            path: entry.path.clone(),
+        },
+        FileOperation::Glob => FileCursor::Path {
+            operation: PathOperation::Glob,
             path: entry.path.clone(),
         },
         FileOperation::Find => FileCursor::Fuzzy {
@@ -797,14 +960,6 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
             path: entry.path.clone(),
         },
     }
-}
-
-fn encode_files_cursor(
-    generation: &RepositoryGeneration,
-    query: &FilesQuery,
-    cursor: FileCursor,
-) -> Result<String> {
-    generation.seal_cursor("files", &request_digest(query)?, cursor)
 }
 
 #[cfg(test)]

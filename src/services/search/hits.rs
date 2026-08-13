@@ -14,8 +14,8 @@ pub(super) struct CandidateSearchHit {
 pub(super) struct SearchResponseShape<'a> {
     pub(super) all: &'a [CandidateSearchHit],
     pub(super) request: &'a SearchInput,
-    pub(super) generation: &'a RepositoryGeneration,
-    pub(super) cursor_digest: &'a str,
+    pub(super) stream_id: StreamId,
+    pub(super) generation: u64,
     pub(super) total_candidates: usize,
     pub(super) offset: usize,
     pub(super) consumed: usize,

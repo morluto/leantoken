@@ -1,68 +1,62 @@
 //! Application-facing reads from one pinned index snapshot.
 
 use super::{
-    ChunkHit, ChunkRecord, FilePathRecord, FileRecord, GenerationReadTransaction, ImportRecord,
-    ImportSymbolTarget, MetaRecord, ParserCoverageRows, PathRecord, ReferenceHit, Storage,
-    StorageCounts, SymbolHit, SymbolRecord,
+    ChunkHit, ChunkRecord, FilePathRecord, FileRecord, ImportRecord, ImportSymbolTarget,
+    MetaRecord, ParserCoverageRows, PathRecord, ReadSession, ReferenceHit, ServiceFailureRecord,
+    Storage, StorageCounts, SymbolHit, SymbolRecord, TokenSavingsRecord,
 };
 use crate::Result;
-use crate::query_receipt::QueryPartition;
+use crate::query_receipt::{QueryPartition, StoredQueryReceipt};
 
-/// One atomically published repository generation pinned by a SQLite read
-/// transaction for its complete lifetime.
+/// Read-only view pinned to one committed repository generation.
 ///
-/// Every retrieval projection must be read through this capability so source,
-/// structure, paths, and metadata cannot come from different publications.
-pub(crate) struct RepositoryGeneration {
-    transaction: GenerationReadTransaction,
+/// The raw SQLite transaction remains storage-owned. Holding this value keeps
+/// every query on the same WAL snapshot until the value is dropped.
+pub struct StorageSnapshot {
+    session: ReadSession,
     generation: u64,
-    semantics_fingerprint: String,
-    repository_identity: String,
-    database_incarnation_id: String,
 }
 
-impl RepositoryGeneration {
+impl StorageSnapshot {
     pub(crate) fn open(storage: &Storage) -> Result<Self> {
-        let transaction = storage.begin_generation_read()?;
-        let meta = transaction.meta()?;
+        let session = storage.begin_read()?;
+        let generation = session.repository_generation()?;
         Ok(Self {
-            transaction,
-            generation: meta.repository_generation,
-            semantics_fingerprint: meta.config_hash,
-            repository_identity: meta.repository_identity,
-            database_incarnation_id: meta.database_incarnation_id,
+            session,
+            generation,
         })
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    /// Repository generation pinned by this snapshot.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
         self.generation
     }
 
-    pub(crate) fn semantics_fingerprint(&self) -> &str {
-        &self.semantics_fingerprint
-    }
-
-    pub(crate) fn repository_identity(&self) -> &str {
-        &self.repository_identity
-    }
-
-    pub(crate) fn database_incarnation_id(&self) -> &str {
-        &self.database_incarnation_id
-    }
-
     pub(crate) fn meta(&self) -> Result<MetaRecord> {
-        self.transaction.meta()
+        self.session.meta()
     }
 
     pub(crate) fn counts(&self) -> Result<StorageCounts> {
-        self.transaction.counts()
+        self.session.counts()
     }
 
     pub(crate) fn parser_coverage_rows(
         &self,
         classify_extension: impl FnMut(&str) -> String,
     ) -> Result<ParserCoverageRows> {
-        self.transaction.parser_coverage_rows(classify_extension)
+        self.session.parser_coverage_rows(classify_extension)
+    }
+
+    pub(crate) fn service_failures(&self, tokenizer: &str) -> Result<Vec<ServiceFailureRecord>> {
+        self.session.service_failures(tokenizer)
+    }
+
+    pub(crate) fn token_savings(
+        &self,
+        tokenizer: &str,
+    ) -> Result<std::collections::HashMap<String, TokenSavingsRecord>> {
+        self.session.token_savings(tokenizer)
     }
 
     pub(crate) fn whole_file_source_tokens(
@@ -70,19 +64,16 @@ impl RepositoryGeneration {
         paths: &[String],
         tokenizer: &str,
     ) -> Result<Option<usize>> {
-        self.transaction.whole_file_source_tokens(paths, tokenizer)
+        self.session.whole_file_source_tokens(paths, tokenizer)
     }
 
     pub(crate) fn file_count(&self) -> Result<usize> {
-        self.transaction.file_count()
+        self.session.file_count()
     }
 
-    pub(crate) fn list_files(
-        &self,
-        max_results: usize,
-        cursor: Option<i64>,
-    ) -> Result<Vec<FileRecord>> {
-        self.transaction.list_files(max_results, cursor)
+    /// Return files in increasing row-id order within this pinned generation.
+    pub fn list_files(&self, max_results: usize, cursor: Option<i64>) -> Result<Vec<FileRecord>> {
+        self.session.list_files(max_results, cursor)
     }
 
     pub(crate) fn list_file_paths(
@@ -90,7 +81,7 @@ impl RepositoryGeneration {
         max_results: usize,
         cursor: Option<i64>,
     ) -> Result<Vec<FilePathRecord>> {
-        self.transaction.list_file_paths(max_results, cursor)
+        self.session.list_file_paths(max_results, cursor)
     }
 
     pub(crate) fn list_glob_paths(
@@ -100,7 +91,7 @@ impl RepositoryGeneration {
         after: Option<&str>,
         max_results: usize,
     ) -> Result<Vec<PathRecord>> {
-        self.transaction
+        self.session
             .list_glob_paths(primary, alternate, after, max_results)
     }
 
@@ -111,16 +102,16 @@ impl RepositoryGeneration {
         after: Option<&str>,
         max_results: usize,
     ) -> Result<Vec<PathRecord>> {
-        self.transaction
+        self.session
             .list_tree_paths(root, max_depth, after, max_results)
     }
 
     pub(crate) fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
-        self.transaction.find_file(path)
+        self.session.find_file(path)
     }
 
     pub(crate) fn affected_importers(&self, candidate_paths: &[String]) -> Result<Vec<String>> {
-        self.transaction.affected_importers(candidate_paths)
+        self.session.affected_importers(candidate_paths)
     }
 
     pub(crate) fn import_symbol_targets(
@@ -129,11 +120,8 @@ impl RepositoryGeneration {
         max_imports_per_seed: usize,
         max_symbols_per_target: usize,
     ) -> Result<Vec<ImportSymbolTarget>> {
-        self.transaction.import_symbol_targets(
-            seed_paths,
-            max_imports_per_seed,
-            max_symbols_per_target,
-        )
+        self.session
+            .import_symbol_targets(seed_paths, max_imports_per_seed, max_symbols_per_target)
     }
 
     pub(crate) fn get_chunks_for_file(
@@ -141,24 +129,18 @@ impl RepositoryGeneration {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<ChunkRecord>> {
-        self.transaction.get_chunks_for_file(file_id, max_results)
-    }
-
-    /// Reconstruct exact source from the canonical non-overlapping chunks in
-    /// this published generation.
-    pub(crate) fn file_content(&self, file_id: i64, expected_size: usize) -> Result<String> {
-        self.transaction.file_content(file_id, expected_size)
+        self.session.get_chunks_for_file(file_id, max_results)
     }
 
     pub(crate) fn get_chunks_overlapping_batch(
         &self,
         ranges: &[(i64, usize, usize)],
     ) -> Result<Vec<Vec<ChunkRecord>>> {
-        self.transaction.get_chunks_overlapping_batch(ranges)
+        self.session.get_chunks_overlapping_batch(ranges)
     }
 
     pub(crate) fn file_end_lines_batch(&self, file_ids: &[i64]) -> Result<Vec<Option<usize>>> {
-        self.transaction.file_end_lines_batch(file_ids)
+        self.session.file_end_lines_batch(file_ids)
     }
 
     pub(crate) fn get_symbols_for_file(
@@ -166,7 +148,7 @@ impl RepositoryGeneration {
         file_id: i64,
         max_results: usize,
     ) -> Result<Vec<SymbolRecord>> {
-        self.transaction.get_symbols_for_file(file_id, max_results)
+        self.session.get_symbols_for_file(file_id, max_results)
     }
 
     pub(crate) fn get_symbols_for_file_filtered_page(
@@ -177,13 +159,8 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<SymbolRecord>> {
-        self.transaction.get_symbols_for_file_filtered_page(
-            file_id,
-            name,
-            kind,
-            max_results,
-            offset,
-        )
+        self.session
+            .get_symbols_for_file_filtered_page(file_id, name, kind, max_results, offset)
     }
 
     pub(crate) fn symbol_counts_for_file_filtered(
@@ -192,7 +169,7 @@ impl RepositoryGeneration {
         name: Option<&str>,
         kind: Option<&str>,
     ) -> Result<Vec<(String, usize)>> {
-        self.transaction
+        self.session
             .symbol_counts_for_file_filtered(file_id, name, kind)
     }
 
@@ -201,7 +178,7 @@ impl RepositoryGeneration {
         file_id: i64,
         name: &str,
     ) -> Result<crate::symbol_identity::SymbolResolution<SymbolRecord>> {
-        self.transaction.find_symbol(file_id, name)
+        self.session.find_symbol(file_id, name)
     }
 
     pub(crate) fn find_document_heading(
@@ -210,7 +187,7 @@ impl RepositoryGeneration {
         name: &str,
         occurrence: usize,
     ) -> Result<Option<SymbolRecord>> {
-        self.transaction
+        self.session
             .find_document_heading(file_id, name, occurrence)
     }
 
@@ -218,7 +195,7 @@ impl RepositoryGeneration {
         &self,
         locations: &[(i64, usize)],
     ) -> Result<Vec<Option<SymbolRecord>>> {
-        self.transaction.find_enclosing_symbols_batch(locations)
+        self.session.find_enclosing_symbols_batch(locations)
     }
 
     pub(crate) fn get_imports_for_file_page(
@@ -227,12 +204,12 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ImportRecord>> {
-        self.transaction
+        self.session
             .get_imports_for_file_page(file_id, max_results, offset)
     }
 
     pub(crate) fn count_imports_for_file(&self, file_id: i64) -> Result<usize> {
-        self.transaction.count_imports_for_file(file_id)
+        self.session.count_imports_for_file(file_id)
     }
 
     pub(crate) fn search_word_page(
@@ -241,8 +218,7 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ChunkHit>> {
-        self.transaction
-            .search_word_page(query, max_results, offset)
+        self.session.search_word_page(query, max_results, offset)
     }
 
     pub(crate) fn search_trigram_page(
@@ -251,16 +227,15 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ChunkHit>> {
-        self.transaction
-            .search_trigram_page(query, max_results, offset)
+        self.session.search_trigram_page(query, max_results, offset)
     }
 
     pub(crate) fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.transaction.search_word(query, max_results)
+        self.session.search_word(query, max_results)
     }
 
     pub(crate) fn search_trigram(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.transaction.search_trigram(query, max_results)
+        self.session.search_trigram(query, max_results)
     }
 
     pub(crate) fn search_trigram_expression_page(
@@ -269,7 +244,7 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ChunkHit>> {
-        self.transaction
+        self.session
             .search_trigram_expression_page(expression, max_results, offset)
     }
 
@@ -278,7 +253,7 @@ impl RepositoryGeneration {
         expression: &str,
         max_results: usize,
     ) -> Result<Vec<ChunkHit>> {
-        self.transaction
+        self.session
             .search_trigram_expression(expression, max_results)
     }
 
@@ -289,7 +264,7 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<SymbolHit>> {
-        self.transaction
+        self.session
             .search_symbols_page(query, case_sensitive, max_results, offset)
     }
 
@@ -299,7 +274,7 @@ impl RepositoryGeneration {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<SymbolHit>> {
-        self.transaction
+        self.session
             .search_symbols(query, case_sensitive, max_results)
     }
 
@@ -310,7 +285,7 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ReferenceHit>> {
-        self.transaction
+        self.session
             .search_references_page(query, case_sensitive, max_results, offset)
     }
 
@@ -320,7 +295,7 @@ impl RepositoryGeneration {
         case_sensitive: bool,
         max_results: usize,
     ) -> Result<Vec<ReferenceHit>> {
-        self.transaction
+        self.session
             .search_references(query, case_sensitive, max_results)
     }
 
@@ -329,12 +304,12 @@ impl RepositoryGeneration {
         names: &[String],
         max_results_per_name: usize,
     ) -> Result<Vec<Vec<SymbolHit>>> {
-        self.transaction
+        self.session
             .find_symbols_exact_batch(names, max_results_per_name)
     }
 
     pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
-        self.transaction.regex_scan_files(max_results)
+        self.session.regex_scan_files(max_results)
     }
 
     pub(crate) fn search_regex_candidates_page(
@@ -343,7 +318,7 @@ impl RepositoryGeneration {
         max_results: usize,
         offset: usize,
     ) -> Result<Vec<ChunkHit>> {
-        self.transaction
+        self.session
             .search_regex_candidates_page(query, max_results, offset)
     }
 
@@ -356,7 +331,7 @@ impl RepositoryGeneration {
         exclude_paths: &[String],
         allows_path: impl FnMut(&str) -> bool,
     ) -> Result<Vec<i64>> {
-        self.transaction.select_scoped_regex_candidate_ids(
+        self.session.select_scoped_regex_candidate_ids(
             query,
             max_rows_scanned,
             max_candidates,
@@ -367,7 +342,7 @@ impl RepositoryGeneration {
     }
 
     pub(crate) fn regex_candidates_by_ids(&self, chunk_ids: &[i64]) -> Result<Vec<ChunkHit>> {
-        self.transaction.regex_candidates_by_ids(chunk_ids)
+        self.session.regex_candidates_by_ids(chunk_ids)
     }
 
     pub(crate) fn regex_candidate_count_up_to(
@@ -375,8 +350,7 @@ impl RepositoryGeneration {
         query: &str,
         max_results: usize,
     ) -> Result<usize> {
-        self.transaction
-            .regex_candidate_count_up_to(query, max_results)
+        self.session.regex_candidate_count_up_to(query, max_results)
     }
 
     pub(crate) fn receipt_structural_hash_matches(
@@ -386,12 +360,12 @@ impl RepositoryGeneration {
         end_line: usize,
         content_hash: &str,
     ) -> Result<Option<bool>> {
-        self.transaction.receipt_structural_hash_matches(
-            file_id,
-            start_line,
-            end_line,
-            content_hash,
-        )
+        self.session
+            .receipt_structural_hash_matches(file_id, start_line, end_line, content_hash)
+    }
+
+    pub(crate) fn load_query_receipt(&self, requested_id: &str) -> Result<StoredQueryReceipt> {
+        self.session.load_query_receipt(requested_id)
     }
 
     pub(crate) fn exact_query_partition(
@@ -399,6 +373,13 @@ impl RepositoryGeneration {
         allows_path: impl FnMut(&str) -> bool,
         check: impl FnMut() -> Result<()>,
     ) -> Result<QueryPartition> {
-        self.transaction.exact_query_partition(allows_path, check)
+        self.session.exact_query_partition(allows_path, check)
+    }
+}
+
+impl Storage {
+    /// Open a read capability pinned to one committed repository generation.
+    pub fn snapshot(&self) -> Result<StorageSnapshot> {
+        StorageSnapshot::open(self)
     }
 }

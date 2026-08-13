@@ -11,6 +11,7 @@ pub(super) struct ParsedSearchRequest {
     pub(super) request: SearchInput,
     pub(super) prepared: PreparedSearch,
     pub(super) output_shape: SearchOutputShape,
+    pub(super) stream_id: StreamId,
 }
 
 pub(super) struct LexicalSearchBatch {
@@ -34,12 +35,17 @@ impl Services {
         output_shape: SearchOutputShape,
     ) -> Result<ParsedSearchRequest> {
         validate_search_input(&request)?;
+        let cursor = ContinuationCursor::parse_optional(request.cursor.as_deref())?;
+        let patterns = SearchPatterns::parse(&request)?;
         let kind = parse_search_kind(&request, output_shape)?;
         let prepared = self.prepare_search(&request, &kind)?;
+        let request = SearchInput::from_request(request, kind, patterns, cursor);
+        let stream_id = search_stream_id(self, &request, &prepared, output_shape);
         Ok(ParsedSearchRequest {
-            request: SearchInput::from_request(request, kind),
+            request,
             prepared,
             output_shape,
+            stream_id,
         })
     }
 
@@ -84,7 +90,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        } = query;
         if let Some(PreparedQueryReceipt::Reuse {
             receipt_id,
             predicate,
@@ -98,15 +108,9 @@ impl Services {
                 cancellation,
             );
         }
-        let cursor_digest = search_cursor_digest(request, prepared, output_shape)?;
         let offset = request
             .cursor
-            .as_deref()
-            .map(|cursor| {
-                session
-                    .open_cursor::<SearchPosition>(cursor, "search", &cursor_digest)
-                    .map(|position| position.offset)
-            })
+            .map(|cursor| cursor.position_for(CursorKind::Search, generation, stream_id))
             .transpose()?
             .unwrap_or(0);
         let mut hits = self.collect_structural_search_hits(
@@ -122,7 +126,11 @@ impl Services {
             generation,
             cancellation,
         };
-        let query = SearchQuery { request, prepared };
+        let query = SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        };
         let lexical = self.collect_lexical_search_hits(snapshot, query, scan)?;
         hits.extend(lexical.hits);
         let hits = order_search_hits(hits, request)?;
@@ -140,18 +148,14 @@ impl Services {
 
     pub(super) fn reuse_query_receipt(
         &self,
-        session: &RepositoryGeneration,
+        session: &IndexReadSnapshot,
         generation: u64,
         receipt_id: &str,
         requested_predicate: &ExactQueryPredicate,
         cancellation: &CancellationToken,
     ) -> Result<SearchSnapshotResult> {
         check_cancelled(cancellation)?;
-        let stored = self.artifacts.load_query_receipt(
-            &self.repository_id(),
-            session.database_incarnation_id(),
-            receipt_id,
-        )?;
+        let stored = session.load_query_receipt(receipt_id)?;
         let Some(scope_relation) = requested_predicate.scope_relation_to(&stored.predicate) else {
             return Err(Error::QueryReceiptMismatch);
         };
@@ -219,7 +223,7 @@ impl Services {
 
     pub(super) fn collect_structural_search_hits(
         &self,
-        session: &RepositoryGeneration,
+        session: &IndexReadSnapshot,
         request: &SearchInput,
         prepared: &PreparedSearch,
         limit: usize,
@@ -375,7 +379,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id: _,
+        } = query;
         let SearchScan {
             regex_planning,
             diagnostics,
@@ -507,7 +515,7 @@ impl Services {
 
     pub(super) fn hydrate_lexical_search_hits(
         &self,
-        session: &RepositoryGeneration,
+        session: &IndexReadSnapshot,
         request: &SearchInput,
         prepared: &PreparedSearch,
         cancellation: &CancellationToken,
@@ -609,7 +617,11 @@ impl Services {
             generation,
             cancellation,
         } = snapshot;
-        let SearchQuery { request, prepared } = query;
+        let SearchQuery {
+            request,
+            prepared,
+            stream_id,
+        } = query;
         let OrderedSearchPage { hits, offset } = page;
         let total_candidates = hits.len();
         let (mut selected, consumed, _) = select_search_page(
@@ -627,8 +639,8 @@ impl Services {
             SearchResponseShape {
                 all: &hits,
                 request,
-                generation: session,
-                cursor_digest: &search_cursor_digest(request, prepared, output_shape)?,
+                stream_id,
+                generation,
                 total_candidates,
                 offset,
                 consumed,
@@ -651,12 +663,11 @@ impl Services {
         let receipt = self.evaluate_receipt(
             matches!(
                 output_shape,
-                SearchOutputShape::Full | SearchOutputShape::Compact
+                SearchOutputShape::Full | SearchOutputShape::Compact | SearchOutputShape::Grouped
             )
             .then_some(request.receipt_id.as_deref())
             .flatten(),
             generation,
-            session.database_incarnation_id(),
             &receipt_candidates,
         )?;
         selected = selected
@@ -686,26 +697,18 @@ impl Services {
             .collect();
         let baseline_source_tokens =
             session.whole_file_source_tokens(&paths, self.config.tokenizer.name())?;
+        let next_cursor = has_more
+            .then(|| {
+                ContinuationCursor::at(CursorKind::Search, generation, stream_id, offset + consumed)
+                    .map(ContinuationCursor::encode)
+            })
+            .transpose()?;
         let mut response = SearchResponse {
             hits: selected,
             coverage,
             occurrences_returned,
             occurrences_total: request.kind.is_exhaustive().then_some(total_candidates),
-            meta: self.meta(
-                generation,
-                emitted_tokens,
-                has_more
-                    .then(|| {
-                        session.seal_cursor(
-                            "search",
-                            &search_cursor_digest(request, prepared, output_shape)?,
-                            SearchPosition {
-                                offset: offset + consumed,
-                            },
-                        )
-                    })
-                    .transpose()?,
-            ),
+            meta: self.meta(generation, emitted_tokens, next_cursor),
         };
         receipt.apply_meta(&mut response.meta);
         let query_receipt =
@@ -763,35 +766,6 @@ impl Services {
     }
 }
 
-fn search_cursor_digest(
-    request: &SearchInput,
-    prepared: &PreparedSearch,
-    output: SearchOutputShape,
-) -> Result<String> {
-    let output = match output {
-        SearchOutputShape::Full => "full",
-        SearchOutputShape::Compact => "compact",
-        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts) => {
-            "occurrence_excerpts"
-        }
-        SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => {
-            "occurrence_coordinates"
-        }
-    };
-    request_digest(&(
-        &request.query,
-        request.kind.mode(),
-        request.kind.definition_preference().prefers_structural(),
-        request.kind.is_exhaustive(),
-        &request.include_paths,
-        &request.exclude_paths,
-        &request.focus_paths,
-        request.case_sensitive,
-        prepared.context_lines,
-        output,
-    ))
-}
-
 pub(super) fn order_search_hits(
     mut hits: Vec<CandidateSearchHit>,
     request: &SearchInput,
@@ -834,7 +808,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchSnapshot<'a> {
-    pub session: &'a RepositoryGeneration,
+    pub session: &'a IndexReadSnapshot,
     pub generation: u64,
     pub cancellation: &'a CancellationToken,
 }
@@ -843,6 +817,7 @@ pub(super) struct SearchSnapshot<'a> {
 pub(super) struct SearchQuery<'a> {
     pub request: &'a SearchInput,
     pub prepared: &'a PreparedSearch,
+    pub stream_id: StreamId,
 }
 
 #[derive(Clone, Copy)]

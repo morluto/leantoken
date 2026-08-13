@@ -276,6 +276,7 @@ fn cli_read_request() {
     assert_eq!(request.continuation_cursor, None);
     assert_eq!(request.max_tokens, Some(100));
     assert_eq!(request.expected_hash, Some("abc123".into()));
+    assert!(!request.delta);
 }
 
 #[test]
@@ -561,7 +562,21 @@ fn cli_global_json_works_before_or_after_subcommand() {
 }
 
 #[test]
-fn cli_core_retrievals_are_generation_backed() {
+fn cli_index_backed_retrievals_default_to_live_consistency_with_snapshot_opt_out() {
+    for arguments in [
+        &["files", "tree"][..],
+        &["search", "needle"][..],
+        &["outline", "src/lib.rs"][..],
+        &["read", "src/lib.rs"][..],
+        &["context", "--task", "find the owner"][..],
+    ] {
+        assert_eq!(
+            request_consistency(parse(arguments).app_request()),
+            IndexConsistency::ReconcileWorkingTree,
+            "default consistency for {arguments:?}"
+        );
+    }
+
     for arguments in [
         &["files", "tree", "--consistency", "indexed_generation"][..],
         &["search", "needle", "--consistency", "indexed_generation"][..],
@@ -572,31 +587,20 @@ fn cli_core_retrievals_are_generation_backed() {
             "indexed_generation",
         ][..],
         &["read", "src/lib.rs", "--consistency", "indexed_generation"][..],
+        &[
+            "context",
+            "--task",
+            "find the owner",
+            "--consistency",
+            "indexed_generation",
+        ][..],
     ] {
-        assert!(
-            Cli::try_parse_from(std::iter::once("leantoken").chain(arguments.iter().copied()))
-                .is_err(),
-            "core retrieval should not expose a consistency mode: {arguments:?}"
+        assert_eq!(
+            request_consistency(parse(arguments).app_request()),
+            IndexConsistency::IndexedGeneration,
+            "snapshot consistency for {arguments:?}"
         );
     }
-
-    assert_eq!(
-        request_consistency(parse(&["context", "--task", "find the owner"]).app_request()),
-        IndexConsistency::ReconcileWorkingTree
-    );
-    assert_eq!(
-        request_consistency(
-            parse(&[
-                "context",
-                "--task",
-                "find the owner",
-                "--consistency",
-                "indexed_generation",
-            ])
-            .app_request()
-        ),
-        IndexConsistency::IndexedGeneration
-    );
 
     assert!(matches!(
         parse(&["status"]).app_request(),
@@ -606,8 +610,12 @@ fn cli_core_retrievals_are_generation_backed() {
 
 fn request_consistency(request: AppRequest) -> IndexConsistency {
     match request {
-        AppRequest::Context { consistency, .. } => consistency,
-        _ => panic!("expected a context request"),
+        AppRequest::Files { consistency, .. }
+        | AppRequest::Search { consistency, .. }
+        | AppRequest::Outline { consistency, .. }
+        | AppRequest::Read { consistency, .. }
+        | AppRequest::Context { consistency, .. } => consistency,
+        _ => panic!("expected an index-backed retrieval request"),
     }
 }
 
@@ -864,19 +872,19 @@ fn cli_request_limit_boundaries_reject_only_meaningless_zero_values() {
 }
 
 #[test]
-fn cli_refresh_and_status_and_mcp_commands() {
-    let cli = parse(&["refresh"]);
+fn cli_index_and_status_and_mcp_commands() {
+    let cli = parse(&["index"]);
     assert!(matches!(
         cli.app_request(),
-        AppRequest::Refresh {
+        AppRequest::Index {
             mode: leantoken::IndexingMode::Reconcile
         }
     ));
 
-    let cli = parse(&["refresh", "--rebuild"]);
+    let cli = parse(&["index", "--rebuild"]);
     assert!(matches!(
         cli.app_request(),
-        AppRequest::Refresh {
+        AppRequest::Index {
             mode: leantoken::IndexingMode::Rebuild
         }
     ));

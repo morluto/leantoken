@@ -3,7 +3,8 @@ use super::*;
 impl Services {
     pub async fn status(&self) -> Result<StatusResponse> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| this.status_sync())
             .await
     }
@@ -45,6 +46,7 @@ impl Services {
         Ok(status_response(
             &config,
             snapshot.generation,
+            snapshot.derivation_fingerprint,
             snapshot.counts,
             freshness,
             index_progress,
@@ -53,13 +55,17 @@ impl Services {
 
     fn status_sync(&self) -> Result<StatusResponse> {
         self.consistent_allow_empty(|session| {
-            let generation = session.generation();
+            let meta = session.meta()?;
+            let generation = meta.repository_generation;
+            let persisted_derivation =
+                (!meta.derivation_fingerprint.is_empty()).then_some(meta.derivation_fingerprint);
             let counts = session.counts()?;
             let freshness = self.freshness();
             let index_progress = self.initial_index_progress(generation, &freshness);
             Ok(status_response(
                 &self.config,
                 generation,
+                persisted_derivation,
                 counts,
                 freshness,
                 index_progress,
@@ -149,6 +155,7 @@ fn validate_fallback_before_lease(config: &Config, database: &std::path::Path) -
 fn status_response(
     config: &Config,
     generation: u64,
+    persisted_derivation_fingerprint: Option<String>,
     counts: StorageCounts,
     freshness: Freshness,
     index_progress: Option<IndexProgressSnapshot>,
@@ -162,6 +169,9 @@ fn status_response(
         database_path: config.database_path.display().to_string(),
         repository_cache_fallback,
         index_content_version: INDEX_CONTENT_VERSION,
+        index_derivation_fingerprint: crate::index_derivation::index_derivation_fingerprint()
+            .to_owned(),
+        persisted_index_derivation_fingerprint: persisted_derivation_fingerprint,
         index_scope: if config.index_scope().is_full() {
             IndexScopeMode::Full
         } else {

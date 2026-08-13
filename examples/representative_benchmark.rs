@@ -638,7 +638,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let services = Services::open(config)?;
 
         let started = Instant::now();
-        let indexed = services.refresh(leantoken::IndexingMode::Rebuild).await?;
+        let indexed = services.index(leantoken::IndexingMode::Rebuild).await?;
         let cold_index_ms = elapsed_ms(started);
         let mut tasks = Vec::new();
         for task in corpus.tasks {
@@ -3788,7 +3788,7 @@ mod tests {
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
         let services = Services::open(config).expect("services");
         services
-            .refresh(leantoken::IndexingMode::Rebuild)
+            .index(leantoken::IndexingMode::Rebuild)
             .await
             .expect("index");
         let trace = concat!(
@@ -3923,7 +3923,7 @@ mod tests {
             Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
         let services = Services::open(config).expect("services");
         services
-            .refresh(leantoken::IndexingMode::Rebuild)
+            .index(leantoken::IndexingMode::Rebuild)
             .await
             .expect("index");
         let trace = concat!(

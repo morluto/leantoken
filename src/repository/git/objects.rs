@@ -1,5 +1,5 @@
 /// Load one bounded UTF-8 repository file from an immutable Git revision.
-pub fn git_blob_at_revision(
+pub(crate) fn git_blob_at_revision(
     root: &Path,
     revision: &str,
     path: &str,
@@ -56,7 +56,7 @@ pub fn git_blob_at_revision(
 ///
 /// A single tree query resolves path-to-object identities, followed by one
 /// `cat-file --batch` call for the selected unique blobs.
-pub fn git_blobs_at_revision(
+pub(crate) fn git_blobs_at_revision(
     root: &Path,
     revision: &str,
     paths: &[String],
@@ -73,7 +73,7 @@ pub fn git_blobs_at_revision(
 ///
 /// This executes one `ls-tree` subprocess and at most one `cat-file --batch`
 /// subprocess, independent of the number of requested paths.
-pub fn git_blobs_at_resolved_revision(
+pub(crate) fn git_blobs_at_resolved_revision(
     root: &Path,
     revision: &str,
     paths: &[String],
@@ -280,7 +280,7 @@ pub fn git_blobs_at_resolved_revision(
 }
 
 /// Read metadata for resolved immutable endpoints in one bounded Git subprocess.
-pub fn git_commit_metadata(
+pub(crate) fn git_commit_metadata(
     root: &Path,
     revisions: &[String],
 ) -> Result<BTreeMap<String, GitCommitMetadata>> {
@@ -353,7 +353,7 @@ pub fn git_commit_metadata(
 }
 
 /// Return bounded commit metadata for one tracked historical line range.
-pub fn git_line_history(
+pub(crate) fn git_line_history(
     root: &Path,
     revision: &str,
     path: &str,

@@ -6,6 +6,10 @@ use super::*;
     description = "Context cross-field relationships remain runtime-validated: strict focus constraints require focus_paths, plan_only cannot combine with receipt_id or handoff, and handoff cannot be combined with plan_only."
 )]
 pub(in crate::mcp) struct ContextMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(length(max = 128))]
@@ -79,7 +83,7 @@ pub(in crate::mcp) struct ContextMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256), inner(length(max = 128)))]
     pub(in crate::mcp) known_hashes: Vec<String>,
-    /// Suppress evidence already returned under this immutable artifact; omit
+    /// Suppress evidence already returned under this server-managed receipt; omit
     /// when `plan_only` is true.
     #[serde(default)]
     #[schemars(length(max = 128))]

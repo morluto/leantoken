@@ -13,14 +13,18 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (request, projection, options, expected_repository_id) = req.into_parts();
+        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -35,11 +39,21 @@ impl LeanTokenMcp {
                 async move {
                     match projection {
                         FilesMcpProjection::Full => services
-                            .files_with_options_cancellable(request, options, cancellation)
+                            .files_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                         FilesMcpProjection::Paths => services
-                            .files_paths_with_options_cancellable(request, options, cancellation)
+                            .files_paths_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                     }
@@ -60,14 +74,18 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens();
-        let (request, output, options, expected_repository_id) = req.into_parts();
+        let (request, output, consistency, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -82,21 +100,37 @@ impl LeanTokenMcp {
                 async move {
                     match output {
                         SearchMcpOutput::Full => services
-                            .search_with_options_cancellable(request, options, cancellation)
+                            .search_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Compact => services
-                            .search_compact_with_options_cancellable(request, options, cancellation)
+                            .search_compact_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Grouped => services
-                            .search_grouped_with_options_cancellable(request, options, cancellation)
+                            .search_grouped_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                         SearchMcpOutput::Occurrences(output) => services
-                            .search_occurrences_with_options_cancellable(
+                            .search_occurrences_with_options_consistency_cancellable(
                                 request,
                                 output,
+                                consistency,
                                 options,
                                 cancellation,
                             )
@@ -120,14 +154,18 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens;
-        let (request, projection, options, expected_repository_id) = req.into_parts();
+        let (request, projection, consistency, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -142,12 +180,18 @@ impl LeanTokenMcp {
                 async move {
                     match projection {
                         OutlineMcpProjection::Full => services
-                            .outline_with_options_cancellable(request, options, cancellation)
+                            .outline_with_options_consistency_cancellable(
+                                request,
+                                consistency,
+                                options,
+                                cancellation,
+                            )
                             .await
                             .and_then(serialized_response),
                         OutlineMcpProjection::Signatures => services
-                            .outline_signatures_with_options_cancellable(
+                            .outline_signatures_with_options_consistency_cancellable(
                                 request,
+                                consistency,
                                 options,
                                 cancellation,
                             )
@@ -162,7 +206,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation from one published repository generation. Keep path separate from target; use a symbol or range from search or outline. Pass expected_hash to suppress unchanged published content; the response identifies its source and reports worktree freshness as unknown because it does not read mutable files; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,
@@ -171,14 +215,18 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
             RetrievalPreparation::Unavailable(result) => return Ok(result),
         };
         let max_response_tokens = req.max_response_tokens;
-        let (request, options, expected_repository_id) = req.into_parts();
+        let (request, consistency, options, expected_repository_id) = req.into_parts();
         let options =
             options.with_mcp_response_shape(self.result_mode.response_shape(protocol.as_ref()));
         self.run_prepared(
@@ -192,7 +240,12 @@ impl LeanTokenMcp {
                 let options = options.with_initial_reconciliation_deadline(deadline);
                 async move {
                     services
-                        .read_with_options_cancellable(request, options, cancellation)
+                        .read_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            options,
+                            cancellation,
+                        )
                         .await
                 }
             },
@@ -211,7 +264,11 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -264,7 +321,11 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -308,7 +369,11 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -359,7 +424,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "receipt_rebase",
-        description = "Explicitly carry only exactly unchanged evidence from an immutable artifact into the current committed generation. Requires the same repository identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\"}."
+        description = "Explicitly carry only exactly unchanged evidence from a stale server-managed receipt into the current committed generation. Requires the same repository/cache/scope identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\",\"consistency\":\"reconcile_working_tree\"}."
     )]
     async fn leantoken_receipt_rebase(
         &self,
@@ -368,7 +433,11 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let protocol = context.protocol_version();
         let prepared = match self
-            .prepare_retrieval_call(context.ct.clone(), |limits| req.validate_limits(limits))
+            .prepare_retrieval_call(
+                context.ct.clone(),
+                req.repository_context.as_deref(),
+                |limits| req.validate_limits(limits),
+            )
             .await?
         {
             RetrievalPreparation::Ready(prepared) => prepared,
@@ -412,7 +481,11 @@ impl LeanTokenMcp {
         &self,
         Parameters(req): Parameters<SavingsMcpRequest>,
     ) -> Result<CallToolResult, ErrorData> {
-        let state = self.services.get();
+        let mcp_services = match self.contexts.resolve(req.repository_context.as_deref()) {
+            Ok(services) => services,
+            Err(error) => return into_tool_error(error, self.result_mode),
+        };
+        let state = mcp_services.get();
         let services = match self.services(&state) {
             Ok(services) => services,
             Err(result) => return Ok(result),

@@ -5,7 +5,7 @@ use std::process::Command;
 
 use clap::Parser;
 use leantoken::{
-    Config, ReadDeltaFallback, ReadDeltaOutcome, ReadResponse, ReadStatus, WorktreeReadRequest,
+    Config, ReadDeltaFallback, ReadDeltaOutcome, ReadRequest, ReadResponse, ReadStatus,
     services::Services,
 };
 use serde::Serialize;
@@ -152,21 +152,21 @@ async fn run_case(case: Case) -> Result<CaseReport, Box<dyn Error>> {
         root.path(),
         Some(root.path().join("index.sqlite")),
     )?)?;
-    services.refresh(leantoken::IndexingMode::Rebuild).await?;
+    services.index(leantoken::IndexingMode::Rebuild).await?;
     let first = services
-        .read_worktree(request(case.target, None, case.capture_base))
+        .read(request(case.target, None, case.capture_base))
         .await?;
     fs::write(root.path().join("fixture.rs"), &case.changed)?;
     if case.reindex_after_edit {
-        services.refresh(leantoken::IndexingMode::Reconcile).await?;
+        services.index(leantoken::IndexingMode::Reconcile).await?;
     }
     let base_hash = first.content_hash;
     let changed = services
-        .read_worktree(request(case.target, Some(base_hash.clone()), true))
+        .read(request(case.target, Some(base_hash.clone()), true))
         .await?;
     validate_case(&case, &changed)?;
     let full = services
-        .read_worktree(request(case.target, Some(base_hash), false))
+        .read(request(case.target, Some(base_hash), false))
         .await?;
     if full.status != ReadStatus::Content || full.meta.source_tokens == 0 {
         return Err(format!("{} full-response control was not content", case.name).into());
@@ -259,12 +259,12 @@ fn validate_case(case: &Case, response: &ReadResponse) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-fn request(target: Target, expected_hash: Option<String>, delta: bool) -> WorktreeReadRequest {
+fn request(target: Target, expected_hash: Option<String>, delta: bool) -> ReadRequest {
     let symbol = match target {
         Target::WholeFile => None,
         Target::Symbol(symbol) => Some(symbol.to_owned()),
     };
-    WorktreeReadRequest {
+    ReadRequest {
         path: "fixture.rs".into(),
         start_line: None,
         end_line: None,
@@ -275,7 +275,6 @@ fn request(target: Target, expected_hash: Option<String>, delta: bool) -> Worktr
         max_tokens: Some(32_000),
         expected_hash,
         delta,
-        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::default(),
     }

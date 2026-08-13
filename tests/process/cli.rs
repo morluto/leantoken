@@ -5,13 +5,13 @@ use super::support::{
     leantoken_program_name, run, run_error,
 };
 
-pub(super) fn cli_refreshes_statuses_and_searches_as_json() {
+pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
     let database = root.path().join("index.sqlite");
 
-    let index = run(root.path(), &database, &["refresh"]);
+    let index = run(root.path(), &database, &["index"]);
     assert!(
         index["files_indexed"]
             .as_u64()
@@ -109,7 +109,7 @@ pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {
     )
     .expect("write fixture");
     let database = root.path().join("index.sqlite");
-    run(root.path(), &database, &["refresh"]);
+    run(root.path(), &database, &["index"]);
 
     let compact = run(
         root.path(),
@@ -177,7 +177,7 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
             scope_args[1],
             scope_args[2],
             scope_args[3],
-            "refresh",
+            "index",
         ],
     );
     assert_eq!(index["files_seen"], 1);
@@ -224,30 +224,37 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     );
 }
 
-pub(super) fn cli_retrieval_reads_one_generation_until_explicit_refresh() {
+pub(super) fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = root.path().join("lib.rs");
     std::fs::write(&source, "pub fn answer() -> u8 { 41 }\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
 
-    run(root.path(), &database, &["refresh"]);
+    run(root.path(), &database, &["index"]);
     std::fs::write(&source, "pub fn answer() -> u8 { 43 }\n").expect("edit fixture");
 
-    let unchanged = run(root.path(), &database, &["search", "41", "--mode", "text"]);
-    assert_eq!(unchanged["hits"][0]["path"], "lib.rs");
-    assert_eq!(unchanged["meta"]["repository_generation"], 1);
+    let reconciled = run(root.path(), &database, &["search", "43", "--mode", "text"]);
+    assert_eq!(reconciled["hits"][0]["path"], "lib.rs");
+    assert_eq!(reconciled["meta"]["repository_generation"], 2);
 
-    let unpublished = run(root.path(), &database, &["search", "43", "--mode", "text"]);
-    assert!(unpublished["hits"].as_array().is_some_and(Vec::is_empty));
-    assert_eq!(unpublished["meta"]["repository_generation"], 1);
-
-    run(root.path(), &database, &["refresh"]);
-    let refreshed = run(root.path(), &database, &["search", "43", "--mode", "text"]);
-    assert_eq!(refreshed["hits"][0]["path"], "lib.rs");
-    assert_eq!(refreshed["meta"]["repository_generation"], 2);
+    std::fs::write(&source, "pub fn answer() -> u8 { 47 }\n").expect("edit fixture again");
+    let snapshot = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "43",
+            "--mode",
+            "text",
+            "--consistency",
+            "indexed_generation",
+        ],
+    );
+    assert_eq!(snapshot["hits"][0]["path"], "lib.rs");
+    assert_eq!(snapshot["meta"]["repository_generation"], 2);
 
     let status = run(root.path(), &database, &["status"]);
-    assert_eq!(status["repository_generation"], 2);
+    assert_eq!(status["working_tree_checked"], false);
 }
 
 pub(super) fn cli_savings_renders_a_color_aware_human_table() {
@@ -255,7 +262,7 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
     let database = root.path().join("index.sqlite");
-    run(root.path(), &database, &["refresh"]);
+    run(root.path(), &database, &["index"]);
     run(
         root.path(),
         &database,
@@ -329,7 +336,7 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
     );
 }
 
-pub(super) fn cli_refresh_explains_skipped_binary_files_without_returning_paths() {
+pub(super) fn cli_index_explains_skipped_binary_files_without_returning_paths() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write text fixture");
@@ -337,7 +344,7 @@ pub(super) fn cli_refresh_explains_skipped_binary_files_without_returning_paths(
     std::fs::write(&binary_path, b"\0binary").expect("write binary fixture");
     let database = root.path().join("index.sqlite");
 
-    let response = run(root.path(), &database, &["refresh"]);
+    let response = run(root.path(), &database, &["index"]);
 
     assert_eq!(response["files_seen"], 2);
     assert_eq!(response["files_indexed"], 1);
@@ -364,7 +371,7 @@ pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
     )
     .expect("source");
     let database = root.path().join("index.sqlite");
-    run(root.path(), &database, &["refresh"]);
+    run(root.path(), &database, &["index"]);
 
     let omitted = run(
         root.path(),
@@ -407,7 +414,7 @@ pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
     assert_eq!(status["index_state"], "uninitialized");
     assert_eq!(status["freshness"], "current");
 
-    let guidance = "repository index is not ready; run `leantoken refresh` for direct CLI use \
+    let guidance = "repository index is not ready; run `leantoken index` for direct CLI use \
         or `leantoken doctor` to verify MCP readiness";
     let human = Command::cargo_bin("leantoken")
         .expect("binary")
@@ -457,7 +464,7 @@ pub(super) fn cli_json_errors_expose_stable_safe_metadata() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn indexed() {}\n").expect("source");
     let database = root.path().join("index.sqlite");
-    run(root.path(), &database, &["refresh"]);
+    run(root.path(), &database, &["index"]);
 
     assert_eq!(
         run_error(root.path(), &database, &["files", "find"]),
@@ -542,7 +549,7 @@ pub(super) fn cli_json_parse_errors_are_structured_without_changing_clap_help() 
     assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: leantoken"));
 }
 
-pub(super) fn cli_refresh_limit_error_is_structured_and_does_not_publish_partial_files() {
+pub(super) fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");
     std::fs::write(root.path().join("b.rs"), "fn b() {}\n").expect("b");
@@ -558,7 +565,7 @@ pub(super) fn cli_refresh_limit_error_is_structured_and_does_not_publish_partial
             "--max-files",
             "1",
             "--json",
-            "refresh",
+            "index",
         ])
         .output()
         .expect("run index");

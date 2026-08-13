@@ -2,49 +2,108 @@ use super::startup::{INITIAL_INDEX_IDLE_GRACE, INITIAL_INDEX_PROBE_INTERVAL};
 use super::*;
 
 impl Services {
-    /// Acquire repository files and atomically publish one new generation.
-    pub async fn refresh(&self, mode: IndexingMode) -> Result<IndexResponse> {
-        self.refresh_report(mode)
+    pub async fn index(&self, mode: IndexingMode) -> Result<IndexResponse> {
+        self.index_report(mode)
             .await
             .map(IndexReport::into_response)
     }
 
-    /// Refresh the repository and include bounded preparation skip reasons.
-    pub async fn refresh_report(&self, mode: IndexingMode) -> Result<IndexReport> {
-        self.refresh_cancellable_report(mode, CancellationToken::new())
+    /// Reconcile repository files and include bounded preparation skip reasons.
+    pub async fn index_report(&self, mode: IndexingMode) -> Result<IndexReport> {
+        self.index_cancellable_report(mode, CancellationToken::new())
             .await
     }
 
-    /// Refresh the repository while honoring caller-owned cancellation.
-    pub async fn refresh_cancellable(
+    /// Reconcile repository files while honoring caller-owned cancellation.
+    pub async fn index_cancellable(
         &self,
         mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexResponse> {
-        self.refresh_cancellable_report(mode, cancellation)
+        self.index_cancellable_report(mode, cancellation)
             .await
             .map(IndexReport::into_response)
     }
 
-    /// Refresh with cancellation and include bounded preparation skip reasons.
-    pub async fn refresh_cancellable_report(
+    /// Reconcile with cancellation and include bounded preparation skip reasons.
+    pub async fn index_cancellable_report(
         &self,
         mode: IndexingMode,
         cancellation: CancellationToken,
     ) -> Result<IndexReport> {
+        let _active = ActiveReconciliation::new(
+            Arc::clone(&self.active_reconciliations),
+            Arc::clone(&self.reconciliation_changed),
+        );
+        let indexing = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+            permit = Arc::clone(&self.runtime.indexing_admission).acquire_owned() => {
+                permit.map_err(|_| Error::McpRuntimeStopped)?
+            }
+        };
         let this = self.clone();
-        let active_reconciliations = Arc::clone(&self.active_reconciliations);
-        let reconciliation_changed = Arc::clone(&self.reconciliation_changed);
-        active_reconciliations.fetch_add(1, Ordering::AcqRel);
         tokio::task::spawn_blocking(move || {
-            let _active = ActiveReconciliation {
-                count: active_reconciliations,
-                changed: reconciliation_changed,
-            };
+            let _indexing = indexing;
             let operation = this.coordination.acquire_operation(&cancellation)?;
             let result = this
                 .indexer
                 .reconcile_cancellable_report(mode, &cancellation);
+            operation.release()?;
+            result
+        })
+        .await?
+    }
+
+    /// Reconcile watcher-reported paths, falling back internally when a
+    /// repository-wide scan is required for correctness.
+    pub async fn index_paths(&self, paths: Vec<String>) -> Result<IndexResponse> {
+        self.index_paths_report(paths)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths and include bounded preparation skip reasons.
+    pub async fn index_paths_report(&self, paths: Vec<String>) -> Result<IndexReport> {
+        self.index_paths_cancellable_report(paths, CancellationToken::new())
+            .await
+    }
+
+    /// Reconcile watcher-reported paths while honoring caller-owned cancellation.
+    pub async fn index_paths_cancellable(
+        &self,
+        paths: Vec<String>,
+        cancellation: CancellationToken,
+    ) -> Result<IndexResponse> {
+        self.index_paths_cancellable_report(paths, cancellation)
+            .await
+            .map(IndexReport::into_response)
+    }
+
+    /// Reconcile watcher paths with cancellation and preparation skip reasons.
+    pub async fn index_paths_cancellable_report(
+        &self,
+        paths: Vec<String>,
+        cancellation: CancellationToken,
+    ) -> Result<IndexReport> {
+        let _active = ActiveReconciliation::new(
+            Arc::clone(&self.active_reconciliations),
+            Arc::clone(&self.reconciliation_changed),
+        );
+        let indexing = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(Error::Cancelled),
+            permit = Arc::clone(&self.runtime.indexing_admission).acquire_owned() => {
+                permit.map_err(|_| Error::McpRuntimeStopped)?
+            }
+        };
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _indexing = indexing;
+            let operation = this.coordination.acquire_operation(&cancellation)?;
+            let result = this
+                .indexer
+                .reconcile_paths_cancellable_report(&paths, &cancellation);
             operation.release()?;
             result
         })
@@ -77,13 +136,11 @@ impl Services {
                 let Some(operation) = this.coordination.try_acquire_operation()? else {
                     return Ok(None);
                 };
-                let readiness = this.storage.meta().map(|meta| {
-                    meta.repository_generation > 0 && meta.config_hash == this.indexer.config_hash()
-                });
+                let generation = this.storage.repository_generation();
                 operation.release()?;
-                readiness.map(Some)
+                generation.map(Some)
             });
-            let readiness = tokio::select! {
+            let generation = tokio::select! {
                 _ = cancellation.cancelled() => return Err(Error::Cancelled),
                 _ = &mut changed => {
                     idle_deadline = None;
@@ -91,10 +148,10 @@ impl Services {
                 },
                 result = probe => result??,
             };
-            if readiness == Some(true) {
+            if generation.is_some_and(|generation| generation > 0) {
                 return Ok(());
             }
-            let delay = if readiness.is_none() {
+            let delay = if generation.is_none() {
                 idle_deadline = None;
                 INITIAL_INDEX_PROBE_INTERVAL
             } else {

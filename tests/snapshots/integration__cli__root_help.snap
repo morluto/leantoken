@@ -8,7 +8,7 @@ Token-budgeted repository context
 Usage: leantoken [OPTIONS] <COMMAND>
 
 Commands:
-  refresh   Acquire repository files and atomically publish a generation
+  index     Index the repository
   status    Show index status
   coverage  Report structural parser coverage for the indexed generation
   savings   Show source compression and full-response token accounting

@@ -32,7 +32,7 @@ async fn multilingual_structural_indexing_returns_new_language_symbol_bodies() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -125,7 +125,7 @@ public sealed class Worker {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -212,6 +212,9 @@ public sealed class Worker {
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified C# symbol read");
@@ -285,7 +288,7 @@ function helper() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -357,6 +360,9 @@ function helper() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("symbol read");
@@ -423,7 +429,7 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -528,6 +534,9 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("repeated selector requires an exact outline range");
@@ -547,6 +556,9 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact top-level selector range");
@@ -568,6 +580,9 @@ async fn html_and_css_structure_support_outline_search_reference_and_read() {
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("structural symbol read");
@@ -608,7 +623,7 @@ Setext
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -679,6 +694,9 @@ Setext
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("Markdown heading read");
@@ -703,6 +721,9 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("missing duplicate occurrence");
@@ -726,6 +747,9 @@ Setext
             continuation_cursor: None,
             max_tokens: Some(2_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("zero heading occurrence");
@@ -752,7 +776,7 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -860,6 +884,9 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
                 continuation_cursor: None,
                 max_tokens: Some(2_000),
                 expected_hash: None,
+                delta: false,
+                receipt_id: None,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .expect("LaTeX structured read");

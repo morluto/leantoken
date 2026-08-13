@@ -259,7 +259,7 @@ impl Fixture {
 
         let config = Config::discover(root.path(), Some(database.path().join("index.sqlite")))?;
         let services = Services::open(config)?;
-        services.refresh(leantoken::IndexingMode::Reconcile).await?;
+        services.index(leantoken::IndexingMode::Reconcile).await?;
         Ok(Self {
             _root: root,
             _database: database,

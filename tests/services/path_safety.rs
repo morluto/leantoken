@@ -22,7 +22,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -32,7 +32,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
 
     assert!(
         services
-            .read_worktree(WorktreeReadRequest {
+            .read(ReadRequest {
                 path: "src/module.rs".into(),
                 symbol: None,
                 heading: None,
@@ -43,9 +43,8 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 max_tokens: Some(100),
                 expected_hash: None,
                 delta: false,
-                delta_base_artifact_id: None,
                 receipt_id: None,
-                policy: leantoken::ReadPolicy::Bounded,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .is_err()
@@ -72,7 +71,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -92,7 +91,7 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
 
     assert!(
         services
-            .read_worktree(WorktreeReadRequest {
+            .read(ReadRequest {
                 path: "src/module.rs".into(),
                 symbol: None,
                 heading: None,
@@ -103,9 +102,8 @@ async fn live_read_cannot_escape_through_replaced_path_components() {
                 max_tokens: Some(100),
                 expected_hash: None,
                 delta: false,
-                delta_base_artifact_id: None,
                 receipt_id: None,
-                policy: leantoken::ReadPolicy::Bounded,
+                policy: leantoken::ReadPolicy::default(),
             })
             .await
             .is_err()
@@ -149,11 +147,11 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
     )
     .expect("linked services");
     base_services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index base");
     linked_services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index linked");
 

@@ -116,6 +116,60 @@ async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence(
 }
 
 #[tokio::test]
+async fn continuation_streams_accept_the_receipt_successor_from_the_previous_page() {
+    let (_root, services) = indexed_source(
+        "paged.rs",
+        b"pub fn first_needle() {}\npub fn second_needle() {}\n",
+    )
+    .await;
+    let request = SearchRequest {
+        query: "needle".into(),
+        mode: SearchMode::Text,
+        include_paths: Vec::new(),
+        exclude_paths: Vec::new(),
+        focus_paths: Vec::new(),
+        max_results: Some(1),
+        max_tokens: Some(1_000),
+        context_lines: Some(0),
+        case_sensitive: true,
+        all_occurrences: true,
+        prefer_structural: false,
+        receipt_id: None,
+        query_receipt: None,
+        cursor: None,
+    };
+    let first = services.search(request.clone()).await.expect("first page");
+    let cursor = first.meta.next_cursor.expect("search continuation");
+    let receipt_id = first.meta.receipt_id.expect("search receipt");
+    let second = services
+        .search(SearchRequest {
+            cursor: Some(cursor),
+            receipt_id: Some(receipt_id),
+            ..request
+        })
+        .await
+        .expect("continue with acknowledged search receipt");
+    assert!(second.meta.next_cursor.is_none());
+
+    let (_root, services) = fixture().await;
+    let outline_request = outline_limit_request(Some(1), Some(1_000));
+    let first = services
+        .outline(outline_request.clone())
+        .await
+        .expect("first outline page");
+    let cursor = first.meta.next_cursor.expect("outline continuation");
+    let receipt_id = first.meta.receipt_id.expect("outline receipt");
+    services
+        .outline(OutlineRequest {
+            cursor: Some(cursor),
+            receipt_id: Some(receipt_id),
+            ..outline_request
+        })
+        .await
+        .expect("continue with acknowledged outline receipt");
+}
+
+#[tokio::test]
 async fn server_managed_receipt_survives_service_restart() {
     let (_root, services) = fixture().await;
     let config = services.config().clone();
@@ -404,22 +458,24 @@ async fn context_handoff_reports_clean_git_head_identity() {
 #[tokio::test]
 async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
     let (_root, services) = fixture().await;
-    let mut read_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
+    let mut read_request = read_limit_request(Some(1_000));
     read_request.end_line = Some(3);
-    let read = services
-        .read_worktree(read_request)
-        .await
-        .expect("read worktree");
+    let read = services.read(read_request).await.expect("read");
     let receipt_id = read.meta.receipt_id.clone().expect("read receipt");
 
     let mut outline_request = outline_limit_request(Some(100), Some(2_000));
     outline_request.receipt_id = Some(receipt_id.clone());
-    let outline = services.outline(outline_request).await.expect("outline");
+    let outline = services
+        .outline(outline_request.clone())
+        .await
+        .expect("outline");
+    let successor_id = outline
+        .meta
+        .receipt_id
+        .clone()
+        .expect("outline successor receipt");
 
-    assert_ne!(
-        outline.meta.receipt_id.as_deref(),
-        Some(receipt_id.as_str())
-    );
+    assert_ne!(successor_id, receipt_id);
     assert!(outline.meta.receipt_suppressed_overlap > 0);
     assert!(
         outline
@@ -428,20 +484,41 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
             .flat_map(|file| &file.symbols)
             .all(|symbol| symbol.name != "greet")
     );
+
+    let retry = services
+        .outline(outline_request.clone())
+        .await
+        .expect("retry from immutable source");
+    assert_eq!(
+        serde_json::to_value(&retry.files).expect("retry files"),
+        serde_json::to_value(&outline.files).expect("original files"),
+        "losing the first response must not suppress its undelivered evidence"
+    );
+
+    outline_request.receipt_id = Some(successor_id);
+    let acknowledged = services
+        .outline(outline_request)
+        .await
+        .expect("reuse acknowledged successor");
+    assert!(acknowledged.returned_symbols < outline.returned_symbols);
+    assert!(
+        acknowledged.meta.receipt_suppressed_exact + acknowledged.meta.receipt_suppressed_overlap
+            > outline.meta.receipt_suppressed_overlap
+    );
 }
 
 #[tokio::test]
 async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
     let (root, services) = fixture().await;
-    let mut unknown_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
+    let mut unknown_request = read_limit_request(Some(1_000));
     unknown_request.receipt_id = Some("missing-receipt".into());
     assert!(matches!(
-        services.read_worktree(unknown_request).await,
+        services.read(unknown_request).await,
         Err(Error::UnknownReceipt(id)) if id == "missing-receipt"
     ));
 
     let first = services
-        .read_worktree(read_limit_request(Some(1_000)).into())
+        .read(read_limit_request(Some(1_000)))
         .await
         .expect("first read");
     let receipt_id = first.meta.receipt_id.expect("read receipt");
@@ -452,15 +529,15 @@ async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
     )
     .expect("update fixture");
     let indexed = services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("reindex");
     assert!(indexed.repository_generation > receipt_generation);
 
-    let mut stale_request: WorktreeReadRequest = read_limit_request(Some(1_000)).into();
+    let mut stale_request = read_limit_request(Some(1_000));
     stale_request.receipt_id = Some(receipt_id);
     assert!(matches!(
-        services.read_worktree(stale_request).await,
+        services.read(stale_request).await,
         Err(Error::StaleReceipt {
             receipt_generation: actual_receipt,
             repository_generation
@@ -490,7 +567,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
 
@@ -545,7 +622,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
         .expect("unrelated edit");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish edits");
     let current_generation = services
@@ -632,10 +709,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
         )
         .await
         .expect("exact receipt-decoration boundary");
-    let boundary_receipt = boundary_response
-        .meta
-        .receipt_id
-        .expect("boundary artifact");
+    assert!(boundary_response.meta.receipt_id.is_some());
     assert_eq!(receipt_header_count(&database), before + 1);
 
     let response = services
@@ -656,12 +730,11 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     assert!(response.samples_complete);
     assert_eq!(response.outcomes_blake3.len(), 64);
     assert_response_token_accounting!(response, services.config().tokenizer);
-    assert_eq!(receipt_header_count(&database), before + 1);
+    assert_eq!(receipt_header_count(&database), before + 2);
     let rebased_receipt = response.meta.receipt_id.clone().expect("rebased receipt");
-    assert_eq!(rebased_receipt, boundary_receipt);
 
     let unchanged = services
-        .read_worktree(line_read_request(
+        .read(line_read_request(
             "unchanged.rs",
             Some(rebased_receipt.clone()),
         ))
@@ -670,7 +743,7 @@ async fn exact_receipt_rebase_classifies_controlled_edits_without_false_suppress
     assert_eq!(unchanged.status, ReadStatus::ReceiptSuppressed);
     assert_eq!(unchanged.meta.receipt_suppressed_exact, 1);
     let changed = services
-        .read_worktree(line_read_request("body.rs", Some(rebased_receipt)))
+        .read(line_read_request("body.rs", Some(rebased_receipt)))
         .await
         .expect("changed evidence is returned");
     assert_eq!(changed.status, ReadStatus::Content);
@@ -716,7 +789,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database.clone())).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
     let source_receipt = append_line_receipt(&services, "branch.rs", None).await;
@@ -748,7 +821,7 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database.clone())).expect("reopen config");
     let services = Services::open(config).expect("reopened services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index branch switch");
     let response = services
@@ -772,11 +845,11 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let config = Config::discover(root.path(), Some(database)).expect("third config");
     let services = Services::open(config).expect("third services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index restored branch");
     let error = services
-        .read_worktree(line_read_request("branch.rs", Some(rebased)))
+        .read(line_read_request("branch.rs", Some(rebased)))
         .await
         .expect_err("rebased receipt is generation bound after restart");
     assert!(matches!(error, Error::StaleReceipt { .. }));
@@ -794,7 +867,7 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
     let request = OutlineRequest {
@@ -818,7 +891,7 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
     )
     .expect("change body without changing the outline signature");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish body edit");
 
@@ -858,8 +931,8 @@ async fn exact_receipt_rebase_validates_outline_signature_evidence() {
     assert_eq!(search.meta.receipt_suppressed_overlap, 0);
 }
 
-fn line_read_request(path: &str, receipt_id: Option<String>) -> WorktreeReadRequest {
-    WorktreeReadRequest {
+fn line_read_request(path: &str, receipt_id: Option<String>) -> ReadRequest {
+    ReadRequest {
         path: path.into(),
         start_line: Some(1),
         end_line: Some(1),
@@ -870,7 +943,6 @@ fn line_read_request(path: &str, receipt_id: Option<String>) -> WorktreeReadRequ
         max_tokens: Some(100),
         expected_hash: None,
         delta: false,
-        delta_base_artifact_id: None,
         policy: leantoken::ReadPolicy::default(),
         receipt_id,
     }
@@ -882,7 +954,7 @@ async fn append_line_receipt(
     receipt_id: Option<String>,
 ) -> String {
     services
-        .read_worktree(line_read_request(path, receipt_id))
+        .read(line_read_request(path, receipt_id))
         .await
         .expect("append line evidence")
         .meta
@@ -891,16 +963,11 @@ async fn append_line_receipt(
 }
 
 fn receipt_header_count(database: &std::path::Path) -> usize {
-    let mut artifacts = database.as_os_str().to_os_string();
-    artifacts.push(".artifacts.sqlite");
-    let connection =
-        rusqlite::Connection::open(std::path::PathBuf::from(artifacts)).expect("inspect artifacts");
+    let connection = rusqlite::Connection::open(database).expect("inspect receipt headers");
     let count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM artifacts WHERE kind = 'evidence'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("evidence artifact count");
-    usize::try_from(count).expect("non-negative artifact count")
+        .query_row("SELECT COUNT(*) FROM retrieval_receipts", [], |row| {
+            row.get(0)
+        })
+        .expect("receipt header count");
+    usize::try_from(count).expect("non-negative receipt count")
 }

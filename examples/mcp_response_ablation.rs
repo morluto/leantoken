@@ -255,7 +255,7 @@ async fn generate(manifest: &Manifest, repository_root: &Path) -> AnyResult<Repo
     }
     let tokenizer = config.tokenizer;
     let services = Arc::new(Services::open(config)?);
-    services.refresh(leantoken::IndexingMode::Rebuild).await?;
+    services.index(leantoken::IndexingMode::Rebuild).await?;
 
     let request = ContextRequest {
         task: manifest.fixture.task.clone(),

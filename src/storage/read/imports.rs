@@ -1,4 +1,4 @@
-impl GenerationReadTransaction {
+impl ReadSession {
     pub fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, path, language, size_bytes, modified_ns, content_hash, generation, structurally_complete FROM files WHERE path = ?1",

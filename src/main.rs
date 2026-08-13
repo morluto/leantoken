@@ -9,14 +9,13 @@ use clap::Parser;
 use leantoken::{
     Result, cache,
     cli::{AppRequest, Cli, SearchProjectionArg},
-    doctor, mcp,
-    model::{IndexingMode, SearchOccurrenceOutput},
+    doctor, episode, mcp,
+    model::{IndexConsistency, IndexState, IndexingMode, SearchOccurrenceOutput},
     services::{ServiceCallOptions, Services},
     setup::{self, SetupOperation},
     upgrade,
     watcher::{RepositoryWatcher, WatcherAction, WatcherMessage, WatcherReconciliationScheduler},
 };
-use leantoken_lab as episode;
 use serde::Serialize;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -30,7 +29,6 @@ fn service_call_options(max_response_tokens: Option<usize>) -> ServiceCallOption
 mod savings;
 
 const WATCHER_QUEUE_CAPACITY: usize = 1;
-const REPOSITORY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const INDEX_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const INDEX_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const LEADERSHIP_POLL_INITIAL_DELAY: Duration = Duration::from_millis(500);

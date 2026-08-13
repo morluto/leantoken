@@ -7,8 +7,8 @@ mod runtime;
 mod support;
 
 #[test]
-fn cli_refreshes_statuses_and_searches_as_json() {
-    cli::cli_refreshes_statuses_and_searches_as_json();
+fn cli_indexes_statuses_and_searches_as_json() {
+    cli::cli_indexes_statuses_and_searches_as_json();
 }
 
 #[test]
@@ -22,8 +22,8 @@ fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
 }
 
 #[test]
-fn cli_retrieval_reads_one_generation_until_explicit_refresh() {
-    cli::cli_retrieval_reads_one_generation_until_explicit_refresh();
+fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
+    cli::cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested();
 }
 
 #[test]
@@ -32,8 +32,8 @@ fn cli_savings_renders_a_color_aware_human_table() {
 }
 
 #[test]
-fn cli_refresh_explains_skipped_binary_files_without_returning_paths() {
-    cli::cli_refresh_explains_skipped_binary_files_without_returning_paths();
+fn cli_index_explains_skipped_binary_files_without_returning_paths() {
+    cli::cli_index_explains_skipped_binary_files_without_returning_paths();
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
 }
 
 #[test]
-fn cli_refresh_limit_error_is_structured_and_does_not_publish_partial_files() {
-    cli::cli_refresh_limit_error_is_structured_and_does_not_publish_partial_files();
+fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
+    cli::cli_index_limit_error_is_structured_and_does_not_publish_partial_files();
 }
 
 #[test]
@@ -113,8 +113,8 @@ fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
 }
 
 #[test]
-fn mcp_processes_isolate_repository_state() {
-    mcp_protocol::mcp_processes_isolate_repository_state();
+fn mcp_approved_repository_contexts_are_isolated() {
+    mcp_protocol::mcp_approved_repository_contexts_are_isolated();
 }
 
 #[test]

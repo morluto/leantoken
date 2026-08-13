@@ -991,8 +991,6 @@ dependencies = [
  "insta",
  "jmespath",
  "jsonc-parser",
- "leantoken-git",
- "leantoken-lab",
  "notify",
  "nucleo-matcher",
  "pulldown-cmark",
@@ -1059,27 +1057,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "leantoken-git"
-version = "0.1.25"
-dependencies = [
- "command-group",
- "tempfile",
- "thiserror",
- "wait-timeout",
-]
-
-[[package]]
-name = "leantoken-lab"
-version = "0.1.25"
-dependencies = [
- "blake3",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "leantoken-test-suite"
 version = "0.1.0"
 dependencies = [
@@ -1109,6 +1086,7 @@ dependencies = [
  "blake3",
  "serde",
  "serde_json",
+ "syn 2.0.119",
 ]
 
 [[package]]

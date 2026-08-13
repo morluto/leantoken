@@ -41,23 +41,14 @@ impl CacheManager {
             .as_deref()
             .map(normalize_repository_root_filter);
         let filter_hash = cache_list_filter_hash(request, repository_root.as_deref());
+        let stream_id = cache_list_stream_id(&self.root, &filter_hash);
         let cursor = match mode {
             CacheListMode::Summary => None,
             CacheListMode::Page { cursor, .. } => cursor,
         };
         let after_id = cursor
             .map(|cursor| {
-                decode_cache_list_cursor_with_prefix(cursor, CACHE_LIST_CURSOR_PREFIX, &filter_hash)
-                    .or_else(|error| {
-                        let legacy =
-                            legacy_cache_list_filter_hash(request, repository_root.as_deref());
-                        decode_cache_list_cursor_with_prefix(
-                            cursor,
-                            CACHE_LIST_CURSOR_PREFIX,
-                            &legacy,
-                        )
-                        .map_err(|_| error)
-                    })
+                decode_cache_list_cursor(cursor, stream_id, request, repository_root.as_deref())
             })
             .transpose()?;
 
@@ -140,13 +131,10 @@ impl CacheManager {
             })
             .collect::<Vec<_>>();
         let next_cursor = match mode {
-            CacheListMode::Page { .. } if end < matching.len() => page.last().map(|entry| {
-                encode_cache_list_cursor_with_prefix(
-                    CACHE_LIST_CURSOR_PREFIX,
-                    &filter_hash,
-                    &entry.entry.id,
-                )
-            }),
+            CacheListMode::Page { .. } if end < matching.len() => page
+                .last()
+                .map(|entry| encode_cache_list_cursor(stream_id, &entry.entry.id))
+                .transpose()?,
             CacheListMode::Summary | CacheListMode::Page { .. } => None,
         };
         let contents = match mode {

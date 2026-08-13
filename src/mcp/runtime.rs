@@ -59,10 +59,18 @@ impl LeanTokenMcp {
     pub(in crate::mcp) async fn prepare_retrieval_call(
         &self,
         cancellation: CancellationToken,
+        repository_context: Option<&str>,
         validate: impl Fn(McpLimitPolicy) -> crate::Result<()>,
     ) -> Result<RetrievalPreparation, ErrorData> {
         let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        let mcp_services = self.services.clone();
+        let mcp_services = match self.contexts.resolve(repository_context) {
+            Ok(services) => services,
+            Err(error) => {
+                return into_tool_error(error, self.result_mode)
+                    .map(RetrievalPreparation::Unavailable);
+            }
+        };
+        let _ = mcp_services.request_activation();
         let state = mcp_services.get();
         if let Err(error) = validate(state.limits()) {
             return into_tool_error(error, self.result_mode).map(RetrievalPreparation::Unavailable);
@@ -149,14 +157,16 @@ impl LeanTokenMcp {
     ) -> Result<CallToolResult, ErrorData> {
         match result {
             Ok(value) => self.result(value),
-            Err(error) if waiting_for_initial_projection(&error) => Ok(self.retryable_result(
-                RetryableToolResponse::new(
-                    "index_building",
-                    "repository index is being built; retry the same call shortly",
-                    500,
-                )
-                .with_index_progress(index_progress),
-            )),
+            Err(error) if matches!(error.reconciliation_cause(), crate::Error::IndexNotReady) => {
+                Ok(self.retryable_result(
+                    RetryableToolResponse::new(
+                        "index_building",
+                        "repository index is being built; retry the same call shortly",
+                        500,
+                    )
+                    .with_index_progress(index_progress),
+                ))
+            }
             Err(error)
                 if matches!(
                     error.reconciliation_cause(),
@@ -242,7 +252,9 @@ impl LeanTokenMcp {
         let index_progress = result
             .as_ref()
             .err()
-            .is_some_and(waiting_for_initial_projection)
+            .is_some_and(|error| {
+                matches!(error.reconciliation_cause(), crate::Error::IndexNotReady)
+            })
             .then(|| progress_services.index_progress_for_retry());
         match result {
             Ok(value) => {
@@ -299,7 +311,7 @@ where
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + wait;
     let result = operation().await;
-    if !result.as_ref().is_err_and(waiting_for_initial_projection) {
+    if !matches!(result, Err(crate::Error::IndexNotReady)) {
         return result;
     }
 
@@ -344,7 +356,7 @@ where
                 tracing::debug!(
                     tool,
                     waited_ms = started.elapsed().as_millis(),
-                    ready = !result.as_ref().is_err_and(waiting_for_initial_projection),
+                    ready = !matches!(result, Err(crate::Error::IndexNotReady)),
                     "MCP retrieval waited for the first index generation"
                 );
                 return result;
@@ -370,11 +382,4 @@ where
             return Err(crate::Error::McpRuntimeStopped);
         }
     }
-}
-
-fn waiting_for_initial_projection(error: &crate::Error) -> bool {
-    matches!(
-        error.reconciliation_cause(),
-        crate::Error::IndexNotReady | crate::Error::RefreshRequired
-    )
 }

@@ -248,7 +248,7 @@ async fn profile_repository(
     let services = Arc::new(Services::open(config).expect("services"));
     let index_started = Instant::now();
     let index = services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("index repository");
     let index_milliseconds = index_started.elapsed().as_millis();
@@ -385,7 +385,7 @@ async fn run_scenario(
     concurrency: usize,
     scenario: Scenario,
 ) -> ScenarioReport {
-    services.blocking_executor.reset_diagnostics();
+    services.runtime.blocking_executor.reset_diagnostics();
     services.storage.reset_diagnostics();
     let cpu_before = process_cpu_ticks();
     let wal_before = wal_bytes(database);
@@ -440,8 +440,7 @@ async fn run_scenario(
             Some(tokio::spawn(async move {
                 barrier.wait().await;
                 let started = Instant::now();
-                let _ = source_path;
-                let result = services.refresh(IndexingMode::Reconcile).await.map(|_| ());
+                let result = services.index_paths(vec![source_path]).await.map(|_| ());
                 (started.elapsed().as_millis(), result)
             }))
         } else {
@@ -471,7 +470,7 @@ async fn run_scenario(
     sampler_cancellation.cancel();
     let resources = sampler.await.expect("resource sampler");
     let cpu_after = process_cpu_ticks();
-    let executor = services.blocking_executor.diagnostics();
+    let executor = services.runtime.blocking_executor.diagnostics();
     let storage = services.storage.diagnostics();
     let checkpoint = passive_checkpoint(database);
     let wal_after = wal_bytes(database);
@@ -633,6 +632,9 @@ fn read_request(source_path: &str) -> ReadRequest {
         continuation_cursor: None,
         max_tokens: Some(1_000),
         expected_hash: None,
+        delta: false,
+        receipt_id: None,
+        policy: crate::model::ReadPolicy::default(),
     }
 }
 

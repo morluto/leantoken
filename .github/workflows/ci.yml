@@ -657,11 +657,8 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Remove stale LLVM coverage targets
-        # The Rust cache can retain instrumented binaries for source files
-        # deleted by a refactor. Clearing only profraw files leaves those
-        # obsolete coverage maps in the report and inflates its denominator.
-        run: cargo llvm-cov clean --workspace
+      - name: Remove stale LLVM profiles
+        run: cargo llvm-cov clean --profraw-only
 
       - name: Run instrumented tests
         run: >

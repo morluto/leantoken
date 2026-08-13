@@ -8,7 +8,7 @@ pub const MAX_RECEIPT_REBASE_SAMPLES_PER_OUTCOME: usize = 16;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 /// Explicit request to carry only exactly unchanged evidence into a new generation.
 pub struct ReceiptRebaseRequest {
-    /// Immutable evidence artifact from an earlier repository generation.
+    /// Opaque server-managed receipt from an earlier repository generation.
     pub receipt_id: String,
     /// Maximum examples retained for each outcome; counts and the digest remain complete.
     #[serde(default, skip_serializing_if = "Option::is_none")]

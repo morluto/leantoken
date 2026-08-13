@@ -1,5 +1,5 @@
-impl GenerationReadTransaction {
-    /// Return a row-id keyset page from this generation transaction's pinned snapshot.
+impl ReadSession {
+    /// Return a row-id keyset page from this session's pinned snapshot.
     ///
     /// Use the final record's `id` as the next cursor. Cursors are storage-layer
     /// values and should not be exposed as service cursors without binding them

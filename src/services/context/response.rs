@@ -5,7 +5,7 @@ use super::super::{
     receipts::{ReceiptDecision, ReceiptEvidence},
 };
 use super::ContextPolicy;
-use super::RepositoryGeneration;
+use super::IndexReadSnapshot;
 use crate::{
     Error, Result,
     model::{ContextCoverageReceipt, ContextRequest, ContextResponse, ContextResponseProfile},
@@ -32,7 +32,7 @@ pub(super) fn effective_context_response_profile(
 }
 
 pub(super) struct ContextResponseFinalization<'a> {
-    pub(super) session: &'a RepositoryGeneration,
+    pub(super) session: &'a IndexReadSnapshot,
     pub(super) request: &'a ContextRequest,
     pub(super) policy: &'a ContextPolicy,
     pub(super) options: ServiceCallOptions,
@@ -225,12 +225,8 @@ impl Services {
                     )
                 })
                 .collect::<Vec<_>>();
-            let receipt = self.evaluate_receipt(
-                policy.receipt_id(),
-                generation,
-                session.database_incarnation_id(),
-                &receipt_candidates,
-            )?;
+            let receipt =
+                self.evaluate_receipt(policy.receipt_id(), generation, &receipt_candidates)?;
             response.fragments = response
                 .fragments
                 .drain(..)

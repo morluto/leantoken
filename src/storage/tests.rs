@@ -1,7 +1,8 @@
 use super::*;
 
-mod artifacts;
-mod instrumentation;
+mod query_receipts;
+mod read_delta;
+mod receipts;
 
 #[test]
 pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
@@ -91,6 +92,36 @@ pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
 }
 
 #[test]
+pub(crate) fn import_projection_repair_resolves_membership_through_the_path_index() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    let connection = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let details = connection
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {IMPORT_CANDIDATE_RESOLUTION_SQL}"
+        ))
+        .expect("resolution query plan")
+        .query_map(params!["[\"src/lib.rs\"]"], |row| row.get::<_, String>(3))
+        .expect("resolution plan rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("resolution plan details");
+
+    assert!(
+        details
+            .iter()
+            .any(|detail| detail.contains("SEARCH files USING COVERING INDEX")),
+        "candidate membership must use the unique files.path index: {details:?}"
+    );
+    assert!(
+        details.iter().all(|detail| !detail.contains("SCAN files")),
+        "candidate membership must not scan the repository table: {details:?}"
+    );
+}
+
+#[test]
 pub(crate) fn unicode_case_fold_fallback_fails_before_truncating_structural_rows() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
@@ -137,7 +168,7 @@ pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
             ],
         )
         .expect("index fixture");
-    let session = storage.begin_generation_read().expect("read session");
+    let session = storage.begin_read().expect("read session");
 
     let error = session
         .select_scoped_regex_candidate_ids("\"needle\"", 1, 10, &[], &[], |_| true)
@@ -160,7 +191,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
     storage
         .full_reconcile("config", vec![sample_file("alpha.rs", "fn alpha() {}\n")])
         .expect("initial publication");
-    let pinned = storage.begin_generation_read().expect("pinned read");
+    let pinned = storage.begin_read().expect("pinned read");
     assert_eq!(
         pinned.repository_generation().expect("pinned generation"),
         1
@@ -195,7 +226,7 @@ pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
         1
     );
     let current = storage
-        .begin_generation_read()
+        .begin_read()
         .expect("current read")
         .parser_coverage_rows(|_| "fixture".to_owned())
         .expect("current parser coverage");
@@ -424,9 +455,7 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
                 .collect(),
         )
         .expect("backlogged generation");
-    let reader = storage
-        .begin_generation_read()
-        .expect("latest pinned reader");
+    let reader = storage.begin_read().expect("latest pinned reader");
     assert_eq!(
         reader.repository_generation().expect("pinned generation"),
         1
@@ -468,7 +497,358 @@ pub(crate) fn repository_open_does_not_checkpoint_existing_wal_backlog() {
 }
 
 #[test]
-pub(crate) fn startup_rejects_a_damaged_path_projection() {
+pub(crate) fn checkpoint_policy_is_restored_when_suspended_operation_fails() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    let mut writer = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    writer
+        .pragma_update(None, "wal_autocheckpoint", 37)
+        .expect("set distinctive checkpoint policy");
+
+    let error =
+        with_auto_checkpoint_suspended(&mut writer, AutoCheckpointCompletion::RestoreOnly, |_| {
+            Err::<(), _>(Error::OperationFailure("expected failure".into()))
+        })
+        .expect_err("operation must fail");
+
+    assert!(matches!(error, Error::OperationFailure(_)));
+    assert_eq!(
+        writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("restored checkpoint policy"),
+        37
+    );
+}
+
+#[test]
+pub(crate) fn startup_repairs_equal_count_path_projection_mismatch() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .full_reconcile("config", vec![sample_file("src/real.rs", "fn real() {}\n")])
+        .expect("index fixture");
+    {
+        let writer = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        writer
+            .execute(
+                "UPDATE path_entries SET path = 'src/phantom.rs' WHERE kind = 1",
+                [],
+            )
+            .expect("replace real path with equal-count phantom");
+    }
+    drop(storage);
+
+    let reopened = Storage::open(&database).expect("repair projection on reopen");
+    let session = reopened.begin_read().expect("read repaired projection");
+    let tree = session
+        .list_tree_paths("src", 4, None, 10)
+        .expect("tree projection");
+    let glob = session
+        .list_glob_paths("src/*.rs", None, None, 10)
+        .expect("glob projection");
+
+    assert!(tree.iter().any(|entry| entry.path == "src/real.rs"));
+    assert!(!tree.iter().any(|entry| entry.path == "src/phantom.rs"));
+    assert_eq!(glob.len(), 1);
+    assert_eq!(glob[0].path, "src/real.rs");
+    assert!(
+        session
+            .find_file("src/real.rs")
+            .expect("direct lookup")
+            .is_some()
+    );
+    assert!(
+        session
+            .find_file("src/phantom.rs")
+            .expect("phantom lookup")
+            .is_none()
+    );
+}
+
+#[test]
+pub(crate) fn path_projection_integrity_covers_all_relational_fields() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .full_reconcile(
+            "config",
+            vec![
+                sample_file("src/one.rs", "fn one() {}\n"),
+                sample_file("src/nested/two.rs", "fn two() {}\n"),
+            ],
+        )
+        .expect("index fixture");
+    let mut writer = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    for corruption in [
+        "UPDATE path_entries SET depth = depth + 1 WHERE path = 'src/one.rs'",
+        "UPDATE path_entries SET kind = 0 WHERE path = 'src/one.rs'",
+        "DELETE FROM path_entries WHERE path = 'src/nested'; INSERT INTO path_entries(path, depth, kind, file_id) VALUES ('phantom', 1, 0, NULL)",
+        "DELETE FROM path_entries WHERE path IN ('src/one.rs', 'src/nested/two.rs'); INSERT INTO path_entries(path, depth, kind, file_id) SELECT 'src/one.rs', 2, 1, id FROM files WHERE path = 'src/nested/two.rs'; INSERT INTO path_entries(path, depth, kind, file_id) SELECT 'src/nested/two.rs', 3, 1, id FROM files WHERE path = 'src/one.rs'",
+    ] {
+        writer
+            .execute_batch(corruption)
+            .expect("damage one projection field");
+        assert!(!path_projection_is_current(&writer).expect("detect corruption"));
+        Storage::ensure_path_projection(&mut writer).expect("repair projection");
+        assert!(path_projection_is_current(&writer).expect("validate repair"));
+    }
+}
+
+#[test]
+pub(crate) fn startup_repairs_all_persisted_quota_usage_projections() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .evaluate_receipt_at(
+            None,
+            1,
+            &[crate::receipt::ReceiptEvidence::new(
+                "lib.rs",
+                1,
+                1,
+                "receipt-hash",
+                Some("fn receipt() {}"),
+            )],
+            true,
+            1_000,
+        )
+        .expect("retrieval receipt");
+    {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .execute_batch(
+                "INSERT INTO query_coverage_receipts(
+                     repository_identity, repository_generation, config_hash,
+                     semantics_version, predicate_json, predicate_blake3,
+                     partition_blake3, partition_file_count, match_count,
+                     result_blake3, created_unix_millis, last_access_unix_millis,
+                     expires_unix_millis, access_sequence, logical_bytes
+                 ) VALUES (
+                     (SELECT repository_identity FROM meta WHERE id = 1),
+                     0, 'config', 1, '{}', lower(hex(zeroblob(32))),
+                     lower(hex(zeroblob(32))), 0, 0,
+                     lower(hex(zeroblob(32))), 1000, 1000, 2000, 7, 123
+                 );
+                 INSERT INTO read_delta_bases(
+                     target_key, content_hash, repository_generation,
+                     target_start_line, target_end_line,
+                     returned_start_line, returned_end_line, content,
+                     created_unix_millis, last_access_unix_millis,
+                     expires_unix_millis, access_sequence, logical_bytes
+                 ) VALUES (
+                     'target', 'hash', 1, 1, 1, 1, 1, 'content',
+                     1000, 1000, 2000, 9, 77
+                 );
+                 UPDATE retrieval_receipts
+                 SET evidence_count = 0, evidence_bytes = 0;
+                 UPDATE retrieval_receipt_usage
+                 SET next_access_sequence = 0,
+                     receipt_count = 128,
+                     receipt_bytes = 0,
+                     evidence_count = 0,
+                     evidence_bytes = 999;
+                 UPDATE query_coverage_receipt_usage
+                 SET next_access_sequence = 0,
+                     receipt_count = 0,
+                     logical_bytes = 0;
+                 UPDATE read_delta_base_usage
+                 SET next_access_sequence = 0,
+                     base_count = 999,
+                     base_bytes = 0;",
+            )
+            .expect("corrupt quota projections");
+    }
+    drop(storage);
+
+    let repaired = Storage::open(&database).expect("repair projections on reopen");
+    let connection = repaired
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let retrieval: (i64, i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT next_access_sequence, receipt_count, receipt_bytes,
+                    evidence_count, evidence_bytes
+             FROM retrieval_receipt_usage WHERE id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("retrieval usage");
+    let authoritative_retrieval: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT count(*) FROM retrieval_receipts),
+                    (SELECT coalesce(sum(logical_bytes), 0) FROM retrieval_receipts),
+                    (SELECT count(*) FROM retrieval_receipt_evidence),
+                    (SELECT coalesce(sum(logical_bytes), 0)
+                     FROM retrieval_receipt_evidence)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("authoritative retrieval totals");
+    assert_eq!(
+        (retrieval.1, retrieval.2, retrieval.3, retrieval.4),
+        authoritative_retrieval
+    );
+    assert!(retrieval.0 >= 1);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT evidence_count, evidence_bytes FROM retrieval_receipts",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .expect("receipt header counters"),
+        (authoritative_retrieval.2, authoritative_retrieval.3)
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT next_access_sequence, receipt_count, logical_bytes
+                 FROM query_coverage_receipt_usage WHERE id = 1",
+                [],
+                |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?
+                )),
+            )
+            .expect("query receipt usage"),
+        (7, 1, 123)
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT next_access_sequence, base_count, base_bytes
+                 FROM read_delta_base_usage WHERE id = 1",
+                [],
+                |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?
+                )),
+            )
+            .expect("read delta usage"),
+        (9, 1, 77)
+    );
+    let old_retrieval_namespace: String = connection
+        .query_row(
+            "SELECT namespace FROM retrieval_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("retrieval namespace");
+    let old_query_namespace: String = connection
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace");
+    connection
+        .execute_batch(
+            "DELETE FROM retrieval_receipt_usage;
+             DELETE FROM query_coverage_receipt_usage;
+             DELETE FROM read_delta_base_usage;",
+        )
+        .expect("remove singleton projections");
+    drop(connection);
+    drop(repaired);
+
+    let restored = Storage::open(&database).expect("restore singleton projections");
+    let connection = restored
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM retrieval_receipts", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("retrieval rows after namespace loss"),
+        0
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT receipt_count FROM retrieval_receipt_usage WHERE id = 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("restored retrieval usage"),
+        0
+    );
+    assert_ne!(
+        connection
+            .query_row(
+                "SELECT namespace FROM retrieval_receipt_usage WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("new retrieval namespace"),
+        old_retrieval_namespace
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM query_coverage_receipts", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("query rows after namespace loss"),
+        0
+    );
+    assert_ne!(
+        connection
+            .query_row(
+                "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("new query namespace"),
+        old_query_namespace
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT next_access_sequence, base_count, base_bytes
+                 FROM read_delta_base_usage WHERE id = 1",
+                [],
+                |row| Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?
+                )),
+            )
+            .expect("restored read delta usage"),
+        (9, 1, 77)
+    );
+}
+
+#[test]
+pub(crate) fn startup_path_repairs_checkpoint_backlog_without_writing_fts_verification_marker() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -506,13 +886,34 @@ pub(crate) fn startup_rejects_a_damaged_path_projection() {
         .len();
     assert!(wal_bytes_before > 0);
 
-    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
-    assert!(matches!(
-        error,
-        Error::InvalidIndexGeneration {
-            projection: "repository path"
-        }
-    ));
+    let repaired = Storage::open(&database).expect("repair storage on reopen");
+
+    let writer = repaired
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (files, paths) = writer
+        .query_row(
+            "SELECT (SELECT count(*) FROM files),
+                    (SELECT count(*) FROM path_entries WHERE kind = 1)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .expect("repaired projection counts");
+    assert_eq!(paths, files);
+    assert!(
+        writer
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get::<_, i64>(0))
+            .expect("restored auto-checkpoint policy")
+            > 0
+    );
+    let wal_bytes_after = fs::metadata(wal_path(&database))
+        .expect("WAL after repair")
+        .len();
+    assert_eq!(
+        wal_bytes_after, 0,
+        "the path-projection repair should checkpoint the pre-existing backlog; a clean FTS verification does not write a marker"
+    );
 }
 
 #[test]
@@ -524,7 +925,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
         .full_reconcile("config", vec![sample_file("pinned.rs", "old snapshot\n")])
         .expect("initial generation");
 
-    let reader = storage.begin_generation_read().expect("long-lived reader");
+    let reader = storage.begin_read().expect("long-lived reader");
     assert_eq!(reader.repository_generation().expect("pin snapshot"), 1);
     assert!(
         reader
@@ -604,7 +1005,7 @@ pub(crate) fn incremental_reconciliation_recycles_wal_after_long_lived_reader_dr
 }
 
 #[test]
-pub(crate) fn startup_rejects_a_damaged_fts_projection() {
+pub(crate) fn startup_rebuilds_external_content_fts_indexes_when_integrity_check_fails() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     let storage = Storage::open(&database).expect("storage");
@@ -637,13 +1038,15 @@ pub(crate) fn startup_rejects_a_damaged_fts_projection() {
     );
     drop(storage);
 
-    let error = Storage::open(&database).expect_err("damaged generation must be rejected");
-    assert!(matches!(
-        error,
-        Error::InvalidIndexGeneration {
-            projection: "full-text search"
-        }
-    ));
+    let reopened = Storage::open(&database).expect("rebuild FTS index on reopen");
+
+    assert_eq!(
+        reopened
+            .search_word("repaired_fts_needle", 10)
+            .expect("search rebuilt index")[0]
+            .path,
+        "needle.rs"
+    );
 }
 
 pub(crate) fn sample_file(path: &str, content: &str) -> IndexedFile {
@@ -761,7 +1164,7 @@ pub(crate) fn enclosing_symbol_lookup_benchmark_rejects_unproven_nesting_depth()
     storage
         .full_reconcile("benchmark", files)
         .expect("index fixture");
-    let session = storage.begin_generation_read().expect("read session");
+    let session = storage.begin_read().expect("read session");
     let file_ids = (0..32)
         .map(|file_index| {
             session
@@ -866,7 +1269,7 @@ pub(crate) fn file_end_line_batch_maps_duplicate_and_missing_file_ids() {
     storage
         .full_reconcile("config", vec![sample_file("source.rs", "fn source() {}\n")])
         .expect("index source");
-    let session = storage.begin_generation_read().expect("read session");
+    let session = storage.begin_read().expect("read session");
     let file_id = session
         .find_file("source.rs")
         .expect("find source")
@@ -1139,7 +1542,7 @@ pub(crate) fn readers_see_old_generation_until_streamed_publication_commits() {
     let (generation, ()) = storage
         .publish_reconciliation_at(&baseline, "config", IndexingMode::Rebuild, |writer| {
             writer.replace(sample_file("new.rs", "fn new() {}\n"))?;
-            let reader = storage.begin_generation_read()?;
+            let reader = storage.begin_read()?;
             assert_eq!(reader.repository_generation()?, 1);
             assert!(reader.find_file("old.rs")?.is_some());
             assert!(reader.find_file("new.rs")?.is_none());
@@ -1215,6 +1618,218 @@ pub(crate) fn repository_binding_updates_last_access_once_per_open() {
 }
 
 #[test]
+pub(crate) fn unversioned_repository_binding_preserves_a_nonempty_root() {
+    let directory = tempfile::tempdir().expect("directory");
+    let expected_repository = directory.path().join("expected");
+    let other_repository = directory.path().join("other");
+    fs::create_dir(&expected_repository).expect("expected repository");
+    fs::create_dir(&other_repository).expect("other repository");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    {
+        let connection = storage
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        connection
+            .execute(
+                "UPDATE meta SET repository_root = ?1, repository_identity = '' WHERE id = 1",
+                [expected_repository.to_string_lossy().as_ref()],
+            )
+            .expect("install unversioned repository binding");
+    }
+
+    assert!(matches!(
+        storage.bind_repository_at(&other_repository, None, 1_234),
+        Err(Error::RepositoryMismatch {
+            expected_repository: expected,
+            actual_repository: actual,
+            ..
+        }) if expected == expected_repository.to_string_lossy()
+            && actual == other_repository
+    ));
+    assert!(matches!(
+        Storage::read_only_status_scoped(&database, &other_repository, None),
+        Err(Error::RepositoryMismatch {
+            expected_repository: expected,
+            actual_repository: actual,
+            ..
+        }) if expected == expected_repository.to_string_lossy()
+            && actual == other_repository
+    ));
+
+    storage
+        .bind_repository_at(&expected_repository, None, 5_678)
+        .expect("upgrade matching unversioned binding");
+    let connection = Connection::open(&database).expect("inspect upgraded binding");
+    let (root, identity): (String, String) = connection
+        .query_row(
+            "SELECT repository_root, repository_identity FROM meta WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("upgraded binding");
+    assert_eq!(root, expected_repository.to_string_lossy());
+    assert_eq!(identity, repository_identity(&expected_repository, None));
+}
+
+#[test]
+pub(crate) fn mismatched_repository_open_repairs_nothing_before_binding_rejects() {
+    let directory = tempfile::tempdir().expect("directory");
+    let expected_repository = directory.path().join("expected");
+    let other_repository = directory.path().join("other");
+    fs::create_dir(&expected_repository).expect("expected repository");
+    fs::create_dir(&other_repository).expect("other repository");
+    let database = directory.path().join("index.sqlite");
+    let storage = Storage::open(&database).expect("storage");
+    storage
+        .bind_repository_at(&expected_repository, None, 1_234)
+        .expect("initial binding");
+    storage
+        .evaluate_receipt(None, 0, &[], true)
+        .expect("receipt fixture");
+    drop(storage);
+
+    let connection = Connection::open(&database).expect("damage usage projection");
+    connection
+        .execute("DELETE FROM retrieval_receipt_usage WHERE id = 1", [])
+        .expect("remove usage projection");
+    drop(connection);
+
+    assert!(matches!(
+        Storage::open_for_repository_scoped(&database, &other_repository, None),
+        Err(Error::RepositoryMismatch { .. })
+    ));
+    let connection = Connection::open(&database).expect("inspect rejected database");
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM retrieval_receipts", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("receipt count"),
+        1,
+        "ownership rejection must not delete authoritative receipts"
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM retrieval_receipt_usage", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("usage count"),
+        0,
+        "ownership rejection must not repair a foreign cache"
+    );
+}
+
+#[test]
+pub(crate) fn token_savings_accounting_skips_a_busy_local_writer() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let meta = ResponseMeta {
+        repository_id: "repository".into(),
+        repository_generation: 1,
+        freshness: crate::model::Freshness::Current,
+        index_scope: crate::model::IndexScopeMode::Full,
+        index_scope_digest: None,
+        source_tokens: 2,
+        protocol_tokens: 3,
+        path_and_metadata_tokens: 5,
+        total_response_tokens: 10,
+        tokenizer: "cl100k_base".into(),
+        token_count_exact: true,
+        receipt_id: None,
+        receipt_suppressed_exact: 0,
+        receipt_suppressed_overlap: 0,
+        receipt_near_duplicates: 0,
+        next_cursor: None,
+    };
+    let writer = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    assert!(
+        !storage
+            .record_token_savings(
+                "cl100k_base",
+                TokenSavingsObservation {
+                    operation: TokenAccountingOperation::Search,
+                    baseline_source_tokens: Some(10),
+                    meta: &meta,
+                    classification: TokenSavingsRequestClass::Useful,
+                    expected_hash_not_modified: false,
+                    expected_hash_suppressed_source_tokens: 0,
+                },
+            )
+            .expect("best-effort accounting")
+    );
+    assert!(
+        !storage
+            .record_service_failure(
+                "cl100k_base",
+                TokenAccountingOperation::Search,
+                "invalid_input",
+            )
+            .expect("best-effort failure accounting")
+    );
+    drop(writer);
+    assert!(
+        storage
+            .record_token_savings(
+                "cl100k_base",
+                TokenSavingsObservation {
+                    operation: TokenAccountingOperation::Search,
+                    baseline_source_tokens: Some(10),
+                    meta: &meta,
+                    classification: TokenSavingsRequestClass::HashSuppressed,
+                    expected_hash_not_modified: true,
+                    expected_hash_suppressed_source_tokens: 8,
+                },
+            )
+            .expect("available accounting")
+    );
+    assert!(
+        storage
+            .record_service_failure(
+                "cl100k_base",
+                TokenAccountingOperation::Search,
+                "invalid_input",
+            )
+            .expect("available failure accounting")
+    );
+    let records = storage
+        .token_savings("cl100k_base")
+        .expect("stored accounting");
+    let record = records.get("search").expect("search accounting");
+    assert_eq!(record.tracked_requests, 0);
+    assert_eq!(record.response_tracked_requests, 1);
+    assert_eq!(record.response_baseline_requests, 1);
+    assert_eq!(record.baseline_source_tokens, 0);
+    assert_eq!(record.response_baseline_source_tokens, 10);
+    assert_eq!(record.emitted_source_tokens, 0);
+    assert_eq!(record.response_source_tokens, 2);
+    assert_eq!(record.path_and_metadata_tokens, 5);
+    assert_eq!(record.protocol_tokens, 3);
+    assert_eq!(record.total_response_tokens, 10);
+    assert_eq!(record.expected_hash_not_modified_responses, 1);
+    assert_eq!(record.expected_hash_suppressed_source_tokens, 8);
+    assert_eq!(record.hash_suppressed_requests, 1);
+    let failures = storage
+        .begin_read()
+        .expect("failure read session")
+        .service_failures("cl100k_base")
+        .expect("stored failure accounting");
+    assert_eq!(
+        failures,
+        vec![ServiceFailureRecord {
+            operation: "search".into(),
+            error_category: "invalid_input".into(),
+            failed_requests: 1,
+        }]
+    );
+}
+
+#[test]
 pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
@@ -1246,7 +1861,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
 
     assert_eq!(
         storage
-            .begin_generation_read()
+            .begin_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "cl100k_base")
             .expect("whole-file tokens"),
@@ -1254,7 +1869,7 @@ pub(crate) fn whole_file_source_tokens_uses_the_exact_indexed_file_count() {
     );
     assert_eq!(
         storage
-            .begin_generation_read()
+            .begin_read()
             .expect("read session")
             .whole_file_source_tokens(&["source.rs".into()], "o200k_base")
             .expect("mismatched tokenizer"),
@@ -1282,7 +1897,7 @@ pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
     ));
     storage.full_reconcile("config", files).expect("reconcile");
 
-    let session = storage.begin_generation_read().expect("session");
+    let session = storage.begin_read().expect("session");
     let first = session
         .list_glob_paths("src/target_*.rs", None, None, 2)
         .expect("first glob page");

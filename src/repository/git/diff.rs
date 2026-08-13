@@ -45,7 +45,7 @@ pub fn git_diff_paths_between(
 }
 
 /// Resolve diff endpoint identities without enumerating changed paths.
-pub fn git_diff_identity(
+pub(crate) fn git_diff_identity(
     root: &Path,
     base_revision: &str,
     head_revision: Option<&str>,
@@ -69,7 +69,7 @@ pub fn git_diff_identity(
 }
 
 /// Resolve the current Git `HEAD` to the same bounded short SHA used by diff receipts.
-pub fn git_head_revision(root: &Path) -> Result<String> {
+pub(crate) fn git_head_revision(root: &Path) -> Result<String> {
     resolve_revision_sha_for_field(
         root,
         Path::new("git"),
@@ -81,7 +81,7 @@ pub fn git_head_revision(root: &Path) -> Result<String> {
 
 /// Resolve the current branch name with the same bounded Git command policy
 /// used for other snapshot metadata. Detached HEAD is reported as unavailable.
-pub fn git_branch_name(root: &Path) -> Result<String> {
+pub(crate) fn git_branch_name(root: &Path) -> Result<String> {
     let output = run_git_capture(
         root,
         Path::new("git"),
@@ -126,7 +126,7 @@ pub fn git_diff_hunks_between(
 }
 
 /// Parse bounded target-side hunk ranges only for explicit repository paths.
-pub fn git_diff_hunks_scoped(
+pub(crate) fn git_diff_hunks_scoped(
     root: &Path,
     base_revision: &str,
     head_revision: Option<&str>,
@@ -136,7 +136,7 @@ pub fn git_diff_hunks_scoped(
     git_diff_hunks_with_head(root, base_revision, head_revision, paths, max)
 }
 
-pub fn git_diff_hunks_with_head(
+pub(crate) fn git_diff_hunks_with_head(
     root: &Path,
     base_revision: &str,
     head_revision: Option<&str>,
@@ -188,7 +188,7 @@ pub fn git_diff_hunks_with_head(
     parse_git_diff_hunks(output.as_slice(), max, &prefix)
 }
 
-pub fn parse_git_diff_hunks<R: BufRead>(
+pub(crate) fn parse_git_diff_hunks<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
@@ -251,7 +251,7 @@ pub fn parse_git_diff_hunks<R: BufRead>(
     Ok(ranges)
 }
 
-pub fn git_diff_paths_with(
+pub(crate) fn git_diff_paths_with(
     root: &Path,
     base_revision: &str,
     max: usize,
@@ -282,7 +282,7 @@ pub fn git_diff_paths_with(
     })
 }
 
-pub fn resolve_revision_sha(
+pub(crate) fn resolve_revision_sha(
     root: &Path,
     program: &Path,
     revision: &str,
@@ -291,7 +291,7 @@ pub fn resolve_revision_sha(
     resolve_revision_sha_for_field(root, program, revision, timeout, "base revision")
 }
 
-pub fn resolve_revision_sha_for_field(
+pub(crate) fn resolve_revision_sha_for_field(
     root: &Path,
     program: &Path,
     revision: &str,
@@ -360,7 +360,7 @@ pub fn resolve_revision_sha_for_field(
     Ok(sha)
 }
 
-pub fn diff_name_only(
+pub(crate) fn diff_name_only(
     root: &Path,
     program: &Path,
     base_sha: &str,
@@ -399,7 +399,7 @@ pub fn diff_name_only(
     parse_diff_names(output.as_slice(), max, prefix)
 }
 
-pub fn parse_diff_names<R: BufRead>(
+pub(crate) fn parse_diff_names<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,

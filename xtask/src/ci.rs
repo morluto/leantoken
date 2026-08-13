@@ -868,7 +868,7 @@ mod tests {
     fn pull_request_selection_is_owner_specific() {
         let plan = build_plan(
             &workspace_root(),
-            input(Event::PullRequest, &["docs/development.md"]),
+            input(Event::PullRequest, &["docs/testing.md"]),
         )
         .expect("plan");
         assert!(plan.selected_lanes.iter().all(|lane| {
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn full_run_is_additive_and_missing_base_fails_conservatively() {
-        let mut full = input(Event::PullRequest, &["docs/development.md"]);
+        let mut full = input(Event::PullRequest, &["docs/testing.md"]);
         full.full_run = true;
         let full_plan = build_plan(&workspace_root(), full).expect("full plan");
         assert!(
@@ -969,7 +969,7 @@ mod tests {
             })
         );
 
-        let mut missing = input(Event::PullRequest, &["docs/development.md"]);
+        let mut missing = input(Event::PullRequest, &["docs/testing.md"]);
         missing.base_revision = None;
         let plan = build_plan(&workspace_root(), missing).expect("fallback plan");
         assert!(plan.fallback_reason.is_some());
@@ -1049,8 +1049,8 @@ mod tests {
             vec!["src/café.rs", "docs/a\tb.md"]
         );
         assert_eq!(
-            parse_changed_paths(b"src/lib.rs\ndocs/development.md\n"),
-            vec!["src/lib.rs", "docs/development.md"]
+            parse_changed_paths(b"src/lib.rs\ndocs/testing.md\n"),
+            vec!["src/lib.rs", "docs/testing.md"]
         );
     }
 
@@ -1076,7 +1076,7 @@ mod tests {
     fn malformed_plan_cannot_unselect_a_required_merge_group_lane() {
         let mut plan = build_plan(
             &workspace_root(),
-            input(Event::MergeGroup, &["docs/development.md"]),
+            input(Event::MergeGroup, &["docs/testing.md"]),
         )
         .expect("plan");
         plan.selected_lanes

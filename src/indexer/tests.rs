@@ -549,6 +549,71 @@ fn full_reconcile_counts_every_preparation_skip_reason() {
 }
 
 #[test]
+fn changed_publication_resolves_imports_only_to_published_files() {
+    let root = tempfile::tempdir().expect("root");
+    let main_path = root.path().join("main.js");
+    fs::write(&main_path, "export function initial() {}\n").expect("initial importer");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
+
+    let mut importer = String::new();
+    for index in 1..=32 {
+        let target = format!("skipped-{index:02}.js");
+        importer.push_str(&format!("import './{target}';\n"));
+        fs::write(root.path().join(target), b"\0binary").expect("binary target");
+    }
+    importer.push_str("import { valid } from './valid.js';\nvalid();\n");
+    fs::write(&main_path, importer).expect("changed importer");
+    fs::write(root.path().join("valid.js"), "export function valid() {}\n").expect("valid target");
+
+    let response = indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("changed reconcile");
+    assert_eq!(response.files_skipped, 32);
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning == "repaired 32 persisted import projections")
+    );
+    let main = storage
+        .find_file("main.js")
+        .expect("main lookup")
+        .expect("published importer");
+    let imports = storage
+        .get_imports_for_file(main.id, 64)
+        .expect("published imports");
+    assert_eq!(imports.len(), 33);
+    assert!(
+        imports[..32]
+            .iter()
+            .all(|import| import.resolved_path.is_none())
+    );
+    assert_eq!(
+        imports[32].resolved_path.as_deref(),
+        Some("valid.js"),
+        "the valid target after 32 skipped discoveries must remain resolvable"
+    );
+
+    let snapshot = crate::storage::IndexSnapshot::open(&storage).expect("snapshot");
+    let targets = snapshot
+        .import_symbol_targets(&["main.js".into()], 32, 8)
+        .expect("bounded import graph");
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.target_file.path == "valid.js"),
+        "unpublished targets must not consume the 32-target graph cap"
+    );
+}
+
+#[test]
 fn incremental_reconcile_counts_every_preparation_skip_reason() {
     let root = tempfile::tempdir().expect("root");
     let indexed_path = root.path().join("indexed.rs");
@@ -656,6 +721,22 @@ fn latex_inputs_resolve_relative_tex_files() {
 }
 
 #[test]
+fn html_resources_resolve_only_the_explicit_repository_relative_subset() {
+    let paths = ["web/index.html", "web/app.js", "web/theme.css"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+    assert_eq!(
+        resolve_import("web/index.html", "./app.js", &paths).as_deref(),
+        Some("web/app.js")
+    );
+    assert!(resolve_import("web/index.html", "app.js", &paths).is_none());
+    assert!(resolve_import("web/index.html", "./theme.css?v=1", &paths).is_none());
+    assert!(resolve_import("web/index.html", "https://example.test/app.js", &paths).is_none());
+}
+
+#[test]
 fn rust_module_symbol_resolves_to_module_file() {
     let paths = ["target.rs".to_string(), "consumer.rs".to_string()]
         .into_iter()
@@ -713,12 +794,150 @@ fn rust_mod_rs_resolves_for_directory_module() {
 
 #[test]
 fn python_init_py_resolves_for_directory_package() {
-    let paths = ["pkg/__init__.py".to_string(), "main.py".to_string()]
-        .into_iter()
-        .collect();
+    let paths = [
+        "pkg.py".to_string(),
+        "pkg/__init__.py".to_string(),
+        "main.py".to_string(),
+    ]
+    .into_iter()
+    .collect();
     assert_eq!(
         resolve_import("main.py", "pkg", &paths).as_deref(),
         Some("pkg/__init__.py")
+    );
+}
+
+#[test]
+fn python_source_layout_precedes_a_repository_root_lookalike() {
+    let paths = ["src/acme/main.py", "src/acme/util.py", "acme/util.py"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+    assert_eq!(
+        resolve_import("src/acme/main.py", "acme.util", &paths).as_deref(),
+        Some("src/acme/util.py")
+    );
+}
+
+#[test]
+fn python_import_from_preserves_the_repository_submodule_edge() {
+    let root = tempfile::tempdir().expect("root");
+    fs::create_dir(root.path().join("app")).expect("package directory");
+    fs::write(
+        root.path().join("main.py"),
+        "from app import models\nprint(models.VALUE)\n",
+    )
+    .expect("importer");
+    fs::write(root.path().join("app/__init__.py"), "PACKAGE = 'app'\n")
+        .expect("package initializer");
+    fs::write(root.path().join("app/models.py"), "VALUE = 42\n").expect("package submodule");
+    let config = Arc::new(
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config"),
+    );
+    let storage = Storage::open(&config.database_path).expect("storage");
+    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
+
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("reconcile");
+
+    let importer = storage
+        .find_file("main.py")
+        .expect("importer lookup")
+        .expect("indexed importer");
+    let imports = storage
+        .get_imports_for_file(importer.id, 10)
+        .expect("imports");
+    assert!(imports.iter().any(|import| {
+        import.raw_target == "app.models"
+            && import.resolved_path.as_deref() == Some("app/models.py")
+    }));
+
+    let snapshot = crate::storage::IndexSnapshot::open(&storage).expect("snapshot");
+    let targets = snapshot
+        .import_symbol_targets(&["main.py".into()], 32, 8)
+        .expect("import expansion");
+    assert!(
+        targets
+            .iter()
+            .any(|target| target.target_file.path == "app/models.py"),
+        "context expansion must retain the concrete repository submodule"
+    );
+}
+
+#[test]
+fn typescript_runtime_extensions_follow_source_substitution_order() {
+    let paths = [
+        "src/main.ts",
+        "src/a.ts",
+        "src/a.js",
+        "src/component.tsx",
+        "src/types.d.ts",
+        "src/types_only.d.ts",
+        "src/worker.mts",
+        "src/worker_types.d.mts",
+        "src/legacy.cts",
+        "src/legacy_types.d.cts",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+
+    assert_eq!(
+        resolve_import("src/main.ts", "./a.js", &paths).as_deref(),
+        Some("src/a.ts"),
+        "the TypeScript source must precede an emitted runtime file"
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./component.jsx", &paths).as_deref(),
+        Some("src/component.tsx")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./types.js", &paths).as_deref(),
+        Some("src/types.d.ts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./types_only", &paths).as_deref(),
+        Some("src/types_only.d.ts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./worker.mjs", &paths).as_deref(),
+        Some("src/worker.mts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./worker_types.mjs", &paths).as_deref(),
+        Some("src/worker_types.d.mts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./legacy.cjs", &paths).as_deref(),
+        Some("src/legacy.cts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./legacy_types.cjs", &paths).as_deref(),
+        Some("src/legacy_types.d.cts")
+    );
+    assert!(resolve_import("src/main.ts", "./worker_types", &paths).is_none());
+    assert!(resolve_import("src/main.ts", "./legacy_types", &paths).is_none());
+}
+
+#[test]
+fn typescript_explicit_esm_sources_reject_extensionless_relative_targets() {
+    let paths = [
+        "src/main.mts",
+        "src/dependency.ts",
+        "src/directory/index.ts",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+
+    assert!(resolve_import("src/main.mts", "./dependency", &paths).is_none());
+    assert!(resolve_import("src/main.mts", "./directory", &paths).is_none());
+    assert_eq!(
+        resolve_import("src/main.mts", "./dependency.js", &paths).as_deref(),
+        Some("src/dependency.ts"),
+        "an explicit runtime extension still follows TypeScript substitution"
     );
 }
 
@@ -793,6 +1012,59 @@ fn rust_qualified_imports_resolve_from_the_source_module() {
 }
 
 #[test]
+fn rust_target_conventions_keep_crate_imports_inside_their_target() {
+    let paths = [
+        "crates/core/src/lib.rs",
+        "crates/core/src/util.rs",
+        "src/util.rs",
+        "src/bin/admin.rs",
+        "src/bin/util.rs",
+        "tests/api.rs",
+        "tests/common.rs",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+
+    assert_eq!(
+        resolve_import("crates/core/src/lib.rs", "crate::util::Config", &paths).as_deref(),
+        Some("crates/core/src/util.rs")
+    );
+    assert_eq!(
+        resolve_import("src/bin/admin.rs", "crate::util::Config", &paths).as_deref(),
+        Some("src/bin/util.rs")
+    );
+    assert_eq!(
+        resolve_import("tests/api.rs", "crate::common::fixture", &paths).as_deref(),
+        Some("tests/common.rs")
+    );
+    assert!(
+        resolve_import("src/main.rs", "super::util", &paths).is_none(),
+        "a crate-root module has no Rust `super` namespace"
+    );
+    assert!(
+        resolve_import("src/bin/admin.rs", "super::util", &paths).is_none(),
+        "a conventional binary target root has no Rust `super` namespace"
+    );
+    assert!(
+        resolve_import("tests/api.rs", "super::common", &paths).is_none(),
+        "an integration-test target root has no Rust `super` namespace"
+    );
+}
+
+#[test]
+fn unsupported_package_imports_do_not_manufacture_repository_edges() {
+    let paths = [
+        "cmd/main.go".to_string(),
+        "example.com/acme/pkg/index".to_string(),
+    ]
+    .into_iter()
+    .collect();
+
+    assert!(resolve_import("cmd/main.go", "example.com/acme/pkg", &paths).is_none());
+}
+
+#[test]
 fn import_resolution_honors_cancellation() {
     let mut files = vec![IndexedFile {
         path: "src/app.ts".into(),
@@ -821,6 +1093,112 @@ fn import_resolution_honors_cancellation() {
         resolve_imports(&mut files, &paths, &cancellation),
         Err(Error::Cancelled)
     ));
+}
+
+#[test]
+fn startup_projection_repair_does_not_trust_the_corrupt_candidate_index() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    fs::create_dir(root.path().join("src")).expect("source directory");
+    fs::write(
+        root.path().join("src/main.rs"),
+        "use crate::feature::thing;\nfn main() { thing(); }\n",
+    )
+    .expect("importer source");
+    fs::write(
+        root.path().join("src/unrelated.rs"),
+        "pub fn unrelated() {}\n",
+    )
+    .expect("unrelated source");
+    let config =
+        Arc::new(Config::discover(root.path(), Some(database.clone())).expect("repository config"));
+    let storage = Storage::open(&database).expect("storage");
+    let indexer = Indexer::new(Arc::clone(&config), storage).expect("indexer");
+    indexer
+        .reconcile(IndexingMode::Reconcile)
+        .expect("initial reconcile");
+    drop(indexer);
+
+    let connection = rusqlite::Connection::open(&database).expect("damage projection");
+    let import_id: i64 = connection
+        .query_row(
+            "SELECT imports.id
+             FROM imports
+             JOIN files ON files.id = imports.file_id
+             WHERE files.path = 'src/main.rs'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("import row");
+    connection
+        .execute(
+            "DELETE FROM import_candidates WHERE import_id = ?1",
+            rusqlite::params![import_id],
+        )
+        .expect("remove self-repair candidate");
+    connection
+        .execute(
+            "INSERT INTO import_candidates(import_id, candidate_path, priority)
+             VALUES (?1, 'src/unrelated.rs', 99)",
+            rusqlite::params![import_id],
+        )
+        .expect("insert wrong candidate and priority");
+    connection
+        .execute(
+            "UPDATE imports SET resolved_path = 'src/unrelated.rs' WHERE id = ?1",
+            rusqlite::params![import_id],
+        )
+        .expect("insert false graph edge");
+    drop(connection);
+
+    fs::write(root.path().join("src/feature.rs"), "pub fn thing() {}\n")
+        .expect("create intended target");
+    let storage = Storage::open(&database).expect("reopen storage");
+    let reopened = Indexer::new(config, storage.clone()).expect("reopened indexer");
+    let response = reopened
+        .reconcile_paths(&["src/feature.rs".into()])
+        .expect("reconcile membership change and repair projections");
+
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| { warning == "repaired 1 persisted import projections" })
+    );
+    let importer = storage
+        .find_file("src/main.rs")
+        .expect("importer lookup")
+        .expect("indexed importer");
+    let imports = storage
+        .get_imports_for_file(importer.id, 10)
+        .expect("repaired imports");
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].resolved_path.as_deref(), Some("src/feature.rs"));
+
+    let expected = import_candidates("src/main.rs", &imports[0].raw_target);
+    let connection = rusqlite::Connection::open(&database).expect("inspect repaired candidates");
+    let persisted = connection
+        .prepare(
+            "SELECT priority, candidate_path
+             FROM import_candidates
+             WHERE import_id = ?1
+             ORDER BY priority, candidate_path",
+        )
+        .expect("candidate query")
+        .query_map(rusqlite::params![import_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("candidate rows")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("persisted candidates");
+    assert_eq!(
+        persisted,
+        expected
+            .into_iter()
+            .enumerate()
+            .map(|(priority, path)| (i64::try_from(priority).expect("priority"), path))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -855,7 +1233,7 @@ fn parser_cancellation_is_not_downgraded_to_a_file_warning() {
 }
 
 #[test]
-fn parser_content_version_reindexes_legacy_symbol_rows() {
+fn derivation_mismatch_reindexes_legacy_symbol_rows() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     std::fs::write(
@@ -871,7 +1249,7 @@ fn parser_content_version_reindexes_legacy_symbol_rows() {
         .reconcile(IndexingMode::Reconcile)
         .expect("initial reconcile");
     assert_eq!(first.repository_generation, 1);
-    let legacy_hash = indexer.config_hash_for_content_marker(PREVIOUS_INDEX_CONTENT_MARKER);
+    let legacy_hash = indexer.config_hash_for_derivation(LEGACY_INDEX_DERIVATION);
     let connection = rusqlite::Connection::open(&database).expect("legacy connection");
     connection
             .execute(
@@ -883,8 +1261,10 @@ fn parser_content_version_reindexes_legacy_symbol_rows() {
             .expect("inject legacy duplicate");
     connection
         .execute(
-            "UPDATE meta SET config_hash = ?1 WHERE id = 1",
-            rusqlite::params![legacy_hash],
+            "UPDATE meta
+             SET config_hash = ?1, derivation_fingerprint = ?2
+             WHERE id = 1",
+            rusqlite::params![legacy_hash, LEGACY_INDEX_DERIVATION],
         )
         .expect("set legacy marker");
     drop(connection);
@@ -908,9 +1288,11 @@ fn parser_content_version_reindexes_legacy_symbol_rows() {
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].symbol.kind, "method");
     assert_eq!(symbols[0].symbol.parent.as_deref(), Some("Point"));
+    let meta = storage.meta().expect("metadata");
+    assert_eq!(meta.config_hash, indexer.config_hash());
     assert_eq!(
-        storage.meta().expect("metadata").config_hash,
-        indexer.config_hash()
+        meta.derivation_fingerprint,
+        crate::index_derivation::index_derivation_fingerprint()
     );
 }
 
@@ -1293,6 +1675,37 @@ fn worker_pool_is_lazy_and_threads_follow_config_per_indexer() {
             .expect("pool b")
             .current_num_threads(),
         3
+    );
+}
+
+#[test]
+fn import_candidate_expansion_fails_closed_at_its_explicit_bounds() {
+    let deep_rust_target = format!(
+        "crate::{}",
+        (0..=MAX_RUST_MODULE_BASES)
+            .map(|index| format!("segment_{index}"))
+            .collect::<Vec<_>>()
+            .join("::")
+    );
+    assert!(import_candidates("src/lib.rs", &deep_rust_target).is_empty());
+
+    let oversized_group = format!(
+        "crate::module::{{{}}}",
+        (0..=MAX_RUST_MODULE_BASES)
+            .map(|index| format!("item_{index}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    assert!(import_candidates("src/lib.rs", &oversized_group).is_empty());
+    assert!(import_candidates("src/main.py", &"x".repeat(MAX_IMPORT_TARGET_BYTES + 1)).is_empty());
+
+    let ordinary = import_candidates("src/lib.rs", "crate::module::item");
+    assert!(!ordinary.is_empty());
+    assert!(ordinary.len() <= MAX_IMPORT_CANDIDATES_PER_IMPORT);
+    assert!(
+        ordinary
+            .iter()
+            .all(|candidate| candidate.len() <= MAX_IMPORT_CANDIDATE_PATH_BYTES)
     );
 }
 

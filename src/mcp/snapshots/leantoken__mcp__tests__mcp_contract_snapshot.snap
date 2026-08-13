@@ -1,6 +1,6 @@
 ---
 source: src/mcp/tests.rs
-assertion_line: 329
+assertion_line: 485
 expression: mcp_contract()
 ---
 {
@@ -447,8 +447,17 @@ expression: mcp_contract()
           },
           "receipt_id": {
             "default": null,
-            "description": "Suppress evidence already returned under this immutable artifact; omit\nwhen `plan_only` is true.",
+            "description": "Suppress evidence already returned under this server-managed receipt; omit\nwhen `plan_only` is true.",
             "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
             "type": [
               "string",
               "null"
@@ -534,6 +543,15 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -599,6 +617,15 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -652,6 +679,15 @@ expression: mcp_contract()
               {
                 "additionalProperties": false,
                 "properties": {
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "cursor": {
                     "default": null,
                     "maxLength": 4096,
@@ -735,6 +771,15 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/FilesMcpOperation",
             "description": "Tagged path operation. Bounds and cursors live on the variant that uses them."
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1110,6 +1155,15 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/HistoryMcpOperation",
             "description": "Git-backed symbol operation: `read_symbol`, `diff_symbol`, `diff_symbols`, or\n`symbol_log`. Use `symbol_log` to list commits that touched a symbol."
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1467,6 +1521,15 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/JsonMcpOperation",
             "description": "Structural JSON operation."
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1499,6 +1562,15 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "consistency": {
+            "default": "indexed_generation",
+            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
+            "enum": [
+              "indexed_generation",
+              "reconcile_working_tree"
+            ],
+            "type": "string"
+          },
           "cursor": {
             "default": null,
             "description": "Opaque cursor from a result-limited outline response.",
@@ -1567,8 +1639,17 @@ expression: mcp_contract()
           },
           "receipt_id": {
             "default": null,
-            "description": "Suppress evidence already returned under this immutable artifact.",
+            "description": "Suppress evidence already returned under this server-managed receipt.",
             "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
             "type": [
               "string",
               "null"
@@ -1601,7 +1682,7 @@ expression: mcp_contract()
       "name": "outline"
     },
     {
-      "description": "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation from one published repository generation. Keep path separate from target; use a symbol or range from search or outline. Pass expected_hash to suppress unchanged published content; the response identifies its source and reports worktree freshness as unknown because it does not read mutable files; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
+      "description": "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}.",
       "inputSchema": {
         "$defs": {
           "ReadMcpTarget": {
@@ -1704,6 +1785,21 @@ expression: mcp_contract()
               }
             ]
           },
+          "ReadPolicy": {
+            "description": "I/O and verification policy for a live read.\n\n`Bounded` (default) stops reading after the requested page is satisfied,\nreports `index_state: unknown`, and emits a prefix-stable continuation. It\ncannot prove that an unread suffix is unchanged. `Full` hashes the complete\nlive file, reports current/stale with live and indexed hashes, and emits a\ncontent-snapshot continuation. It is required for delta requests.",
+            "oneOf": [
+              {
+                "const": "bounded",
+                "description": "Stop after the requested page; no full-file hash or index staleness.",
+                "type": "string"
+              },
+              {
+                "const": "full",
+                "description": "Hash the complete live file and report index verification metadata.",
+                "type": "string"
+              }
+            ]
+          },
           "SymbolIdentity": {
             "additionalProperties": false,
             "properties": {
@@ -1730,6 +1826,20 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "consistency": {
+            "default": "indexed_generation",
+            "description": "Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.",
+            "enum": [
+              "indexed_generation",
+              "reconcile_working_tree"
+            ],
+            "type": "string"
+          },
+          "delta": {
+            "default": false,
+            "description": "Record this target and prefer a cheaper follow-up. Without `expected_hash`,\nselect the latest compatible base for this exact target.",
+            "type": "boolean"
+          },
           "expected_hash": {
             "default": null,
             "description": "Hash from the same prior target; matching content returns `not_modified`.",
@@ -1776,6 +1886,29 @@ expression: mcp_contract()
             "minLength": 1,
             "type": "string"
           },
+          "policy": {
+            "$ref": "#/$defs/ReadPolicy",
+            "default": "bounded",
+            "description": "I/O and verification policy. `bounded` (default) stops after the\nrequested page and reports `index_state: unknown`. `full` hashes the\ncomplete live file, reports current/stale with indexed hashes, and is\nrequired for `delta: true`."
+          },
+          "receipt_id": {
+            "default": null,
+            "description": "Suppress evidence already returned under this server-managed receipt.",
+            "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "target": {
             "$ref": "#/$defs/ReadMcpTarget",
             "description": "Exact symbol, document heading, line range, or continuation to read."
@@ -1790,7 +1923,7 @@ expression: mcp_contract()
       "name": "read"
     },
     {
-      "description": "Explicitly carry only exactly unchanged evidence from an immutable artifact into the current committed generation. Requires the same repository identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\"}.",
+      "description": "Explicitly carry only exactly unchanged evidence from a stale server-managed receipt into the current committed generation. Requires the same repository/cache/scope identity and exact path, line coordinates, and content hash; never guesses line shifts, renames, symbol relocation, overlap, near-duplicates, or fuzzy matches. Returns complete carried/changed/missing/unmapped counts, bounded source-free samples, and a digest. Example: {\"receipt_id\":\"r...\",\"consistency\":\"reconcile_working_tree\"}.",
       "inputSchema": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
@@ -1836,10 +1969,19 @@ expression: mcp_contract()
             ]
           },
           "receipt_id": {
-            "description": "Immutable evidence artifact from an earlier repository generation.",
+            "description": "Opaque server-managed receipt from an earlier repository generation.",
             "maxLength": 128,
             "minLength": 1,
             "type": "string"
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1859,6 +2001,15 @@ expression: mcp_contract()
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "snapshot": {
             "default": null,
             "description": "Opaque snapshot from an earlier savings response; returns aggregate deltas.",
@@ -1929,6 +2080,15 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,
@@ -2068,6 +2228,15 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2205,6 +2374,15 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,
@@ -2344,6 +2522,15 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2482,6 +2669,15 @@ expression: mcp_contract()
                     "default": false,
                     "type": "boolean"
                   },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
+                  },
                   "context_lines": {
                     "default": null,
                     "description": "The server's configured context_lines value applies when this field is omitted.",
@@ -2619,6 +2815,15 @@ expression: mcp_contract()
                   "case_sensitive": {
                     "default": false,
                     "type": "boolean"
+                  },
+                  "consistency": {
+                    "default": "indexed_generation",
+                    "description": "Use `reconcile_working_tree` after edits; otherwise use the indexed generation.",
+                    "enum": [
+                      "indexed_generation",
+                      "reconcile_working_tree"
+                    ],
+                    "type": "string"
                   },
                   "context_lines": {
                     "default": null,
@@ -2774,6 +2979,15 @@ expression: mcp_contract()
           "operation": {
             "$ref": "#/$defs/SearchMcpOperation",
             "description": "Search semantics and all bounds are owned by the selected tagged operation."
+          },
+          "repository_context": {
+            "default": null,
+            "description": "Optional name of an approved repository context.",
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

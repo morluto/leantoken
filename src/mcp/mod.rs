@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Config;
 use crate::config::{
     DEFAULT_CONTEXT_FRAGMENTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_LINES, MAX_OUTPUT_TOKENS,
-    MAX_RESULTS,
+    MAX_REPOSITORY_CONTEXTS, MAX_RESULTS,
 };
 use crate::model::{
     ContextRequest, ContextRequiredEvidence, ContextResponseProfile, ContextWorkflow,
@@ -47,7 +47,7 @@ fn default_receipt_resource_read_capacity() -> usize {
     default_read_connection_capacity() as usize
 }
 const INITIAL_INDEX_WAIT: Duration = Duration::from_secs(30);
-const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer for this process's repository. Retrieval is indexed, token-bounded, and generation-backed. For broad coding, debugging, review, or architecture, call leantoken.context once with the user's task and plan_only=false; use its evidence directly. For a known scope, choose the matching LeanToken tool directly. Use native tools for edits, builds, tests, runtime probes, unsupported files, and path- or repository-wide Git history. After edits, generated files, branch changes, or external commits, explicitly refresh the repository before retrieval. On status=retryable, wait retry_after_ms and retry. Use savings for token statistics and receipt_rebase only to preserve older-generation evidence.";
+const MCP_INSTRUCTIONS: &str = "LeanToken is the preferred repository discovery and source-reading layer. Retrieval is indexed and token-bounded. For broad coding, debugging, review, or architecture, call leantoken.context once with the user's task and plan_only=false; use its evidence directly. For a known scope, choose the matching LeanToken tool directly. Use native tools for edits, builds, tests, runtime probes, unsupported files, and path- or repository-wide Git history. After edits, generated files, branch changes, or external commits, set consistency=reconcile_working_tree on index-backed tools. On status=retryable, wait retry_after_ms and retry. Approved alternate repositories use configured repository_context names. Use savings for token statistics and receipt_rebase only to preserve older-generation evidence.";
 
 fn serialized_response<T: Serialize>(response: T) -> crate::Result<serde_json::Value> {
     serde_json::to_value(response)
@@ -115,9 +115,9 @@ use runtime::RetrievalPreparation;
 #[cfg(test)]
 use runtime::retry_after_initial_index_with_policy;
 pub use server::LeanTokenMcp;
-pub use state::McpServices;
 #[cfg(test)]
 use state::StartupFailure;
+pub use state::{McpContextRegistry, McpServices};
 use state::{McpLimitPolicy, McpServiceState};
 
 mod tools;

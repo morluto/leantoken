@@ -1,10 +1,16 @@
+use std::mem::size_of;
+
 use serde::{Deserialize, Serialize};
 
 use crate::model::{QueryReceiptScopeRelation, SearchMode, SearchOccurrence, SearchRequest};
 use crate::{Error, Result};
 
+pub(crate) const MAX_QUERY_RECEIPTS: usize = 128;
 pub(crate) const MAX_QUERY_RECEIPT_ID_BYTES: usize = 128;
 pub(crate) const MAX_QUERY_PREDICATE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_TOTAL_QUERY_RECEIPT_BYTES: usize = 1024 * 1024;
+pub(crate) const QUERY_RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
+pub(crate) const QUERY_RECEIPT_TOUCH_INTERVAL_MILLIS: i64 = 60 * 1_000;
 pub(crate) const QUERY_RECEIPT_SEMANTICS_VERSION: u64 = 2;
 const SQLITE_POSITIVE_INTEGER_MAX: u64 = i64::MAX as u64;
 
@@ -33,9 +39,15 @@ pub(crate) fn search_semantics_fingerprint() -> u64 {
     let fingerprint = u64::from_le_bytes(digest.as_bytes()[..8].try_into().unwrap_or([0; 8]));
     fingerprint % SQLITE_POSITIVE_INTEGER_MAX + 1
 }
+pub(crate) const QUERY_RECEIPT_FIXED_LOGICAL_BYTES: usize = 16 * size_of::<u64>();
+const QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
+const QUERY_RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
 pub(crate) const QUERY_RECEIPT_ID_RESPONSE_RESERVE: &str =
-    "q0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f80";
-const _: () = assert!(QUERY_RECEIPT_ID_RESPONSE_RESERVE.len() == 65);
+    "q0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708";
+const _: () = assert!(
+    QUERY_RECEIPT_ID_RESPONSE_RESERVE.len()
+        == 1 + QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES + QUERY_RECEIPT_ID_ROW_HEX_BYTES
+);
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -144,13 +156,13 @@ fn normalize_patterns(patterns: &[String]) -> Result<Vec<String>> {
     Ok(normalized)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QueryPartition {
     pub digest: String,
     pub file_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub(crate) struct QueryReceiptRecord {
     pub repository_generation: u64,
     pub config_hash: String,
@@ -159,6 +171,19 @@ pub(crate) struct QueryReceiptRecord {
     pub partition: QueryPartition,
     pub match_count: usize,
     pub result_blake3: String,
+}
+
+impl QueryReceiptRecord {
+    pub(crate) fn logical_bytes(&self, repository_identity: &str) -> Result<usize> {
+        QUERY_RECEIPT_FIXED_LOGICAL_BYTES
+            .checked_add(repository_identity.len())
+            .and_then(|bytes| bytes.checked_add(self.config_hash.len()))
+            .and_then(|bytes| bytes.checked_add(self.predicate.serialized().ok()?.len()))
+            .and_then(|bytes| bytes.checked_add(self.predicate_blake3.len()))
+            .and_then(|bytes| bytes.checked_add(self.partition.digest.len()))
+            .and_then(|bytes| bytes.checked_add(self.result_blake3.len()))
+            .ok_or_else(|| Error::OperationFailure("query receipt byte accounting overflow".into()))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -191,6 +216,20 @@ pub(crate) fn exhaustive_result_digest<'a>(
         hash_occurrence(&mut hasher, occurrence);
     }
     hasher.finalize().to_hex().to_string()
+}
+
+pub(crate) fn format_query_receipt_id(namespace: &str, row_id: i64) -> String {
+    format!("q{namespace}{row_id:016x}")
+}
+
+pub(crate) fn parse_query_receipt_id(requested_id: &str, namespace: &str) -> Option<i64> {
+    let suffix = requested_id.strip_prefix('q')?.strip_prefix(namespace)?;
+    if suffix.len() != QUERY_RECEIPT_ID_ROW_HEX_BYTES {
+        return None;
+    }
+    i64::from_str_radix(suffix, 16)
+        .ok()
+        .filter(|row_id| *row_id > 0)
 }
 
 fn hash_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) {
@@ -263,6 +302,18 @@ mod tests {
     }
 
     #[test]
+    fn query_receipt_ids_are_namespace_bound() {
+        let namespace = "0123456789abcdef0123456789abcdef";
+        let receipt_id = format_query_receipt_id(namespace, 42);
+        assert_eq!(parse_query_receipt_id(&receipt_id, namespace), Some(42));
+        assert_eq!(
+            parse_query_receipt_id(&receipt_id, "ffffffffffffffffffffffffffffffff"),
+            None
+        );
+        assert_eq!(receipt_id.len(), QUERY_RECEIPT_ID_RESPONSE_RESERVE.len());
+    }
+
+    #[test]
     fn response_reserve_covers_generated_ids_across_tokenizers() {
         use crate::tokens::Tokenizer;
 
@@ -277,7 +328,11 @@ mod tests {
             Tokenizer::Estimate,
         ];
         for seed in 0u64..4_096 {
-            let id = format!("q{}", blake3::hash(&seed.to_le_bytes()).to_hex());
+            let namespace = blake3::hash(&seed.to_le_bytes()).to_hex();
+            let id = format_query_receipt_id(
+                &namespace.as_str()[..QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES],
+                i64::try_from(seed + 1).expect("bounded row id"),
+            );
             for tokenizer in tokenizers {
                 assert!(
                     tokenizer.count(&id) <= tokenizer.count(QUERY_RECEIPT_ID_RESPONSE_RESERVE),

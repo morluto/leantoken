@@ -3,7 +3,11 @@ use super::*;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct ReceiptRebaseMcpRequest {
-    /// Immutable evidence artifact from an earlier repository generation.
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
+    /// Opaque server-managed receipt from an earlier repository generation.
     #[schemars(length(min = 1, max = 128))]
     pub(in crate::mcp) receipt_id: String,
     /// Maximum source-free examples per outcome; complete counts and digest are always returned.

@@ -1,21 +1,31 @@
 use crate::model::ResponseMeta;
 
+pub(crate) const MAX_RECEIPTS: usize = 128;
 pub(crate) const MAX_EVIDENCE_PER_RECEIPT: usize = 2_048;
+pub(crate) const MAX_TOTAL_EVIDENCE: usize = 16_384;
 pub(crate) const MAX_RECEIPT_ID_BYTES: usize = 128;
+pub(crate) const MAX_TOTAL_RECEIPT_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_EVIDENCE_BYTES_PER_RECEIPT: usize = 1024 * 1024;
+pub(crate) const MAX_TOTAL_EVIDENCE_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE: usize = 64;
 pub(crate) const MAX_REBASE_LIVE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const RECEIPT_TTL_MILLIS: i64 = 24 * 60 * 60 * 1_000;
+const RECEIPT_ID_NAMESPACE_HEX_BYTES: usize = 32;
+const RECEIPT_ID_ROW_HEX_BYTES: usize = 16;
 // A valid, high-token-density ID used before storage assigns the exact opaque
 // value. Keep the generated length assertion and tokenizer coverage together.
 pub(crate) const RECEIPT_ID_RESPONSE_RESERVE: &str =
-    "r0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f80";
+    "r0a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708";
 const NEAR_DUPLICATE_HAMMING_DISTANCE: u32 = 8;
 const RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES: usize = 7 * size_of::<u64>();
 pub(crate) const MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES: usize =
     RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES + 4_096 + 128;
-const _: () = assert!(RECEIPT_ID_RESPONSE_RESERVE.len() == 65);
+const _: () = assert!(
+    RECEIPT_ID_RESPONSE_RESERVE.len()
+        == 1 + RECEIPT_ID_NAMESPACE_HEX_BYTES + RECEIPT_ID_ROW_HEX_BYTES
+);
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReceiptEvidence {
     pub path: String,
     pub start_line: usize,
@@ -24,7 +34,7 @@ pub(crate) struct ReceiptEvidence {
     match_policy: ReceiptMatchPolicy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReceiptMatchPolicy {
     ExactOnly,
     Overlap { semantic_signature: Option<u64> },
@@ -49,6 +59,27 @@ impl ReceiptEvidence {
         }
     }
 
+    pub(crate) fn from_stored(
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        content_hash: String,
+        semantic_signature: Option<u64>,
+        exact_only: bool,
+    ) -> Self {
+        Self {
+            path,
+            start_line,
+            end_line,
+            content_hash,
+            match_policy: if exact_only {
+                ReceiptMatchPolicy::ExactOnly
+            } else {
+                ReceiptMatchPolicy::Overlap { semantic_signature }
+            },
+        }
+    }
+
     pub(crate) const fn exact_only(&self) -> bool {
         matches!(self.match_policy, ReceiptMatchPolicy::ExactOnly)
     }
@@ -58,11 +89,6 @@ impl ReceiptEvidence {
             ReceiptMatchPolicy::ExactOnly => None,
             ReceiptMatchPolicy::Overlap { semantic_signature } => semantic_signature,
         }
-    }
-
-    pub(crate) fn into_exact_only(mut self) -> Self {
-        self.match_policy = ReceiptMatchPolicy::ExactOnly;
-        self
     }
 
     #[cfg(test)]
@@ -104,6 +130,8 @@ pub(crate) struct StoredReceipt {
     pub receipt_id: String,
     pub repository_identity: String,
     pub repository_generation: u64,
+    pub created_unix_millis: i64,
+    pub expires_unix_millis: i64,
     pub complete: bool,
     pub evidence: Vec<ReceiptEvidence>,
 }
@@ -166,6 +194,23 @@ pub(crate) fn decide(
         return ReceiptDecision::ReturnNearDuplicate;
     }
     ReceiptDecision::Return
+}
+
+pub(crate) fn format_receipt_id(namespace: &str, row_id: i64) -> String {
+    format!("r{namespace}{row_id:016x}")
+}
+
+pub(crate) fn parse_receipt_id(receipt_id: &str, namespace: &str) -> Option<i64> {
+    let expected_len = 1 + RECEIPT_ID_NAMESPACE_HEX_BYTES + RECEIPT_ID_ROW_HEX_BYTES;
+    if receipt_id.len() != expected_len
+        || !receipt_id.starts_with('r')
+        || receipt_id.get(1..1 + RECEIPT_ID_NAMESPACE_HEX_BYTES)? != namespace
+    {
+        return None;
+    }
+    let row_id =
+        i64::from_str_radix(receipt_id.get(1 + RECEIPT_ID_NAMESPACE_HEX_BYTES..)?, 16).ok()?;
+    (row_id > 0).then_some(row_id)
 }
 
 fn ranges_overlap(
@@ -299,6 +344,28 @@ mod tests {
     }
 
     #[test]
+    fn stored_exact_only_evidence_discards_inapplicable_semantic_state() {
+        let evidence =
+            ReceiptEvidence::from_stored("src/lib.rs".into(), 1, 2, "hash".into(), Some(42), true);
+
+        assert!(evidence.exact_only());
+        assert_eq!(evidence.semantic_signature(), None);
+    }
+
+    #[test]
+    fn receipt_ids_are_namespace_bound_and_input_bounded() {
+        let namespace = "0123456789abcdef0123456789abcdef";
+        let id = format_receipt_id(namespace, 42);
+        assert!(id.len() <= MAX_RECEIPT_ID_BYTES);
+        assert_eq!(parse_receipt_id(&id, namespace), Some(42));
+        assert_eq!(
+            parse_receipt_id(&id, "fedcba9876543210fedcba9876543210"),
+            None
+        );
+        assert_eq!(parse_receipt_id("r1", namespace), None);
+    }
+
+    #[test]
     fn semantic_signatures_are_stable_across_processes_and_toolchains() {
         assert_eq!(
             semantic_signature("alpha beta gamma delta epsilon"),
@@ -321,7 +388,11 @@ mod tests {
             Tokenizer::Estimate,
         ];
         for seed in 0u64..4_096 {
-            let id = format!("r{}", blake3::hash(&seed.to_le_bytes()).to_hex());
+            let namespace = blake3::hash(&seed.to_le_bytes()).to_hex();
+            let id = format_receipt_id(
+                &namespace.as_str()[..RECEIPT_ID_NAMESPACE_HEX_BYTES],
+                i64::try_from(seed + 1).expect("bounded row id"),
+            );
             for tokenizer in tokenizers {
                 assert!(
                     tokenizer.count(&id) <= tokenizer.count(RECEIPT_ID_RESPONSE_RESERVE),

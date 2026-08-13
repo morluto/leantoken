@@ -2,9 +2,13 @@ pub(crate) fn verify_baseline(
     baseline: &MetaRecord,
     current_generation: i64,
     current_config: &str,
+    current_derivation: &str,
 ) -> Result<()> {
     let actual = i64_to_u64(current_generation)?;
-    if actual != baseline.repository_generation || current_config != baseline.config_hash {
+    if actual != baseline.repository_generation
+        || current_config != baseline.config_hash
+        || current_derivation != baseline.derivation_fingerprint
+    {
         return Err(Error::StaleReconciliation {
             expected: baseline.repository_generation,
             actual,
@@ -37,6 +41,7 @@ pub(crate) enum StorageColumn {
     MetaRepositoryRoot,
     MetaRepositoryIdentity,
     MetaRepositoryGeneration,
+    MetaDerivationFingerprint,
     FilesSizeBytes,
     FilesLanguage,
     FilesStructurallyComplete,
@@ -48,7 +53,8 @@ impl StorageColumn {
         match self {
             Self::MetaRepositoryRoot
             | Self::MetaRepositoryIdentity
-            | Self::MetaRepositoryGeneration => StorageTable::Meta,
+            | Self::MetaRepositoryGeneration
+            | Self::MetaDerivationFingerprint => StorageTable::Meta,
             Self::FilesSizeBytes
             | Self::FilesLanguage
             | Self::FilesStructurallyComplete
@@ -61,6 +67,7 @@ impl StorageColumn {
             Self::MetaRepositoryRoot => "repository_root",
             Self::MetaRepositoryIdentity => "repository_identity",
             Self::MetaRepositoryGeneration => "repository_generation",
+            Self::MetaDerivationFingerprint => "derivation_fingerprint",
             Self::FilesSizeBytes => "size_bytes",
             Self::FilesLanguage => "language",
             Self::FilesStructurallyComplete => "structurally_complete",

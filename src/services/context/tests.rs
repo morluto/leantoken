@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn working_tree_observation_ignores_changes_outside_the_scoped_root() {
-    let status = leantoken_git::parse_git_status_observation(
+    let status = crate::repository::parse_git_status_observation(
         std::io::Cursor::new(b"M  sibling.rs\0"),
         10,
         "nested/",

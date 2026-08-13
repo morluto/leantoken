@@ -6,7 +6,7 @@ use super::execution::JsonExecutionOptions;
 use super::selection::ParsedJsonSelector;
 use super::{MAX_ARRAY_SAMPLE_SIZE, MAX_JSON_DEPTH, MAX_JSON_ITEMS, MAX_JSON_SELECTORS};
 use crate::model::{JsonOperation, JsonProjection, JsonRequest};
-use crate::repository::validate_relative;
+use crate::repository::{normalize_relative, validate_relative};
 use crate::services::validation::{MAX_PATH_BYTES, validate_input};
 use crate::services::{validate_positive_request_limit, validate_request_limit};
 use crate::{Error, Result};
@@ -56,7 +56,6 @@ pub(super) fn parse_json_request(
         validate_request_limit("depth", depth, MAX_JSON_DEPTH)?;
     }
 
-    let query_hash = json_query_hash(&request.operation, execution)?;
     let operation = match request.operation {
         JsonOperation::Query {
             path,
@@ -65,6 +64,7 @@ pub(super) fn parse_json_request(
         } => {
             validate_input(&path, "path", MAX_PATH_BYTES)?;
             validate_relative(&path)?;
+            let path = normalize_relative(&path)?;
             if execution.depth().is_some() && projection != JsonProjection::Keys {
                 return Err(Error::InvalidInput {
                     field: "depth",
@@ -74,7 +74,7 @@ pub(super) fn parse_json_request(
             let cursor = request
                 .cursor
                 .as_deref()
-                .map(|cursor| decode_json_cursor(cursor, execution.cursor_version()))
+                .map(decode_json_cursor)
                 .transpose()?;
             if cursor.is_some() && projection != JsonProjection::Keys {
                 return Err(Error::InvalidInput {
@@ -82,6 +82,14 @@ pub(super) fn parse_json_request(
                     reason: "is supported only for query operations with the keys projection",
                 });
             }
+            let query_hash = json_query_hash(
+                &JsonOperation::Query {
+                    path: path.clone(),
+                    selector: selector.clone(),
+                    projection,
+                },
+                execution,
+            )?;
             ParsedJsonOperation::Query {
                 path,
                 selector: selector.map(ParsedJsonSelector::parse).transpose()?,
@@ -93,6 +101,7 @@ pub(super) fn parse_json_request(
         JsonOperation::NumericSummary { path, selector } => {
             validate_input(&path, "path", MAX_PATH_BYTES)?;
             validate_relative(&path)?;
+            let path = normalize_relative(&path)?;
             if execution.depth().is_some() {
                 return Err(Error::InvalidInput {
                     field: "depth",
@@ -120,6 +129,8 @@ pub(super) fn parse_json_request(
             validate_input(&head_path, "head path", MAX_PATH_BYTES)?;
             validate_relative(&base_path)?;
             validate_relative(&head_path)?;
+            let base_path = normalize_relative(&base_path)?;
+            let head_path = normalize_relative(&head_path)?;
             validate_positive_request_limit("selectors", selectors.len(), MAX_JSON_SELECTORS)?;
             if execution.depth().is_some() {
                 return Err(Error::InvalidInput {

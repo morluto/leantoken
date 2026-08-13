@@ -39,7 +39,7 @@ async fn contribution_context_routes_to_guidance_validation_and_owner_tests() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 

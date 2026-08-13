@@ -9,15 +9,6 @@ pub(super) enum JsonCursorVersion {
     V2,
 }
 
-impl JsonCursorVersion {
-    pub(super) fn prefix(self) -> &'static str {
-        match self {
-            Self::V1 => "j1",
-            Self::V2 => "j2",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum JsonKeyOrder {
     Pointer,

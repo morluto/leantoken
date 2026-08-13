@@ -24,7 +24,7 @@ pub struct GitHunkRange {
 
 /// One immutable UTF-8 file blob loaded from a resolved Git revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitBlob {
+pub(crate) struct GitBlob {
     /// Resolved 12-character revision.
     pub revision: String,
     /// File contents at the revision.
@@ -33,7 +33,7 @@ pub struct GitBlob {
 
 /// Bounded UTF-8 blobs loaded together from one immutable Git revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitBlobBatch {
+pub(crate) struct GitBlobBatch {
     /// Resolved 12-character revision.
     pub revision: String,
     /// Repository-relative paths mapped to UTF-8 contents.
@@ -52,7 +52,7 @@ pub struct GitBlobBatch {
 
 /// One commit from Git's tracked line history.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitLineCommit {
+pub(crate) struct GitLineCommit {
     pub commit: String,
     pub authored_at: String,
     pub subject: String,
@@ -60,7 +60,7 @@ pub struct GitLineCommit {
 
 /// Shared metadata for one exact immutable commit endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitCommitMetadata {
+pub(crate) struct GitCommitMetadata {
     pub revision: String,
     pub authored_at: String,
     pub subject: String,

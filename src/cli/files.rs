@@ -5,6 +5,10 @@ pub struct FilesArgs {
     /// Files operation to perform.
     pub operation: FileOperationArg,
 
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
+
     /// Starting path or path filter.
     #[arg(short, long)]
     pub path: Option<String>,

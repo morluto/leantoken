@@ -27,6 +27,205 @@ fn request_admission_has_an_exact_fail_fast_boundary() {
 }
 
 #[test]
+fn repository_context_registry_defaults_and_fails_closed() {
+    let primary = McpServices::starting_default();
+    let registry = McpContextRegistry::primary(primary.clone());
+    assert!(registry.resolve(None).is_ok());
+    assert!(registry.resolve(Some("default")).is_ok());
+    assert!(matches!(
+        registry.resolve(Some("unapproved")),
+        Err(crate::Error::InvalidInput {
+            field: "repository_context",
+            ..
+        })
+    ));
+
+    registry
+        .register("docs".into(), McpServices::starting_default())
+        .expect("valid context name");
+    assert!(registry.resolve(Some("docs")).is_ok());
+}
+
+#[test]
+fn repository_context_registry_allows_the_configured_approved_context_limit() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    for index in 0..MAX_REPOSITORY_CONTEXTS {
+        registry
+            .register(format!("context-{index}"), McpServices::starting_default())
+            .expect("configured approved context capacity");
+    }
+
+    assert!(matches!(
+        registry.register("one-too-many".into(), McpServices::starting_default()),
+        Err(crate::Error::RequestLimitExceeded {
+            field: "repository_contexts",
+            requested,
+            limit: MAX_REPOSITORY_CONTEXTS,
+        }) if requested == MAX_REPOSITORY_CONTEXTS + 1
+    ));
+}
+
+#[tokio::test]
+async fn selecting_an_approved_context_requests_lazy_activation() {
+    let (server, _) = LeanTokenMcp::pending();
+    let context = McpServices::starting_default();
+    server
+        .contexts
+        .register("docs".into(), context.clone())
+        .expect("approved context");
+    assert!(!context.activation_requested());
+
+    let cancellation = CancellationToken::new();
+    let call_cancellation = cancellation.clone();
+    let call = tokio::spawn(async move {
+        server
+            .prepare_retrieval_call(call_cancellation, Some("docs"), |_| Ok(()))
+            .await
+    });
+    for _ in 0..100 {
+        if context.activation_requested() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(context.activation_requested());
+    context
+        .wait_for_activation(CancellationToken::new())
+        .await
+        .expect("activation signal");
+    cancellation.cancel();
+    let _ = call.await.expect("activation call joins");
+}
+
+#[test]
+fn approved_context_activation_is_dormant_and_coalesced() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    let contexts = (0..MAX_REPOSITORY_CONTEXTS)
+        .map(|index| {
+            let context = McpServices::starting_default();
+            registry
+                .register(format!("context-{index}"), context.clone())
+                .expect("approved context");
+            context
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        contexts
+            .iter()
+            .all(|context| !context.activation_requested())
+    );
+
+    let selected = contexts[3].clone();
+    let requests = (0..32)
+        .map(|_| {
+            let selected = selected.clone();
+            std::thread::spawn(move || selected.request_activation())
+        })
+        .collect::<Vec<_>>();
+    let first_requests = requests
+        .into_iter()
+        .map(|request| request.join().expect("activation request"))
+        .filter(|first| *first)
+        .count();
+
+    assert_eq!(first_requests, 1);
+    assert!(selected.activation_requested());
+    assert!(
+        contexts
+            .iter()
+            .enumerate()
+            .all(|(index, context)| { index == 3 || !context.activation_requested() })
+    );
+}
+
+#[tokio::test]
+async fn prepared_retrieval_selects_the_approved_context() {
+    let primary_root = tempfile::tempdir().expect("primary repository");
+    let docs_root = tempfile::tempdir().expect("approved repository");
+    let primary = Arc::new(
+        Services::open(
+            Config::discover(
+                primary_root.path(),
+                Some(primary_root.path().join("index.sqlite")),
+            )
+            .expect("primary config"),
+        )
+        .expect("primary services"),
+    );
+    let docs = Arc::new(
+        Services::open(
+            Config::discover(
+                docs_root.path(),
+                Some(docs_root.path().join("index.sqlite")),
+            )
+            .expect("approved config"),
+        )
+        .expect("approved services"),
+    );
+    let expected_id = docs.repository_id();
+    let server = LeanTokenMcp::new(primary);
+    server
+        .contexts
+        .register("docs".into(), McpServices::ready(docs))
+        .expect("valid context name");
+
+    let prepared = server
+        .prepare_retrieval_call(CancellationToken::new(), Some("docs"), |_| Ok(()))
+        .await
+        .expect("approved context selection");
+    let RetrievalPreparation::Ready(prepared) = prepared else {
+        panic!("approved context should be ready");
+    };
+    assert_eq!(prepared.services.repository_id(), expected_id);
+}
+
+#[tokio::test]
+async fn receipt_resource_lookup_requests_dormant_context_activation() {
+    let root = tempfile::tempdir().expect("primary repository");
+    let primary = Arc::new(
+        Services::open(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+                .expect("primary config"),
+        )
+        .expect("primary services"),
+    );
+    let server = LeanTokenMcp::new(primary);
+    let context = McpServices::starting_default();
+    server
+        .contexts
+        .register("docs".into(), context.clone())
+        .expect("approved context");
+
+    let call = tokio::spawn({
+        let server = server.clone();
+        async move {
+            server
+                .read_receipt_resource(
+                    "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef"
+                        .into(),
+                    None,
+                )
+                .await
+        }
+    });
+    for _ in 0..100 {
+        if context.activation_requested() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(context.activation_requested());
+    context.set_failed(&crate::Error::OperationFailure(
+        "test startup failure".into(),
+    ));
+    let error = call
+        .await
+        .expect("receipt lookup joins")
+        .expect_err("unknown receipt");
+    assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+}
+
+#[test]
 fn cloned_servers_share_admission_but_separate_instances_do_not() {
     let (server, _) = LeanTokenMcp::pending();
     let clone = server.clone();
@@ -236,7 +435,10 @@ async fn savings_is_covered_by_protocol_admission() {
         .collect::<Vec<_>>();
 
     let result = server
-        .leantoken_savings(Parameters(SavingsMcpRequest { snapshot: None }))
+        .leantoken_savings(Parameters(SavingsMcpRequest {
+            repository_context: None,
+            snapshot: None,
+        }))
         .await
         .expect("retryable savings response");
     assert_eq!(
@@ -387,7 +589,7 @@ fn semantic_failures_use_native_model_visible_tool_errors() {
 
 #[test]
 fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff() {
-    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
@@ -436,7 +638,7 @@ fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff
 
 #[test]
 fn receipt_decoration_cannot_exceed_the_requested_response_budget() {
-    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let receipt_id = "r0123456789abcdef0123456789abcdef0123456789abcdef";
     let value = serde_json::json!({
         "meta": {
             "receipt_id": receipt_id,
@@ -559,7 +761,7 @@ async fn receipt_resource_reads_fail_fast_at_the_reader_pool_bound() {
         .collect::<Vec<_>>();
     let error = server
         .read_receipt_resource(
-            "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            "leantoken://receipt/v1/r0123456789abcdef0123456789abcdef0123456789abcdef".into(),
             None,
         )
         .await
@@ -712,51 +914,6 @@ async fn initial_index_retry_returns_first_published_result() {
                     Ok(42)
                 } else {
                     Err(crate::Error::IndexNotReady)
-                };
-                std::future::ready(result)
-            },
-        )
-        .await
-    });
-    tokio::task::yield_now().await;
-    assert_eq!(calls.load(Ordering::Acquire), 1);
-
-    ready.store(true, Ordering::Release);
-    tokio::time::advance(Duration::from_millis(100)).await;
-
-    assert_eq!(
-        waiting
-            .await
-            .expect("join readiness retry")
-            .expect("published result"),
-        42
-    );
-    assert_eq!(calls.load(Ordering::Acquire), 2);
-}
-
-#[tokio::test(start_paused = true)]
-async fn initial_index_retry_waits_for_an_incompatible_projection() {
-    let (_server, mcp_services) = LeanTokenMcp::pending();
-    let ready = Arc::new(AtomicBool::new(false));
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let operation_ready = Arc::clone(&ready);
-    let operation_calls = Arc::clone(&calls);
-    let waiting = tokio::spawn(async move {
-        retry_after_initial_index_with_policy(
-            "files",
-            &mcp_services,
-            CancellationToken::new(),
-            Duration::from_secs(1),
-            |_| async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(())
-            },
-            move || {
-                operation_calls.fetch_add(1, Ordering::AcqRel);
-                let result = if operation_ready.load(Ordering::Acquire) {
-                    Ok(42)
-                } else {
-                    Err(crate::Error::RefreshRequired)
                 };
                 std::future::ready(result)
             },
@@ -1618,37 +1775,52 @@ fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
 }
 
 #[test]
-fn core_retrieval_tools_are_generation_backed() {
-    let tools = LeanTokenMcp::tool_router().list_all();
-    for tool in tools
-        .iter()
-        .filter(|tool| matches!(tool.name.as_ref(), "files" | "search" | "outline" | "read"))
+fn retrieval_tools_expose_consistency_boundary() {
+    for tool in LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .filter(|tool| tool.name != "savings" && tool.name != "history" && tool.name != "json")
     {
         let schema = serde_json::Value::Object((*tool.input_schema).clone());
         let consistency = schema
             .pointer("/properties/consistency")
             .or_else(|| schema.pointer("/$defs/FilesMcpOperation/oneOf/0/properties/consistency"))
-            .or_else(|| schema.pointer("/$defs/SearchMcpOperation/oneOf/0/properties/consistency"));
+            .or_else(|| schema.pointer("/$defs/SearchMcpOperation/oneOf/0/properties/consistency"))
+            .unwrap_or_else(|| panic!("{} consistency schema missing", tool.name));
+        assert_eq!(
+            consistency.get("default"),
+            Some(&serde_json::json!("indexed_generation"))
+        );
+        assert_eq!(
+            consistency.get("enum"),
+            Some(&serde_json::json!([
+                "indexed_generation",
+                "reconcile_working_tree"
+            ]))
+        );
         assert!(
-            consistency.is_none(),
-            "{}.consistency would make canonical retrieval ambiguous",
+            consistency
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|description| {
+                    description.contains("reconcile_working_tree") && description.contains("edits")
+                }),
+            "{}.consistency must tell agents when to synchronize",
             tool.name
         );
     }
-
-    for name in ["context", "receipt_rebase"] {
-        let tool = tools
-            .iter()
-            .find(|tool| tool.name == name)
-            .unwrap_or_else(|| panic!("{name} tool"));
-        assert!(
-            tool.input_schema
-                .get("properties")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|properties| properties.contains_key("consistency")),
-            "{name} retains its orchestration-specific consistency contract until it leaves the kernel"
-        );
-    }
+    let history = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "history")
+        .expect("history tool");
+    assert!(
+        history
+            .input_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .is_none_or(|properties| !properties.contains_key("consistency"))
+    );
 }
 
 #[test]
@@ -1806,7 +1978,7 @@ fn assert_read_target_shapes() {
         "target": {"kind": "lines", "start": 10, "end": 20}
     }))
     .expect("canonical line-range target");
-    let (request, _, _) = request.into_parts();
+    let (request, _, _, _) = request.into_parts();
     assert_eq!(request.start_line, Some(10));
     assert_eq!(request.end_line, Some(20));
     for target in [
@@ -1827,7 +1999,7 @@ fn assert_read_target_shapes() {
     }))
     .expect("Markdown heading target");
     assert!(heading.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
-    let (heading, _, _) = heading.into_parts();
+    let (heading, _, _, _) = heading.into_parts();
     assert_eq!(heading.heading.as_deref(), Some("Installation"));
     assert_eq!(heading.heading_occurrence, Some(2));
     assert!(heading.symbol.is_none());
@@ -1846,7 +2018,7 @@ fn assert_read_target_shapes() {
         "target": {"kind": "continuation", "cursor": "opaque"}
     }))
     .expect("continuation target");
-    let (continuation, _, _) = continuation.into_parts();
+    let (continuation, _, _, _) = continuation.into_parts();
     assert_eq!(continuation.continuation_cursor.as_deref(), Some("opaque"));
     assert!(continuation.symbol.is_none());
     assert!(continuation.heading.is_none());
@@ -1986,14 +2158,15 @@ fn retrieval_response_budget_limits_are_validated_for_every_tool() {
 }
 
 #[test]
-fn canonical_read_rejects_mutable_receipt_state() {
-    let error = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+fn receipt_id_maps_to_the_service_request() {
+    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
         "path": "README.md",
         "receipt_id": "r0000000000000001",
         "target": {"kind": "lines", "start": 1, "end": 2}
     }))
-    .expect_err("canonical read must reject mutable receipt state");
-    assert!(error.to_string().contains("unknown field `receipt_id`"));
+    .expect("read request with receipt");
+    let (request, _, _, _) = request.into_parts();
+    assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
 }
 
 #[test]
@@ -2194,7 +2367,7 @@ fn outline_cursor_maps_to_the_service_request() {
         "cursor": "12:outline:34:0000000000000000"
     }))
     .expect("outline request");
-    let (request, _, _, _) = request.into_parts();
+    let (request, _, _, _, _) = request.into_parts();
 
     assert_eq!(
         request.cursor.as_deref(),
@@ -2208,28 +2381,28 @@ fn compact_projections_map_to_service_requests() {
         "operation": {"kind": "tree"}
     }))
     .expect("default files projection");
-    let (_, projection, _, _) = files.into_parts();
+    let (_, projection, _, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Full);
 
     let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
         "operation": {"kind": "find", "query": "service", "projection": "paths"}
     }))
     .expect("path projection");
-    let (_, projection, _, _) = files.into_parts();
+    let (_, projection, _, _, _) = files.into_parts();
     assert_eq!(projection, FilesMcpProjection::Paths);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "auto", "query": "Services"}
     }))
     .expect("default search projection");
-    let (_, output, _, _) = search.into_parts();
+    let (_, output, _, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Full);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "auto", "query": "Services", "projection": "grouped"}
     }))
     .expect("grouped projection");
-    let (_, output, _, _) = search.into_parts();
+    let (_, output, _, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Grouped);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
@@ -2239,7 +2412,7 @@ fn compact_projections_map_to_service_requests() {
     search
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("valid compact projection");
-    let (_, output, _, _) = search.into_parts();
+    let (_, output, _, _, _) = search.into_parts();
     assert_eq!(output, SearchMcpOutput::Compact);
 
     let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
@@ -2254,7 +2427,7 @@ fn compact_projections_map_to_service_requests() {
     search
         .validate_limits(McpLimitPolicy::DEFAULT)
         .expect("valid occurrence projection");
-    let (_, output, _, _) = search.into_parts();
+    let (_, output, _, _, _) = search.into_parts();
     assert_eq!(
         output,
         SearchMcpOutput::Occurrences(SearchOccurrenceOutput::Coordinates)
@@ -2301,7 +2474,7 @@ fn compact_projections_map_to_service_requests() {
         "paths": ["src/services.rs"]
     }))
     .expect("default outline projection");
-    let (_, projection, _, _) = outline.into_parts();
+    let (_, projection, _, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Full);
 
     let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
@@ -2309,7 +2482,7 @@ fn compact_projections_map_to_service_requests() {
         "projection": "signatures"
     }))
     .expect("signature projection");
-    let (_, projection, _, _) = outline.into_parts();
+    let (_, projection, _, _, _) = outline.into_parts();
     assert_eq!(projection, OutlineMcpProjection::Signatures);
 }
 
@@ -2386,7 +2559,7 @@ fn search_query_preserves_significant_whitespace() {
         "operation": {"kind": "text", "query": "  exact text  "}
     }))
     .expect("whitespace-surrounded search query");
-    let (request, _, _, _) = request.into_parts();
+    let (request, _, _, _, _) = request.into_parts();
 
     assert_eq!(request.query, "  exact text  ");
 }

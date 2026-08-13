@@ -1,5 +1,5 @@
 use super::*;
-use leantoken::{ObservedTokenSavingsReport, ReadPolicy, TaskSavingsObservationStatus};
+use leantoken::{ObservedTokenSavingsReport, TaskSavingsObservationStatus};
 
 #[tokio::test]
 async fn token_savings_tracks_successful_source_retrievals_by_operation() {
@@ -33,6 +33,9 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("first read");
@@ -47,6 +50,9 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first_read.content_hash),
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("conditional read");
@@ -329,26 +335,17 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .expect("alternate tokenizer config");
     alternate_config.tokenizer = Tokenizer::O200kBase;
     let alternate = Services::open(alternate_config).expect("alternate tokenizer services");
-    let error = alternate
-        .outline(outline_limit_request(Some(10), Some(100)))
-        .await
-        .expect_err("outline against stale tokenizer index must require refresh");
-    assert!(matches!(error, Error::RefreshRequired));
-    alternate
-        .refresh(leantoken::IndexingMode::Reconcile)
-        .await
-        .expect("rebuild stale tokenizer index");
     alternate
         .outline(outline_limit_request(Some(10), Some(100)))
         .await
-        .expect("outline against refreshed tokenizer index");
+        .expect("outline against stale tokenizer index");
     assert_eq!(
         alternate
             .token_savings()
             .await
             .expect("alternate tokenizer savings")
             .tracked_requests,
-        1
+        0
     );
 }
 
@@ -356,7 +353,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
 async fn receipt_rebase_records_success_and_failure_accounting() {
     let (root, services) = fixture().await;
     let source = services
-        .read_worktree(WorktreeReadRequest {
+        .read(ReadRequest {
             path: "src/lib.rs".into(),
             start_line: Some(1),
             end_line: Some(1),
@@ -367,9 +364,8 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
             max_tokens: Some(100),
             expected_hash: None,
             delta: false,
-            delta_base_artifact_id: None,
             receipt_id: None,
-            policy: ReadPolicy::Bounded,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("source read");
@@ -377,7 +373,7 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
     std::fs::write(root.path().join("src/rebase-added.rs"), "fn added() {}\n")
         .expect("generation edit");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish generation");
 
@@ -435,7 +431,7 @@ async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_
     )
     .expect("write empty LaTeX fixture");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index LaTeX fixture");
     let base = services

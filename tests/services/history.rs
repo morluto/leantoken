@@ -27,7 +27,7 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -117,6 +117,9 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("qualified live read");
@@ -163,6 +166,9 @@ async fn canonical_symbol_identity_round_trips_without_silent_ambiguity() {
             continuation_cursor: None,
             max_tokens: Some(1_000),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect_err("unqualified live symbol must not select the first match");
@@ -272,7 +278,7 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -383,7 +389,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -756,7 +762,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let ordinary_target = |symbol: &str| DiffSymbolsTarget {
@@ -986,7 +992,7 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 

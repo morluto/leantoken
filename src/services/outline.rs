@@ -4,12 +4,12 @@ use std::collections::BTreeMap;
 
 use tokio_util::sync::CancellationToken;
 
-use super::cursor::request_digest;
+use super::cursor::{ContinuationCursor, CursorKind, StreamId, StreamIdentityBuilder};
 use super::execution_options::RetrievalExecution;
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_CURSOR_BYTES, MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled,
-    validate_input, validate_optional_input,
+    MAX_INPUT_ITEMS, MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input,
+    validate_optional_input,
 };
 use super::{ServiceCallOptions, Services};
 use crate::model::*;
@@ -62,15 +62,10 @@ fn storage_symbol(symbol: super::index_read::SymbolRecord) -> Symbol {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
-struct OutlinePosition {
-    #[serde(rename = "o")]
-    offset: usize,
-}
-
 struct ParsedOutlineRequest {
     request: OutlineRequest,
-    cursor: Option<String>,
+    cursor: Option<ContinuationCursor>,
+    stream_id: StreamId,
     limit: usize,
     token_limit: usize,
 }
@@ -86,50 +81,34 @@ impl OutlineOutput {
         matches!(self, Self::Full)
     }
 
-    const fn cursor_projection(self) -> Option<&'static str> {
+    const fn stream_label(self) -> &'static str {
         match self {
-            Self::Full => None,
-            Self::Signatures => Some("signatures"),
+            Self::Full => "full",
+            Self::Signatures => "signatures",
         }
     }
 }
 
 fn outline_cursor_offset(
-    generation: &super::index_read::RepositoryGeneration,
-    cursor: Option<&str>,
-    request: &OutlineRequest,
-    projection: Option<&str>,
+    cursor: Option<ContinuationCursor>,
+    generation: u64,
+    stream_id: StreamId,
 ) -> Result<usize> {
-    let Some(cursor) = cursor else {
-        return Ok(0);
-    };
-    let digest = outline_request_digest(request, projection)?;
-    let position: OutlinePosition = generation.open_cursor(cursor, "outline", &digest)?;
-    Ok(position.offset)
+    cursor
+        .map(|cursor| cursor.position_for(CursorKind::Outline, generation, stream_id))
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
-fn make_outline_cursor(
-    generation: &super::index_read::RepositoryGeneration,
-    offset: usize,
-    request: &OutlineRequest,
-    projection: Option<&str>,
-) -> Result<String> {
-    let digest = outline_request_digest(request, projection)?;
-    generation.seal_cursor("outline", &digest, OutlinePosition { offset })
-}
-
-fn outline_request_digest(request: &OutlineRequest, projection: Option<&str>) -> Result<String> {
-    request_digest(&(
-        &request.paths,
-        &request.symbol_name,
-        &request.symbol_kind,
-        projection,
-    ))
+fn make_outline_cursor(generation: u64, offset: usize, stream_id: StreamId) -> Result<String> {
+    ContinuationCursor::at(CursorKind::Outline, generation, stream_id, offset)
+        .map(ContinuationCursor::encode)
 }
 
 fn parse_outline_input(
     services: &Services,
     mut request: OutlineRequest,
+    output: OutlineOutput,
 ) -> Result<ParsedOutlineRequest> {
     if request.paths.is_empty() {
         return Err(Error::InvalidInput {
@@ -154,17 +133,31 @@ fn parse_outline_input(
         "symbol kind",
         MAX_PATTERN_BYTES,
     )?;
-    validate_optional_input(request.cursor.as_deref(), "cursor", MAX_CURSOR_BYTES)?;
-    let cursor = request.cursor.take();
+    let cursor = ContinuationCursor::parse_optional(request.cursor.take().as_deref())?;
     request.paths = request
         .paths
         .iter()
         .map(|path| normalize_relative(path))
         .collect::<Result<Vec<_>>>()?;
+    let limit = services.result_limit(request.max_results)?;
+    let token_limit =
+        services.token_limit(request.max_tokens, services.config.default_read_tokens)?;
+    let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::Outline);
+    stream.field_strings("paths", &request.paths);
+    stream.field_optional_str("symbol_name", request.symbol_name.as_deref());
+    stream.field_optional_str("symbol_kind", request.symbol_kind.as_deref());
+    stream.field_str("output", output.stream_label());
+    // Entries that do not fit the token budget are intentionally consumed so
+    // later inexpensive entries can still be returned. Binding the normalized
+    // budget makes that omission policy part of the stream: callers must
+    // restart, rather than resume past omitted entries, when raising it.
+    stream.field_usize("max_tokens", token_limit);
+    // Receipt successors acknowledge delivered pages; they do not change the
+    // ordered pre-suppression outline stream addressed by this cursor.
     Ok(ParsedOutlineRequest {
-        limit: services.result_limit(request.max_results)?,
-        token_limit: services
-            .token_limit(request.max_tokens, services.config.default_read_tokens)?,
+        limit,
+        token_limit,
+        stream_id: stream.finish(),
         request,
         cursor,
     })
@@ -189,15 +182,33 @@ impl Services {
         .await
     }
 
-    /// Outline files under response controls and cancellation.
-    pub async fn outline_with_options_cancellable(
+    /// Outline files after applying the requested index consistency boundary.
+    pub async fn outline_with_consistency_cancellable(
         &self,
         request: OutlineRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<OutlineResponse> {
+        self.outline_execute(
+            request,
+            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
+        )
+        .await
+    }
+
+    /// Outline files under consistency and serialized-response controls.
+    pub async fn outline_with_options_consistency_cancellable(
+        &self,
+        request: OutlineRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineResponse> {
-        self.outline_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.outline_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     pub async fn outline_cancellable(
@@ -219,18 +230,31 @@ impl Services {
     ) -> Result<OutlineResponse> {
         let operation = TokenAccountingOperation::Outline;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
+        let output = OutlineOutput::Full;
+        let request =
+            self.observe_service_result(operation, parse_outline_input(self, request, output))?;
+        if let Some(consistency) = consistency {
+            let consistency_result = self
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                this.outline_sync(request, options, OutlineOutput::Full, cancellation)
+                this.outline_sync(request, options, output, cancellation)
             })
             .await;
         self.observe_service_result(operation, result)
@@ -258,15 +282,19 @@ impl Services {
         .await
     }
 
-    /// Outline signatures under response controls and cancellation.
-    pub async fn outline_signatures_with_options_cancellable(
+    /// Outline signatures after applying the requested consistency boundary.
+    pub async fn outline_signatures_with_options_consistency_cancellable(
         &self,
         request: OutlineRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<OutlineSignaturesResponse> {
-        self.outline_signatures_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.outline_signatures_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     async fn outline_signatures_execute(
@@ -276,22 +304,31 @@ impl Services {
     ) -> Result<OutlineSignaturesResponse> {
         let operation = TokenAccountingOperation::Outline;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        let request = self.observe_service_result(operation, parse_outline_input(self, request))?;
+        let output = OutlineOutput::Signatures;
+        let request =
+            self.observe_service_result(operation, parse_outline_input(self, request, output))?;
+        if let Some(consistency) = consistency {
+            let consistency_result = self
+                .apply_consistency_with_initial_deadline(
+                    consistency,
+                    cancellation.clone(),
+                    options.initial_reconciliation_deadline(),
+                )
+                .await;
+            self.observe_service_result(operation, consistency_result)?;
+        }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
-                let response = this.outline_sync(
-                    request,
-                    ServiceCallOptions::new(),
-                    OutlineOutput::Signatures,
-                    cancellation,
-                )?;
+                let response =
+                    this.outline_sync(request, ServiceCallOptions::new(), output, cancellation)?;
                 let mut files = Vec::with_capacity(response.files.len());
                 for file in response.files {
                     let signatures = file
@@ -352,14 +389,13 @@ impl Services {
         let ParsedOutlineRequest {
             request,
             cursor,
+            stream_id,
             limit,
             token_limit,
         } = parsed;
-        let outcome = self.consistent(|session| {
+        let (mut response, baseline_source_tokens) = self.consistent(|session| {
             let generation = session.generation();
-            let cursor_projection = output.cursor_projection();
-            let offset =
-                outline_cursor_offset(session, cursor.as_deref(), &request, cursor_projection)?;
+            let offset = outline_cursor_offset(cursor, generation, stream_id)?;
             let mut total_symbols = 0usize;
             let mut total_imports = 0usize;
             let mut symbol_counts_by_kind = BTreeMap::new();
@@ -515,7 +551,7 @@ impl Services {
 
             let truncated_by_max_results = remaining == 0 && consumed < total_entries;
             let next_cursor = truncated_by_max_results
-                .then(|| make_outline_cursor(session, consumed, &request, cursor_projection))
+                .then(|| make_outline_cursor(generation, consumed, stream_id))
                 .transpose()?;
             let result_complete = offset == 0
                 && returned_symbols == total_symbols
@@ -542,10 +578,8 @@ impl Services {
                     meta: self.meta(generation, emitted_tokens, next_cursor),
                 },
                 baseline_source_tokens,
-                session.database_incarnation_id().to_owned(),
             ))
         })?;
-        let (mut response, baseline_source_tokens, database_incarnation_id) = outcome;
         let returned_entries = response
             .returned_symbols
             .saturating_add(response.returned_imports);
@@ -588,7 +622,6 @@ impl Services {
         let receipt = self.evaluate_receipt(
             request.receipt_id.as_deref(),
             response.meta.repository_generation,
-            &database_incarnation_id,
             &receipt_candidates,
         )?;
         let mut decision_index = 0usize;

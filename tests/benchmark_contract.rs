@@ -85,7 +85,7 @@ async fn main() {
 
     let cold_start = Instant::now();
     services
-        .refresh(leantoken::IndexingMode::Rebuild)
+        .index(leantoken::IndexingMode::Rebuild)
         .await
         .expect("cold index");
     let cold_index_ms = cold_start.elapsed().as_secs_f64() * 1_000.0;

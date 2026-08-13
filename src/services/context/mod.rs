@@ -48,7 +48,7 @@ pub(super) use super::change_receipt::{classify_revision_changes, owner_test_cov
 pub(super) use super::execution_options::RetrievalExecution;
 pub(super) use super::handoff::{self, HandoffProvenance};
 pub(super) use super::index_read::{
-    ChunkHit, FileRecord, RepositoryGeneration, SymbolHit, SymbolRecord,
+    ChunkHit, FileRecord, IndexReadSnapshot, SymbolHit, SymbolRecord,
 };
 pub(super) use super::read::{AdaptiveExcerptRequest, StoredExcerpt, StoredExcerptRequest};
 pub(super) use super::search::{

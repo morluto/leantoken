@@ -18,15 +18,22 @@ impl fmt::Debug for Storage {
     }
 }
 
+#[cfg(test)]
+impl Storage {
+    pub(crate) fn reader_connection_capacity(&self) -> u32 {
+        self.readers.max_size()
+    }
+}
+
 /// One read-only connection held under a DEFERRED transaction so all queries
-/// on this generation transaction observe a single SQLite WAL snapshot.
-pub struct GenerationReadTransaction {
+/// on this session observe a single SQLite WAL snapshot.
+pub(super) struct ReadSession {
     pub(crate) conn: r2d2::PooledConnection<SqliteConnectionManager>,
     #[cfg(test)]
     pub(crate) diagnostics: Arc<StorageDiagnostics>,
 }
 
-impl Drop for GenerationReadTransaction {
+impl Drop for ReadSession {
     fn drop(&mut self) {
         let _ = self.conn.execute_batch("ROLLBACK");
         #[cfg(test)]

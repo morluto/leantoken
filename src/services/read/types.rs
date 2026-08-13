@@ -15,7 +15,7 @@ pub(in crate::services) enum NewReadTarget {
 #[derive(Debug, Clone)]
 pub(super) enum ReadTargetInput {
     New(NewReadTarget),
-    Continuation(String),
+    Continuation(ReadCursor),
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +35,6 @@ pub(super) struct ReadInput {
     pub(super) mode: ReadMode,
     pub(super) max_tokens: Option<usize>,
     pub(super) expected_hash: Option<String>,
-    pub(super) delta_base_artifact_id: Option<String>,
     pub(super) receipt_id: Option<String>,
     pub(super) policy: ReadPolicy,
 }
@@ -150,30 +149,27 @@ pub(super) struct ReadBudgetEstimate {
     pub(super) page_start_byte: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub(super) struct ReadCursor {
-    #[serde(rename = "a")]
+    pub(super) envelope: crate::services::cursor::CursorEnvelope,
+    pub(super) state: ReadCursorState,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ReadCursorState {
     pub(super) target_start_line: usize,
     /// The requested target endpoint. `None` preserves an open-ended read even
     /// when a bounded page stopped before EOF.
-    #[serde(rename = "b")]
     pub(super) target_end_line: Option<usize>,
-    #[serde(rename = "c")]
     pub(super) next_start_line: usize,
-    #[serde(rename = "d")]
     pub(super) next_byte: usize,
     /// Full-file hash for `Full` policy cursors; `None` for `Bounded` cursors.
-    #[serde(rename = "e")]
     pub(super) full_hash: Option<String>,
     /// Hash of the requested target prefix through `next_byte` for bounded
     /// cursors. Size and mtime alone can miss same-size, same-timestamp edits.
-    #[serde(rename = "f")]
     pub(super) prefix_hash: Option<String>,
-    #[serde(rename = "g")]
     pub(super) policy: ReadPolicy,
-    #[serde(rename = "h")]
     pub(super) file_size: usize,
-    #[serde(rename = "i")]
     pub(super) modified_ns: Option<u128>,
 }
 use super::*;

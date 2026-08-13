@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use leantoken::model::WorktreeReadRequest;
+use leantoken::model::ReadRequest;
 use leantoken::services::Services;
 use leantoken::{Config, DiscoveryLimits};
 use serde::Serialize;
@@ -91,7 +91,7 @@ async fn run(args: &Args) -> AnyResult<Report> {
     fs::write(root.path().join("near_limit.rs"), &content)?;
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))?;
     let services = Services::open(config)?;
-    services.refresh(leantoken::IndexingMode::Reconcile).await?;
+    services.index(leantoken::IndexingMode::Reconcile).await?;
 
     let shallow = (1, args.range_lines.min(lines));
     let deep_start = lines
@@ -99,12 +99,8 @@ async fn run(args: &Args) -> AnyResult<Report> {
         .saturating_add(1)
         .max(1);
     let deep = (deep_start, lines);
-    services
-        .read_worktree(request(shallow, args.max_tokens))
-        .await?;
-    services
-        .read_worktree(request(deep, args.max_tokens))
-        .await?;
+    services.read(request(shallow, args.max_tokens)).await?;
+    services.read(request(deep, args.max_tokens)).await?;
 
     let (shallow_range, shallow_response) =
         measure(&services, shallow, args.iterations, args.max_tokens).await?;
@@ -182,7 +178,7 @@ async fn measure(
     let mut response = None;
     for _ in 0..iterations {
         let started = Instant::now();
-        let current = services.read_worktree(request(range, max_tokens)).await?;
+        let current = services.read(request(range, max_tokens)).await?;
         durations.push(started.elapsed());
         black_box(&current);
         response = Some(current);
@@ -193,8 +189,8 @@ async fn measure(
     ))
 }
 
-fn request(range: (usize, usize), max_tokens: usize) -> WorktreeReadRequest {
-    WorktreeReadRequest {
+fn request(range: (usize, usize), max_tokens: usize) -> ReadRequest {
+    ReadRequest {
         path: PathBuf::from("near_limit.rs")
             .to_string_lossy()
             .into_owned(),
@@ -207,7 +203,6 @@ fn request(range: (usize, usize), max_tokens: usize) -> WorktreeReadRequest {
         max_tokens: Some(max_tokens),
         expected_hash: None,
         delta: false,
-        delta_base_artifact_id: None,
         receipt_id: None,
         policy: leantoken::model::ReadPolicy::default(),
     }

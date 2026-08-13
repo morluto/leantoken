@@ -8,14 +8,13 @@ use regex_syntax::hir::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::cursor::request_digest;
+use super::cursor::{ContinuationCursor, CursorKind, StreamId, StreamIdentityBuilder};
 use super::execution_options::RetrievalExecution;
-use super::index_read::{ChunkHit, ReferenceHit, RepositoryGeneration, SymbolHit};
+use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};
 use super::read::{StoredExcerpt, StoredExcerptRequest};
 use super::receipts::{ReceiptDecision, ReceiptEvidence};
 use super::validation::{
-    MAX_CURSOR_BYTES, MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled,
-    validate_glob_patterns, validate_input, validate_optional_input,
+    MAX_QUERY_BYTES, PathFilter, PathMatcher, check_cancelled, validate_input,
 };
 use super::{ServiceCallOptions, Services, retrieval_primitive_key};
 use crate::model::*;
@@ -54,48 +53,47 @@ impl Services {
         shape: SearchResponseShape<'_>,
         options: ServiceCallOptions,
     ) -> Result<()> {
-        let provisional = |selected: &[CandidateSearchHit]| -> Result<SearchResponse> {
-            Ok(SearchResponse {
-                hits: selected
-                    .iter()
-                    .map(|candidate| candidate.hit.clone())
-                    .collect(),
-                coverage: search_coverage(shape.all, selected, shape.request.kind.mode()),
-                occurrences_returned: selected.len(),
-                occurrences_total: shape
-                    .request
-                    .kind
-                    .is_exhaustive()
-                    .then_some(shape.total_candidates),
-                meta: self.meta(
-                    shape.generation.generation(),
-                    selected
-                        .iter()
-                        .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
-                        .sum(),
-                    shape
-                        .has_more
-                        .then(|| {
-                            shape.generation.seal_cursor(
-                                "search",
-                                shape.cursor_digest,
-                                SearchPosition {
-                                    offset: shape.offset + shape.consumed,
-                                },
-                            )
-                        })
-                        .transpose()?,
-                ),
+        let next_cursor = shape
+            .has_more
+            .then(|| {
+                ContinuationCursor::at(
+                    CursorKind::Search,
+                    shape.generation,
+                    shape.stream_id,
+                    shape.offset + shape.consumed,
+                )
+                .map(ContinuationCursor::encode)
             })
+            .transpose()?;
+        let provisional = |selected: &[CandidateSearchHit]| SearchResponse {
+            hits: selected
+                .iter()
+                .map(|candidate| candidate.hit.clone())
+                .collect(),
+            coverage: search_coverage(shape.all, selected, shape.request.kind.mode()),
+            occurrences_returned: selected.len(),
+            occurrences_total: shape
+                .request
+                .kind
+                .is_exhaustive()
+                .then_some(shape.total_candidates),
+            meta: self.meta(
+                shape.generation,
+                selected
+                    .iter()
+                    .map(|candidate| self.config.tokenizer.count(&candidate.hit.excerpt))
+                    .sum(),
+                next_cursor.clone(),
+            ),
         };
-        let mut sized = provisional(selected)?;
+        let mut sized = provisional(selected);
         if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
         for candidate in selected.iter_mut() {
             candidate.hit.score_reasons.clear();
         }
-        sized = provisional(selected)?;
+        sized = provisional(selected);
         if self.response_fits_with_receipt_reserve(&sized, selected.len(), options)? {
             return Ok(());
         }
@@ -107,6 +105,22 @@ impl Services {
                 .expect("fitting only runs with a response limit"),
             options,
         )?)
+    }
+
+    async fn apply_search_consistency(
+        &self,
+        consistency: Option<IndexConsistency>,
+        deadline: Option<tokio::time::Instant>,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        let Some(consistency) = consistency else {
+            return Ok(());
+        };
+        let operation = TokenAccountingOperation::Search;
+        let consistency_result = self
+            .apply_consistency_with_initial_deadline(consistency, cancellation.clone(), deadline)
+            .await;
+        self.observe_service_result(operation, consistency_result)
     }
 
     /// Search indexed lexical and structural evidence.
@@ -128,14 +142,33 @@ impl Services {
         .await
     }
 
-    pub async fn search_with_options_cancellable(
+    /// Search after applying a cancellable index consistency boundary.
+    pub async fn search_with_consistency_cancellable(
         &self,
         request: SearchRequest,
+        consistency: IndexConsistency,
+        cancellation: CancellationToken,
+    ) -> Result<SearchResponse> {
+        self.search_execute(
+            request,
+            RetrievalExecution::consistent(consistency, ServiceCallOptions::new(), cancellation),
+        )
+        .await
+    }
+
+    /// Search under consistency and serialized-response controls.
+    pub async fn search_with_options_consistency_cancellable(
+        &self,
+        request: SearchRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchResponse> {
-        self.search_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.search_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     pub async fn search_cancellable(
@@ -157,7 +190,7 @@ impl Services {
     ) -> Result<SearchResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
@@ -166,8 +199,15 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
+        self.apply_search_consistency(
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.search_sync(
@@ -205,14 +245,19 @@ impl Services {
         .await
     }
 
-    pub async fn search_compact_with_options_cancellable(
+    /// Search with source-free ranked hits after applying a consistency boundary.
+    pub async fn search_compact_with_options_consistency_cancellable(
         &self,
         request: SearchRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchCompactResponse> {
-        self.search_compact_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.search_compact_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     async fn search_compact_execute(
@@ -222,7 +267,7 @@ impl Services {
     ) -> Result<SearchCompactResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
@@ -231,8 +276,15 @@ impl Services {
         let output_shape = SearchOutputShape::Compact;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
+        self.apply_search_consistency(
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
@@ -286,14 +338,19 @@ impl Services {
         .await
     }
 
-    pub async fn search_grouped_with_options_cancellable(
+    /// Search with grouped output after applying the requested consistency boundary.
+    pub async fn search_grouped_with_options_consistency_cancellable(
         &self,
         request: SearchRequest,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchGroupedResponse> {
-        self.search_grouped_execute(request, RetrievalExecution::direct(options, cancellation))
-            .await
+        self.search_grouped_execute(
+            request,
+            RetrievalExecution::consistent(consistency, options, cancellation),
+        )
+        .await
     }
 
     async fn search_grouped_execute(
@@ -303,17 +360,24 @@ impl Services {
     ) -> Result<SearchGroupedResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
         let options = options.with_receipt_resource_reserve();
         self.observe_service_result(operation, self.validate_call_options(options))?;
-        let output_shape = SearchOutputShape::Full;
+        let output_shape = SearchOutputShape::Grouped;
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
+        self.apply_search_consistency(
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let response = this
@@ -379,17 +443,19 @@ impl Services {
         .await
     }
 
-    pub async fn search_occurrences_with_options_cancellable(
+    /// Search grouped occurrences after applying the requested consistency boundary.
+    pub async fn search_occurrences_with_options_consistency_cancellable(
         &self,
         request: SearchRequest,
         output: SearchOccurrenceOutput,
+        consistency: IndexConsistency,
         options: ServiceCallOptions,
         cancellation: CancellationToken,
     ) -> Result<SearchOccurrencesResponse> {
         self.search_occurrences_execute(
             request,
             output,
-            RetrievalExecution::direct(options, cancellation),
+            RetrievalExecution::consistent(consistency, options, cancellation),
         )
         .await
     }
@@ -402,7 +468,7 @@ impl Services {
     ) -> Result<SearchOccurrencesResponse> {
         let operation = TokenAccountingOperation::Search;
         let RetrievalExecution {
-            consistency: _,
+            consistency,
             options,
             cancellation,
         } = execution;
@@ -411,8 +477,15 @@ impl Services {
         let output_shape = SearchOutputShape::OccurrenceGroups(output);
         let request = self
             .observe_service_result(operation, self.parse_search_request(request, output_shape))?;
+        self.apply_search_consistency(
+            consistency,
+            options.initial_reconciliation_deadline(),
+            &cancellation,
+        )
+        .await?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let snapshot = this.search_sync(
@@ -453,11 +526,7 @@ impl Services {
                 this.finalize_bounded_response(&mut compact, options)?;
                 if let QueryReceiptExecution::Pending(record) = snapshot.query_receipt {
                     check_cancelled(cancellation)?;
-                    let receipt_id = this.artifacts.persist_query_receipt(
-                        &this.repository_id(),
-                        &this.storage.meta()?.database_incarnation_id,
-                        &record,
-                    )?;
+                    let receipt_id = this.storage.persist_query_receipt(&record)?;
                     compact.query_receipt =
                         Some(recorded_query_receipt_outcome(&record, receipt_id));
                     this.finalize_bounded_response(&mut compact, options)?;
@@ -477,7 +546,8 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -509,7 +579,8 @@ impl Services {
         let output_shape = SearchOutputShape::Full;
         let request = self.parse_search_request(request, output_shape)?;
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |cancellation| {
                 let snapshot = this.search_sync(
                     request,
@@ -543,6 +614,7 @@ impl Services {
             request,
             prepared,
             output_shape,
+            stream_id,
         } = parsed;
         let mut snapshot = self.consistent(|session| {
             let generation = session.generation();
@@ -555,6 +627,7 @@ impl Services {
                 execution::SearchQuery {
                     request: &request,
                     prepared: &prepared,
+                    stream_id,
                 },
                 output_shape,
                 execution,

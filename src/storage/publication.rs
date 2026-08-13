@@ -1,12 +1,12 @@
 impl Storage {
     /// Read the currently committed schema, configuration, and generation metadata.
     pub fn meta(&self) -> Result<MetaRecord> {
-        self.begin_generation_read()?.meta()
+        self.begin_read()?.meta()
     }
 
     /// Return the identifier of the latest atomically committed repository view.
     pub fn repository_generation(&self) -> Result<u64> {
-        self.begin_generation_read()?.repository_generation()
+        self.begin_read()?.repository_generation()
     }
 
     /// Replace the complete index using an internally captured optimistic baseline.
@@ -199,12 +199,20 @@ impl Storage {
         (|| {
             let mut diagnostics = PublicationDiagnostics::default();
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-            let (current_generation, current_config): (i64, String) = tx.query_row(
-                "SELECT repository_generation, config_hash FROM meta WHERE id = 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+            let (current_generation, current_config, current_derivation): (i64, String, String) =
+                tx.query_row(
+                    "SELECT repository_generation, config_hash, derivation_fingerprint
+                 FROM meta WHERE id = 1",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+            verify_baseline(
+                baseline,
+                current_generation,
+                &current_config,
+                &current_derivation,
             )?;
-            verify_baseline(baseline, current_generation, &current_config)?;
+            let runtime_derivation = crate::index_derivation::index_derivation_fingerprint();
 
             // Initial and replacement publications can build the external-content
             // FTS indexes once instead of maintaining them for every chunk mutation.
@@ -237,7 +245,8 @@ impl Storage {
                 || writer.replacements > 0
                 || !writer.deletions.is_empty()
                 || writer.projection_refreshes > 0
-                || current_config != config_hash;
+                || current_config != config_hash
+                || current_derivation != runtime_derivation;
             if !mode.is_rebuild() && !writer.deletions.is_empty() {
                 Self::remove_orphan_path_entries(&tx)?;
             }
@@ -290,8 +299,13 @@ impl Storage {
             }
             let published_generation = if changed {
                 tx.execute(
-                    "UPDATE meta SET config_hash = ?1, repository_generation = ?2, index_version = index_version + 1 WHERE id = 1",
-                    params![config_hash, next_generation],
+                    "UPDATE meta
+                     SET config_hash = ?1,
+                         derivation_fingerprint = ?2,
+                         repository_generation = ?3,
+                         index_version = index_version + 1
+                     WHERE id = 1",
+                    params![config_hash, runtime_derivation, next_generation],
                 )?;
                 next_generation
             } else {
@@ -424,37 +438,6 @@ impl Storage {
             }
         }
 
-        Ok(())
-    }
-
-    pub(crate) fn insert_path_projection(tx: &Transaction, path: &str, file_id: i64) -> Result<()> {
-        let parts = path.split('/').collect::<Vec<_>>();
-        let mut insert_directory = tx.prepare_cached(
-            "INSERT OR IGNORE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 0, NULL)",
-        )?;
-        for index in 1..parts.len() {
-            let directory = parts[..index].join("/");
-            insert_directory.execute(params![directory, usize_to_i64(index)?])?;
-        }
-        drop(insert_directory);
-        tx.prepare_cached(
-            "INSERT OR REPLACE INTO path_entries(path, depth, kind, file_id) VALUES (?1, ?2, 1, ?3)",
-        )?
-        .execute(params![path, usize_to_i64(parts.len())?, file_id])?;
-        Ok(())
-    }
-
-    pub(crate) fn remove_orphan_path_entries(tx: &Transaction) -> Result<()> {
-        tx.execute(
-            "DELETE FROM path_entries
-             WHERE kind = 0
-               AND NOT EXISTS (
-                   SELECT 1 FROM files
-                   WHERE substr(files.path, 1, length(path_entries.path) + 1)
-                         = path_entries.path || '/'
-               )",
-            [],
-        )?;
         Ok(())
     }
 }

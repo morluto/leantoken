@@ -75,6 +75,14 @@ pub(in crate::mcp) fn expected_repository_id_schema(_: &mut SchemaGenerator) -> 
     })
 }
 
+pub(in crate::mcp) fn repository_context_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "description": "Optional name of an approved repository context; omitted values use the primary workspace.",
+        "type": ["string", "null"],
+        "maxLength": 64
+    })
+}
+
 pub(in crate::mcp) fn validate_optional_positive_limit(
     field: &'static str,
     requested: Option<usize>,

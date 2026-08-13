@@ -87,7 +87,7 @@ async fn run_parent(args: Args) -> AnyResult<()> {
     let database = database_dir.path().join("regex-fallback.sqlite");
     let config = Config::discover(repository.path(), Some(database.clone()))?;
     let services = Services::open(config)?;
-    let index = services.refresh(leantoken::IndexingMode::Rebuild).await?;
+    let index = services.index(leantoken::IndexingMode::Rebuild).await?;
     drop(services);
 
     let workloads = [

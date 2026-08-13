@@ -2,12 +2,11 @@ use std::time::{Duration, Instant};
 
 impl Storage {
     /// Open a read-only connection and begin a DEFERRED transaction so callers
-    /// observe one WAL snapshot until the generation transaction is dropped.
+    /// observe one WAL snapshot until the session is dropped.
     ///
-    /// Keep one generation transaction for every multi-query response. Dropping
-    /// it rolls back the read transaction and returns the connection to the
-    /// bounded pool.
-    pub fn begin_generation_read(&self) -> Result<GenerationReadTransaction> {
+    /// Keep one session for every multi-query response. Dropping it rolls back
+    /// the read transaction and returns the connection to the bounded pool.
+    pub(super) fn begin_read(&self) -> Result<ReadSession> {
         let checkout_started = Instant::now();
         let conn = self.readers.get()?;
         let checkout_wait = checkout_started.elapsed();
@@ -37,7 +36,7 @@ impl Storage {
                 .peak_active_snapshots
                 .fetch_max(active, Ordering::AcqRel);
         }
-        Ok(GenerationReadTransaction {
+        Ok(ReadSession {
             conn,
             #[cfg(test)]
             diagnostics: Arc::clone(&self.diagnostics),

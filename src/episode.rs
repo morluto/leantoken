@@ -13,30 +13,7 @@ use serde::Serialize;
 use serde::ser::SerializeStruct;
 use serde_json::Value;
 
-/// Failure while reading or normalizing an offline experiment artifact.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    /// The artifact could not be read from disk.
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
-    /// The artifact violates the selected adapter's bounded schema.
-    #[error("invalid episode audit request: {0}")]
-    InvalidRequest(String),
-}
-
-impl Error {
-    /// Stable category for command adapters and tests.
-    #[must_use]
-    pub const fn public_category(&self) -> &'static str {
-        match self {
-            Self::Io(_) => "io",
-            Self::InvalidRequest(_) => "invalid_request",
-        }
-    }
-}
-
-/// Result returned by offline experiment analysis.
-pub type Result<T> = std::result::Result<T, Error>;
+use crate::{Error, Result};
 
 /// Episode-audit report schema emitted by this module.
 pub const EPISODE_AUDIT_SCHEMA_V1: u32 = 1;
@@ -1591,17 +1568,13 @@ fn classifier_evidence_name(evidence: ClassifierEvidence) -> &'static str {
 mod tests {
     use super::*;
 
-    const SUITE_V1: &[u8] = include_bytes!(
-        "../../../benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json"
-    );
-    const SUITE_V2: &[u8] = include_bytes!(
-        "../../../benchmarks/reports/multi-agent-context-suite-v2-codex-0.144.1.json"
-    );
-    const TRAJECTORY: &[u8] =
-        include_bytes!("../../../benchmarks/reports/model-ab-trajectory-v1.json");
-    const WIRE: &[u8] = include_bytes!("../../../benchmarks/reports/wire-trace-synthetic-v2.json");
-    const HOST: &[u8] =
-        include_bytes!("../../../benchmarks/reports/codex-host-receipt-0.144.1.json");
+    const SUITE_V1: &[u8] =
+        include_bytes!("../benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json");
+    const SUITE_V2: &[u8] =
+        include_bytes!("../benchmarks/reports/multi-agent-context-suite-v2-codex-0.144.1.json");
+    const TRAJECTORY: &[u8] = include_bytes!("../benchmarks/reports/model-ab-trajectory-v1.json");
+    const WIRE: &[u8] = include_bytes!("../benchmarks/reports/wire-trace-synthetic-v2.json");
+    const HOST: &[u8] = include_bytes!("../benchmarks/reports/codex-host-receipt-0.144.1.json");
 
     #[test]
     fn suite_v1_recomputes_negative_episode_signals() {

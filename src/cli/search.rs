@@ -16,6 +16,10 @@ pub struct SearchArgs {
     /// Search query.
     pub query: String,
 
+    /// Consistency boundary for this retrieval.
+    #[command(flatten)]
+    pub index_consistency: RetrievalConsistencyArgs,
+
     /// Search mode.
     #[arg(short, long, value_enum, default_value_t = SearchModeArg::Auto)]
     pub mode: SearchModeArg,

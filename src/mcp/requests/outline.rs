@@ -14,6 +14,10 @@ pub(in crate::mcp) enum OutlineMcpProjection {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct OutlineMcpRequest {
+    /// Optional name of an approved repository context.
+    #[serde(default)]
+    #[schemars(schema_with = "repository_context_schema")]
+    pub(in crate::mcp) repository_context: Option<String>,
     /// Expected opaque repository identity from an earlier response.
     #[serde(default)]
     #[schemars(schema_with = "expected_repository_id_schema")]
@@ -41,7 +45,7 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(schema_with = "response_token_limit_schema")]
     pub(in crate::mcp) max_response_tokens: Option<usize>,
-    /// Suppress evidence already returned under this immutable artifact.
+    /// Suppress evidence already returned under this server-managed receipt.
     #[serde(default)]
     #[schemars(length(max = 128))]
     pub(in crate::mcp) receipt_id: Option<String>,
@@ -49,6 +53,10 @@ pub(in crate::mcp) struct OutlineMcpRequest {
     #[serde(default)]
     #[schemars(length(max = 256))]
     pub(in crate::mcp) cursor: Option<String>,
+    /// Use `reconcile_working_tree` after edits; otherwise `indexed_generation`.
+    #[serde(default)]
+    #[schemars(schema_with = "index_consistency_schema")]
+    pub(in crate::mcp) consistency: IndexConsistency,
     /// Response shape: `full` definitions (default) or compact `signatures`.
     #[serde(default)]
     pub(in crate::mcp) projection: OutlineMcpProjection,
@@ -70,6 +78,7 @@ impl OutlineMcpRequest {
     ) -> (
         OutlineRequest,
         OutlineMcpProjection,
+        IndexConsistency,
         ServiceCallOptions,
         Option<String>,
     ) {
@@ -88,6 +97,7 @@ impl OutlineMcpRequest {
                 cursor: self.cursor,
             },
             self.projection,
+            self.consistency,
             service_call_options(self.max_response_tokens),
             self.expected_repository_id,
         )

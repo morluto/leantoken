@@ -10,6 +10,7 @@ use super::execution::{JsonExecutionOptions, JsonKeyOrder};
 use super::projection::{ProjectionState, escape_pointer, json_type, take_item};
 use super::source::{JsonMeasurementCache, JsonMeasurementKey};
 use crate::services::Services;
+use crate::services::cursor::StreamId;
 use crate::{Error, Result};
 
 pub(super) struct KeyProjectionPage {
@@ -25,7 +26,7 @@ pub(super) struct KeyProjectionPage {
 pub(super) struct KeyProjectionContext<'a> {
     cursor: Option<&'a JsonCursor>,
     source_hash: &'a str,
-    query_hash: &'a str,
+    stream_id: StreamId,
     execution: JsonExecutionOptions,
     measurements: &'a mut JsonMeasurementCache,
 }
@@ -34,14 +35,14 @@ impl<'a> KeyProjectionContext<'a> {
     pub(super) fn new(
         cursor: Option<&'a JsonCursor>,
         source_hash: &'a str,
-        query_hash: &'a str,
+        stream_id: StreamId,
         execution: JsonExecutionOptions,
         measurements: &'a mut JsonMeasurementCache,
     ) -> Self {
         Self {
             cursor,
             source_hash,
-            query_hash,
+            stream_id,
             execution,
             measurements,
         }
@@ -179,11 +180,11 @@ pub(super) fn project_key_page(
         context.execution.key_order(),
     );
     let total_items = entries.len();
-    let offset = match context.cursor {
-        Some(cursor) if cursor.matches(context.source_hash, context.query_hash) => cursor.offset(),
-        Some(_) => return Err(Error::StaleCursor),
-        None => 0,
-    };
+    let offset = context
+        .cursor
+        .map(|cursor| cursor.offset_for(context.source_hash, context.stream_id))
+        .transpose()?
+        .unwrap_or(0);
     if offset > total_items || (offset == total_items && offset != 0) {
         return Err(Error::StaleCursor);
     }
@@ -207,14 +208,9 @@ pub(super) fn project_key_page(
     } else {
         crate::model::JsonIncompleteReason::MaxItems
     });
-    let next_cursor = (remaining_items > 0).then(|| {
-        make_json_cursor(
-            context.execution.cursor_version(),
-            context.source_hash,
-            context.query_hash,
-            consumed,
-        )
-    });
+    let next_cursor = (remaining_items > 0)
+        .then(|| make_json_cursor(context.stream_id, context.source_hash, consumed))
+        .transpose()?;
     Ok(KeyProjectionPage {
         value: Value::Array(candidates[..returned_items].to_vec()),
         total_items,

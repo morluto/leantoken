@@ -8,9 +8,9 @@ pub struct MetaRecord {
     pub schema_version: i64,
     pub index_version: i64,
     pub config_hash: String,
+    /// Exact derivation implementation that produced the committed rows.
+    pub derivation_fingerprint: String,
     pub repository_generation: u64,
-    pub repository_identity: String,
-    pub database_incarnation_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -121,8 +121,9 @@ pub struct ReferenceRecord {
 /// language-specific import policy.
 ///
 /// Storage persists every candidate in priority order for reverse invalidation;
-/// `resolved_path` is populated only when exactly one candidate exists in the
-/// repository view used to prepare the file.
+/// `resolved_path` is the first candidate present in the authoritative
+/// repository generation, according to that language policy's deterministic
+/// precedence.
 pub struct ImportInput {
     pub raw_target: String,
     pub resolved_path: Option<String>,
@@ -151,6 +152,11 @@ pub(crate) struct ImportSeed {
 pub(crate) struct ImportProjection {
     pub id: i64,
     pub file_id: i64,
+    pub value: ImportProjectionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImportProjectionValue {
     pub resolved_path: Option<String>,
     pub candidate_paths: Vec<String>,
 }
@@ -244,6 +250,7 @@ pub(crate) struct UnrecognizedExtensionCoverageRow {
 #[derive(Debug, Clone)]
 pub(crate) struct ReadOnlyStatusSnapshot {
     pub generation: u64,
+    pub derivation_fingerprint: Option<String>,
     pub counts: StorageCounts,
 }
 
@@ -288,11 +295,11 @@ pub(crate) struct TokenSavingsObservation<'a> {
 
 /// SQLite-backed repository index with one serialized writer and pooled readers.
 ///
-/// Clones share the same writer mutex and established read pool. Each
-/// [`GenerationReadTransaction`] checks out one read-only connection and pins a WAL snapshot,
-/// while reconciliation publishes through one immediate transaction. Pooling is
-/// process-local; repository ownership and cross-process write serialization are
-/// enforced separately by the services and coordination layers.
+/// Clones share the same writer mutex and established read pool. Storage-owned
+/// read sessions check out one read-only connection and pin a WAL snapshot,
+/// while reconciliation publishes through one immediate transaction. Pooling
+/// is process-local; repository ownership and cross-process write serialization
+/// are enforced separately by the services and coordination layers.
 pub struct Storage {
     pub(crate) writer: Arc<Mutex<Connection>>,
     pub(crate) readers: r2d2::Pool<SqliteConnectionManager>,
@@ -327,3 +334,8 @@ pub(crate) struct ReconciliationWriter<'transaction, 'connection> {
     pub(crate) projection_refreshes: usize,
 }
 use super::*;
+
+/// Maximum persisted resolution candidates for one import syntax fact.
+pub(crate) const MAX_IMPORT_CANDIDATES_PER_IMPORT: usize = 64;
+/// Maximum UTF-8 bytes in one persisted repository-relative import candidate.
+pub(crate) const MAX_IMPORT_CANDIDATE_PATH_BYTES: usize = 4 * 1024;

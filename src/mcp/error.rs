@@ -286,10 +286,6 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             "repository index is not ready",
             mcp_error_data(cause.public_category()),
         ),
-        crate::Error::RefreshRequired => ErrorData::internal_error(
-            "repository projection requires refresh",
-            mcp_error_data(cause.public_category()),
-        ),
         crate::Error::RetryableConflict(_) => ErrorData::internal_error(
             "repository operation should be retried",
             mcp_error_data(cause.public_category()),

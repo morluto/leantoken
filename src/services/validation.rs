@@ -9,7 +9,6 @@ pub(super) const MAX_QUERY_BYTES: usize = 64 * 1024;
 pub(super) const MAX_PATTERN_BYTES: usize = 4 * 1024;
 pub(super) const MAX_PATH_BYTES: usize = 4 * 1024;
 pub(super) const MAX_INPUT_ITEMS: usize = 256;
-pub(super) const MAX_CURSOR_BYTES: usize = 1_024;
 pub(super) fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     if cancellation.is_cancelled() {
         Err(Error::Cancelled)
@@ -76,6 +75,10 @@ pub(super) fn validate_input(value: &str, name: &'static str, max_bytes: usize) 
         });
     }
     Ok(())
+}
+
+pub(super) fn is_lower_hex(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use super::change_receipt::{
     classify_historical_symbol_change, classify_historical_symbol_removed,
     classify_historical_symbol_rename,
 };
+use super::cursor::{ContinuationCursor, CursorKind, StreamId, StreamIdentityBuilder};
 use super::validation::{MAX_PATH_BYTES, MAX_PATTERN_BYTES, check_cancelled, validate_input};
 use super::{ServiceCallOptions, Services, validate_positive_request_limit};
 use crate::model::{
@@ -35,7 +36,6 @@ const MAX_DIFF_SYMBOL_FILE_BYTES: usize = 1024 * 1024;
 const MAX_DIFF_SYMBOL_TOTAL_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DIFF_SYMBOL_PARSED_SYMBOLS_PER_ENDPOINT: usize = 1_024;
 const MAX_DIFF_SYMBOL_BYTES: usize = 1024 * 1024;
-const MAX_DIFF_SYMBOL_CURSOR_BYTES: usize = 128;
 
 struct ResolvedHistoricalSymbol {
     symbol: HistoricalSymbol,
@@ -135,7 +135,7 @@ struct ParsedDiffSymbolsRequest {
     head_revision: String,
     max_results: Option<usize>,
     max_tokens: Option<usize>,
-    cursor: Option<String>,
+    cursor: Option<ContinuationCursor>,
 }
 
 impl ParsedDiffSymbolsTarget {
@@ -276,13 +276,7 @@ fn parse_diff_symbols_request(
             max_results_limit.min(MAX_DIFF_SYMBOL_RESULTS),
         )?;
     }
-    if request
-        .cursor
-        .as_ref()
-        .is_some_and(|cursor| cursor.is_empty() || cursor.len() > MAX_DIFF_SYMBOL_CURSOR_BYTES)
-    {
-        return Err(Error::StaleCursor);
-    }
+    let cursor = ContinuationCursor::parse_optional(request.cursor.as_deref())?;
     let base_revision = parse_non_empty(request.base_revision, "base revision")?;
     let head_revision = parse_non_empty(request.head_revision, "head revision")?;
     let mut base_paths = BTreeSet::new();
@@ -344,76 +338,51 @@ fn parse_diff_symbols_request(
         head_revision,
         max_results: request.max_results,
         max_tokens: request.max_tokens,
-        cursor: request.cursor,
+        cursor,
     })
 }
 
-fn diff_symbols_query_hash(
+fn diff_symbols_stream_id(
+    services: &Services,
     request: &ParsedDiffSymbolsRequest,
     base_revision: &str,
     head_revision: &str,
-) -> String {
-    fn update(hasher: &mut blake3::Hasher, value: &str) {
-        hasher.update(&(value.len() as u64).to_le_bytes());
-        hasher.update(value.as_bytes());
-    }
-
-    let mut hasher = blake3::Hasher::new();
-    update(&mut hasher, base_revision);
-    update(&mut hasher, head_revision);
-    hasher.update(&(request.targets.len() as u64).to_le_bytes());
+) -> StreamId {
+    let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::HistoryDiffSymbols);
+    stream.field_str("base_revision", base_revision);
+    stream.field_str("head_revision", head_revision);
+    stream.field_usize("target_count", request.targets.len());
     for target in &request.targets {
-        update(&mut hasher, &target.base.path);
-        update(&mut hasher, &target.base.symbol);
+        stream.field_str("base_path", &target.base.path);
+        stream.field_str("base_symbol", &target.base.symbol);
         match &target.head {
             HistoricalHeadTarget::SameAsBase => {
-                hasher.update(&[0, 0]);
+                stream.field_bool("head_override", false);
             }
             HistoricalHeadTarget::Override(head) => {
-                hasher.update(&[1]);
-                update(&mut hasher, &head.path);
-                hasher.update(&[1]);
-                update(&mut hasher, &head.symbol);
+                stream.field_bool("head_override", true);
+                stream.field_str("head_path", &head.path);
+                stream.field_str("head_symbol", &head.symbol);
             }
         }
     }
-    hasher.finalize().to_hex()[..16].to_string()
+    stream.finish()
 }
 
-fn make_diff_symbols_cursor(
-    request: &ParsedDiffSymbolsRequest,
-    base_revision: &str,
-    head_revision: &str,
-    offset: usize,
-) -> String {
-    format!(
-        "history-multi:{offset}:{base_revision}:{head_revision}:{}",
-        diff_symbols_query_hash(request, base_revision, head_revision)
-    )
+fn make_diff_symbols_cursor(stream_id: StreamId, offset: usize) -> Result<String> {
+    ContinuationCursor::at(CursorKind::HistoryDiffSymbols, 0, stream_id, offset)
+        .map(ContinuationCursor::encode)
 }
 
 fn parse_diff_symbols_cursor(
     request: &ParsedDiffSymbolsRequest,
-    base_revision: &str,
-    head_revision: &str,
+    stream_id: StreamId,
 ) -> Result<usize> {
-    let Some(cursor) = request.cursor.as_deref() else {
-        return Ok(0);
-    };
-    let fields = cursor.split(':').collect::<Vec<_>>();
-    let [kind, offset, cursor_base, cursor_head, query_hash] = fields.as_slice() else {
-        return Err(Error::StaleCursor);
-    };
-    if *kind != "history-multi"
-        || *cursor_base != base_revision
-        || *cursor_head != head_revision
-        || query_hash.len() != 16
-        || !query_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || *query_hash != diff_symbols_query_hash(request, base_revision, head_revision)
-    {
-        return Err(Error::StaleCursor);
-    }
-    let offset = offset.parse::<usize>().map_err(|_| Error::StaleCursor)?;
+    let offset = request
+        .cursor
+        .map(|cursor| cursor.position_for(CursorKind::HistoryDiffSymbols, 0, stream_id))
+        .transpose()?
+        .unwrap_or(0);
     if offset >= request.targets.len() {
         return Err(Error::StaleCursor);
     }
@@ -631,6 +600,7 @@ impl Services {
         )?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.history_sync(request, options, cancellation)
@@ -695,6 +665,7 @@ impl Services {
         )?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.history_diff_symbols_sync(request, options, cancellation)
@@ -721,11 +692,13 @@ impl Services {
             &request.base_revision,
             Some(&request.head_revision),
         )?;
-        let page_start = parse_diff_symbols_cursor(
+        let stream_id = diff_symbols_stream_id(
+            self,
             &request,
             &revisions.base_revision,
             &revisions.head_revision,
-        )?;
+        );
+        let page_start = parse_diff_symbols_cursor(&request, stream_id)?;
         let page_end = page_start
             .saturating_add(max_results)
             .min(request.targets.len());
@@ -985,12 +958,7 @@ impl Services {
         });
         let mut meta = self.meta(generation, emitted_tokens, None);
         if !page_complete {
-            meta.next_cursor = Some(make_diff_symbols_cursor(
-                &request,
-                &revisions.base_revision,
-                &revisions.head_revision,
-                page_end,
-            ));
+            meta.next_cursor = Some(make_diff_symbols_cursor(stream_id, page_end)?);
         }
         let parsed_symbols = base.parsed_symbols.saturating_add(head.parsed_symbols);
         let mut response = DiffSymbolsResponse {
@@ -1012,7 +980,7 @@ impl Services {
             },
             meta,
         };
-        self.fit_diff_symbols_response(&mut response, &request, page_start, options)?;
+        self.fit_diff_symbols_response(&mut response, &request, page_start, stream_id, options)?;
         self.finalize_bounded_response(&mut response, options)?;
         self.record_token_savings(TokenAccountingOperation::History, None, &response.meta);
         Ok(response)
@@ -1306,6 +1274,7 @@ impl Services {
         response: &mut DiffSymbolsResponse,
         request: &ParsedDiffSymbolsRequest,
         page_start: usize,
+        stream_id: StreamId,
         options: ServiceCallOptions,
     ) -> Result<()> {
         if self.response_fits(response, options)? {
@@ -1329,14 +1298,9 @@ impl Services {
             candidate.results.truncate(keep);
             candidate.result_complete = false;
             let next_offset = page_start.saturating_add(keep);
-            candidate.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
-                make_diff_symbols_cursor(
-                    request,
-                    &candidate.base.revision,
-                    &candidate.head.revision,
-                    next_offset,
-                )
-            });
+            candidate.meta.next_cursor = (next_offset < request.targets.len())
+                .then(|| make_diff_symbols_cursor(stream_id, next_offset))
+                .transpose()?;
             refresh_diff_symbols_accounting(&self.config.tokenizer, &mut candidate);
             self.finalized_response_tokens(&candidate, options)
         })?;
@@ -1345,14 +1309,9 @@ impl Services {
             minimum.results.truncate(1);
             minimum.result_complete = false;
             let next_offset = page_start.saturating_add(1);
-            minimum.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
-                make_diff_symbols_cursor(
-                    request,
-                    &minimum.base.revision,
-                    &minimum.head.revision,
-                    next_offset,
-                )
-            });
+            minimum.meta.next_cursor = (next_offset < request.targets.len())
+                .then(|| make_diff_symbols_cursor(stream_id, next_offset))
+                .transpose()?;
             refresh_diff_symbols_accounting(&self.config.tokenizer, &mut minimum);
             return Err(self.response_budget_error(&minimum, max_response_tokens, options)?);
         };
@@ -1361,14 +1320,9 @@ impl Services {
         fitted.results.truncate(keep);
         fitted.result_complete = false;
         let next_offset = page_start.saturating_add(keep);
-        fitted.meta.next_cursor = (next_offset < request.targets.len()).then(|| {
-            make_diff_symbols_cursor(
-                request,
-                &fitted.base.revision,
-                &fitted.head.revision,
-                next_offset,
-            )
-        });
+        fitted.meta.next_cursor = (next_offset < request.targets.len())
+            .then(|| make_diff_symbols_cursor(stream_id, next_offset))
+            .transpose()?;
         refresh_diff_symbols_accounting(&self.config.tokenizer, &mut fitted);
 
         for result_index in 0..keep {

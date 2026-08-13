@@ -14,8 +14,11 @@ pub mod config;
 pub mod coordination;
 /// Executable MCP readiness diagnostics.
 pub mod doctor;
+/// Bounded normalization of redacted episode-analysis artifacts.
+pub mod episode;
 /// Error and result types shared across the crate.
 pub mod error;
+mod index_derivation;
 /// Repository discovery, parsing, and transactional reconciliation.
 pub mod indexer;
 mod invocation;

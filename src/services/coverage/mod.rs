@@ -7,7 +7,8 @@ impl Services {
     /// Return aggregate parser coverage from one pinned index snapshot.
     pub async fn parser_coverage(&self) -> Result<ParserCoverageReport> {
         let this = self.clone();
-        self.blocking_executor
+        self.runtime
+            .blocking_executor
             .run(CancellationToken::new(), move |_| {
                 this.consistent_allow_empty(|session| {
                     let generation = session.generation();

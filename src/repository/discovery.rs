@@ -1,4 +1,7 @@
 pub(crate) const LEANTOKEN_IGNORE_FILE: &str = ".leantokenignore";
+pub(crate) const GIT_PATH_OUTPUT_BYTES_PER_RESULT: usize = 4_096;
+pub(crate) const GIT_HUNK_OUTPUT_BYTES_PER_RESULT: usize = 64 * 1024;
+pub(crate) const MAX_GIT_DISCOVERY_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const GENERATED_DIRECTORY_NAMES: &[&str] = &[
     ".cache",
     ".gradle",

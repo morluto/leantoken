@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use leantoken::{
     Config, ContextFocusCapacityBlocker, ContextFocusSuppressionBoundary, ContextRequest,
     ContextRequiredEvidence, ContextResponseProfile, ContextSignalPolicy, ContextWorkflow,
@@ -10,7 +12,7 @@ use leantoken::{
     ReadDeltaBaseSource, ReadDeltaFallback, ReadDeltaOutcome, ReadDeltaPersistenceFallback,
     ReadRequest, ReadStatus, ReceiptRebaseRequest, ReferenceExtractionStatus, ReferenceRole,
     SearchMode, SearchOccurrenceOutput, SearchRequest, TokenAccountingOperation,
-    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence, WorktreeReadRequest,
+    TokenSavingsOperation, TokenSavingsWindow, WorkflowEvidence,
     coordination::IndexCoordination,
     services::{ServiceCallOptions, Services},
     tokens::Tokenizer,
@@ -65,13 +67,14 @@ async fn fixture() -> (tempfile::TempDir, Services) {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     (root, services)
 }
 
 mod budgets;
+mod consistency;
 mod context_planning;
 mod context_regressions;
 mod context_signals;
@@ -212,6 +215,9 @@ fn read_limit_request(max_tokens: Option<usize>) -> ReadRequest {
         continuation_cursor: None,
         max_tokens,
         expected_hash: None,
+        delta: false,
+        receipt_id: None,
+        policy: leantoken::ReadPolicy::default(),
     }
 }
 
@@ -283,7 +289,7 @@ async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Servi
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index source");
     (root, services)

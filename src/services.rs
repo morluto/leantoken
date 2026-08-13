@@ -19,8 +19,8 @@ use crate::error::RetryableOperation;
 use crate::indexer::{Indexer, index_progress_cache_namespace};
 use crate::model::*;
 use crate::storage::{
-    ArtifactStorage, InstrumentationStorage, ParserCoverageRows, ServiceFailureRecord, Storage,
-    StorageCounts, TokenSavingsObservation, TokenSavingsRecord,
+    ParserCoverageRows, ServiceFailureRecord, Storage, StorageCounts, TokenSavingsObservation,
+    TokenSavingsRecord,
 };
 use crate::{Config, Error, Result};
 
@@ -30,7 +30,7 @@ mod change_receipt;
 mod concurrency_profile;
 mod context;
 mod coverage;
-mod cursor;
+pub(crate) mod cursor;
 mod execution_options;
 mod executor;
 mod files;
@@ -41,6 +41,7 @@ mod indexing;
 mod json;
 mod observer;
 mod outline;
+mod process_runtime;
 mod read;
 mod read_delta;
 mod receipt_rebase;
@@ -56,6 +57,7 @@ pub use context::ContextWorkflowOptions;
 pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
 pub(crate) use history::MAX_DIFF_SYMBOL_TARGETS;
 pub(crate) use json::{JsonExecutionOptions, MAX_JSON_DEPTH};
+pub use process_runtime::ServicesRuntime;
 
 pub(crate) const MAX_EXPECTED_REPOSITORY_ID_BYTES: usize = 128;
 
@@ -115,15 +117,15 @@ pub(crate) fn validate_request_limit(
 pub struct Services {
     config: Arc<Config>,
     storage: Storage,
-    artifacts: ArtifactStorage,
-    instrumentation: InstrumentationStorage,
     indexer: Indexer,
     repository_root: Arc<Dir>,
     coordination: IndexCoordination,
     _cache_lease: CacheLease,
     active_reconciliations: Arc<AtomicUsize>,
     reconciliation_changed: Arc<tokio::sync::Notify>,
-    blocking_executor: executor::BlockingExecutor,
+    read_deltas: Arc<read_delta::ReadDeltaRegistry>,
+    runtime: ServicesRuntime,
+    _runtime_repository: process_runtime::RuntimeRepositoryRegistration,
     response_accountant: accounting::ResponseAccountant,
     observer: observer::ServiceObserver,
     reconciliation: reconciliation::ReconciliationCoordinator,
@@ -432,14 +434,14 @@ impl Services {
 
     pub(super) fn consistent<T>(
         &self,
-        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::RequireReady, operation)
     }
 
     fn consistent_allow_empty<T>(
         &self,
-        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
         self.consistent_inner(IndexSnapshotReadiness::AllowEmpty, operation)
     }
@@ -451,10 +453,13 @@ impl Services {
     fn consistent_inner<T>(
         &self,
         readiness: IndexSnapshotReadiness,
-        operation: impl Fn(&index_read::RepositoryGeneration) -> Result<T>,
+        operation: impl Fn(&index_read::IndexReadSnapshot) -> Result<T>,
     ) -> Result<T> {
+        let _snapshot_admission = Arc::clone(&self.runtime.snapshot_admission)
+            .try_acquire_owned()
+            .map_err(|_| Error::RetrievalOverloaded)?;
         for attempt in 0..3 {
-            let snapshot = index_read::RepositoryGeneration::open(&self.storage);
+            let snapshot = index_read::IndexReadSnapshot::open(&self.storage);
             let snapshot = match snapshot {
                 Ok(snapshot) => snapshot,
                 Err(error) if is_database_contention(&error) => {
@@ -468,11 +473,6 @@ impl Services {
             let generation = snapshot.generation();
             if generation == 0 && matches!(readiness, IndexSnapshotReadiness::RequireReady) {
                 return Err(Error::IndexNotReady);
-            }
-            if matches!(readiness, IndexSnapshotReadiness::RequireReady)
-                && snapshot.semantics_fingerprint() != self.indexer.config_hash()
-            {
-                return Err(Error::RefreshRequired);
             }
             // Do not retry operation errors: after the first read, this session
             // is pinned and concurrent publication cannot have caused them.
@@ -598,13 +598,12 @@ impl Services {
     pub(crate) fn read_stored_receipt(
         &self,
         receipt_id: &str,
+        now_unix_millis: i64,
     ) -> Result<crate::receipt::StoredReceipt> {
-        let meta = self.storage.meta()?;
-        self.artifacts.read_receipt(
-            &self.repository_id(),
-            &meta.database_incarnation_id,
-            receipt_id,
-        )
+        let _snapshot_admission = Arc::clone(&self.runtime.snapshot_admission)
+            .try_acquire_owned()
+            .map_err(|_| Error::RetrievalOverloaded)?;
+        self.storage.read_receipt(receipt_id, now_unix_millis)
     }
 
     /// Rejects retrieval bound to a different repository/worktree.

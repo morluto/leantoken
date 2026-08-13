@@ -242,11 +242,14 @@ pub(super) fn select_search_page(
                 occurrence_group_key(&candidate.hit, SearchOccurrenceOutput::Excerpts),
             ),
             SearchOutputShape::Full
+            | SearchOutputShape::Grouped
             | SearchOutputShape::Compact
             | SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => None,
         };
         let count = match output_shape {
-            SearchOutputShape::Full => tokenizer.count(&candidate.hit.excerpt),
+            SearchOutputShape::Full | SearchOutputShape::Grouped => {
+                tokenizer.count(&candidate.hit.excerpt)
+            }
             SearchOutputShape::Compact => 0,
             SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Coordinates) => 0,
             SearchOutputShape::OccurrenceGroups(SearchOccurrenceOutput::Excerpts)
@@ -290,7 +293,7 @@ pub(super) fn selected_search_source_tokens(
     tokenizer: &crate::tokens::Tokenizer,
 ) -> usize {
     match output_shape {
-        SearchOutputShape::Full => selected
+        SearchOutputShape::Full | SearchOutputShape::Grouped => selected
             .iter()
             .map(|candidate| tokenizer.count(&candidate.hit.excerpt))
             .sum(),

@@ -40,6 +40,13 @@ pub(super) fn process_imports_match(
             }
         } else {
             push_import(imports, &module, line);
+            // `from package import member` may load either an attribute owned
+            // by the package or the repository submodule `package.member`.
+            // Persist both bounded syntax-derived alternatives instead of
+            // erasing the member and manufacturing certainty downstream.
+            for (member, member_line) in python_members {
+                push_import(imports, &format!("{module}.{member}"), member_line);
+            }
         }
     }
 }

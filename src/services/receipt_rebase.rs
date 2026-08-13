@@ -3,7 +3,7 @@ use std::io::Read;
 use tokio_util::sync::CancellationToken;
 
 use super::execution_options::RetrievalExecution;
-use super::index_read::RepositoryGeneration;
+use super::index_read::IndexReadSnapshot;
 use super::read::open_live_file;
 use super::receipts::ReceiptEvidence;
 use super::validation::check_cancelled;
@@ -89,6 +89,7 @@ impl Services {
         }
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 this.rebase_receipt_sync(request, options, cancellation)
@@ -104,12 +105,9 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReceiptRebaseResponse> {
         check_cancelled(cancellation)?;
-        let database_incarnation_id = self.storage.meta()?.database_incarnation_id;
-        let source = self.artifacts.load_receipt_rebase_source(
-            &self.repository_id(),
-            &database_incarnation_id,
-            &request.receipt_id,
-        )?;
+        let source = self
+            .storage
+            .load_receipt_rebase_source(&request.receipt_id)?;
         let classification = self.consistent(|session| {
             let generation = session.generation();
             if source.repository_generation >= generation {
@@ -141,10 +139,8 @@ impl Services {
             );
         };
         check_cancelled(cancellation)?;
-        let receipt_id = self.artifacts.persist_rebased_receipt(
+        let receipt_id = self.storage.persist_rebased_receipt(
             &source,
-            &self.repository_id(),
-            &database_incarnation_id,
             classification.generation,
             &classification.carried,
         )?;
@@ -187,7 +183,7 @@ fn parse_rebase_request(request: ReceiptRebaseRequest) -> Result<ParsedReceiptRe
 
 fn classify_receipt(
     services: &Services,
-    session: &RepositoryGeneration,
+    session: &IndexReadSnapshot,
     generation: u64,
     source: &ReceiptRebaseSource,
     cancellation: &CancellationToken,
@@ -269,7 +265,7 @@ fn classify_receipt(
         match outcome {
             ReceiptRebaseOutcomeKind::Carried => {
                 counts.carried = counts.carried.saturating_add(1);
-                carried.push(evidence.clone().into_exact_only());
+                carried.push(evidence.clone());
             }
             ReceiptRebaseOutcomeKind::Changed => {
                 counts.changed = counts.changed.saturating_add(1);

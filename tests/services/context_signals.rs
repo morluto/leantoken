@@ -23,7 +23,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -110,6 +110,7 @@ async fn import_expansion_is_exact_safe_and_requires_corroborated_symbols() {
             .all(|candidate| candidate.representation != "import_neighbor")
     );
 }
+
 #[tokio::test]
 async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
     let root = tempfile::tempdir().expect("root");
@@ -128,7 +129,7 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
     let request = ContextRequest {
@@ -227,60 +228,4 @@ async fn context_signal_evaluation_keeps_graph_arms_additive_and_isolated() {
                 .iter()
                 .any(|kind| kind == "reverse-import")
     }));
-}
-
-#[tokio::test]
-async fn working_tree_diff_boosts_changed_files() {
-    require_git();
-
-    let root = tempfile::tempdir().expect("root");
-    std::fs::create_dir(root.path().join("src")).unwrap();
-    std::fs::write(root.path().join("src/a.rs"), "fn shared() {}\n").unwrap();
-    std::fs::write(root.path().join("src/b.rs"), "fn shared() {}\n").unwrap();
-    init_git_repo(root.path());
-
-    let config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
-    let services = Services::open(config).unwrap();
-    services
-        .refresh(leantoken::IndexingMode::Reconcile)
-        .await
-        .unwrap();
-
-    // Modify b.rs after refresh; do not refresh so the diff signal is tested.
-    std::fs::write(root.path().join("src/b.rs"), "fn shared() { let x = 1; }\n").unwrap();
-
-    let response = services
-        .context(ContextRequest {
-            task: "update shared implementation".into(),
-            token_budget: 500,
-            include_paths: Vec::new(),
-            must_include_paths: Vec::new(),
-            must_include_symbols: Vec::new(),
-            required_evidence: Vec::new(),
-            max_fragments: None,
-            plan_only: false,
-            focus_paths: Vec::new(),
-            strict_focus_paths: false,
-            minimum_fragments_per_focus_path: None,
-            focus_symbols: Vec::new(),
-            exclude_paths: Vec::new(),
-            known_hashes: Vec::new(),
-            receipt_id: None,
-            prior_repository_generation: None,
-            base_revision: None,
-            changed_paths: Vec::new(),
-            strict_changed_paths: false,
-            explain_diagnostics: false,
-        })
-        .await
-        .unwrap();
-
-    assert!(!response.fragments.is_empty());
-    assert_eq!(response.fragments[0].path, "src/b.rs");
-    assert!(
-        response
-            .fragments
-            .iter()
-            .any(|fragment| fragment.path == "src/b.rs" && fragment.reason.contains("changed"))
-    );
 }

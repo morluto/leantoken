@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy)]
 pub(in crate::mcp) struct McpLimitPolicy {
@@ -93,6 +94,84 @@ pub struct McpServices {
     pub(in crate::mcp) state_changed: Arc<tokio::sync::Notify>,
     pub(in crate::mcp) protocol_initialized: Arc<AtomicBool>,
     pub(in crate::mcp) initialized: Arc<tokio::sync::Notify>,
+    activation_requested: Arc<AtomicBool>,
+    activation: Arc<tokio::sync::Notify>,
+}
+
+/// Names the bounded set of repository runtimes approved for one MCP server.
+#[derive(Debug, Clone)]
+pub struct McpContextRegistry {
+    contexts: Arc<RwLock<BTreeMap<String, McpServices>>>,
+}
+
+impl McpContextRegistry {
+    pub(in crate::mcp) fn primary(primary: McpServices) -> Self {
+        let mut contexts = BTreeMap::new();
+        contexts.insert("default".into(), primary);
+        Self {
+            contexts: Arc::new(RwLock::new(contexts)),
+        }
+    }
+
+    pub fn register(&self, name: String, services: McpServices) -> crate::Result<()> {
+        if name.is_empty() || name == "default" || name.len() > 64 || name.contains(['/', '\\']) {
+            return Err(crate::Error::InvalidInput {
+                field: "repository_context",
+                reason: "must be a non-empty approved context name",
+            });
+        }
+        let mut contexts = self
+            .contexts
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let approved_contexts = contexts.len().saturating_sub(1);
+        if !contexts.contains_key(&name) && approved_contexts >= MAX_REPOSITORY_CONTEXTS {
+            return Err(crate::Error::RequestLimitExceeded {
+                field: "repository_contexts",
+                requested: approved_contexts.saturating_add(1),
+                limit: MAX_REPOSITORY_CONTEXTS,
+            });
+        }
+        contexts.insert(name, services);
+        Ok(())
+    }
+
+    pub(in crate::mcp) fn resolve(&self, name: Option<&str>) -> crate::Result<McpServices> {
+        let name = match name {
+            None => "default",
+            Some(name) if !name.trim().is_empty() => name.trim(),
+            Some(_) => {
+                return Err(crate::Error::InvalidInput {
+                    field: "repository_context",
+                    reason: "must be a non-empty approved context name",
+                });
+            }
+        };
+        if name.len() > 64 || name.contains(['/', '\\']) {
+            return Err(crate::Error::InvalidInput {
+                field: "repository_context",
+                reason: "must be a bounded approved context name",
+            });
+        }
+        self.contexts
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(name)
+            .cloned()
+            .ok_or(crate::Error::InvalidInput {
+                field: "repository_context",
+                reason: "must name an approved repository context",
+            })
+    }
+
+    pub(in crate::mcp) fn all(&self) -> Vec<(String, McpServices)> {
+        self.contexts
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .map(|(name, services)| (name.clone(), services.clone()))
+            .collect()
+    }
 }
 
 impl McpServices {
@@ -105,6 +184,8 @@ impl McpServices {
             state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
+            activation_requested: Arc::new(AtomicBool::new(false)),
+            activation: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -116,6 +197,8 @@ impl McpServices {
             state_changed: Arc::new(tokio::sync::Notify::new()),
             protocol_initialized: Arc::new(AtomicBool::new(false)),
             initialized: Arc::new(tokio::sync::Notify::new()),
+            activation_requested: Arc::new(AtomicBool::new(true)),
+            activation: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -124,6 +207,36 @@ impl McpServices {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    /// Request lazy startup for an approved repository context.
+    pub(in crate::mcp) fn request_activation(&self) -> bool {
+        let first = !self.activation_requested.swap(true, Ordering::AcqRel);
+        if first {
+            self.activation.notify_waiters();
+        }
+        first
+    }
+
+    /// Wait until a tool first selects this context or the server shuts down.
+    pub async fn wait_for_activation(&self, cancellation: CancellationToken) -> crate::Result<()> {
+        loop {
+            let activated = self.activation.notified();
+            tokio::pin!(activated);
+            activated.as_mut().enable();
+            if self.activation_requested.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(crate::Error::Cancelled),
+                _ = &mut activated => {}
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::mcp) fn activation_requested(&self) -> bool {
+        self.activation_requested.load(Ordering::Acquire)
     }
 
     pub(in crate::mcp) async fn wait_for_services(
@@ -168,6 +281,7 @@ impl McpServices {
 
     /// Make initialized retrieval services visible to MCP tool handlers.
     pub fn set_ready(&self, services: Arc<Services>) {
+        let _ = self.request_activation();
         let limits = McpLimitPolicy::from_config(services.config())
             .expect("Services always contains a validated configuration");
         *self

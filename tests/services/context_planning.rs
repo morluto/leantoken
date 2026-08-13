@@ -68,7 +68,7 @@ async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
     )
     .expect("write unrelated registration fixture");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index MCP routing fixture");
 
@@ -197,7 +197,7 @@ async fn context_options_enforce_the_final_serialized_service_response_budget() 
         .expect("write context budget fixture");
     }
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("reindex budget fixture");
     let request = context_limit_request(1_000);
@@ -482,7 +482,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -811,7 +811,7 @@ async fn context_include_paths_constrain_fragments_and_report_path_omissions() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(200);
@@ -888,7 +888,7 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -948,6 +948,9 @@ async fn repository_context_exclusions_preserve_exact_artifact_access() {
             continuation_cursor: None,
             max_tokens: Some(200),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: leantoken::ReadPolicy::default(),
         })
         .await
         .expect("exact read");
@@ -1006,7 +1009,7 @@ async fn strict_focus_paths_enforce_minimum_coverage_and_fail_loud() {
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -1208,7 +1211,7 @@ async fn strict_focus_paths_generate_candidates_before_global_top_n_truncation()
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -1455,7 +1458,7 @@ async fn five_focus_diagnostics_freeze_plan_and_materialized_capacity_truth() {
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -1562,7 +1565,7 @@ async fn exact_focus_symbols_satisfy_multi_fragment_minimum_after_reconciliation
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("initial index");
 
@@ -1675,7 +1678,7 @@ async fn strict_changed_paths_are_a_hard_boundary_and_intersect_focus_scope() {
     )
     .expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -1772,7 +1775,7 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(300);
@@ -1867,7 +1870,7 @@ async fn context_must_cover_generates_evidence_and_reports_unmatched_constraints
     )
     .expect("change required source");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index_paths(vec!["src/required.rs".into()])
         .await
         .expect("advance generation");
     let next_generation = services
@@ -1947,7 +1950,7 @@ async fn context_required_evidence_covers_doq_ranges_and_rejects_intro_fallbacks
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
 
@@ -2058,7 +2061,7 @@ async fn context_marks_partial_required_symbols_without_claiming_complete_covera
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index fixture");
     let mut request = context_limit_request(300);

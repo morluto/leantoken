@@ -72,11 +72,207 @@ async fn indexed_services() -> (tempfile::TempDir, Services) {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("initial index");
     services.reconciliation.reset_diagnostics();
     (root, services)
+}
+
+#[test]
+fn process_runtime_shares_every_multiplying_service_budget() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let mut first_config = Config::discover(
+        first_root.path(),
+        Some(first_root.path().join("index.sqlite")),
+    )
+    .expect("first config");
+    let mut second_config = Config::discover(
+        second_root.path(),
+        Some(second_root.path().join("index.sqlite")),
+    )
+    .expect("second config");
+    first_config.max_index_workers = 2;
+    second_config.max_index_workers = 2;
+    let runtime = ServicesRuntime::new(2).expect("process runtime");
+
+    let first = Services::open_in_runtime(first_config, runtime.clone()).expect("first services");
+    let second = Services::open_in_runtime(second_config, runtime).expect("second services");
+
+    assert!(
+        first
+            .runtime
+            .blocking_executor
+            .shares_capacity_with(&second.runtime.blocking_executor)
+    );
+    assert!(Arc::ptr_eq(
+        &first.runtime.snapshot_admission,
+        &second.runtime.snapshot_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.reconciliation_admission,
+        &second.runtime.reconciliation_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.indexing_admission,
+        &second.runtime.indexing_admission
+    ));
+    assert!(Arc::ptr_eq(
+        &first.runtime.index_pool,
+        &second.runtime.index_pool
+    ));
+    let diagnostics = first.runtime.diagnostics();
+    assert_eq!(diagnostics.active_repository_services, 2);
+    assert_eq!(
+        first.storage.reader_connection_capacity(),
+        u32::try_from(diagnostics.snapshot_capacity).expect("snapshot capacity")
+    );
+    assert_eq!(second.storage.reader_connection_capacity(), 1);
+    assert_eq!(
+        diagnostics.max_pooled_reader_connections,
+        diagnostics.snapshot_capacity + diagnostics.max_repository_services - 1
+    );
+}
+
+#[test]
+fn process_runtime_bounds_repository_and_reader_pool_multiplication() {
+    let runtime = ServicesRuntime::new(2).expect("process runtime");
+    let mut registrations = Vec::new();
+    for _ in 0..runtime.diagnostics().max_repository_services {
+        registrations.push(runtime.register_repository().expect("bounded registration"));
+    }
+    let diagnostics = runtime.diagnostics();
+    assert_eq!(
+        diagnostics.active_repository_services,
+        diagnostics.max_repository_services
+    );
+    assert_eq!(
+        registrations
+            .iter()
+            .map(|registration| registration.reader_connection_capacity() as usize)
+            .sum::<usize>(),
+        diagnostics.max_pooled_reader_connections
+    );
+    assert!(matches!(
+        runtime.register_repository(),
+        Err(Error::RequestLimitExceeded {
+            field: "process repository services",
+            ..
+        })
+    ));
+
+    registrations.pop();
+    assert_eq!(
+        runtime.diagnostics().active_repository_services,
+        diagnostics.max_repository_services - 1
+    );
+    runtime
+        .register_repository()
+        .expect("released registration returns capacity");
+}
+
+#[test]
+fn snapshot_capacity_is_enforced_across_repository_services() {
+    let first_root = tempfile::tempdir().expect("first root");
+    let second_root = tempfile::tempdir().expect("second root");
+    let mut first_config = Config::discover(
+        first_root.path(),
+        Some(first_root.path().join("index.sqlite")),
+    )
+    .expect("first config");
+    let mut second_config = Config::discover(
+        second_root.path(),
+        Some(second_root.path().join("index.sqlite")),
+    )
+    .expect("second config");
+    first_config.max_index_workers = 1;
+    second_config.max_index_workers = 1;
+    let runtime = ServicesRuntime::new(1).expect("process runtime");
+    let first = Services::open_in_runtime(first_config, runtime.clone()).expect("first services");
+    let second =
+        Services::open_in_runtime(second_config, runtime.clone()).expect("second services");
+    let snapshot_capacity = runtime.diagnostics().snapshot_capacity;
+    let entered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut readers = Vec::new();
+
+    for index in 0..snapshot_capacity {
+        let services = if index == 0 {
+            second.clone()
+        } else {
+            first.clone()
+        };
+        let entered = Arc::clone(&entered);
+        let gate = Arc::clone(&gate);
+        readers.push(std::thread::spawn(move || {
+            services.consistent_allow_empty(|_| {
+                entered.fetch_add(1, Ordering::AcqRel);
+                let (open, changed) = &*gate;
+                let mut open = open.lock().expect("snapshot gate");
+                while !*open {
+                    open = changed.wait(open).expect("snapshot gate wait");
+                }
+                Ok(())
+            })
+        }));
+    }
+    while entered.load(Ordering::Acquire) < snapshot_capacity {
+        std::thread::yield_now();
+    }
+
+    assert_eq!(runtime.diagnostics().active_snapshots, snapshot_capacity);
+    assert!(matches!(
+        first.consistent_allow_empty(|_| Ok(())),
+        Err(Error::RetrievalOverloaded)
+    ));
+
+    let (open, changed) = &*gate;
+    *open.lock().expect("snapshot gate") = true;
+    changed.notify_all();
+    for reader in readers {
+        reader
+            .join()
+            .expect("reader thread")
+            .expect("snapshot read");
+    }
+    assert_eq!(runtime.diagnostics().active_snapshots, 0);
+}
+
+#[test]
+fn stored_receipt_reads_share_snapshot_capacity() {
+    let root = tempfile::tempdir().expect("repository");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let runtime = ServicesRuntime::new(1).expect("process runtime");
+    let mut config = config;
+    config.max_index_workers = 1;
+    let services = Services::open_in_runtime(config, runtime.clone()).expect("services");
+    let permits = (0..runtime.diagnostics().snapshot_capacity)
+        .map(|_| {
+            Arc::clone(&runtime.snapshot_admission)
+                .try_acquire_owned()
+                .expect("snapshot permit")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        services.read_stored_receipt("r0123456789abcdef0123456789abcdef0123456789abcdef", 0),
+        Err(Error::RetrievalOverloaded)
+    ));
+    drop(permits);
+}
+
+fn root_files_request() -> FilesRequest {
+    FilesRequest {
+        operation: FileOperation::Tree,
+        path: None,
+        query: None,
+        pattern: None,
+        max_results: Some(10),
+        cursor: None,
+        depth: Some(0),
+    }
 }
 
 #[tokio::test]
@@ -129,7 +325,7 @@ async fn response_accounting_reaches_an_inclusive_fixed_point_across_digit_bound
 #[tokio::test]
 async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
     let (_root, services) = indexed_services().await;
-    let request: WorktreeReadRequest = ReadRequest {
+    let request = ReadRequest {
         path: "lib.rs".into(),
         start_line: Some(1),
         end_line: Some(1),
@@ -139,15 +335,17 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         continuation_cursor: None,
         max_tokens: Some(100),
         expected_hash: None,
-    }
-    .into();
+        delta: false,
+        receipt_id: None,
+        policy: crate::model::ReadPolicy::default(),
+    };
     let shape = crate::tokens::McpResponseShape {
         mode: crate::tokens::McpResponseMode::Structured,
         protocol: crate::tokens::McpProtocolShape::Modern,
     };
     let shaped_options = ServiceCallOptions::new().with_mcp_response_shape(shape);
     let successful = services
-        .read_worktree_with_options(request.clone(), shaped_options)
+        .read_with_options(request.clone(), shaped_options)
         .await
         .expect("unbounded MCP-shaped read");
     let visible_tokens = services
@@ -187,7 +385,7 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         .expect("savings before rejected call")
         .tracked_requests;
     let error = services
-        .read_worktree_with_options(request, shaped_options.with_max_response_tokens(limit))
+        .read_with_options(request, shaped_options.with_max_response_tokens(limit))
         .await
         .expect_err("MCP wrapper must be reserved before receipt persistence");
     match error {
@@ -553,6 +751,83 @@ async fn caller_after_a_cancelled_waiting_wave_uses_a_fresh_wave() {
 }
 
 #[tokio::test]
+async fn generation_zero_reconciliation_deadline_returns_without_stale_retrieval() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let held_operation = services
+        .coordination
+        .acquire_operation(&CancellationToken::new())
+        .expect("hold operation lock");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let call_services = services.clone();
+    let call = tokio::spawn(async move {
+        call_services
+            .files_with_options_consistency_cancellable(
+                root_files_request(),
+                IndexConsistency::ReconcileWorkingTree,
+                ServiceCallOptions::new().with_initial_reconciliation_deadline(deadline),
+                CancellationToken::new(),
+            )
+            .await
+    });
+    wait_until_with_timer(|| {
+        let diagnostics = services.reconciliation.diagnostics();
+        diagnostics.requests == 1 && diagnostics.active_waves == 1
+    })
+    .await;
+
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    assert!(matches!(
+        call.await.expect("join timed-out retrieval"),
+        Err(Error::IndexNotReady)
+    ));
+    assert_eq!(
+        services
+            .storage
+            .repository_generation()
+            .expect("generation after timeout"),
+        0
+    );
+
+    tokio::time::resume();
+    held_operation.release().expect("release operation lock");
+    wait_until_with_timer(|| services.reconciliation.diagnostics().active_waves == 0).await;
+    let diagnostics = services.reconciliation.diagnostics();
+    assert_eq!(diagnostics.pending_waiters, 0);
+    assert_eq!(diagnostics.timed_out_waiters, 1);
+    assert_eq!(diagnostics.cancelled_waiters, 0);
+    assert_eq!(diagnostics.waves_cancelled_before_start, 1);
+}
+
+#[tokio::test]
+async fn generation_zero_reconciliation_can_complete_before_its_deadline() {
+    let root = tempfile::tempdir().expect("root");
+    fs::write(root.path().join("lib.rs"), "pub fn cold_source() {}\n").expect("source");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+
+    let response = services
+        .files_with_options_consistency_cancellable(
+            root_files_request(),
+            IndexConsistency::ReconcileWorkingTree,
+            ServiceCallOptions::new().with_initial_reconciliation_deadline(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+            ),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("cold reconciliation before deadline");
+
+    assert_eq!(response.meta.repository_generation, 1);
+    assert_eq!(services.reconciliation.diagnostics().timed_out_waiters, 0);
+}
+
+#[tokio::test]
 async fn committed_generation_reconciliation_keeps_waiting_past_cold_deadline() {
     let (_root, services) = indexed_services().await;
     let held_operation = services
@@ -733,7 +1008,7 @@ async fn initial_index_wait_returns_after_publication_lock_releases() {
     let publisher = tokio::task::spawn_blocking(move || {
         publisher_services
             .storage
-            .full_reconcile(&publisher_services.indexer.config_hash(), Vec::new())
+            .full_reconcile("published", Vec::new())
             .expect("publish generation");
         published_tx.send(()).expect("announce publication");
         release_rx.recv().expect("release permission");
@@ -805,27 +1080,6 @@ async fn initial_index_wait_bounds_generation_zero_without_an_owner() {
     assert!(matches!(result, Error::IndexNotReady));
 }
 
-#[tokio::test(start_paused = true)]
-async fn initial_index_wait_treats_an_incompatible_generation_as_unready() {
-    let root = tempfile::tempdir().expect("root");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
-    let services = Services::open(config).expect("services");
-    services
-        .storage
-        .full_reconcile("obsolete-projection", Vec::new())
-        .expect("obsolete generation");
-
-    let result = tokio::time::timeout(
-        INITIAL_INDEX_IDLE_GRACE + INITIAL_INDEX_PROBE_INTERVAL,
-        services.wait_for_initial_index_cancellable(CancellationToken::new()),
-    )
-    .await
-    .expect("incompatible generation wait must be bounded")
-    .expect_err("incompatible generation remains unready without a refresh");
-    assert!(matches!(result, Error::IndexNotReady));
-}
-
 #[tokio::test]
 async fn index_search_read_and_hash_delta() {
     let root = tempfile::tempdir().expect("root");
@@ -838,7 +1092,7 @@ async fn index_search_read_and_hash_delta() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -875,6 +1129,9 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read");
@@ -889,6 +1146,9 @@ async fn index_search_read_and_hash_delta() {
             continuation_cursor: None,
             max_tokens: Some(100),
             expected_hash: Some(first.content_hash),
+            delta: false,
+            receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
         })
         .await
         .expect("read delta");
@@ -910,7 +1170,7 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("index");
     let file = services
@@ -918,10 +1178,8 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .find_file("lib.rs")
         .expect("find file")
         .expect("indexed file");
-    let session = services
-        .storage
-        .begin_generation_read()
-        .expect("read session");
+    let session = crate::services::index_read::IndexReadSnapshot::open(&services.storage)
+        .expect("read snapshot");
     let crate::symbol_identity::SymbolResolution::Unique(large) =
         session.find_symbol(file.id, "large").expect("find symbol")
     else {
@@ -937,8 +1195,6 @@ async fn adaptive_context_ranges_keep_the_match_and_complete_small_declarations(
         .expect("enclosing symbol");
     assert_eq!(enclosing.name, "large");
 
-    let session = crate::services::index_read::RepositoryGeneration::open(&services.storage)
-        .expect("read snapshot");
     let bounded = services
         .adaptive_context_excerpts(
             &session,
@@ -1027,7 +1283,7 @@ async fn search_cursor_defers_candidates_that_do_not_fit_the_current_token_page(
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -1117,7 +1373,7 @@ async fn cancellable_service_stops_before_blocking_work() {
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let services = Services::open(config).expect("services");
     services
-        .refresh(IndexingMode::Reconcile)
+        .index(IndexingMode::Reconcile)
         .await
         .expect("index");
 
@@ -1173,12 +1429,13 @@ async fn token_savings_rejects_work_when_blocking_capacity_is_saturated() {
     let config =
         Config::discover(root.path(), Some(root.path().join("db.sqlite"))).expect("config");
     let mut services = Services::open(config).expect("services");
-    services.blocking_executor = executor::BlockingExecutor::new(1, 1, Duration::from_secs(30));
+    services.runtime.blocking_executor =
+        executor::BlockingExecutor::new(1, 1, Duration::from_secs(30));
 
     let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let blocker = {
-        let executor = services.blocking_executor.clone();
+        let executor = services.runtime.blocking_executor.clone();
         let gate = Arc::clone(&gate);
         let started = Arc::clone(&started);
         tokio::spawn(async move {
@@ -1221,7 +1478,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
     let services = Services::open(config).expect("services");
     let first = services
         .storage
-        .full_reconcile(&services.indexer.config_hash(), Vec::new())
+        .full_reconcile("hash-a", Vec::new())
         .expect("initial generation");
     assert_eq!(first, 1);
 
@@ -1234,7 +1491,7 @@ fn request_snapshot_ignores_concurrent_generation_publish() {
             assert_eq!(session.generation(), first);
             services
                 .storage
-                .full_reconcile(&services.indexer.config_hash(), Vec::new())
+                .full_reconcile("hash-b", Vec::new())
                 .expect("concurrent publish");
             assert_eq!(
                 session.generation(),
@@ -1264,7 +1521,7 @@ fn pinned_snapshot_operation_errors_are_not_retried() {
     let services = Services::open(config).expect("services");
     services
         .storage
-        .full_reconcile(&services.indexer.config_hash(), Vec::new())
+        .full_reconcile("hash-a", Vec::new())
         .expect("initial generation");
     let calls = Cell::new(0);
 
@@ -1310,7 +1567,7 @@ async fn regex_retained_chunk_overflow_is_not_reported_as_complete() {
         .collect();
     services
         .storage
-        .full_reconcile(&services.indexer.config_hash(), files)
+        .full_reconcile("hash-a", files)
         .expect("indexed fixture");
 
     let error = services
@@ -1367,7 +1624,7 @@ async fn regex_candidate_chunk_overflow_reports_the_fts_bound() {
     services
         .storage
         .full_reconcile(
-            &services.indexer.config_hash(),
+            "hash-a",
             vec![IndexedFile {
                 path: "large.rs".into(),
                 language: Some("rust".into()),

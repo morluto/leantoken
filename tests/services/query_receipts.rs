@@ -95,9 +95,10 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     let error = services
-        .search_occurrences_with_options_cancellable(
+        .search_occurrences_with_options_consistency_cancellable(
             exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
             SearchOccurrenceOutput::Coordinates,
+            IndexConsistency::IndexedGeneration,
             ServiceCallOptions::new(),
             cancellation,
         )
@@ -308,7 +309,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
     std::fs::write(root.path().join("notes.md"), "definitely_absent\n")
         .expect("write out-of-scope file");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish unrelated file");
     let reused = services
@@ -338,7 +339,7 @@ async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
     )
     .expect("change relevant source");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("publish relevant edit");
     let error = services
@@ -364,7 +365,7 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
     let config = Config::discover(root.path(), Some(database)).expect("config");
     let services = Services::open(config.clone()).expect("services");
     services
-        .refresh(leantoken::IndexingMode::Reconcile)
+        .index(leantoken::IndexingMode::Reconcile)
         .await
         .expect("index");
     let recorded = services
@@ -417,16 +418,11 @@ async fn query_receipt_survives_restart_and_fails_loud_on_predicate_mismatch() {
 }
 
 fn query_receipt_count(database: &std::path::Path) -> usize {
-    let mut artifacts = database.as_os_str().to_os_string();
-    artifacts.push(".artifacts.sqlite");
-    let connection = rusqlite::Connection::open(std::path::PathBuf::from(artifacts))
-        .expect("open artifact database");
+    let connection = rusqlite::Connection::open(database).expect("open database");
     let count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM artifacts WHERE kind = 'query_proof'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("query proof count");
-    usize::try_from(count).expect("non-negative query proof count")
+        .query_row("SELECT COUNT(*) FROM query_coverage_receipts", [], |row| {
+            row.get(0)
+        })
+        .expect("query receipt count");
+    usize::try_from(count).expect("non-negative query receipt count")
 }

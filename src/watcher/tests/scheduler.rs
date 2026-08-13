@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
-async fn initial_burst_collapses_to_one_quiet_refresh() {
+async fn initial_burst_collapses_to_one_quiet_full_reconciliation() {
     let mut scheduler = WatcherReconciliationScheduler::with_policy(test_schedule_policy());
     scheduler.enqueue(
         WatcherMessage::Changed {
@@ -24,7 +24,7 @@ async fn initial_burst_collapses_to_one_quiet_refresh() {
     advance(Duration::from_millis(1)).await;
     assert_eq!(
         scheduler.take_ready(Instant::now()),
-        Some(WatcherAction::Refresh)
+        Some(WatcherAction::Full)
     );
     assert!(scheduler.take_ready(Instant::now()).is_none());
 }
@@ -51,7 +51,7 @@ async fn new_activity_extends_quiet_period_and_coalesces_paths() {
     advance(Duration::from_millis(1)).await;
     assert_eq!(
         scheduler.take_ready(Instant::now()),
-        Some(WatcherAction::Refresh)
+        Some(WatcherAction::Paths(vec!["a.rs".into(), "b.rs".into()]))
     );
 }
 
@@ -69,7 +69,7 @@ async fn consecutive_full_reconciliations_observe_capped_cooldown() {
         assert!(scheduler.take_ready(Instant::now()).is_none());
         advance(Duration::from_millis(1)).await;
         let action = scheduler.take_ready(Instant::now()).expect("next full");
-        assert_eq!(action, WatcherAction::Refresh);
+        assert_eq!(action, WatcherAction::Full);
         scheduler.finish_success(&action, Instant::now());
     }
 }
@@ -89,7 +89,7 @@ async fn stable_period_resets_full_reconciliation_cooldown() {
     advance(Duration::from_millis(1)).await;
     assert_eq!(
         scheduler.take_ready(Instant::now()),
-        Some(WatcherAction::Refresh)
+        Some(WatcherAction::Full)
     );
 }
 
@@ -120,7 +120,10 @@ async fn transient_failure_retains_work_and_backs_off_before_retry() {
     let retry = scheduler
         .take_ready(Instant::now())
         .expect("retained retry");
-    assert_eq!(retry, WatcherAction::Refresh);
+    assert_eq!(
+        retry,
+        WatcherAction::Paths(vec!["a.rs".into(), "b.rs".into()])
+    );
     scheduler.finish_failure(retry, Instant::now());
 
     advance(Duration::from_millis(99)).await;
@@ -147,6 +150,6 @@ async fn failed_action_does_not_replace_a_later_full_request() {
 
     assert_eq!(
         scheduler.take_ready(Instant::now()),
-        Some(WatcherAction::Refresh)
+        Some(WatcherAction::Full)
     );
 }

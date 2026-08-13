@@ -1,4 +1,4 @@
-impl GenerationReadTransaction {
+impl ReadSession {
     pub fn counts(&self) -> Result<StorageCounts> {
         let files = i64_to_usize(self.conn.query_row(
             "SELECT count(*) FROM files",

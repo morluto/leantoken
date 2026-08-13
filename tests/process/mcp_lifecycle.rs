@@ -180,8 +180,10 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
     process.send_initialized();
     process.stdin.take();
 
+    // Startup cancellation joins the runtime task under the production
+    // shutdown budget; allow that same bounded window on slower CI runners.
     let status = process
-        .wait_timeout(Duration::from_secs(2))
+        .wait_timeout(Duration::from_secs(5))
         .expect("wait for MCP process")
         .expect("MCP process should honor startup cancellation");
     assert!(status.success(), "MCP process exited with {status}");
@@ -484,7 +486,7 @@ pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation
     )
     .expect("old fixture");
     let database = root.path().join("index.sqlite");
-    let initial = run(root.path(), &database, &["refresh"]);
+    let initial = run(root.path(), &database, &["index"]);
     assert_eq!(initial["repository_generation"], 1);
     assert_eq!(database_state(&database).map(|state| state.1), Some(1));
 

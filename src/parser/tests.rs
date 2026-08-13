@@ -936,7 +936,10 @@ fn python_parses_class_function_imports() -> Result<()> {
     let imports = import_targets(&out);
     assert!(imports.contains(&"os"), "imports: {imports:?}");
     assert!(imports.contains(&"collections"), "imports: {imports:?}");
-    assert!(!imports.contains(&"defaultdict"), "imports: {imports:?}");
+    assert!(
+        imports.contains(&"collections.defaultdict"),
+        "imports: {imports:?}"
+    );
 
     let init = out.symbols.iter().find(|s| s.name == "__init__").unwrap();
     assert_eq!(init.parent.as_deref(), Some("Greeter"));
@@ -956,7 +959,16 @@ fn python_imports_preserve_module_semantics() -> Result<()> {
     )?;
     assert_eq!(
         import_targets(&out),
-        vec!["pkg.mod", ".helpers", ".tools", ".aliased", "..core"]
+        vec![
+            "pkg.mod",
+            "pkg.mod.thing",
+            "pkg.mod.other",
+            ".helpers",
+            ".tools",
+            ".aliased",
+            "..core",
+            "..core.api"
+        ]
     );
     Ok(())
 }

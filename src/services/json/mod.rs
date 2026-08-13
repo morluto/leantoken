@@ -98,6 +98,7 @@ impl Services {
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let this = self.clone();
         let result = self
+            .runtime
             .blocking_executor
             .run(cancellation, move |cancellation| {
                 let request = validation::parse_json_request(request, execution)?;
