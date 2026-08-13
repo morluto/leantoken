@@ -1111,7 +1111,10 @@ mod tests {
         let contexts = config
             .approved_repository_contexts()
             .expect("contained context");
-        assert_eq!(contexts[0].root.as_path(), nested.canonicalize().unwrap());
+        assert_eq!(
+            fs::canonicalize(contexts[0].root.as_path()).expect("canonical nested context root"),
+            fs::canonicalize(&nested).expect("canonical nested repository")
+        );
 
         fs::write(
             &config_path,
@@ -1149,7 +1152,10 @@ mod tests {
         let contexts = config
             .approved_repository_contexts()
             .expect("external capability");
-        assert_eq!(contexts[0].root.as_path(), outside.path());
+        assert_eq!(
+            fs::canonicalize(contexts[0].root.as_path()).expect("canonical external context root"),
+            fs::canonicalize(outside.path()).expect("canonical external repository")
+        );
     }
 
     #[test]
