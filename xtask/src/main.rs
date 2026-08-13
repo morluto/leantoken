@@ -270,7 +270,8 @@ fn run_parallel_product_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskErr
             "parallel product plan shape drifted".to_owned(),
         ));
     }
-    let (parallel, sequential) = plan.commands.split_at(PRODUCT_PARALLEL_LANES);
+    let parallel_lanes = product_parallel_lanes();
+    let (parallel, sequential) = plan.commands.split_at(parallel_lanes);
     let results = thread::scope(|scope| {
         parallel
             .iter()
@@ -325,7 +326,7 @@ fn run_parallel_product_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskErr
     }
 
     for (offset, command) in sequential.iter().enumerate() {
-        let index = PRODUCT_PARALLEL_LANES + offset;
+        let index = parallel_lanes + offset;
         let started = Instant::now();
         let status = print_and_run(root, command)?;
         println!(
@@ -474,6 +475,21 @@ fn nextest_command<const N: usize>(args: [&str; N]) -> Vec<String> {
 
 fn process_test_jobs() -> &'static str {
     process_test_jobs_for_os(std::env::consts::OS)
+}
+
+fn product_parallel_lanes() -> usize {
+    product_parallel_lanes_for_os(std::env::consts::OS)
+}
+
+fn product_parallel_lanes_for_os(os: &str) -> usize {
+    // Windows runners time out ordinary integration reads when they compete
+    // with the library suite for filesystem and SQLite capacity. Keep the
+    // evidence complete while serializing those two heavy lanes there.
+    if os == "windows" {
+        1
+    } else {
+        PRODUCT_PARALLEL_LANES
+    }
 }
 
 fn process_test_jobs_for_os(os: &str) -> &'static str {
@@ -962,7 +978,8 @@ mod tests {
     use super::{
         BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
         contains_include_macro, listed_test_count, module_path_value, parse_compiled_test_list,
-        process_test_jobs_for_os, run_parallel_product_plan, workspace_root,
+        process_test_jobs_for_os, product_parallel_lanes_for_os, run_parallel_product_plan,
+        workspace_root,
     };
 
     #[test]
@@ -1055,6 +1072,19 @@ mod tests {
                     .windows(2)
                     .any(|args| args == ["--exclude", BENCHMARKS]))
         );
+    }
+
+    #[test]
+    fn windows_product_lanes_avoid_cross_suite_resource_contention() {
+        assert_eq!(
+            product_parallel_lanes_for_os("linux"),
+            PRODUCT_PARALLEL_LANES
+        );
+        assert_eq!(
+            product_parallel_lanes_for_os("macos"),
+            PRODUCT_PARALLEL_LANES
+        );
+        assert_eq!(product_parallel_lanes_for_os("windows"), 1);
     }
 
     #[test]
