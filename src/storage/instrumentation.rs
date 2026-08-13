@@ -39,6 +39,30 @@ CREATE TABLE IF NOT EXISTS legacy_primary_imports (
 );
 "#;
 
+const LEGACY_TOKEN_SAVINGS_COLUMNS: &[&str] = &[
+    "tokenizer",
+    "operation",
+    "tracked_requests",
+    "response_tracked_requests",
+    "response_baseline_requests",
+    "baseline_source_tokens",
+    "response_baseline_source_tokens",
+    "emitted_source_tokens",
+    "estimated_source_tokens_saved",
+    "response_source_tokens",
+    "path_and_metadata_tokens",
+    "protocol_tokens",
+    "total_response_tokens",
+    "receipt_suppressed_exact",
+    "receipt_suppressed_overlap",
+    "expected_hash_not_modified_responses",
+    "expected_hash_suppressed_source_tokens",
+    "useful_requests",
+    "incomplete_requests",
+    "unsupported_requests",
+    "hash_suppressed_requests",
+];
+
 /// Best-effort process instrumentation isolated from repository generations.
 #[derive(Clone)]
 pub(crate) struct InstrumentationStorage {
@@ -166,9 +190,28 @@ impl InstrumentationStorage {
                 return Ok(());
             }
 
+            let legacy_columns = {
+                let mut statement =
+                    connection.prepare("PRAGMA legacy.table_info(token_savings)")?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<std::result::Result<HashSet<_>, _>>()?
+            };
+            let legacy_projection = LEGACY_TOKEN_SAVINGS_COLUMNS
+                .iter()
+                .map(|column| {
+                    if legacy_columns.contains(*column) {
+                        format!("legacy_token_savings.\"{column}\"")
+                    } else {
+                        "0".to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+
             connection.execute_batch("BEGIN IMMEDIATE")?;
             let imported = (|| {
-                connection.execute_batch(
+                let import_token_savings = format!(
                     "INSERT OR IGNORE INTO token_savings (
                         tokenizer, operation, tracked_requests,
                         response_tracked_requests, response_baseline_requests,
@@ -182,25 +225,19 @@ impl InstrumentationStorage {
                         incomplete_requests, unsupported_requests,
                         hash_suppressed_requests
                     )
-                    SELECT tokenizer, operation, tracked_requests,
-                           response_tracked_requests, response_baseline_requests,
-                           baseline_source_tokens, response_baseline_source_tokens,
-                           emitted_source_tokens, estimated_source_tokens_saved,
-                           response_source_tokens, path_and_metadata_tokens,
-                           protocol_tokens, total_response_tokens,
-                           receipt_suppressed_exact, receipt_suppressed_overlap,
-                           expected_hash_not_modified_responses,
-                           expected_hash_suppressed_source_tokens, useful_requests,
-                           incomplete_requests, unsupported_requests,
-                           hash_suppressed_requests
-                    FROM legacy.token_savings;
+                    SELECT {legacy_projection}
+                    FROM legacy.token_savings AS legacy_token_savings",
+                    legacy_projection = legacy_projection
+                );
+                connection.execute_batch(&format!(
+                    "{import_token_savings};
 
                     INSERT OR IGNORE INTO service_failures (
                         tokenizer, operation, error_category, failed_requests
                     )
                     SELECT tokenizer, operation, error_category, failed_requests
                     FROM legacy.service_failures;",
-                )?;
+                ))?;
                 connection.execute(
                     "INSERT INTO legacy_primary_imports(source_database) VALUES (?1)",
                     params![source_database],

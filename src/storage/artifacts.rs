@@ -427,10 +427,15 @@ impl ArtifactStorage {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        // A primary database recreation gets a new incarnation while its
-        // sidecar may survive. Those artifacts are unusable by the new
-        // incarnation, so remove them before accounting for the bounded
-        // artifact quota rather than allowing dead state to exhaust it.
+        // A primary database recreation or path reuse gets a new identity while
+        // its sidecar may survive. Only artifacts for the current identity and
+        // incarnation are usable, so reclaim all other rows before accounting
+        // for the bounded artifact quota.
+        transaction.execute(
+            "DELETE FROM artifacts
+             WHERE repository_identity <> ?1",
+            [repository_identity],
+        )?;
         transaction.execute(
             "DELETE FROM artifacts
              WHERE repository_identity = ?1 AND database_incarnation_id <> ?2",

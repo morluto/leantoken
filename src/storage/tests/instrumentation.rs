@@ -135,6 +135,68 @@ fn legacy_primary_accounting_is_copied_before_the_tables_are_removed() {
 }
 
 #[test]
+fn older_legacy_primary_accounting_defaults_new_columns_before_copying() {
+    let directory = tempfile::tempdir().expect("directory");
+    let index_path = directory.path().join("index.sqlite");
+    let instrumentation_path = directory.path().join("instrumentation.sqlite");
+    let index = Connection::open(&index_path).expect("legacy index");
+    index
+        .execute_batch(
+            "CREATE TABLE token_savings (
+                 tokenizer TEXT NOT NULL,
+                 operation TEXT NOT NULL,
+                 tracked_requests INTEGER NOT NULL DEFAULT 0,
+                 baseline_source_tokens INTEGER NOT NULL DEFAULT 0,
+                 emitted_source_tokens INTEGER NOT NULL DEFAULT 0,
+                 estimated_source_tokens_saved INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY(tokenizer, operation)
+             );
+             CREATE TABLE service_failures (
+                 tokenizer TEXT NOT NULL,
+                 operation TEXT NOT NULL,
+                 error_category TEXT NOT NULL,
+                 failed_requests INTEGER NOT NULL DEFAULT 0,
+                 PRIMARY KEY(tokenizer, operation, error_category)
+             );
+             INSERT INTO token_savings(
+                 tokenizer, operation, tracked_requests,
+                 baseline_source_tokens, emitted_source_tokens,
+                 estimated_source_tokens_saved
+             ) VALUES ('cl100k_base', 'search', 7, 11, 3, 8);
+             INSERT INTO service_failures(
+                 tokenizer, operation, error_category, failed_requests
+             ) VALUES ('cl100k_base', 'search', 'fixture', 3);",
+        )
+        .expect("older additive schema");
+    drop(index);
+
+    let instrumentation = InstrumentationStorage::open(&instrumentation_path);
+    instrumentation
+        .migrate_legacy_primary(&index_path)
+        .expect("copy older legacy accounting");
+
+    let (savings, failures) = instrumentation
+        .snapshot("cl100k_base")
+        .expect("migrated accounting");
+    Storage::open(&index_path).expect("older primary opens after migration");
+    let record = savings.get("search").expect("search savings");
+    assert_eq!(record.tracked_requests, 7);
+    assert_eq!(record.baseline_source_tokens, 11);
+    assert_eq!(record.emitted_source_tokens, 3);
+    assert_eq!(record.estimated_source_tokens_saved, 8);
+    assert_eq!(record.response_tracked_requests, 0);
+    assert_eq!(record.total_response_tokens, 0);
+    assert_eq!(
+        failures,
+        vec![ServiceFailureRecord {
+            operation: "search".into(),
+            error_category: "fixture".into(),
+            failed_requests: 3,
+        }]
+    );
+}
+
+#[test]
 fn accounting_skips_a_busy_local_writer() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = InstrumentationStorage::open(&directory.path().join("instrumentation.sqlite"));

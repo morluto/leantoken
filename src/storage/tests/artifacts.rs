@@ -241,6 +241,37 @@ fn recreated_primary_database_reclaims_old_sidecar_quota() {
 }
 
 #[test]
+fn reused_primary_database_reclaims_old_repository_quota() {
+    let directory = tempfile::tempdir().expect("directory");
+    let artifact_path = directory.path().join("index.artifacts.sqlite");
+    let artifacts = ArtifactStorage::open(&artifact_path);
+
+    for index in 0..256 {
+        artifacts
+            .evaluate_receipt(
+                "old-repository",
+                "old-incarnation",
+                None,
+                index as u64,
+                &[evidence(&format!("old-{index}"))],
+                true,
+            )
+            .expect("fill old repository quota");
+    }
+
+    artifacts
+        .evaluate_receipt(
+            "new-repository",
+            "new-incarnation",
+            None,
+            1,
+            &[evidence("new")],
+            true,
+        )
+        .expect("new repository must not inherit old quota usage");
+}
+
+#[test]
 fn legacy_mutable_state_is_absent_from_the_repository_index() {
     let directory = tempfile::tempdir().expect("directory");
     let index = Storage::open(directory.path().join("index.sqlite")).expect("index");
