@@ -128,7 +128,13 @@ impl InstrumentationStorage {
         connection.busy_timeout(Duration::ZERO)?;
         let attach = connection.execute("ATTACH DATABASE ?1 AS legacy", params![&source_database]);
         let restore_timeout = connection.busy_timeout(DEFAULT_BUSY_TIMEOUT);
-        attach.and(restore_timeout)?;
+        if let Err(error) = attach.and(restore_timeout) {
+            // SQLite can retain the failed attachment's file handle on
+            // Windows even when ATTACH reports a corrupt database. Release
+            // the handle before startup removes a disposable managed cache.
+            let _ = connection.execute_batch("DETACH DATABASE legacy");
+            return Err(error.into());
+        }
         let result = (|| {
             let has_legacy_token_savings = connection.query_row(
                 "SELECT EXISTS(
