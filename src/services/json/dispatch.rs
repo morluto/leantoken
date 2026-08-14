@@ -353,12 +353,13 @@ impl Services {
             let mut project = |value: Option<&Value>| -> Result<Option<Value>> {
                 let Some(value) = value else { return Ok(None) };
                 if projection == JsonProjection::Schema {
-                    let page = project_schema_page(
-                        self,
-                        value,
-                        limits.max_items.saturating_sub(returned_items).max(1),
-                        limits.max_tokens.saturating_sub(projected_tokens).max(1),
-                    )?;
+                    let item_budget = limits.max_items.saturating_sub(returned_items);
+                    let token_budget = limits.max_tokens.saturating_sub(projected_tokens);
+                    if item_budget == 0 || token_budget == 0 {
+                        incomplete = true;
+                        return Ok(None);
+                    }
+                    let page = project_schema_page(self, value, item_budget, token_budget)?;
                     let (projected, _total, returned, remaining, reason, tokens) =
                         page.into_parts();
                     returned_items = returned_items.saturating_add(returned);

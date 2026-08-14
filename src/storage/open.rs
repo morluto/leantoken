@@ -137,17 +137,10 @@ impl Storage {
         conn.execute_batch("BEGIN DEFERRED")?;
 
         if !table_exists(&conn, StorageTable::Meta)? {
-            return Ok(ReadOnlyStatusSnapshot {
-                generation: 0,
-                derivation_fingerprint: None,
-                counts: StorageCounts {
-                    files: 0,
-                    chunks: 0,
-                    symbols: 0,
-                    source_bytes: 0,
-                    languages: Vec::new(),
-                },
-            });
+            return Err(Error::OperationFailure(format!(
+                "database is not a LeanToken index: missing meta table at {}",
+                path.display()
+            )));
         }
 
         let has_repository_root = column_exists(&conn, StorageColumn::MetaRepositoryRoot)?;

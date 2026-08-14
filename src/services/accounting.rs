@@ -5,7 +5,7 @@ use crate::{Error, Result};
 
 use super::{RetrievalResponse, ServiceCallOptions};
 
-const MAX_ACCOUNTING_PASSES: usize = 32;
+const MAX_ACCOUNTING_PASSES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReceiptResourceDecoration {
@@ -44,6 +44,7 @@ impl ResponseAccountant {
             meta.total_response_tokens = 0;
             meta.source_tokens
         };
+        let mut last = None;
         for _ in 0..MAX_ACCOUNTING_PASSES {
             let accounting = self.accounting(
                 &*response,
@@ -58,6 +59,20 @@ impl ResponseAccountant {
             {
                 return Ok(());
             }
+            // Check for oscillation: if we've seen this exact state before,
+            // accept the worst-case (max) token count and stop.
+            let current = (
+                accounting.protocol_tokens,
+                accounting.path_and_metadata_tokens,
+                accounting.total_response_tokens,
+            );
+            if last == Some(current) {
+                meta.protocol_tokens = current.0;
+                meta.path_and_metadata_tokens = current.1;
+                meta.total_response_tokens = current.2;
+                return Ok(());
+            }
+            last = Some(current);
             meta.protocol_tokens = accounting.protocol_tokens;
             meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
             meta.total_response_tokens = accounting.total_response_tokens;
@@ -108,6 +123,7 @@ impl ResponseAccountant {
             meta.path_and_metadata_tokens = 0;
             meta.total_response_tokens = 0;
         }
+        let mut last = None;
         for _ in 0..MAX_ACCOUNTING_PASSES {
             let accounting = self.accounting(
                 &*response,
@@ -122,6 +138,18 @@ impl ResponseAccountant {
             {
                 return Ok(());
             }
+            let current = (
+                accounting.protocol_tokens,
+                accounting.path_and_metadata_tokens,
+                accounting.total_response_tokens,
+            );
+            if last == Some(current) {
+                meta.protocol_tokens = current.0;
+                meta.path_and_metadata_tokens = current.1;
+                meta.total_response_tokens = current.2;
+                return Ok(());
+            }
+            last = Some(current);
             meta.protocol_tokens = accounting.protocol_tokens;
             meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
             meta.total_response_tokens = accounting.total_response_tokens;
