@@ -201,10 +201,40 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
         if reader.read_line(&mut line)? == 0 {
             break;
         }
-        if let Some(path) = line.strip_prefix("+++ ") {
-            target_path = path
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            let stripped = rest.trim_end_matches(['\r', '\n']);
+            // Handle Git patch header formats:
+            // 1. Standard:           +++ b/<path>
+            // 2. Quoted (quotePath): "b/<path>" with C-escaped bytes
+            // 3. No prefix:          +++ <path> (diff.noprefix=true)
+            let unquoted = stripped
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .map(|s| {
+                    let mut result = String::new();
+                    let mut chars = s.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            match chars.next() {
+                                Some('"') => result.push('"'),
+                                Some('t') => result.push('\t'),
+                                Some(other) => {
+                                    result.push('\\');
+                                    result.push(other);
+                                }
+                                None => result.push('\\'),
+                            }
+                        } else {
+                            result.push(c);
+                        }
+                    }
+                    result
+                });
+            let path_str = unquoted.as_deref().unwrap_or(stripped);
+            target_path = path_str
                 .strip_prefix("b/")
-                .map(|path| path.trim_end_matches(['\r', '\n']))
+                .or_else(|| path_str.strip_prefix("a/"))
+                .or(Some(path_str))
                 .and_then(|path| path.strip_prefix(prefix))
                 .map(|path| slash_path(Path::new(path)));
             continue;
@@ -382,7 +412,7 @@ pub(crate) fn diff_name_only(
     ];
     args.extend(head_sha.map(str::to_owned));
     args.extend(["--".to_owned(), ".".to_owned()]);
-    let Ok(output) = run_git_capture(
+    let output = run_git_capture(
         root,
         program,
         &args,
@@ -393,9 +423,7 @@ pub(crate) fn diff_name_only(
             failure_reason: "could not diff revision",
             max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
         },
-    ) else {
-        return Ok(Vec::new());
-    };
+    )?;
     parse_diff_names(output.as_slice(), max, prefix)
 }
 
