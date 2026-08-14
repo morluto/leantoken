@@ -170,67 +170,75 @@
 <a href=#170 id=170 data-nosnippet>170</a>                    limit: MAX_CONTEXT_EVIDENCE_QUERIES,
 <a href=#171 id=171 data-nosnippet>171</a>                });
 <a href=#172 id=172 data-nosnippet>172</a>            }
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">if </span>requirement.minimum_query_matches == <span class="number">0
-<a href=#174 id=174 data-nosnippet>174</a>                </span>|| requirement.minimum_query_matches &gt; requirement.queries.len()
-<a href=#175 id=175 data-nosnippet>175</a>            {
-<a href=#176 id=176 data-nosnippet>176</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#177 id=177 data-nosnippet>177</a>                    field: <span class="string">"required_evidence minimum_query_matches"</span>,
-<a href=#178 id=178 data-nosnippet>178</a>                    reason: <span class="string">"must be between one and the number of queries"</span>,
-<a href=#179 id=179 data-nosnippet>179</a>                });
-<a href=#180 id=180 data-nosnippet>180</a>            }
-<a href=#181 id=181 data-nosnippet>181</a>            <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>requirement.queries {
-<a href=#182 id=182 data-nosnippet>182</a>                validate_input(query, <span class="string">"required_evidence query"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
-<a href=#183 id=183 data-nosnippet>183</a>                <span class="kw">if </span>query.trim().is_empty() {
-<a href=#184 id=184 data-nosnippet>184</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#185 id=185 data-nosnippet>185</a>                        field: <span class="string">"required_evidence queries"</span>,
-<a href=#186 id=186 data-nosnippet>186</a>                        reason: <span class="string">"must not contain empty queries"</span>,
-<a href=#187 id=187 data-nosnippet>187</a>                    });
-<a href=#188 id=188 data-nosnippet>188</a>                }
-<a href=#189 id=189 data-nosnippet>189</a>                evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
-<a href=#190 id=190 data-nosnippet>190</a>            }
-<a href=#191 id=191 data-nosnippet>191</a>        }
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">if </span>evidence_query_bytes &gt; MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
-<a href=#193 id=193 data-nosnippet>193</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#194 id=194 data-nosnippet>194</a>                field: <span class="string">"required_evidence query bytes"</span>,
-<a href=#195 id=195 data-nosnippet>195</a>                requested: evidence_query_bytes,
-<a href=#196 id=196 data-nosnippet>196</a>                limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
-<a href=#197 id=197 data-nosnippet>197</a>            });
-<a href=#198 id=198 data-nosnippet>198</a>        }
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">if </span>request.known_hashes.len() &gt; MAX_INPUT_ITEMS {
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#201 id=201 data-nosnippet>201</a>        }
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">for </span>hash <span class="kw">in </span><span class="kw-2">&amp;</span>request.known_hashes {
-<a href=#203 id=203 data-nosnippet>203</a>            validate_input(hash, <span class="string">"known hash"</span>, <span class="number">128</span>)<span class="question-mark">?</span>;
-<a href=#204 id=204 data-nosnippet>204</a>        }
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">if </span>request.changed_paths.len() &gt; MAX_DIFF_CHANGED_PATHS {
-<a href=#206 id=206 data-nosnippet>206</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#207 id=207 data-nosnippet>207</a>        }
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">for </span>query <span class="kw">in </span>facets::plan(<span class="kw-2">&amp;</span>request.task, MAX_CONTEXT_QUERIES)
-<a href=#209 id=209 data-nosnippet>209</a>            .queries
-<a href=#210 id=210 data-nosnippet>210</a>            .iter()
-<a href=#211 id=211 data-nosnippet>211</a>            .filter(|query| !query.has_facet(FacetKind::TestIntent))
-<a href=#212 id=212 data-nosnippet>212</a>        {
-<a href=#213 id=213 data-nosnippet>213</a>            compile_literal_regex(<span class="kw-2">&amp;</span>query.value, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#214 id=214 data-nosnippet>214</a>        }
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="prelude-val">Ok</span>(policy)
-<a href=#216 id=216 data-nosnippet>216</a>    }
-<a href=#217 id=217 data-nosnippet>217</a>}
-<a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>context_accounting_operation(request: <span class="kw-2">&amp;</span>ContextRequest) -&gt; TokenAccountingOperation {
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>request.plan_only {
-<a href=#221 id=221 data-nosnippet>221</a>        TokenAccountingOperation::ContextPlan
-<a href=#222 id=222 data-nosnippet>222</a>    } <span class="kw">else </span>{
-<a href=#223 id=223 data-nosnippet>223</a>        TokenAccountingOperation::Context
+<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">let </span>normalized_distinct = {
+<a href=#174 id=174 data-nosnippet>174</a>                <span class="kw">let </span><span class="kw-2">mut </span>seen = std::collections::HashSet::new();
+<a href=#175 id=175 data-nosnippet>175</a>                requirement
+<a href=#176 id=176 data-nosnippet>176</a>                    .queries
+<a href=#177 id=177 data-nosnippet>177</a>                    .iter()
+<a href=#178 id=178 data-nosnippet>178</a>                    .filter(|q| seen.insert(q.to_lowercase()))
+<a href=#179 id=179 data-nosnippet>179</a>                    .count()
+<a href=#180 id=180 data-nosnippet>180</a>            };
+<a href=#181 id=181 data-nosnippet>181</a>            <span class="kw">if </span>requirement.minimum_query_matches == <span class="number">0
+<a href=#182 id=182 data-nosnippet>182</a>                </span>|| requirement.minimum_query_matches &gt; normalized_distinct
+<a href=#183 id=183 data-nosnippet>183</a>            {
+<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#185 id=185 data-nosnippet>185</a>                    field: <span class="string">"required_evidence minimum_query_matches"</span>,
+<a href=#186 id=186 data-nosnippet>186</a>                    reason: <span class="string">"must be between one and the number of normalized distinct queries"</span>,
+<a href=#187 id=187 data-nosnippet>187</a>                });
+<a href=#188 id=188 data-nosnippet>188</a>            }
+<a href=#189 id=189 data-nosnippet>189</a>            <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>requirement.queries {
+<a href=#190 id=190 data-nosnippet>190</a>                validate_input(query, <span class="string">"required_evidence query"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
+<a href=#191 id=191 data-nosnippet>191</a>                <span class="kw">if </span>query.trim().is_empty() {
+<a href=#192 id=192 data-nosnippet>192</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#193 id=193 data-nosnippet>193</a>                        field: <span class="string">"required_evidence queries"</span>,
+<a href=#194 id=194 data-nosnippet>194</a>                        reason: <span class="string">"must not contain empty queries"</span>,
+<a href=#195 id=195 data-nosnippet>195</a>                    });
+<a href=#196 id=196 data-nosnippet>196</a>                }
+<a href=#197 id=197 data-nosnippet>197</a>                evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
+<a href=#198 id=198 data-nosnippet>198</a>            }
+<a href=#199 id=199 data-nosnippet>199</a>        }
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">if </span>evidence_query_bytes &gt; MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
+<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#202 id=202 data-nosnippet>202</a>                field: <span class="string">"required_evidence query bytes"</span>,
+<a href=#203 id=203 data-nosnippet>203</a>                requested: evidence_query_bytes,
+<a href=#204 id=204 data-nosnippet>204</a>                limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
+<a href=#205 id=205 data-nosnippet>205</a>            });
+<a href=#206 id=206 data-nosnippet>206</a>        }
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">if </span>request.known_hashes.len() &gt; MAX_INPUT_ITEMS {
+<a href=#208 id=208 data-nosnippet>208</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#209 id=209 data-nosnippet>209</a>        }
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">for </span>hash <span class="kw">in </span><span class="kw-2">&amp;</span>request.known_hashes {
+<a href=#211 id=211 data-nosnippet>211</a>            validate_input(hash, <span class="string">"known hash"</span>, <span class="number">128</span>)<span class="question-mark">?</span>;
+<a href=#212 id=212 data-nosnippet>212</a>        }
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">if </span>request.changed_paths.len() &gt; MAX_DIFF_CHANGED_PATHS {
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#215 id=215 data-nosnippet>215</a>        }
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">for </span>query <span class="kw">in </span>facets::plan(<span class="kw-2">&amp;</span>request.task, MAX_CONTEXT_QUERIES)
+<a href=#217 id=217 data-nosnippet>217</a>            .queries
+<a href=#218 id=218 data-nosnippet>218</a>            .iter()
+<a href=#219 id=219 data-nosnippet>219</a>            .filter(|query| !query.has_facet(FacetKind::TestIntent))
+<a href=#220 id=220 data-nosnippet>220</a>        {
+<a href=#221 id=221 data-nosnippet>221</a>            compile_literal_regex(<span class="kw-2">&amp;</span>query.value, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#222 id=222 data-nosnippet>222</a>        }
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="prelude-val">Ok</span>(policy)
 <a href=#224 id=224 data-nosnippet>224</a>    }
 <a href=#225 id=225 data-nosnippet>225</a>}
 <a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>set_routing_consistency(
-<a href=#228 id=228 data-nosnippet>228</a>    response: <span class="kw-2">&amp;mut </span>ContextResponse,
-<a href=#229 id=229 data-nosnippet>229</a>    consistency: IndexConsistency,
-<a href=#230 id=230 data-nosnippet>230</a>) {
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(routing) = <span class="kw-2">&amp;mut </span>response.routing {
-<a href=#232 id=232 data-nosnippet>232</a>        routing.consistency = consistency;
-<a href=#233 id=233 data-nosnippet>233</a>    }
-<a href=#234 id=234 data-nosnippet>234</a>}
-<a href=#235 id=235 data-nosnippet>235</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#227 id=227 data-nosnippet>227</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>context_accounting_operation(request: <span class="kw-2">&amp;</span>ContextRequest) -&gt; TokenAccountingOperation {
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">if </span>request.plan_only {
+<a href=#229 id=229 data-nosnippet>229</a>        TokenAccountingOperation::ContextPlan
+<a href=#230 id=230 data-nosnippet>230</a>    } <span class="kw">else </span>{
+<a href=#231 id=231 data-nosnippet>231</a>        TokenAccountingOperation::Context
+<a href=#232 id=232 data-nosnippet>232</a>    }
+<a href=#233 id=233 data-nosnippet>233</a>}
+<a href=#234 id=234 data-nosnippet>234</a>
+<a href=#235 id=235 data-nosnippet>235</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>set_routing_consistency(
+<a href=#236 id=236 data-nosnippet>236</a>    response: <span class="kw-2">&amp;mut </span>ContextResponse,
+<a href=#237 id=237 data-nosnippet>237</a>    consistency: IndexConsistency,
+<a href=#238 id=238 data-nosnippet>238</a>) {
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(routing) = <span class="kw-2">&amp;mut </span>response.routing {
+<a href=#240 id=240 data-nosnippet>240</a>        routing.consistency = consistency;
+<a href=#241 id=241 data-nosnippet>241</a>    }
+<a href=#242 id=242 data-nosnippet>242</a>}
+<a href=#243 id=243 data-nosnippet>243</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>
