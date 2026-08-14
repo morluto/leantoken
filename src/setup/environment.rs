@@ -157,12 +157,10 @@ pub(super) fn configured_registrations(
     home: &Path,
     launcher: &McpLauncher,
 ) -> Result<Vec<ConfiguredRegistration>> {
-    configured_registrations_against(
-        home,
-        launcher.command()?,
-        &launcher.args,
-        launcher.version(),
-    )
+    SetupClient::ALL
+        .into_iter()
+        .filter_map(|client| read_configured_registration(client, home, launcher).transpose())
+        .collect()
 }
 
 pub(super) fn configured_registrations_with_snapshots(
@@ -281,11 +279,12 @@ pub(super) fn configured_registration_from_definition(
     definition: &ClientDefinition,
     source: Option<&str>,
 ) -> Result<Option<ConfiguredRegistration>> {
+    let expected_args = launcher.args_for(client);
     configured_registration_from_definition_against(
         client,
         home,
         launcher.command()?,
-        &launcher.args,
+        &expected_args,
         launcher.version(),
         definition,
         source,

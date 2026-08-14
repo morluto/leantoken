@@ -188,7 +188,13 @@ pub fn print_progress() -> Result<()> {
 /// first-run contract against the configured repository.
 pub fn run(config: &Config, ready_timeout: Duration) -> Result<DoctorReport> {
     let mut transport = DoctorTransport::spawn(config)?;
-    run_with_transport(config, ready_timeout, &mut transport, None)
+    run_with_transport(
+        config,
+        ready_timeout,
+        &mut transport,
+        None,
+        McpResultMode::Structured,
+    )
 }
 
 /// Verify the exact launcher currently stored for one configured MCP client.
@@ -223,7 +229,13 @@ pub fn run_configured_client(
         &registration.args,
         DatabaseForwarding::ExplicitOnly,
     )?;
-    run_with_transport(config, ready_timeout, &mut transport, Some(&registration))
+    run_with_transport(
+        config,
+        ready_timeout,
+        &mut transport,
+        Some(&registration),
+        result_mode_from_arguments(&registration.args),
+    )
 }
 
 /// Verify an exact setup launcher through the same MCP contract used by
@@ -237,7 +249,13 @@ pub(crate) fn run_launcher(
 ) -> Result<DoctorReport> {
     let mut transport =
         DoctorTransport::spawn_launcher(config, command, args, DatabaseForwarding::Resolved)?;
-    run_with_transport(config, ready_timeout, &mut transport, None)
+    run_with_transport(
+        config,
+        ready_timeout,
+        &mut transport,
+        None,
+        result_mode_from_arguments(args),
+    )
 }
 
 fn run_with_transport(
@@ -245,6 +263,7 @@ fn run_with_transport(
     ready_timeout: Duration,
     transport: &mut DoctorTransport,
     verified_registration: Option<&setup::ConfiguredRegistration>,
+    result_mode: McpResultMode,
 ) -> Result<DoctorReport> {
     let expected_server_version = expected_server_version(verified_registration);
     transport.send(
@@ -394,13 +413,8 @@ fn run_with_transport(
                 ),
             ));
         }
-        let structured = call.get("structuredContent").ok_or_else(|| {
-            doctor_error(
-                "first_retrieval",
-                "first retrieval omitted structuredContent",
-            )
-        })?;
-        if structured.get("status").and_then(Value::as_str) == Some("retryable") {
+        let result = model_visible_result(call, result_mode)?;
+        if result.get("status").and_then(Value::as_str) == Some("retryable") {
             warmed_index = true;
             if Instant::now() >= deadline {
                 return Err(doctor_error(
@@ -411,7 +425,7 @@ fn run_with_transport(
                     ),
                 ));
             }
-            let retry_after = structured
+            let retry_after = result
                 .get("retry_after_ms")
                 .and_then(Value::as_u64)
                 .unwrap_or(100)
@@ -420,7 +434,7 @@ fn run_with_transport(
             id += 1;
             continue;
         }
-        break structured
+        break result
             .pointer("/meta/repository_generation")
             .and_then(Value::as_u64)
             .ok_or_else(|| {
@@ -467,7 +481,6 @@ fn run_with_transport(
         registration_health,
         &registrations,
     );
-    let result_mode = McpResultMode::Structured;
     Ok(DoctorReport {
         status: "ready",
         process_version: env!("CARGO_PKG_VERSION"),
@@ -787,6 +800,43 @@ fn result_object<'a>(
         .ok_or_else(|| doctor_error(stage, format!("{operation} returned no result object")))
 }
 
+fn model_visible_result(
+    call: &serde_json::Map<String, Value>,
+    result_mode: McpResultMode,
+) -> Result<Value> {
+    match result_mode {
+        McpResultMode::Structured | McpResultMode::Dual => {
+            call.get("structuredContent").cloned().ok_or_else(|| {
+                doctor_error(
+                    "first_retrieval",
+                    "first retrieval omitted structuredContent",
+                )
+            })
+        }
+        McpResultMode::Text => {
+            let text = call
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|content| {
+                    content.iter().find_map(|item| {
+                        item.get("text")
+                            .and_then(Value::as_str)
+                            .filter(|text| !text.is_empty())
+                    })
+                })
+                .ok_or_else(|| {
+                    doctor_error("first_retrieval", "first retrieval omitted text content")
+                })?;
+            serde_json::from_str(text).map_err(|error| {
+                doctor_error(
+                    "first_retrieval",
+                    format!("first retrieval text content was not JSON: {error}"),
+                )
+            })
+        }
+    }
+}
+
 fn required_string(
     result: &serde_json::Map<String, Value>,
     pointer: &str,
@@ -913,8 +963,36 @@ fn launcher_arguments(
     }
     global_args.extend(["--tokenizer".into(), config.tokenizer.name().into()]);
     launch_args.splice(mcp_index..mcp_index, global_args);
-    launch_args.extend(["--result-mode".into(), "structured".into()]);
+    if !launch_args.iter().any(|argument| {
+        argument == "--result-mode" || argument.to_string_lossy().starts_with("--result-mode=")
+    }) {
+        launch_args.extend(["--result-mode".into(), "structured".into()]);
+    }
     Ok(launch_args)
+}
+
+fn result_mode_from_arguments(args: &[String]) -> McpResultMode {
+    args.windows(2)
+        .rev()
+        .find_map(|arguments| {
+            (arguments[0] == "--result-mode").then(|| match arguments[1].as_str() {
+                "dual" => McpResultMode::Dual,
+                "text" => McpResultMode::Text,
+                _ => McpResultMode::Structured,
+            })
+        })
+        .or_else(|| {
+            args.iter().rev().find_map(|argument| {
+                argument
+                    .strip_prefix("--result-mode=")
+                    .map(|value| match value {
+                        "dual" => McpResultMode::Dual,
+                        "text" => McpResultMode::Text,
+                        _ => McpResultMode::Structured,
+                    })
+            })
+        })
+        .unwrap_or(McpResultMode::Structured)
 }
 
 impl DoctorTransport {
