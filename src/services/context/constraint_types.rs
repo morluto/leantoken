@@ -119,10 +119,18 @@ pub(super) fn focus_text_relevance(text: &str, queries: &[ContextQuery]) -> f64 
 
 pub(super) fn required_evidence_query_matches(text: &str, queries: &[String]) -> Vec<usize> {
     let normalized = text.to_lowercase();
+    let mut seen = HashSet::new();
     queries
         .iter()
         .enumerate()
-        .filter_map(|(index, query)| normalized.contains(&query.to_lowercase()).then_some(index))
+        .filter_map(|(index, query)| {
+            let lower = query.to_lowercase();
+            if normalized.contains(&lower) && seen.insert(lower) {
+                Some(index)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -152,3 +160,40 @@ pub(super) fn retain_ranked_focus_candidate(
     candidates.truncate(MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN);
 }
 use super::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_evidence_query_matches_deduplicates_case_equivalent_queries() {
+        let text = "ROLLBACK the transaction";
+        let queries = vec!["rollback".to_string(), "ROLLBACK".to_string()];
+        assert_eq!(required_evidence_query_matches(text, &queries), vec![0],);
+    }
+
+    #[test]
+    fn required_evidence_query_matches_deduplicates_exact_duplicates() {
+        let text = "begin the transaction";
+        let queries = vec![
+            "begin".to_string(),
+            "BEGIN".to_string(),
+            "begin".to_string(),
+        ];
+        assert_eq!(required_evidence_query_matches(text, &queries), vec![0],);
+    }
+
+    #[test]
+    fn required_evidence_query_matches_preserves_distinct_queries() {
+        let text = "begin and rollback the transaction";
+        let queries = vec!["begin".to_string(), "rollback".to_string()];
+        assert_eq!(required_evidence_query_matches(text, &queries), vec![0, 1],);
+    }
+
+    #[test]
+    fn required_evidence_query_matches_returns_empty_when_nothing_matches() {
+        let text = "select all the rows";
+        let queries = vec!["drop".to_string(), "DROP".to_string()];
+        assert!(required_evidence_query_matches(text, &queries).is_empty());
+    }
+}
