@@ -330,10 +330,17 @@ fn path_contains(path: &Path, component: &str) -> bool {
 
 fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Option<CommandSpec> {
     match context {
-        InstallContext::GlobalNpm => Some(CommandSpec::new(
-            "npm",
-            ["install", "--global", NPM_PACKAGE],
-        )),
+        InstallContext::GlobalNpm => {
+            let package = format!(
+                "{}@{}",
+                PACKAGE_NAME,
+                latest_version.expect("npm context resolves the latest version")
+            );
+            Some(CommandSpec::new(
+                "npm",
+                vec!["install".into(), "--global".into(), package],
+            ))
+        }
         InstallContext::Cargo => {
             let mut arguments = vec!["install".into(), "--git".into(), GIT_REPOSITORY.into()];
             if let Some(version) = latest_version {
@@ -582,7 +589,7 @@ mod tests {
             upgrade_command(InstallContext::GlobalNpm, Some("1.2.3"))
                 .unwrap()
                 .display(),
-            "npm install --global leantoken@latest"
+            "npm install --global leantoken@1.2.3"
         );
         assert_eq!(
             upgrade_command(InstallContext::Cargo, Some("1.2.3"))
