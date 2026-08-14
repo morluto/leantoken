@@ -5,7 +5,7 @@ use crate::{Error, Result};
 
 use super::{RetrievalResponse, ServiceCallOptions};
 
-const MAX_ACCOUNTING_PASSES: usize = 32;
+const MAX_ACCOUNTING_PASSES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReceiptResourceDecoration {
