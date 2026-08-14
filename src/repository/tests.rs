@@ -270,7 +270,7 @@ fn git_capture_kills_the_producer_when_output_crosses_the_budget() {
 
 #[cfg(unix)]
 #[test]
-fn name_only_probe_preserves_best_effort_failure_semantics() {
+fn name_only_probe_propagates_failure_instead_of_swallowing_it() {
     let root = tempfile::tempdir().expect("root");
     let program = root.path().join("large-git");
     fs::write(&program, "#!/bin/sh\nhead -c 1048576 /dev/zero\n").expect("script");
@@ -278,7 +278,7 @@ fn name_only_probe_preserves_best_effort_failure_semantics() {
     permissions.set_mode(0o755);
     fs::set_permissions(&program, permissions).expect("executable");
 
-    let changed = diff_name_only(
+    let result = diff_name_only(
         root.path(),
         &program,
         "base",
@@ -286,10 +286,12 @@ fn name_only_probe_preserves_best_effort_failure_semantics() {
         1,
         Duration::from_secs(2),
         "",
-    )
-    .expect("name-only probe remains best effort");
+    );
 
-    assert!(changed.is_empty());
+    assert!(
+        result.is_err(),
+        "git capture failure should propagate, not be swallowed"
+    );
 }
 
 #[cfg(unix)]

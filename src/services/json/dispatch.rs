@@ -356,6 +356,7 @@ impl Services {
                     let item_budget = limits.max_items.saturating_sub(returned_items);
                     let token_budget = limits.max_tokens.saturating_sub(projected_tokens);
                     if item_budget == 0 || token_budget == 0 {
+                        incomplete = true;
                         return Ok(None);
                     }
                     let page = project_schema_page(self, value, item_budget, token_budget)?;

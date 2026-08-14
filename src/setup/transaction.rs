@@ -310,18 +310,13 @@ pub(super) fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
             let current = read_optional(path)?;
             if current.is_none() {
                 // The file is missing but the original says it should exist
-                // (possibly as an empty file). Recreate it with the original
-                // content instead of short-circuiting through write_if_changed
-                // with a defaulted empty current value.
-                let parent = path.parent().ok_or_else(|| {
-                    Error::SetupFailure(format!("config path has no parent: {}", path.display()))
-                })?;
-                std::fs::create_dir_all(parent)?;
-                std::fs::write(path, original.as_bytes())?;
-                sync_parent_directory(path)?;
-                return Ok(());
+                // (possibly as an empty file). Use write_if_changed with a
+                // sentinel current value that differs from original so the
+                // equality shortcut does not skip the atomic write.
+                write_if_changed(path, " ", original)
+            } else {
+                write_if_changed(path, &current.unwrap_or_default(), original)
             }
-            write_if_changed(path, &current.unwrap_or_default(), original)
         }
         None => {
             if path.exists() {

@@ -207,6 +207,7 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
             // 1. Standard:           +++ b/<path>
             // 2. Quoted (quotePath): "b/<path>" with C-escaped bytes
             // 3. No prefix:          +++ <path> (diff.noprefix=true)
+            // 4. Deleted file:       +++ /dev/null
             let unquoted = stripped
                 .strip_prefix('"')
                 .and_then(|s| s.strip_suffix('"'))
@@ -218,6 +219,9 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
                             match chars.next() {
                                 Some('"') => result.push('"'),
                                 Some('t') => result.push('\t'),
+                                Some('n') => result.push('\n'),
+                                Some('r') => result.push('\r'),
+                                Some('\\') => result.push('\\'),
                                 Some(other) => {
                                     result.push('\\');
                                     result.push(other);
@@ -231,12 +235,25 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
                     result
                 });
             let path_str = unquoted.as_deref().unwrap_or(stripped);
+            // Reject /dev/null which Git uses for deleted files
+            if path_str == "/dev/null" {
+                target_path = None;
+                continue;
+            }
+            // Only strip the standard "b/" prefix, not "a/" (which is the
+            // source file prefix, not the destination).  Do not fall through
+            // to treating the raw line as a path to avoid misinterpreting
+            // noprefix paths that happen to start with "a/" or "b/".
             target_path = path_str
                 .strip_prefix("b/")
-                .or_else(|| path_str.strip_prefix("a/"))
-                .or(Some(path_str))
                 .and_then(|path| path.strip_prefix(prefix))
                 .map(|path| slash_path(Path::new(path)));
+            if target_path.is_none() {
+                // Fall back to treating as a noprefix path
+                target_path = path_str
+                    .strip_prefix(prefix)
+                    .map(|path| slash_path(Path::new(path)));
+            }
             continue;
         }
         let Some(path) = target_path.as_ref() else {
