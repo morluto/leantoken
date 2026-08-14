@@ -164,6 +164,9 @@ pub(crate) fn git_diff_hunks_with_head(
         "--no-textconv".to_owned(),
         "--unified=0".to_owned(),
         "--no-renames".to_owned(),
+        // Force standard prefixes so we never see noprefix output
+        "--src-prefix=a/".to_owned(),
+        "--dst-prefix=b/".to_owned(),
         base_sha,
     ];
     args.extend(head_sha);
@@ -188,6 +191,46 @@ pub(crate) fn git_diff_hunks_with_head(
     parse_git_diff_hunks(output.as_slice(), max, &prefix)
 }
 
+/// Decode a Git patch header path, handling C-quoted paths with octal escapes.
+fn decode_git_quoted_path(raw: &str) -> String {
+    let Some(inner) = raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return raw.to_owned();
+    };
+    let mut result = Vec::<u8>::new();
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'"' => result.push(b'"'),
+                b'\\' => result.push(b'\\'),
+                b't' => result.push(b'\t'),
+                b'n' => result.push(b'\n'),
+                b'r' => result.push(b'\r'),
+                next => {
+                    if (b'0'..=b'7').contains(&next) && i + 3 < bytes.len() {
+                        let octal = &inner[i + 1..i + 4];
+                        if let Ok(byte_val) = u8::from_str_radix(octal, 8) {
+                            result.push(byte_val);
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    result.push(b'\\');
+                    result.push(next);
+                    i += 2;
+                    continue;
+                }
+            }
+            i += 2;
+        } else {
+            result.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&result).into_owned()
+}
+
 pub(crate) fn parse_git_diff_hunks<R: BufRead>(
     mut reader: R,
     max: usize,
@@ -203,57 +246,21 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
         }
         if let Some(rest) = line.strip_prefix("+++ ") {
             let stripped = rest.trim_end_matches(['\r', '\n']);
-            // Handle Git patch header formats:
-            // 1. Standard:           +++ b/<path>
-            // 2. Quoted (quotePath): "b/<path>" with C-escaped bytes
-            // 3. No prefix:          +++ <path> (diff.noprefix=true)
-            // 4. Deleted file:       +++ /dev/null
-            let unquoted = stripped
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .map(|s| {
-                    let mut result = String::new();
-                    let mut chars = s.chars().peekable();
-                    while let Some(c) = chars.next() {
-                        if c == '\\' {
-                            match chars.next() {
-                                Some('"') => result.push('"'),
-                                Some('t') => result.push('\t'),
-                                Some('n') => result.push('\n'),
-                                Some('r') => result.push('\r'),
-                                Some('\\') => result.push('\\'),
-                                Some(other) => {
-                                    result.push('\\');
-                                    result.push(other);
-                                }
-                                None => result.push('\\'),
-                            }
-                        } else {
-                            result.push(c);
-                        }
-                    }
-                    result
-                });
-            let path_str = unquoted.as_deref().unwrap_or(stripped);
+            // The diff command is invoked with --dst-prefix=b/ so the
+            // destination path always appears as: +++ b/<path>
+            // For deleted files Git emits: +++ /dev/null
+            // With core.quotePath=true, non-ASCII bytes are C-quoted:
+            //   "b/<path with \\NNN octal escapes>"
+            let path_str = decode_git_quoted_path(stripped);
             // Reject /dev/null which Git uses for deleted files
             if path_str == "/dev/null" {
                 target_path = None;
                 continue;
             }
-            // Only strip the standard "b/" prefix, not "a/" (which is the
-            // source file prefix, not the destination).  Do not fall through
-            // to treating the raw line as a path to avoid misinterpreting
-            // noprefix paths that happen to start with "a/" or "b/".
             target_path = path_str
                 .strip_prefix("b/")
                 .and_then(|path| path.strip_prefix(prefix))
                 .map(|path| slash_path(Path::new(path)));
-            if target_path.is_none() {
-                // Fall back to treating as a noprefix path
-                target_path = path_str
-                    .strip_prefix(prefix)
-                    .map(|path| slash_path(Path::new(path)));
-            }
             continue;
         }
         let Some(path) = target_path.as_ref() else {

@@ -1924,3 +1924,27 @@ pub(crate) fn list_glob_paths_pages_selective_matches_with_keyset_cursor() {
         session.list_files(1, None).expect("full")[0].path
     );
 }
+
+#[test]
+fn status_rejects_non_leantoken_sqlite_database_without_meta_table() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("foreign.db");
+    let conn = rusqlite::Connection::open(&database).expect("open");
+    conn.execute_batch(
+        "CREATE TABLE unrelated_data (id INTEGER PRIMARY KEY, data TEXT); \
+         INSERT INTO unrelated_data (id, data) VALUES (1, 'not leantoken');",
+    )
+    .expect("create foreign schema");
+    drop(conn);
+
+    let result = Storage::read_only_status_scoped(&database, root.path(), None);
+    assert!(
+        result.is_err(),
+        "non-LeanToken SQLite database without meta table should be rejected, not treated as empty"
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("meta table"),
+        "error should mention missing meta table: {error}"
+    );
+}
