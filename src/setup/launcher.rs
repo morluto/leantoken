@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use crate::invocation::{InvocationIdentity, InvocationMetadata, PackageManager};
 use crate::{Error, Result};
 
+use super::SetupClient;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct McpLauncher {
     command: PathBuf,
@@ -118,6 +120,20 @@ impl McpLauncher {
         self.command
             .to_str()
             .ok_or_else(|| Error::SetupFailure("LeanToken executable path is not UTF-8".into()))
+    }
+
+    /// Arguments for one host's managed MCP registration.
+    ///
+    /// Codex currently needs the JSON text representation because its adapter
+    /// can drop MCP `structuredContent`. Keep this scoped to the generated
+    /// Codex registration: the server-wide default remains structured, and
+    /// dual remains an explicit compatibility mode for hosts that need both.
+    pub(super) fn args_for(&self, client: SetupClient) -> Vec<String> {
+        let mut args = self.args.clone();
+        if client == SetupClient::Codex {
+            args.extend(["--result-mode".into(), "text".into()]);
+        }
+        args
     }
 
     fn from_npx_paths(node: &Path, npx: &Path) -> Result<Self> {
@@ -360,5 +376,16 @@ mod tests {
             yarn.doctor_command(),
             "yarn dlx leantoken@1.2.3 doctor --json"
         );
+    }
+
+    #[test]
+    fn codex_registration_uses_text_without_changing_other_clients() {
+        let launcher = McpLauncher::from_executable(Path::new("/opt/leantoken"));
+
+        assert_eq!(
+            launcher.args_for(SetupClient::Codex),
+            ["--managed-by-setup", "mcp", "--result-mode", "text"]
+        );
+        assert_eq!(launcher.args_for(SetupClient::Claude), launcher.args);
     }
 }
