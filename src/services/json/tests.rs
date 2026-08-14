@@ -13,7 +13,7 @@ use super::source::{JsonMeasurementCache, JsonMeasurementKey};
 use super::validation::parse_json_request;
 use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
-use crate::model::{JsonOperation, JsonProjection, JsonRequest};
+use crate::model::{JsonOperation, JsonProjection, JsonRequest, JsonSelector};
 use crate::services::cursor::{CursorKind, StreamIdentityBuilder};
 use crate::services::{ServiceCallOptions, Services};
 
@@ -422,4 +422,62 @@ fn json_measurement_cache_preserves_exact_tokens_for_distinct_values() {
             .count(&serde_json::to_string(&different_value).expect("serialize different value"))
     );
     assert!(different_tokens > first);
+}
+
+#[tokio::test]
+async fn schema_diff_does_not_bypass_max_items_when_budget_is_exhausted() {
+    let root = tempfile::tempdir().expect("root");
+    let base = json!({
+        "alpha": {"deep": {"nested": {"value": 1}}},
+        "beta": {"deep": {"nested": {"value": 2}}},
+    });
+    let head = json!({
+        "alpha": {"deep": {"nested": {"value": 3}}},
+        "beta": {"deep": {"nested": {"value": 4}}},
+    });
+    std::fs::write(
+        root.path().join("base.json"),
+        serde_json::to_vec(&base).expect("serialize base"),
+    )
+    .expect("write base fixture");
+    std::fs::write(
+        root.path().join("head.json"),
+        serde_json::to_vec(&head).expect("serialize head"),
+    )
+    .expect("write head fixture");
+    let config = crate::Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+        .expect("config");
+    let services = Services::open(config).expect("services");
+    let response = services
+        .json(JsonRequest {
+            operation: JsonOperation::DiffFields {
+                base_path: "base.json".into(),
+                head_path: "head.json".into(),
+                selectors: vec![
+                    JsonSelector::Pointer {
+                        pointer: "/alpha".into(),
+                    },
+                    JsonSelector::Pointer {
+                        pointer: "/beta".into(),
+                    },
+                ],
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(10_000),
+            max_items: Some(3),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("schema diff");
+    assert!(response.differences.len() == 2);
+    // The first selector exhausts the item budget; the second selector
+    // must not get a 1-item schema projection from the exhausted budget.
+    let second_before = response.differences[1].before.as_ref();
+    let second_after = response.differences[1].after.as_ref();
+    assert!(
+        second_before.is_none() || second_after.is_none(),
+        "second selector should not get schema projections when budget is exhausted"
+    );
+    assert!(!response.result_complete);
 }
