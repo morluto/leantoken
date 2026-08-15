@@ -947,6 +947,57 @@ fn rebase_quota_eviction_never_selects_the_source_receipt() {
 }
 
 #[test]
+fn rebase_source_survives_next_receipt_creation() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let first_generation = storage
+        .full_reconcile(
+            "first",
+            vec![sample_file(
+                "lib.rs",
+                "fn first() {}
+",
+            )],
+        )
+        .expect("first generation");
+    let first = evidence(1);
+    let source_id = storage
+        .evaluate_receipt(None, first_generation, std::slice::from_ref(&first), true)
+        .expect("source receipt")
+        .receipt_id;
+    for _ in 1..MAX_RECEIPTS {
+        storage
+            .evaluate_receipt(None, first_generation, &[], true)
+            .expect("fill receipt headers");
+    }
+    assert_eq!(usage(&storage).0, MAX_RECEIPTS);
+    let source = storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("source snapshot");
+    let second_generation = storage
+        .full_reconcile(
+            "second",
+            vec![sample_file(
+                "lib.rs",
+                "fn second() {}
+",
+            )],
+        )
+        .expect("second generation");
+    storage
+        .persist_rebased_receipt(&source, second_generation, std::slice::from_ref(&first))
+        .expect("rebase at header quota");
+    // Create one more receipt — this should evict the oldest receipt
+    // that is NOT the source (which was just touched during rebase).
+    storage
+        .evaluate_receipt(None, second_generation, &[], true)
+        .expect("next receipt");
+    storage
+        .load_receipt_rebase_source(&source_id)
+        .expect("source survived next receipt creation");
+}
+
+#[test]
 fn poisoned_process_local_writer_mutex_does_not_corrupt_receipts() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");

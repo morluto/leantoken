@@ -582,7 +582,22 @@ impl Storage {
             }
             usage = receipt_usage(&tx)?;
         }
-        let access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
+        // Touch the source receipt so it is not prematurely evicted by LRU.
+        let source_access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
+        tx.execute(
+            "UPDATE retrieval_receipts
+             SET last_access_unix_millis = ?1,
+                 expires_unix_millis = ?2,
+                 access_sequence = ?3
+             WHERE id = ?4",
+            params![
+                now_unix_millis,
+                expires_unix_millis,
+                source_access_sequence,
+                source_row_id
+            ],
+        )?;
+        let access_sequence = next_receipt_access_sequence(&tx, source_access_sequence)?;
         tx.execute(
             "INSERT INTO retrieval_receipts(
                 repository_identity,
