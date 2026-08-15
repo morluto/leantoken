@@ -1,4 +1,5 @@
 use super::*;
+use jsonc_parser::cst::CstObject;
 
 pub(super) fn resolve_json_edit_from_source(
     operation: SetupOperation,
@@ -14,6 +15,7 @@ pub(super) fn resolve_json_edit_from_source(
     let object = root
         .object_value_or_create()
         .ok_or_else(|| invalid_config(path, "top-level value must be an object"))?;
+    check_duplicate_keys(path, &object, "top-level")?;
     let section = match object.object_value_or_create(section_name) {
         Some(section) => section,
         None => {
@@ -23,6 +25,7 @@ pub(super) fn resolve_json_edit_from_source(
             ));
         }
     };
+    check_duplicate_keys(path, &section, section_name)?;
 
     match operation {
         SetupOperation::Setup => {
@@ -79,6 +82,31 @@ pub(super) fn resolve_json_edit_from_source(
     }
 }
 
+fn check_duplicate_keys(path: &Path, object: &CstObject, section_name: &str) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for prop in object.properties() {
+        if let Some(name) = prop.name() {
+            let decoded = match name {
+                jsonc_parser::cst::ObjectPropName::String(s) => {
+                    s.decoded_value().unwrap_or_default()
+                }
+                jsonc_parser::cst::ObjectPropName::Word(w) => {
+                    format!("{}", w)
+                }
+            };
+            if !seen.insert(decoded.clone()) {
+                return Err(invalid_config(
+                    path,
+                    format!(
+                        "duplicate key \"{}\" in {}; refusing to edit ambiguous configuration",
+                        decoded, section_name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 pub(super) fn json_entry(shape: JsonEntryShape, launcher: &McpLauncher) -> Result<Value> {
     let command = launcher.command()?;
     Ok(match shape {
