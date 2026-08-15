@@ -186,6 +186,7 @@ impl Services {
                 });
             }
         }
+        self.storage.touch_query_receipt(receipt_id)?;
         let requested_predicate_blake3 = requested_predicate.digest()?;
         let outcome = QueryReceiptOutcome {
             status: QueryReceiptStatus::AlreadyCovered,

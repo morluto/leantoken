@@ -164,6 +164,48 @@ fn query_receipt_quota_is_bounded_and_generation_recheck_rolls_back() {
 }
 
 #[test]
+fn touch_query_receipt_bumps_access_sequence_and_extends_ttl() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = indexed_storage(&database);
+    let first_id = storage
+        .persist_query_receipt_at(&record(&storage, "query-0"), 1_000)
+        .expect("first receipt");
+    for index in 1..MAX_QUERY_RECEIPTS {
+        storage
+            .persist_query_receipt_at(
+                &record(&storage, &format!("query-{index}")),
+                1_500 + index as i64,
+            )
+            .expect("fill receipts");
+    }
+    assert_eq!(usage(&storage).0, MAX_QUERY_RECEIPTS);
+
+    // Touch the first receipt at a later time.
+    storage
+        .touch_query_receipt_at(&first_id, 10_000)
+        .expect("touch");
+    let loaded = storage
+        .begin_read()
+        .expect("read")
+        .load_query_receipt_at(&first_id, 10_000)
+        .expect("receipt still readable");
+    assert_eq!(loaded.receipt_id, first_id);
+
+    // After touch, the first receipt should NOT be evicted by the next receipt.
+    // Without the touch, it would be the oldest by access_sequence.
+    let next_id = storage
+        .persist_query_receipt_at(&record(&storage, "query-next"), 11_000)
+        .expect("next receipt");
+    assert_ne!(next_id, first_id);
+    storage
+        .begin_read()
+        .expect("read")
+        .load_query_receipt_at(&first_id, 11_000)
+        .expect("touched receipt survived eviction");
+}
+
+#[test]
 fn query_receipt_queries_use_bounded_indexes() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = indexed_storage(&directory.path().join("index.sqlite"));
