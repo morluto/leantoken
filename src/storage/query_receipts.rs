@@ -36,14 +36,35 @@ impl Storage {
     }
 
     pub(crate) fn touch_query_receipt(&self, receipt_id: &str) -> Result<()> {
-        self.touch_query_receipt_at(receipt_id, unix_millis(SystemTime::now()))
+        self.touch_query_receipt_with_clock(receipt_id, || unix_millis(SystemTime::now()))
     }
 
+    #[cfg(test)]
     pub(crate) fn touch_query_receipt_at(
         &self,
         receipt_id: &str,
         now_unix_millis: i64,
     ) -> Result<()> {
+        self.touch_query_receipt_with_clock(receipt_id, || now_unix_millis)
+    }
+
+    fn touch_query_receipt_with_clock<F>(
+        &self,
+        receipt_id: &str,
+        now_unix_millis: F,
+    ) -> Result<()>
+    where
+        F: FnOnce() -> i64,
+    {
+        let mut conn = self
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Sample live time only after SQLite has serialized writers,
+        // otherwise an earlier sample can commit after a later one and
+        // look like a clock rollback.
+        let now_unix_millis = now_unix_millis();
         if now_unix_millis < 0 {
             return Err(Error::OperationFailure(
                 "system clock precedes the Unix epoch".into(),
@@ -52,11 +73,6 @@ impl Storage {
         let expires_unix_millis = now_unix_millis
             .checked_add(QUERY_RECEIPT_TTL_MILLIS)
             .ok_or_else(|| Error::OperationFailure("query receipt expiry overflow".into()))?;
-        let mut conn = self
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         prune_expired_query_receipts(&tx, now_unix_millis)?;
         let usage = query_receipt_usage(&tx)?;
         let row_id = parse_query_receipt_id(receipt_id, &usage.namespace);
