@@ -582,20 +582,16 @@ impl Storage {
             }
             usage = receipt_usage(&tx)?;
         }
-        // Touch the source receipt so it is not prematurely evicted by LRU.
+        // Bump only the source's LRU position so the next receipt creation
+        // does not evict it. The source's fixed expiry and last-access
+        // timestamp are intentionally left unchanged: the architecture
+        // contract guarantees a fixed 24-hour lifetime and never renews it.
         let source_access_sequence = next_receipt_access_sequence(&tx, usage.next_access_sequence)?;
         tx.execute(
             "UPDATE retrieval_receipts
-             SET last_access_unix_millis = ?1,
-                 expires_unix_millis = ?2,
-                 access_sequence = ?3
-             WHERE id = ?4",
-            params![
-                now_unix_millis,
-                expires_unix_millis,
-                source_access_sequence,
-                source_row_id
-            ],
+             SET access_sequence = ?1
+             WHERE id = ?2",
+            params![source_access_sequence, source_row_id],
         )?;
         let access_sequence = next_receipt_access_sequence(&tx, source_access_sequence)?;
         tx.execute(

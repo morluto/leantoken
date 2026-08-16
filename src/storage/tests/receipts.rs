@@ -1050,6 +1050,10 @@ fn receipt_lookup_append_and_prune_query_plans_use_bounded_indexes() {
              ORDER BY access_sequence, id LIMIT 1",
             "USING COVERING INDEX retrieval_receipts_lru_idx",
         ),
+        (
+            "UPDATE retrieval_receipts SET access_sequence = 1 WHERE id = 2",
+            "USING INTEGER PRIMARY KEY",
+        ),
     ] {
         let mut statement = connection
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
