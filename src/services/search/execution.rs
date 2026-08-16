@@ -186,7 +186,13 @@ impl Services {
                 });
             }
         }
-        self.storage.touch_query_receipt(receipt_id)?;
+        // Best-effort touch: a concurrent quota eviction may have removed
+        // this receipt after the pinned snapshot validated it. The reuse
+        // was already validated above, so losing the touch race must not
+        // turn a valid already_covered into an error.
+        if let Err(Error::UnknownQueryReceipt(_)) = self.storage.touch_query_receipt(receipt_id) {
+            // Receipt was evicted concurrently; reuse result is still valid.
+        }
         let requested_predicate_blake3 = requested_predicate.digest()?;
         let outcome = QueryReceiptOutcome {
             status: QueryReceiptStatus::AlreadyCovered,
