@@ -145,7 +145,7 @@
 <a href=#145 id=145 data-nosnippet>145</a>
 <a href=#146 id=146 data-nosnippet>146</a>    <span class="attr">#[tool(
 <a href=#147 id=147 data-nosnippet>147</a>        name = <span class="string">"outline"</span>,
-<a href=#148 id=148 data-nosnippet>148</a>        description = <span class="string">"Preferred before native whole-file reads when the file is known but the relevant range is not. Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
+<a href=#148 id=148 data-nosnippet>148</a>        description = <span class="string">"Preferred before native whole-file reads when the file is known but the relevant range is not. Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or line range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
 <a href=#149 id=149 data-nosnippet>149</a>    </span>)]
 <a href=#150 id=150 data-nosnippet>150</a>    </span><span class="kw">async fn </span>leantoken_outline(
 <a href=#151 id=151 data-nosnippet>151</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -206,7 +206,7 @@
 <a href=#206 id=206 data-nosnippet>206</a>
 <a href=#207 id=207 data-nosnippet>207</a>    <span class="attr">#[tool(
 <a href=#208 id=208 data-nosnippet>208</a>        name = <span class="string">"read"</span>,
-<a href=#209 id=209 data-nosnippet>209</a>        description = <span class="string">"Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+<a href=#209 id=209 data-nosnippet>209</a>        description = <span class="string">"Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, line range, or continuation. Keep path separate from target; use a symbol or line range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
 <a href=#210 id=210 data-nosnippet>210</a>    </span>)]
 <a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">async fn </span>leantoken_read(
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -255,7 +255,7 @@
 <a href=#255 id=255 data-nosnippet>255</a>
 <a href=#256 id=256 data-nosnippet>256</a>    <span class="attr">#[tool(
 <a href=#257 id=257 data-nosnippet>257</a>        name = <span class="string">"history"</span>,
-<a href=#258 id=258 data-nosnippet>258</a>        description = <span class="string">"Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}."
+<a href=#258 id=258 data-nosnippet>258</a>        description = <span class="string">"Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":{\"name\":\"meta\",\"parent\":\"Services\"},\"revision\":\"HEAD\"}}."
 <a href=#259 id=259 data-nosnippet>259</a>    </span>)]
 <a href=#260 id=260 data-nosnippet>260</a>    </span><span class="kw">async fn </span>leantoken_history(
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
