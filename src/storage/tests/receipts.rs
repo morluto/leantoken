@@ -947,7 +947,7 @@ fn rebase_quota_eviction_never_selects_the_source_receipt() {
 }
 
 #[test]
-fn rebase_source_survives_next_receipt_creation() {
+fn rebase_source_lru_position_is_immutable_after_commit() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let first_generation = storage
@@ -987,14 +987,18 @@ fn rebase_source_survives_next_receipt_creation() {
     storage
         .persist_rebased_receipt(&source, second_generation, std::slice::from_ref(&first))
         .expect("rebase at header quota");
-    // Create one more receipt — this should evict the oldest receipt
-    // that is NOT the source (which was just touched during rebase).
+    // The source's LRU position is immutable after the rebase transaction
+    // commits. The next receipt creation can evict the source because its
+    // access_sequence was not bumped.
     storage
         .evaluate_receipt(None, second_generation, &[], true)
         .expect("next receipt");
-    storage
-        .load_receipt_rebase_source(&source_id)
-        .expect("source survived next receipt creation");
+    assert!(
+        storage
+            .load_receipt_rebase_source(&source_id)
+            .is_err(),
+        "source was evicted because its LRU position was not bumped"
+    );
 }
 
 #[test]
@@ -1049,10 +1053,6 @@ fn receipt_lookup_append_and_prune_query_plans_use_bounded_indexes() {
              WHERE access_sequence > 0
              ORDER BY access_sequence, id LIMIT 1",
             "USING COVERING INDEX retrieval_receipts_lru_idx",
-        ),
-        (
-            "UPDATE retrieval_receipts SET access_sequence = 1 WHERE id = 2",
-            "USING INTEGER PRIMARY KEY",
         ),
     ] {
         let mut statement = connection
