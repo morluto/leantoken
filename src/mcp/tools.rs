@@ -145,7 +145,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "outline",
-        description = "Preferred before native whole-file reads when the file is known but the relevant range is not. Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
+        description = "Preferred before native whole-file reads when the file is known but the relevant range is not. Inspect known files without reading whole source files. Returns definitions, imports, ranges, and parse coverage; set projection=signatures to keep only compact signatures. Next: pass a returned symbol or line range to read. Example: {\"paths\":[\"src/mcp/mod.rs\"]}."
     )]
     async fn leantoken_outline(
         &self,
@@ -206,7 +206,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "read",
-        description = "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, range, or continuation. Keep path separate from target; use a symbol or range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
+        description = "Preferred over native Read, cat, head, or sed for repository source. Read an exact symbol, Markdown heading, line range, or continuation. Keep path separate from target; use a symbol or line range from search or outline. Set delta=true or pass expected_hash to suppress unchanged content; truncated reads return a continuation cursor and source-budget guidance. Example: {\"path\":\"README.md\",\"target\":{\"kind\":\"heading\",\"name\":\"Installation\"}}."
     )]
     async fn leantoken_read(
         &self,
@@ -255,7 +255,7 @@ impl LeanTokenMcp {
 
     #[tool(
         name = "history",
-        description = "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":\"Services.meta\",\"revision\":\"HEAD\"}}."
+        description = "Preferred over native git show, diff, or log -L for parsed symbol history across immutable revisions. Operations: read_symbol reads one revision; diff_symbol compares one symbol; diff_symbols compares a bounded, cursor-paged set; symbol_log is the commit-history operation and lists commits that touched one symbol's tracked lines. Use parent.name for qualified symbols. Use native Git for path-wide or repository-wide commit history. Example: {\"operation\":{\"kind\":\"symbol_log\",\"path\":\"src/services.rs\",\"symbol\":{\"name\":\"meta\",\"parent\":\"Services\"},\"revision\":\"HEAD\"}}."
     )]
     async fn leantoken_history(
         &self,
