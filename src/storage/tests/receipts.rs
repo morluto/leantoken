@@ -994,9 +994,7 @@ fn rebase_source_lru_position_is_immutable_after_commit() {
         .evaluate_receipt(None, second_generation, &[], true)
         .expect("next receipt");
     assert!(
-        storage
-            .load_receipt_rebase_source(&source_id)
-            .is_err(),
+        storage.load_receipt_rebase_source(&source_id).is_err(),
         "source was evicted because its LRU position was not bumped"
     );
 }
