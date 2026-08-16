@@ -398,24 +398,7 @@ fn updated_report(
 
 fn latest_version(context: InstallContext) -> Option<String> {
     match context {
-        InstallContext::Cargo => command_stdout(
-            "git",
-            &[
-                "ls-remote",
-                "--tags",
-                "--refs",
-                "--sort=-v:refname",
-                GIT_REPOSITORY,
-            ],
-        )
-        .and_then(|output| {
-            output
-                .lines()
-                .next()?
-                .split("refs/tags/v")
-                .nth(1)
-                .map(str::to_owned)
-        }),
+        InstallContext::Cargo => latest_cargo_version(),
         InstallContext::Npx
         | InstallContext::Npm
         | InstallContext::Pnpm
@@ -423,6 +406,29 @@ fn latest_version(context: InstallContext) -> Option<String> {
         | InstallContext::GlobalNpm
         | InstallContext::Unknown => latest_npm_version(),
     }
+}
+
+fn latest_cargo_version() -> Option<String> {
+    command_stdout("git", &["ls-remote", "--tags", "--refs", GIT_REPOSITORY])
+        .and_then(select_latest_stable_tag)
+}
+
+fn select_latest_stable_tag(output: String) -> Option<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let tag = line.rsplit("refs/tags/").next()?.trim();
+            let version_str = tag.strip_prefix('v')?;
+            let version = Version::parse(version_str).ok()?;
+
+            if !version.pre.is_empty() {
+                return None;
+            }
+
+            Some((version, version_str.to_owned()))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, version_str)| version_str)
 }
 
 fn command_stdout(program: &str, arguments: &[&str]) -> Option<String> {
@@ -690,5 +696,50 @@ mod tests {
             Some(false)
         );
         assert_eq!(version_update_available("0.1.12", "not-semver"), None);
+    }
+
+    #[test]
+    fn cargo_version_selects_greatest_stable_ignoring_prereleases() {
+        let output = "foo refs/tags/v1.0.0
+bar refs/tags/v1.0.1-alpha.1
+baz refs/tags/v1.0.1
+";
+
+        assert_eq!(
+            select_latest_stable_tag(output.into()),
+            Some("1.0.1".into())
+        );
+    }
+
+    #[test]
+    fn cargo_version_ignores_malformed_tags() {
+        let output = "abc refs/tags/v9foo
+def refs/tags/v1.0.0
+";
+
+        assert_eq!(
+            select_latest_stable_tag(output.into()),
+            Some("1.0.0".into())
+        );
+    }
+
+    #[test]
+    fn cargo_version_returns_none_when_no_valid_tags() {
+        let output = "foo refs/tags/v9foo
+bar refs/tags/latest
+";
+
+        assert_eq!(select_latest_stable_tag(output.into()), None);
+    }
+
+    #[test]
+    fn cargo_version_prefers_stable_over_newer_prerelease() {
+        let output = "abc refs/tags/v2.0.0-beta.1
+def refs/tags/v1.5.0
+";
+        assert_eq!(
+            select_latest_stable_tag(output.into()),
+            Some("1.5.0".into())
+        );
     }
 }
