@@ -48,11 +48,7 @@ impl Storage {
         self.touch_query_receipt_with_clock(receipt_id, || now_unix_millis)
     }
 
-    fn touch_query_receipt_with_clock<F>(
-        &self,
-        receipt_id: &str,
-        now_unix_millis: F,
-    ) -> Result<()>
+    fn touch_query_receipt_with_clock<F>(&self, receipt_id: &str, now_unix_millis: F) -> Result<()>
     where
         F: FnOnce() -> i64,
     {
