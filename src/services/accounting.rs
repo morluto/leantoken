@@ -37,34 +37,13 @@ impl ResponseAccountant {
         response: &mut T,
         mcp_response_shape: Option<crate::tokens::McpResponseShape>,
     ) -> Result<()> {
-        let source_tokens = {
-            let meta = response.meta_mut();
-            meta.protocol_tokens = 0;
-            meta.path_and_metadata_tokens = 0;
-            meta.total_response_tokens = 0;
-            meta.source_tokens
-        };
-        for _ in 0..MAX_ACCOUNTING_PASSES {
-            let accounting = self.accounting(
-                &*response,
-                source_tokens,
-                mcp_response_shape,
-                ReceiptResourceDecoration::Omit,
-            )?;
-            let meta = response.meta_mut();
-            if meta.protocol_tokens == accounting.protocol_tokens
-                && meta.path_and_metadata_tokens == accounting.path_and_metadata_tokens
-                && meta.total_response_tokens == accounting.total_response_tokens
-            {
-                return Ok(());
-            }
-            meta.protocol_tokens = accounting.protocol_tokens;
-            meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
-            meta.total_response_tokens = accounting.total_response_tokens;
-        }
-        Err(Error::ResponseAccountingInvariant(
-            "serialized response accounting did not reach a fixed point".into(),
-        ))
+        let source_tokens = response.meta_mut().source_tokens;
+        self.finalize_accounting(
+            response,
+            source_tokens,
+            mcp_response_shape,
+            ReceiptResourceDecoration::Omit,
+        )
     }
 
     pub(super) fn finalized_tokens_for<T>(
@@ -102,18 +81,34 @@ impl ResponseAccountant {
         if response.meta_mut().receipt_id.is_none() {
             return self.finalize_for(response, mcp_response_shape);
         }
+        self.finalize_accounting(
+            response,
+            source_tokens,
+            mcp_response_shape,
+            ReceiptResourceDecoration::Include,
+        )
+    }
+
+    fn finalize_accounting<T: RetrievalResponse>(
+        &self,
+        response: &mut T,
+        source_tokens: usize,
+        mcp_response_shape: Option<crate::tokens::McpResponseShape>,
+        receipt_resource: ReceiptResourceDecoration,
+    ) -> Result<()> {
         {
             let meta = response.meta_mut();
             meta.protocol_tokens = 0;
             meta.path_and_metadata_tokens = 0;
             meta.total_response_tokens = 0;
         }
+        let mut observed = Vec::with_capacity(MAX_ACCOUNTING_PASSES);
         for _ in 0..MAX_ACCOUNTING_PASSES {
             let accounting = self.accounting(
                 &*response,
                 source_tokens,
                 mcp_response_shape,
-                ReceiptResourceDecoration::Include,
+                receipt_resource,
             )?;
             let meta = response.meta_mut();
             if meta.protocol_tokens == accounting.protocol_tokens
@@ -122,6 +117,25 @@ impl ResponseAccountant {
             {
                 return Ok(());
             }
+            if observed.contains(&accounting) {
+                // Exact inclusive accounting is a self-referential equation:
+                // the accounting fields are part of the payload being counted.
+                // Exact BPE tokenization can produce a short cycle at a digit
+                // boundary rather than a fixed point. Keep the largest observed
+                // total as a conservative ceiling instead of rejecting a valid
+                // response; ordinary responses still take the exact path above.
+                let fallback = observed
+                    .iter()
+                    .copied()
+                    .chain([accounting])
+                    .max_by_key(|value| value.total_response_tokens)
+                    .expect("accounting cycle has an observed state");
+                meta.protocol_tokens = fallback.protocol_tokens;
+                meta.path_and_metadata_tokens = fallback.path_and_metadata_tokens;
+                meta.total_response_tokens = fallback.total_response_tokens;
+                return Ok(());
+            }
+            observed.push(accounting);
             meta.protocol_tokens = accounting.protocol_tokens;
             meta.path_and_metadata_tokens = accounting.path_and_metadata_tokens;
             meta.total_response_tokens = accounting.total_response_tokens;

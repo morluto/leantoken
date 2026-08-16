@@ -1193,8 +1193,11 @@ optional diff evidence and explain includes it when available. Receipt sizing
 reserves the exact request/generated receipt identifier plus conservative
 counter and warning shapes, and the final postcondition is checked after
 receipt application.
-Accounting converges to a fixed point and
-`meta.total_response_tokens` is the exact inclusive serialized DTO count.
+Accounting normally converges to a fixed point and
+`meta.total_response_tokens` is the exact inclusive serialized DTO count. If
+exact BPE tokenization enters a short cycle at an accounting-digit boundary,
+the accountant returns the largest observed total as a conservative response
+ceiling rather than rejecting an otherwise valid response.
 The shared `ResponseBudget` counter provides a logarithmic largest-prefix
 primitive; operation services supply the response-shaped projection and
 correctness skeleton rather than applying generic JSON truncation.
