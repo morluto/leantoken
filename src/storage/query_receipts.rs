@@ -35,6 +35,67 @@ impl Storage {
         self.persist_query_receipt_at(record, unix_millis(SystemTime::now()))
     }
 
+    pub(crate) fn touch_query_receipt(&self, receipt_id: &str) -> Result<()> {
+        self.touch_query_receipt_with_clock(receipt_id, || unix_millis(SystemTime::now()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn touch_query_receipt_at(
+        &self,
+        receipt_id: &str,
+        now_unix_millis: i64,
+    ) -> Result<()> {
+        self.touch_query_receipt_with_clock(receipt_id, || now_unix_millis)
+    }
+
+    fn touch_query_receipt_with_clock<F>(&self, receipt_id: &str, now_unix_millis: F) -> Result<()>
+    where
+        F: FnOnce() -> i64,
+    {
+        let mut conn = self
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Sample live time only after SQLite has serialized writers,
+        // otherwise an earlier sample can commit after a later one and
+        // look like a clock rollback.
+        let now_unix_millis = now_unix_millis();
+        if now_unix_millis < 0 {
+            return Err(Error::OperationFailure(
+                "system clock precedes the Unix epoch".into(),
+            ));
+        }
+        let expires_unix_millis = now_unix_millis
+            .checked_add(QUERY_RECEIPT_TTL_MILLIS)
+            .ok_or_else(|| Error::OperationFailure("query receipt expiry overflow".into()))?;
+        prune_expired_query_receipts(&tx, now_unix_millis)?;
+        let usage = query_receipt_usage(&tx)?;
+        let row_id = parse_query_receipt_id(receipt_id, &usage.namespace);
+        if let Some(row_id) = row_id {
+            let access_sequence =
+                next_query_receipt_access_sequence(&tx, usage.next_access_sequence)?;
+            let updated = tx.execute(
+                "UPDATE query_coverage_receipts
+                 SET last_access_unix_millis = ?1,
+                     expires_unix_millis = ?2,
+                     access_sequence = ?3
+                 WHERE id = ?4",
+                params![
+                    now_unix_millis,
+                    expires_unix_millis,
+                    access_sequence,
+                    row_id
+                ],
+            )?;
+            if updated == 0 {
+                return Err(Error::UnknownQueryReceipt(receipt_id.to_owned()));
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub(crate) fn persist_query_receipt_at(
         &self,
         record: &QueryReceiptRecord,
