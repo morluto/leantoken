@@ -18,9 +18,10 @@ pub(super) fn resolve_toml_edit_from_source(
     match operation {
         SetupOperation::Setup => {
             let command = launcher.command()?;
+            let expected_args = launcher.args_for(SetupClient::Codex);
             let servers = ensure_toml_table(&mut document, "mcp_servers", path)?;
             if let Some(existing) = servers.get(SERVER_NAME)
-                && toml_entry_matches(existing, command, &launcher.args)
+                && toml_entry_matches(existing, command, &expected_args)
             {
                 return Ok(ResolvedEdit::AlreadyConfigured { original });
             }
@@ -28,8 +29,7 @@ pub(super) fn resolve_toml_edit_from_source(
             let mut server = Table::new();
             server["command"] = value(command);
             let mut args = Array::new();
-            launcher
-                .args
+            expected_args
                 .iter()
                 .for_each(|argument| args.push(argument));
             server["args"] = value(args);

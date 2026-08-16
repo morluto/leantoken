@@ -46,7 +46,9 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
 - The MCP adapter owns SDK types, protocol error translation, cancellation, and
   stdio lifecycle. It omits optional output schemas from the catalog and offers
   explicit dual, text-only, and structured-only result modes. Structured is the
-  default; dual and text remain troubleshooting overrides. Successful and
+  default; dual and text remain troubleshooting overrides. Setup-generated
+  Codex registrations explicitly select text while its host adapter drops
+  `structuredContent`; all other registrations retain the default. Successful and
   tool-error results start from RMCP constructors so `resultType`, `isError`,
   and legacy-version adaptation remain SDK-owned. Semantic failures from a
   valid tool call use structured tool-error results that hosts expose to the

@@ -164,6 +164,7 @@ pub(super) fn doctor_can_exercise_the_exact_codex_registration() {
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("doctor report");
     assert_eq!(report["integration"]["verified_client"], "codex");
+    assert_eq!(report["result_mode"], "text");
     assert!(report.get("index_content_version").is_none());
     let codex = report["integration"]["registrations"]
         .as_array()

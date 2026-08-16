@@ -164,6 +164,9 @@ pub(crate) fn git_diff_hunks_with_head(
         "--no-textconv".to_owned(),
         "--unified=0".to_owned(),
         "--no-renames".to_owned(),
+        // Force standard prefixes so we never see noprefix output
+        "--src-prefix=a/".to_owned(),
+        "--dst-prefix=b/".to_owned(),
         base_sha,
     ];
     args.extend(head_sha);
@@ -188,6 +191,46 @@ pub(crate) fn git_diff_hunks_with_head(
     parse_git_diff_hunks(output.as_slice(), max, &prefix)
 }
 
+/// Decode a Git patch header path, handling C-quoted paths with octal escapes.
+fn decode_git_quoted_path(raw: &str) -> String {
+    let Some(inner) = raw.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return raw.to_owned();
+    };
+    let mut result = Vec::<u8>::new();
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'"' => result.push(b'"'),
+                b'\\' => result.push(b'\\'),
+                b't' => result.push(b'\t'),
+                b'n' => result.push(b'\n'),
+                b'r' => result.push(b'\r'),
+                next => {
+                    if (b'0'..=b'7').contains(&next) && i + 3 < bytes.len() {
+                        let octal = &inner[i + 1..i + 4];
+                        if let Ok(byte_val) = u8::from_str_radix(octal, 8) {
+                            result.push(byte_val);
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    result.push(b'\\');
+                    result.push(next);
+                    i += 2;
+                    continue;
+                }
+            }
+            i += 2;
+        } else {
+            result.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&result).into_owned()
+}
+
 pub(crate) fn parse_git_diff_hunks<R: BufRead>(
     mut reader: R,
     max: usize,
@@ -201,10 +244,21 @@ pub(crate) fn parse_git_diff_hunks<R: BufRead>(
         if reader.read_line(&mut line)? == 0 {
             break;
         }
-        if let Some(path) = line.strip_prefix("+++ ") {
-            target_path = path
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            let stripped = rest.trim_end_matches(['\r', '\n']);
+            // The diff command is invoked with --dst-prefix=b/ so the
+            // destination path always appears as: +++ b/<path>
+            // For deleted files Git emits: +++ /dev/null
+            // With core.quotePath=true, non-ASCII bytes are C-quoted:
+            //   "b/<path with \\NNN octal escapes>"
+            let path_str = decode_git_quoted_path(stripped);
+            // Reject /dev/null which Git uses for deleted files
+            if path_str == "/dev/null" {
+                target_path = None;
+                continue;
+            }
+            target_path = path_str
                 .strip_prefix("b/")
-                .map(|path| path.trim_end_matches(['\r', '\n']))
                 .and_then(|path| path.strip_prefix(prefix))
                 .map(|path| slash_path(Path::new(path)));
             continue;
@@ -382,7 +436,7 @@ pub(crate) fn diff_name_only(
     ];
     args.extend(head_sha.map(str::to_owned));
     args.extend(["--".to_owned(), ".".to_owned()]);
-    let Ok(output) = run_git_capture(
+    let output = run_git_capture(
         root,
         program,
         &args,
@@ -393,9 +447,7 @@ pub(crate) fn diff_name_only(
             failure_reason: "could not diff revision",
             max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
         },
-    ) else {
-        return Ok(Vec::new());
-    };
+    )?;
     parse_diff_names(output.as_slice(), max, prefix)
 }
 

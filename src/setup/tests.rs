@@ -294,6 +294,46 @@ fn json_remove_preserves_sibling_server_and_prunes_empty_section() {
     assert!(contents.contains("\"x\": 1"));
 }
 
+#[test]
+fn json_setup_rejects_duplicate_server_entry_keys() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("dup.json");
+    fs::write(
+        &path,
+        "{\n\"mcpServers\": {\n\"leantoken\": { \"command\": \"/old/leantoken\", \"args\": [\"mcp\"] },\n\"leantoken\": { \"command\": \"/effective/leantoken\", \"args\": [\"mcp\"] }\n}\n}\n",
+    )
+    .unwrap();
+    let launcher = McpLauncher::from_executable(&temp.path().join("leantoken"));
+    let error = edit_json_config(
+        SetupOperation::Setup,
+        &path,
+        "mcpServers",
+        JsonEntryShape::CommandAndArgs,
+        &launcher,
+    );
+    assert!(error.is_err(), "must reject duplicate keys");
+}
+
+#[test]
+fn json_setup_rejects_duplicate_top_level_section_keys() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("dup-section.json");
+    fs::write(
+        &path,
+        "{\n\"mcpServers\": { \"other\": { \"command\": \"other\" } },\n\"mcpServers\": { \"leantoken\": { \"command\": \"/effective/leantoken\", \"args\": [\"mcp\"] } }\n}\n",
+    )
+    .unwrap();
+    let launcher = McpLauncher::from_executable(&temp.path().join("leantoken"));
+    let error = edit_json_config(
+        SetupOperation::Setup,
+        &path,
+        "mcpServers",
+        JsonEntryShape::CommandAndArgs,
+        &launcher,
+    );
+    assert!(error.is_err(), "must reject duplicate top-level keys");
+}
+
 #[cfg(unix)]
 #[test]
 fn json_remove_does_not_require_a_utf8_executable_path() {
@@ -338,6 +378,7 @@ fn toml_setup_and_remove_preserve_unrelated_content() {
     assert!(configured.contains("# keep me"));
     assert!(configured.contains("[mcp_servers.other]"));
     assert!(configured.contains("[mcp_servers.leantoken]"));
+    assert!(configured.contains("\"--result-mode\", \"text\""));
     assert!(matches!(
         edit_toml_config(SetupOperation::Setup, &path, &launcher).unwrap(),
         EditStatus::AlreadyConfigured
@@ -359,7 +400,7 @@ fn toml_setup_accepts_integer_valued_float_timeout_without_rewriting() {
     let source = format!(
         "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\nstartup_timeout_sec = 30.0\n",
         launcher.command().unwrap(),
-        launcher.args
+        launcher.args_for(SetupClient::Codex)
     );
     fs::write(&path, &source).unwrap();
 
@@ -2197,7 +2238,7 @@ fn ownership_and_edit_share_one_snapshot_before_preflight() {
     let managed = format!(
         "[mcp_servers.leantoken]\ncommand = {:?}\nargs = {:?}\n",
         environment.launcher.command().unwrap(),
-        environment.launcher.args
+        environment.launcher.args_for(SetupClient::Codex)
     );
     fs::write(&path, &managed).unwrap();
     let edit = resolve_client_edit(
@@ -2266,7 +2307,7 @@ fn codex_registration_health_includes_the_configured_startup_timeout() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
     let command = serde_json::to_string(environment.launcher.command().unwrap()).unwrap();
-    let args = serde_json::to_string(&environment.launcher.args).unwrap();
+    let args = serde_json::to_string(&environment.launcher.args_for(SetupClient::Codex)).unwrap();
     let source = |timeout: &str| {
         format!(
             "[mcp_servers.leantoken]\ncommand = {command}\nargs = {args}\nstartup_timeout_sec = {timeout}\n"

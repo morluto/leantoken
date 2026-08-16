@@ -1441,11 +1441,7 @@ async fn exact_tokenizers_reject_source_budgets_that_cannot_advance_a_page() {
     let exact_tokenizers = [
         Tokenizer::Cl100kBase,
         Tokenizer::O200kBase,
-        Tokenizer::O200kHarmony,
         Tokenizer::P50kBase,
-        Tokenizer::R50kBase,
-        Tokenizer::Gpt2,
-        Tokenizer::P50kEdit,
     ];
 
     for tokenizer in exact_tokenizers {

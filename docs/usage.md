@@ -541,6 +541,13 @@ The default `structured` mode returns the typed result without duplicating its
 JSON as text. Explicit `dual` and `text` modes remain troubleshooting
 overrides. `leantoken doctor` reports the effective static mode directly.
 
+Setup-generated Codex registrations explicitly use `--result-mode text` until
+the host adapter forwards MCP `structuredContent` to the model. This preserves
+retrieval results without the duplicated JSON that `dual` would add. It applies
+only to Codex setup entries; the server default stays `structured`, and `dual`
+remains available for compatibility cases that specifically require both
+fields.
+
 The catalog publishes documented input schemas but omits
 optional output schemas; repeating full response DTOs in every `tools/list`
 result costs model context without changing tool behavior.

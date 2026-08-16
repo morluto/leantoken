@@ -2563,3 +2563,86 @@ fn search_query_preserves_significant_whitespace() {
 
     assert_eq!(request.query, "  exact text  ");
 }
+
+#[test]
+fn read_description_example_parses_successfully() {
+    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "README.md",
+        "target": {"kind": "heading", "name": "Installation"}
+    }))
+    .expect("read description example must parse");
+    let (request, _, _, _) = request.into_parts();
+    assert_eq!(request.heading.as_deref(), Some("Installation"));
+}
+
+#[test]
+fn history_description_example_parses_successfully() {
+    let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "symbol_log",
+            "path": "src/services.rs",
+            "symbol": {"name": "meta", "parent": "Services"},
+            "revision": "HEAD"
+        }
+    }))
+    .expect("history description example must parse");
+    assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
+}
+
+#[test]
+fn read_target_lines_variant_parses_and_maps() {
+    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
+        "path": "src/main.rs",
+        "target": {"kind": "lines", "start": 1, "end": 50}
+    }))
+    .expect("lines target must parse");
+    let (request, _, _, _) = request.into_parts();
+    assert_eq!(request.start_line, Some(1));
+    assert_eq!(request.end_line, Some(50));
+}
+
+#[test]
+fn read_description_does_not_offer_range_target_kind() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    let read = tools
+        .into_iter()
+        .find(|tool| tool.name == "read")
+        .expect("read tool");
+    let description = read.description.expect("read description");
+    assert!(
+        !description.contains("\"range\""),
+        "read description must not imply a range target kind: {description}"
+    );
+    assert!(
+        description.contains("line range"),
+        "read description should mention line range: {description}"
+    );
+}
+
+#[test]
+fn outline_description_does_not_offer_range_to_read() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    let outline = tools
+        .into_iter()
+        .find(|tool| tool.name == "outline")
+        .expect("outline tool");
+    let description = outline.description.expect("outline description");
+    assert!(
+        description.contains("line range to read"),
+        "outline description should guide to line range: {description}"
+    );
+}
+
+#[test]
+fn history_description_example_uses_symbol_identity_object() {
+    let tools = LeanTokenMcp::tool_router().list_all();
+    let history = tools
+        .into_iter()
+        .find(|tool| tool.name == "history")
+        .expect("history tool");
+    let description = history.description.expect("history description");
+    assert!(
+        description.contains("\"symbol\":{\"name\":"),
+        "history description example must use a SymbolIdentity object: {description}"
+    );
+}

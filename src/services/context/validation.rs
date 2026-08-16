@@ -170,12 +170,20 @@ impl Services {
                     limit: MAX_CONTEXT_EVIDENCE_QUERIES,
                 });
             }
+            let normalized_distinct = {
+                let mut seen = std::collections::HashSet::new();
+                requirement
+                    .queries
+                    .iter()
+                    .filter(|q| seen.insert(q.to_lowercase()))
+                    .count()
+            };
             if requirement.minimum_query_matches == 0
-                || requirement.minimum_query_matches > requirement.queries.len()
+                || requirement.minimum_query_matches > normalized_distinct
             {
                 return Err(Error::InvalidInput {
                     field: "required_evidence minimum_query_matches",
-                    reason: "must be between one and the number of queries",
+                    reason: "must be between one and the number of normalized distinct queries",
                 });
             }
             for query in &requirement.queries {
