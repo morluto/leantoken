@@ -52,15 +52,22 @@ pub(super) fn process_imports_match(
 }
 
 pub(super) fn push_import(imports: &mut Vec<Import>, raw_target: &str, line: usize) {
-    if imports
-        .iter()
-        .any(|import| import.line == line && import.raw_target == raw_target)
-    {
-        return;
-    }
     imports.push(Import {
         raw_target: raw_target.to_string(),
         resolved_path: None,
         line,
     });
+}
+
+pub(super) fn deduplicate_imports(imports: &mut Vec<Import>) {
+    let mut seen = HashSet::with_capacity(imports.len());
+    // Decide before mutating so the set can borrow targets instead of cloning
+    // every string solely for deduplication.
+    let keep = imports
+        .iter()
+        .map(|import| seen.insert((import.line, import.raw_target.as_str())))
+        .collect::<Vec<_>>();
+    drop(seen);
+    let mut keep = keep.into_iter();
+    imports.retain(|_| keep.next().expect("one decision per import"));
 }

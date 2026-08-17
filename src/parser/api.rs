@@ -199,6 +199,7 @@ pub(super) fn parse_language_with_cancellation(
             return Err(Error::Cancelled);
         }
 
+        deduplicate_imports(&mut imports);
         deduplicate_symbols(&mut symbols);
         compute_symbol_parents(&mut symbols);
         compute_reference_enclosing(&symbols, &mut references);
