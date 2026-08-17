@@ -683,20 +683,25 @@ impl Storage {
 /// Physical identity of the database file: stable across ordinary reopens,
 /// but distinct for a copied or replaced file.
 fn database_identity(path: &Path) -> Result<String> {
-    let metadata = fs::metadata(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(path)?;
         Ok(format!("{:016x}{:016x}", metadata.dev(), metadata.ino()))
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        Ok(format!(
-            "{:08x}{:016x}",
-            metadata.volume_serial_number(),
-            metadata.file_index()
-        ))
+        // The Windows file-index APIs are unstable, so the canonical path is
+        // the stable clone signal on this platform: an ordinary reopen keeps
+        // it, while a copy or replacement resolves to a different path.
+        Ok(fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(path.to_string_lossy().into_owned())
     }
 }
 
