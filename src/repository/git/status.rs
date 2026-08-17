@@ -12,6 +12,17 @@ pub fn git_changed_paths(root: &Path, max: usize) -> Result<HashSet<String>> {
 pub(crate) struct GitWorkingTreeStatus {
     pub(crate) changed_paths: HashSet<String>,
     state: GitWorkingTreeState,
+    changed_paths_complete: bool,
+    changed_paths_limit: Option<usize>,
+    failure: Option<GitWorkingTreeFailure>,
+}
+
+#[derive(Clone, Copy)]
+enum GitWorkingTreeFailure {
+    Unavailable,
+    InvalidPathEncoding,
+    Read,
+    OutputBytes { requested: usize, limit: usize },
 }
 
 #[derive(Clone, Copy)]
@@ -29,21 +40,38 @@ enum GitWorkingTreeChanges {
 }
 
 impl GitWorkingTreeStatus {
-    fn unavailable(changed_paths: HashSet<String>, modified: bool, untracked: bool) -> Self {
+    fn unavailable(
+        changed_paths: HashSet<String>,
+        modified: bool,
+        untracked: bool,
+        failure: GitWorkingTreeFailure,
+    ) -> Self {
         Self {
             changed_paths,
             state: GitWorkingTreeState::Unavailable(GitWorkingTreeChanges::from_flags(
                 modified, untracked,
             )),
+            changed_paths_complete: false,
+            changed_paths_limit: None,
+            failure: Some(failure),
         }
     }
 
-    fn available(changed_paths: HashSet<String>, modified: bool, untracked: bool) -> Self {
+    fn available(
+        changed_paths: HashSet<String>,
+        modified: bool,
+        untracked: bool,
+        changed_paths_complete: bool,
+        changed_paths_limit: Option<usize>,
+    ) -> Self {
         Self {
             changed_paths,
             state: GitWorkingTreeState::Available(GitWorkingTreeChanges::from_flags(
                 modified, untracked,
             )),
+            changed_paths_complete,
+            changed_paths_limit,
+            failure: None,
         }
     }
 
@@ -63,6 +91,46 @@ impl GitWorkingTreeStatus {
             self.state.changes(),
             GitWorkingTreeChanges::Untracked | GitWorkingTreeChanges::ModifiedAndUntracked
         )
+    }
+
+    pub(crate) const fn changed_paths_complete(&self) -> bool {
+        self.changed_paths_complete
+    }
+
+    pub(crate) const fn changed_paths_limit(&self) -> Option<usize> {
+        self.changed_paths_limit
+    }
+
+    pub(crate) fn require_complete(&self) -> Result<()> {
+        match self.failure {
+            Some(GitWorkingTreeFailure::OutputBytes { requested, limit }) => {
+                Err(Error::RequestLimitExceeded {
+                    field: "git output bytes",
+                    requested,
+                    limit,
+                })
+            }
+            Some(GitWorkingTreeFailure::InvalidPathEncoding) => Err(Error::InvalidInput {
+                field: "git status path",
+                reason: "must be valid UTF-8",
+            }),
+            Some(GitWorkingTreeFailure::Read) => Err(Error::OperationFailure(
+                "could not read git status paths".into(),
+            )),
+            Some(GitWorkingTreeFailure::Unavailable) => Err(Error::InvalidInput {
+                field: "changed paths",
+                reason: "working-tree changed-path discovery is unavailable",
+            }),
+            None if !self.changed_paths_complete => {
+                let limit = self.changed_paths_limit.unwrap_or(self.changed_paths.len());
+                Err(Error::RequestLimitExceeded {
+                    field: "git changed paths",
+                    requested: limit.saturating_add(1),
+                    limit,
+                })
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -106,7 +174,7 @@ pub(crate) fn git_working_tree_status_with(
     timeout: Duration,
 ) -> GitWorkingTreeStatus {
     if max == 0 {
-        return GitWorkingTreeStatus::available(HashSet::new(), false, false);
+        return GitWorkingTreeStatus::available(HashSet::new(), false, false, false, Some(0));
     }
     let prefix = git_worktree_prefix(root);
     let args = [
@@ -121,7 +189,7 @@ pub(crate) fn git_working_tree_status_with(
         ".",
     ]
     .map(str::to_owned);
-    let Ok(output) = run_git_capture(
+    let output = match run_git_capture(
         root,
         program,
         &args,
@@ -130,10 +198,33 @@ pub(crate) fn git_working_tree_status_with(
             field: "git status",
             timeout_reason: "git status timed out",
             failure_reason: "git status failed",
-            max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
+            max_output_bytes: bounded_git_output(
+                max.saturating_add(1),
+                GIT_PATH_OUTPUT_BYTES_PER_RESULT,
+            ),
         },
-    ) else {
-        return GitWorkingTreeStatus::unavailable(HashSet::new(), false, false);
+    ) {
+        Ok(output) => output,
+        Err(Error::RequestLimitExceeded {
+            field: "git output bytes",
+            requested,
+            limit,
+        }) => {
+            return GitWorkingTreeStatus::unavailable(
+                HashSet::new(),
+                false,
+                false,
+                GitWorkingTreeFailure::OutputBytes { requested, limit },
+            );
+        }
+        Err(_) => {
+            return GitWorkingTreeStatus::unavailable(
+                HashSet::new(),
+                false,
+                false,
+                GitWorkingTreeFailure::Unavailable,
+            );
+        }
     };
     parse_git_status_observation(output.as_slice(), max, &prefix)
 }
@@ -161,7 +252,7 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
     prefix: &str,
 ) -> GitWorkingTreeStatus {
     if max == 0 {
-        return GitWorkingTreeStatus::available(HashSet::new(), false, false);
+        return GitWorkingTreeStatus::available(HashSet::new(), false, false, false, Some(0));
     }
     let mut changed = HashSet::new();
     let mut modified = false;
@@ -173,7 +264,14 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         match reader.read_until(0, &mut record) {
             Ok(0) => break,
             Ok(_) => {}
-            Err(_) => return GitWorkingTreeStatus::unavailable(changed, modified, untracked),
+            Err(_) => {
+                return GitWorkingTreeStatus::unavailable(
+                    changed,
+                    modified,
+                    untracked,
+                    GitWorkingTreeFailure::Read,
+                );
+            }
         }
 
         if record.last() == Some(&0) {
@@ -197,22 +295,23 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         }
 
         let Ok(path) = std::str::from_utf8(&record[3..]) else {
-            return GitWorkingTreeStatus::unavailable(HashSet::new(), modified, untracked);
+            return GitWorkingTreeStatus::unavailable(
+                HashSet::new(),
+                modified,
+                untracked,
+                GitWorkingTreeFailure::InvalidPathEncoding,
+            );
         };
 
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
-        changed.insert(slash_path(Path::new(path)));
-        if changed.len() == max {
-            tracing::warn!(
-                changed_paths = max,
-                "git status changed-path set truncated at {} entries;                 the working tree has more changed paths than the bound",
-                max,
-            );
-            break;
+        let path = slash_path(Path::new(path));
+        if changed.len() == max && !changed.contains(&path) {
+            return GitWorkingTreeStatus::available(changed, modified, untracked, false, Some(max));
         }
+        changed.insert(path);
     }
-    GitWorkingTreeStatus::available(changed, modified, untracked)
+    GitWorkingTreeStatus::available(changed, modified, untracked, true, None)
 }
 use super::*;

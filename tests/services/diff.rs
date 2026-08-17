@@ -173,6 +173,204 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
 }
 
 #[tokio::test]
+async fn strict_immutable_diff_rejects_the_513th_changed_path() {
+    require_git();
+
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    write_bounded_diff_fixture(root.path(), false);
+    init_git_repo(root.path());
+    let base = git_revision(root.path(), "HEAD");
+    write_bounded_diff_fixture(root.path(), true);
+    git_commit_all(root.path(), "change 513 paths");
+    let head = git_revision(root.path(), "HEAD");
+
+    let config = Config::discover(
+        root.path(),
+        Some(database.path().join("immutable-overflow.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index head");
+    let mut strict = context_limit_request(1_000);
+    strict.task = "review only_task_relevant_tail_marker".into();
+    strict.base_revision = Some(format!("{base}..{head}"));
+    strict.strict_changed_paths = true;
+
+    let error = services
+        .context(strict)
+        .await
+        .expect_err("an incomplete strict diff scope must fail");
+    assert_git_changed_path_limit(error);
+
+    let mut advisory = context_limit_request(1_000);
+    advisory.task = "review only_task_relevant_tail_marker".into();
+    advisory.base_revision = Some(format!("{base}..{head}"));
+    let response = services
+        .context_with_handoff(advisory, HandoffManifestRequest::default())
+        .await
+        .expect("advisory diff may return an explicitly incomplete scope");
+    let scope = response.diff_scope.as_ref().expect("diff scope");
+    assert_eq!(scope.changed_paths.len(), 512);
+    assert!(!scope.changed_paths_complete);
+    assert_eq!(scope.changed_paths_limit, Some(512));
+    assert!(
+        !scope
+            .changed_paths
+            .iter()
+            .any(|path| path == "zz/relevant.rs")
+    );
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("changed-path discovery is incomplete"))
+    );
+    let routing = response.routing.as_ref().expect("oversized-scope routing");
+    assert!(!routing.changed_paths_complete);
+    assert_eq!(routing.changed_paths_limit, Some(512));
+    let handoff = response.handoff_manifest.as_ref().expect("handoff");
+    assert!(!handoff.changed_paths_complete);
+    assert_eq!(handoff.changed_paths_limit, Some(512));
+    assert!(
+        handoff
+            .gaps
+            .iter()
+            .any(|gap| gap.contains("changed-path discovery was incomplete"))
+    );
+}
+
+#[tokio::test]
+async fn strict_working_tree_rejects_modified_and_untracked_path_overflow() {
+    require_git();
+
+    let root = tempfile::tempdir().expect("root");
+    let database = tempfile::tempdir().expect("database");
+    write_tracked_working_tree_fixture(root.path(), false);
+    init_git_repo(root.path());
+    write_tracked_working_tree_fixture(root.path(), true);
+    std::fs::create_dir_all(root.path().join("zz")).expect("tail directory");
+    std::fs::write(
+        root.path().join("zz/relevant.rs"),
+        "pub fn only_task_relevant_tail_marker() -> bool { true }\n",
+    )
+    .expect("untracked relevant tail");
+
+    let config = Config::discover(
+        root.path(),
+        Some(database.path().join("working-tree-overflow.sqlite")),
+    )
+    .expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index working tree");
+    let mut strict = context_limit_request(1_000);
+    strict.task = "review only_task_relevant_tail_marker".into();
+    strict.strict_changed_paths = true;
+
+    let error = services
+        .context(strict)
+        .await
+        .expect_err("an incomplete strict working-tree scope must fail");
+    assert_git_changed_path_limit(error);
+
+    let mut advisory = context_limit_request(1_000);
+    advisory.task = "review only_task_relevant_tail_marker".into();
+    advisory.base_revision = Some("HEAD".into());
+    let response = services
+        .context_with_handoff(advisory, HandoffManifestRequest::default())
+        .await
+        .expect("advisory working-tree scope");
+    let scope = response.diff_scope.as_ref().expect("diff scope");
+    assert_eq!(scope.changed_paths.len(), 512);
+    assert!(!scope.changed_paths_complete);
+    assert_eq!(scope.changed_paths_limit, Some(512));
+    assert!(
+        !scope
+            .changed_paths
+            .iter()
+            .any(|path| path == "zz/relevant.rs")
+    );
+    let provenance = response.provenance.as_ref().expect("provenance");
+    assert!(!provenance.working_tree_paths_complete);
+    assert_eq!(provenance.working_tree_paths_limit, Some(512));
+    let handoff = response.handoff_manifest.as_ref().expect("handoff");
+    assert!(!handoff.changed_paths_complete);
+    assert_eq!(handoff.changed_paths_limit, Some(512));
+}
+
+fn write_bounded_diff_fixture(root: &std::path::Path, changed: bool) {
+    write_tracked_working_tree_fixture(root, changed);
+    std::fs::create_dir_all(root.join("zz")).expect("tail directory");
+    let value = if changed { "true" } else { "false" };
+    std::fs::write(
+        root.join("zz/relevant.rs"),
+        format!("pub fn only_task_relevant_tail_marker() -> bool {{ {value} }}\n"),
+    )
+    .expect("relevant tail");
+}
+
+fn write_tracked_working_tree_fixture(root: &std::path::Path, changed: bool) {
+    let value = if changed { "true" } else { "false" };
+    for index in 0..512 {
+        let directory = root.join(format!("src/group_{:02}", index % 8));
+        std::fs::create_dir_all(&directory).expect("fixture directory");
+        std::fs::write(
+            directory.join(format!("file_{index:03}.rs")),
+            format!("pub fn generic_marker_{index:03}() -> bool {{ {value} }}\n"),
+        )
+        .expect("fixture source");
+    }
+}
+
+fn git_revision(root: &std::path::Path, revision: &str) -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", revision])
+        .current_dir(root)
+        .output()
+        .expect("git rev-parse");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .expect("UTF-8 revision")
+        .trim()
+        .to_owned()
+}
+
+fn git_commit_all(root: &std::path::Path, message: &str) {
+    for args in [&["add", "-A"][..], &["commit", "-m", message][..]] {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("git command");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+fn assert_git_changed_path_limit(error: Error) {
+    assert!(
+        matches!(
+            error,
+            Error::RequestLimitExceeded {
+                field: "git changed paths",
+                requested: 513,
+                limit: 512,
+            }
+        ),
+        "unexpected strict-scope error: {error:?}"
+    );
+}
+
+#[tokio::test]
 async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracked_owner_tests() {
     require_git();
 

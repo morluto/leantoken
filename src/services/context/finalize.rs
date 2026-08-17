@@ -253,6 +253,8 @@ impl Services {
             diff_scope,
             working_tree,
             working_tree_paths,
+            working_tree_paths_complete,
+            working_tree_paths_limit,
             commit_revision,
             branch,
             resolved_workflow,
@@ -331,6 +333,8 @@ impl Services {
             commit_revision: commit_revision.map(str::to_owned),
             branch: branch.map(str::to_owned),
             working_tree_state: working_tree.provenance_state(),
+            working_tree_paths_complete,
+            working_tree_paths_limit,
             repository_generation: generation,
             freshness: response.meta.freshness.clone(),
             status: if commit_revision.is_some() && branch.is_some() && working_tree.is_available()
@@ -377,6 +381,14 @@ impl Services {
                     routing.changed_paths, routing.path_groups_total
                 ));
             }
+            if !scope.changed_paths_complete {
+                let bound = scope
+                    .changed_paths_limit
+                    .map_or_else(|| "the configured bound".into(), |limit| limit.to_string());
+                response.warnings.push(format!(
+                    "changed-path discovery is incomplete at {bound} paths; advisory results may omit changed files"
+                ));
+            }
             response.diff_scope = Some(scope);
         }
         if let Some(handoff) = policy.handoff() {
@@ -411,6 +423,8 @@ impl Services {
                     commit_revision: handoff_commit_revision.clone(),
                     branch: None,
                     working_tree_state: RepositoryWorkingTreeState::Unknown,
+                    working_tree_paths_complete: false,
+                    working_tree_paths_limit: None,
                     repository_generation: 0,
                     // The model has no separate unknown freshness variant;
                     // status=unavailable is the authoritative signal.

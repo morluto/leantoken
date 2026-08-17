@@ -40,7 +40,9 @@ pub fn git_diff_paths_between(
     Ok(GitDiffResult {
         base_revision: base_sha,
         head_revision: head_sha,
-        changed_paths,
+        changed_paths: changed_paths.paths,
+        changed_paths_complete: changed_paths.complete,
+        changed_paths_limit: changed_paths.limit,
     })
 }
 
@@ -65,6 +67,8 @@ pub(crate) fn git_diff_identity(
         base_revision: base_sha,
         head_revision: head_sha,
         changed_paths: Vec::new(),
+        changed_paths_complete: true,
+        changed_paths_limit: None,
     })
 }
 
@@ -323,6 +327,8 @@ pub(crate) fn git_diff_paths_with(
             base_revision: String::new(),
             head_revision: String::new(),
             changed_paths: Vec::new(),
+            changed_paths_complete: false,
+            changed_paths_limit: Some(0),
         });
     }
     let prefix = git_worktree_prefix(root);
@@ -332,7 +338,9 @@ pub(crate) fn git_diff_paths_with(
     Ok(GitDiffResult {
         base_revision: base_sha,
         head_revision: head_sha,
-        changed_paths: changed,
+        changed_paths: changed.paths,
+        changed_paths_complete: changed.complete,
+        changed_paths_limit: changed.limit,
     })
 }
 
@@ -422,7 +430,7 @@ pub(crate) fn diff_name_only(
     max: usize,
     timeout: Duration,
     prefix: &str,
-) -> Result<Vec<String>> {
+) -> Result<GitChangedPathSet> {
     let mut args = vec![
         "-c".to_owned(),
         "core.fsmonitor=false".to_owned(),
@@ -445,7 +453,10 @@ pub(crate) fn diff_name_only(
             field: "base revision",
             timeout_reason: "git diff timed out",
             failure_reason: "could not diff revision",
-            max_output_bytes: bounded_git_output(max, GIT_PATH_OUTPUT_BYTES_PER_RESULT),
+            max_output_bytes: bounded_git_output(
+                max.saturating_add(1),
+                GIT_PATH_OUTPUT_BYTES_PER_RESULT,
+            ),
         },
     )?;
     parse_diff_names(output.as_slice(), max, prefix)
@@ -455,9 +466,9 @@ pub(crate) fn parse_diff_names<R: BufRead>(
     mut reader: R,
     max: usize,
     prefix: &str,
-) -> Result<Vec<String>> {
+) -> Result<GitChangedPathSet> {
     if max == 0 {
-        return Ok(Vec::new());
+        return Ok(GitChangedPathSet::truncated(Vec::new(), 0));
     }
     let mut changed = Vec::new();
     let mut record = Vec::new();
@@ -466,7 +477,11 @@ pub(crate) fn parse_diff_names<R: BufRead>(
         match reader.read_until(0, &mut record) {
             Ok(0) => break,
             Ok(_) => {}
-            Err(_) => break,
+            Err(error) => {
+                return Err(Error::OperationFailure(format!(
+                    "could not read git diff paths: {error}"
+                )));
+            }
         }
         if record.last() == Some(&0) {
             record.pop();
@@ -481,16 +496,11 @@ pub(crate) fn parse_diff_names<R: BufRead>(
         let Some(path) = path.strip_prefix(prefix) else {
             continue;
         };
-        changed.push(slash_path(Path::new(path)));
         if changed.len() == max {
-            tracing::warn!(
-                changed_paths = max,
-                "git diff changed-path set truncated at {} entries;                 the diff has more changed paths than the bound",
-                max,
-            );
-            break;
+            return Ok(GitChangedPathSet::truncated(changed, max));
         }
+        changed.push(slash_path(Path::new(path)));
     }
-    Ok(changed)
+    Ok(GitChangedPathSet::complete(changed))
 }
 use super::*;
