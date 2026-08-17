@@ -115,16 +115,21 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         }
         build_focused_test_command(FocusedTestTarget::Suite, &filter, false)
     } else {
-        // Single-pass: probe the product target first (the common case).
-        // Only probe the suite target if the product probe finds nothing.
+        // Probe both packages: a name present in both is ambiguous and must
+        // fail instead of silently running only one package.
         let product_match = focused_target_has_test(root, FocusedTestTarget::Product, selector)?;
-        if product_match {
-            build_focused_test_command(FocusedTestTarget::Product, selector, false)
-        } else {
-            let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
-            if suite_match {
-                build_focused_test_command(FocusedTestTarget::Suite, selector, false)
-            } else {
+        let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+        match (product_match, suite_match) {
+            (true, true) => {
+                return Err(XtaskError::Usage(format!(
+                    "ambiguous test selector `{selector}` matches both {SUITE} and {PRODUCT}; use a domain-qualified selector or run the owning package directly"
+                )));
+            }
+            (true, false) => {
+                build_focused_test_command(FocusedTestTarget::Product, selector, false)
+            }
+            (false, true) => build_focused_test_command(FocusedTestTarget::Suite, selector, false),
+            (false, false) => {
                 return Err(XtaskError::NoTestsMatched(selector.clone()));
             }
         }
@@ -420,7 +425,9 @@ impl TestPlan {
         // Target lifecycle and liveness tests specifically rather than replaying
         // the entire process test suite. These tests exercise retry, failover,
         // startup contention, and cancellation — the stochastic invariants most
-        // likely to surface race conditions under repetition.
+        // likely to surface race conditions under repetition. The filter matches
+        // the registered wrapper names in tests/process.rs, which share the
+        // `mcp_lifecycle_` prefix.
         Ok(Self {
             commands: vec![nextest_command([
                 "--locked",
@@ -429,7 +436,7 @@ impl TestPlan {
                 "--all-features",
                 "--test",
                 "integration",
-                "process::mcp_lifecycle::",
+                "process::mcp_lifecycle_",
                 "-j",
                 process_test_jobs(),
             ])],

@@ -277,9 +277,8 @@ async fn main() {
     // Assert total JSON savings are also positive — a regression in the
     // wire format could increase JSON overhead even if source savings hold.
     assert!(
-        aggregate_total_json_savings_against_minimal_baseline_fraction.is_finite()
-            && aggregate_total_json_savings > 0.0,
-        "total JSON savings fraction must be positive, got {aggregate_total_json_savings}"
+        aggregate_json_savings.is_finite() && aggregate_json_savings > 0.0,
+        "total JSON savings fraction must be positive, got {aggregate_json_savings}"
     );
 }
 
