@@ -2740,34 +2740,40 @@ fn committed_setup_journal_never_restores_applied_edits() {
     assert!(!transaction_path(&runtime_root).exists());
 }
 
-#[cfg(unix)]
 #[test]
-fn write_if_changed_rejects_symlinked_config() {
-    use std::os::unix::fs::symlink;
+fn write_if_changed_creates_an_absent_file_for_a_none_original() {
     let temp = tempfile::tempdir().unwrap();
-    let real = temp.path().join("real.toml");
-    let link = temp.path().join("config.toml");
-    fs::write(&real, "original = true").unwrap();
-    symlink(&real, &link).unwrap();
+    let path = temp.path().join("config.json");
 
-    let result = write_if_changed(&link, "original = true", "updated = true");
+    write_if_changed(&path, None, "new content").expect("create must succeed");
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
+}
+
+#[test]
+fn write_if_changed_rejects_a_create_when_the_file_appeared() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.json");
+    fs::write(&path, "concurrent write").unwrap();
+
+    let error = write_if_changed(&path, None, "new content").unwrap_err();
 
     assert!(
-        result.is_err(),
-        "write_if_changed should reject symlinked config"
+        error
+            .to_string()
+            .contains("configuration changed before persist"),
+        "create CAS must fail when the file appeared: {error}"
     );
-    let error = result.unwrap_err().to_string();
-    assert!(
-        error.contains("symbolic link"),
-        "error should mention symbolic link: {error}"
-    );
-    // The real file should be untouched
-    assert_eq!(fs::read_to_string(&real).unwrap(), "original = true");
-    // The symlink should still be intact
-    assert!(
-        fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink()
-    );
+}
+
+#[test]
+fn write_if_changed_keeps_an_existing_file_when_content_is_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.json");
+    fs::write(&path, "original content").unwrap();
+
+    write_if_changed(&path, Some("original content"), "original content")
+        .expect("unchanged update must be a no-op");
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original content");
 }

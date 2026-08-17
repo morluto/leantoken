@@ -141,9 +141,9 @@ pub(super) fn validate_setup_content_size(path: &Path, content: &str) -> Result<
     Ok(())
 }
 
-pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
+pub(super) fn write_if_changed(path: &Path, original: Option<&str>, updated: &str) -> Result<()> {
     validate_setup_content_size(path, updated)?;
-    if original == updated {
+    if original == Some(updated) {
         return Ok(());
     }
     // Compare-and-swap: re-read the file immediately before the atomic persist
@@ -151,7 +151,7 @@ pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Re
     // This shrinks the TOCTOU window from "between two separate function calls"
     // to "a few microseconds within this function".
     let on_disk = read_optional(path)?;
-    if on_disk.as_deref() != Some(original) {
+    if on_disk.as_deref() != original {
         return Err(Error::SetupFailure(format!(
             "configuration changed before persist: {}",
             path.display()

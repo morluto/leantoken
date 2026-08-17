@@ -308,15 +308,9 @@ pub(super) fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
     match original {
         Some(original) => {
             let current = read_optional(path)?;
-            if current.is_none() {
-                // The file is missing but the original says it should exist
-                // (possibly as an empty file). Use write_if_changed with a
-                // sentinel current value that differs from original so the
-                // equality shortcut does not skip the atomic write.
-                write_if_changed(path, " ", original)
-            } else {
-                write_if_changed(path, &current.unwrap_or_default(), original)
-            }
+            // A missing file with a recorded original means the entry was
+            // never persisted; recreate it as the original content.
+            write_if_changed(path, current.as_deref(), original)
         }
         None => {
             if path.exists() {

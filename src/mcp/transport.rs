@@ -25,6 +25,11 @@ use super::{McpResultMode, RequestAdmission, RetryableToolResponse, retryable_to
 
 const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
+/// Multiplies the dispatch capacity to bound the number of cancelled-but-
+/// draining entries retained after cancellations release their permits. A
+/// client that cancels faster than handlers drain cannot grow the map or the
+/// in-flight work beyond this bound.
+const RETAINED_TOMBSTONE_MULTIPLIER: usize = 4;
 
 /// Dispatch entry state: active (holding a permit) or tombstoned (cancelled
 /// but handler still draining). Tombstoned entries prevent ID reuse until the
@@ -33,6 +38,15 @@ const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 enum DispatchEntry {
     Active(tokio::sync::OwnedSemaphorePermit),
     Tombstoned,
+}
+
+/// A request rejected by admission: either a tool call over the dispatch
+/// bound or any request whose ID collides with an in-flight or tombstoned
+/// entry. Control-request collisions must not release the reserved ID.
+#[derive(Debug)]
+struct AdmissionFailure {
+    id: rmcp::model::RequestId,
+    tool_call: bool,
 }
 
 #[derive(Clone)]
@@ -58,6 +72,7 @@ pub(super) struct BoundedStdioTransport {
     decoder: JsonRpcMessageCodec<RxJsonRpcMessage<RoleServer>>,
     read_buffer: BytesMut,
     request_dispatch: RequestAdmission,
+    max_dispatch_entries: usize,
     dispatched_calls: Arc<Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>>,
     result_mode: McpResultMode,
     negotiated_protocol: Arc<RwLock<Option<ProtocolVersion>>>,
@@ -65,12 +80,16 @@ pub(super) struct BoundedStdioTransport {
 
 impl BoundedStdioTransport {
     pub(super) fn new(request_dispatch: RequestAdmission, result_mode: McpResultMode) -> Self {
+        let max_dispatch_entries = request_dispatch
+            .capacity()
+            .saturating_mul(RETAINED_TOMBSTONE_MULTIPLIER);
         Self {
             reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
             writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
             decoder: JsonRpcMessageCodec::new_with_max_length(MAX_MCP_STDIO_FRAME_BYTES),
             read_buffer: BytesMut::new(),
             request_dispatch,
+            max_dispatch_entries,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
             result_mode,
             negotiated_protocol: Arc::new(RwLock::new(None)),
@@ -104,7 +123,7 @@ impl BoundedStdioTransport {
     fn admit_message(
         &self,
         message: &mut RxJsonRpcMessage<RoleServer>,
-    ) -> Result<(), rmcp::model::RequestId> {
+    ) -> Result<(), AdmissionFailure> {
         let request = match message {
             JsonRpcMessage::Notification(notification) => {
                 if let ClientNotification::CancelledNotification(cancelled) =
@@ -118,20 +137,24 @@ impl BoundedStdioTransport {
             JsonRpcMessage::Request(request) => request,
             JsonRpcMessage::Response(_) | JsonRpcMessage::Error(_) => return Ok(()),
         };
-        if !matches!(&request.request, ClientRequest::CallToolRequest(_)) {
-            return Ok(());
-        }
         let id = request.id.clone();
+        let tool_call = matches!(&request.request, ClientRequest::CallToolRequest(_));
         let mut dispatched = self
             .dispatched_calls
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if dispatched.contains_key(&id) {
-            return Err(id);
+            return Err(AdmissionFailure { id, tool_call });
+        }
+        if !tool_call {
+            return Ok(());
+        }
+        if dispatched.len() >= self.max_dispatch_entries {
+            return Err(AdmissionFailure { id, tool_call });
         }
         let permit = match self.request_dispatch.try_admit() {
             Ok(permit) => permit,
-            Err(_) => return Err(id),
+            Err(_) => return Err(AdmissionFailure { id, tool_call }),
         };
         dispatched.insert(id.clone(), DispatchEntry::Active(permit));
         drop(dispatched);
@@ -232,8 +255,18 @@ impl Transport<RoleServer> for BoundedStdioTransport {
             match self.decoder.decode(&mut self.read_buffer) {
                 Ok(Some(mut message)) => match self.admit_message(&mut message) {
                     Ok(()) => return Some(message),
-                    Err(id) => {
-                        let response = self.overloaded_response(id);
+                    Err(AdmissionFailure { id, tool_call }) => {
+                        // Rejected control requests respond with an error that
+                        // is written directly, bypassing `send`, so a reserved
+                        // in-flight or tombstoned ID is never released early.
+                        let response = if tool_call {
+                            self.overloaded_response(id)
+                        } else {
+                            TxJsonRpcMessage::<RoleServer>::error(
+                                ErrorData::invalid_request("request id is already in flight", None),
+                                Some(id),
+                            )
+                        };
                         if Self::write_message(Arc::clone(&self.writer), response)
                             .await
                             .is_err()
