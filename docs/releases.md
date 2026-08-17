@@ -4,8 +4,12 @@ LeanToken uses a release-please style workflow.
 Every push to `main` triggers the [Release Please] workflow, which opens or
 updates a release PR containing the version bump and regenerated changelog.
 Merging that PR creates the git tag and explicitly dispatches [cargo-dist] with
-that tag to publish platform archives to a GitHub release. A custom packaging
-job also assembles the five native binaries into one script-free npm tarball.
+that tag to publish platform archives to a GitHub release. Tag creation is
+pinned to the release PR's merged commit from the close-event payload, so a
+later `main` commit cannot be included in the earlier release. The tag step also
+requires the PR title, Cargo package, and MCP Registry metadata to carry the
+same version before it writes the tag. A custom packaging job then assembles
+the five native binaries into one script-free npm tarball.
 A trusted-publishing job verifies that tarball and publishes it to npm with
 provenance before the release workflow completes.
 
