@@ -25,7 +25,7 @@
 > 20.1% fewer model input tokens than the agent's built-in tools with limited
 > repository exploration, and 37.6% fewer than those tools with broad
 > exploration. See exactly
-> how it was measured in the [measurement methodology](docs/measurement.md).
+> how it was measured in the [measurement methodology](https://github.com/morluto/leantoken/blob/main/docs/measurement.md).
 
 ## Quick start
 
@@ -177,7 +177,7 @@ dump:
 This one-call contract is for autonomous repository triage, not a limit on
 implementation agents. Human review and control-plane flows can still preview
 expensive or high-risk retrieval with `plan_only: true` before materializing.
-The [repeated multi-agent context suite](docs/measurement.md#repeated-multi-agent-context-suite)
+The [repeated multi-agent context suite](https://github.com/morluto/leantoken/blob/main/docs/measurement.md#repeated-multi-agent-context-suite)
 found that an iterative LeanToken profile used 50.9% more total input than thin
 native, while the frozen one-context-plus-optional-one-search profile saved
 20.1% and had 15/20 path-set successes. Those results cover four pinned triage
@@ -441,9 +441,9 @@ LeanToken's goal is to return the code an agent needs with fewer input tokens.
 | [Usage and tool reference](docs/usage.md) | Commands, MCP tools, request options, and examples |
 | [Architecture and reliability](docs/architecture.md) | Components, data flow, storage, and failure behavior |
 | [Roadmap](docs/roadmap.md) | Current direction and planned work |
-| [Development and testing](docs/development.md) | Local setup, validation, and release workflow |
-| [Benchmark methodology](benchmarks/README.md) | Token-economy measurements and interpretation |
-| [Measurement harnesses](docs/measurement.md) | Experiment, wire-cost, and profiling tools |
+| [Development and testing](https://github.com/morluto/leantoken/blob/main/docs/development.md) | Local setup, validation, and release workflow |
+| [Benchmark methodology](https://github.com/morluto/leantoken/blob/main/benchmarks/README.md) | Token-economy measurements and interpretation |
+| [Measurement harnesses](https://github.com/morluto/leantoken/blob/main/docs/measurement.md) | Experiment, wire-cost, and profiling tools |
 
 ## License
 

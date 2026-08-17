@@ -1197,7 +1197,7 @@ and use the evidence directly. Make at most one focused follow-up only when the
 returned coverage identifies a concrete missing implementation or
 regression-test owner. This is a host usage contract, not service session state
 or a restriction on implementation agents. The
-[repeated multi-agent context suite](measurement.md#repeated-multi-agent-context-suite)
+[repeated multi-agent context suite](https://github.com/morluto/leantoken/blob/main/docs/measurement.md#repeated-multi-agent-context-suite)
 records the four-task, 60-run evidence and its limits.
 
 Optional inputs focus or exclude paths and symbols, provide hashes already held

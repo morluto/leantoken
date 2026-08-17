@@ -30,7 +30,7 @@ Git 履歴の調査を行えます。
 
 > **計測済みのトークン削減：** 60 回の制御された実験では、エージェントの組み込み
 > ツールと比べ、限定的なリポジトリ探索でモデル入力トークンを 20.1%、広範な探索で
-> 37.6% 削減しました。詳細は[計測方法](../../measurement.md)を参照してください。
+> 37.6% 削減しました。詳細は[計測方法](https://github.com/morluto/leantoken/blob/main/docs/measurement.md)を参照してください。
 
 ## クイックスタート
 
@@ -206,9 +206,9 @@ LeanToken はソースを一度索引化し、コンパクトなパス、順位�
 | [利用方法とツールリファレンス](../../usage.md) | コマンド、MCP ツール、要求オプション、例 |
 | [アーキテクチャと信頼性](../../architecture.md) | コンポーネント、データフロー、ストレージ、障害時の動作 |
 | [ロードマップ](../../roadmap.md) | 現在の方向性と計画 |
-| [開発とテスト](../../development.md) | ローカル設定、検証、リリースフロー |
-| [ベンチマーク手法](../../../benchmarks/README.md) | トークン効率の計測と解釈 |
-| [計測ハーネス](../../measurement.md) | 実験、通信コスト、プロファイリングツール |
+| [開発とテスト](https://github.com/morluto/leantoken/blob/main/docs/development.md) | ローカル設定、検証、リリースフロー |
+| [ベンチマーク手法](https://github.com/morluto/leantoken/blob/main/benchmarks/README.md) | トークン効率の計測と解釈 |
+| [計測ハーネス](https://github.com/morluto/leantoken/blob/main/docs/measurement.md) | 実験、通信コスト、プロファイリングツール |
 
 ## ライセンス
 

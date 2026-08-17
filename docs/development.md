@@ -286,9 +286,10 @@ cargo package --locked --package leantoken
 
 The package command targets only the public crate; the workspace's test,
 benchmark, and orchestration packages are intentionally private. The root
-manifest's explicit package boundary retains the source, user documentation,
-licenses, and test fixtures needed by in-crate tests without shipping the
-repository's CI, npm, benchmark-harness, or integration-test trees.
+manifest's explicit package boundary retains the source, self-contained user
+and reference documentation, licenses, and test fixtures needed by in-crate
+tests without shipping the repository's CI, npm, development, measurement,
+benchmark-harness, or integration-test trees.
 
 `rmcp` is an upstream registry dependency pinned to the exact version in
 `Cargo.toml`; `Cargo.lock` records the resolved checksum. Update it only with the
