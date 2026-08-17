@@ -105,6 +105,7 @@ pub(super) fn read_optional(path: &Path) -> Result<Option<String>> {
 }
 
 pub(super) fn read_optional_with_limit(path: &Path, max_bytes: u64) -> Result<Option<String>> {
+    reject_symlink_target(path)?;
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -143,10 +144,10 @@ pub(super) fn validate_setup_content_size(path: &Path, content: &str) -> Result<
 
 pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Result<()> {
     validate_setup_content_size(path, updated)?;
+    reject_symlink_target(path)?;
     if original == updated {
         return Ok(());
     }
-    reject_symlink_target(path)?;
     let parent = path.parent().ok_or_else(|| {
         Error::SetupFailure(format!("config path has no parent: {}", path.display()))
     })?;
@@ -189,22 +190,16 @@ pub(super) fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
     ))
 }
 
-#[cfg(unix)]
-fn reject_symlink_target(path: &Path) -> Result<()> {
-    if let Ok(metadata) = std::fs::symlink_metadata(path) {
-        if metadata.file_type().is_symlink() {
-            return Err(Error::SetupFailure(format!(
-                "refusing to overwrite symlinked config: {} is a symbolic link; remove the symlink or replace it with a regular file before running setup",
-                path.display()
-            )));
-        }
+pub(super) fn reject_symlink_target(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::SetupFailure(format!(
+            "symlinked setup paths are unsupported: {} is a symbolic link; preserve the link and update its target directly, or replace it with a regular file before running setup",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn reject_symlink_target(_path: &Path) -> Result<()> {
-    Ok(())
 }
 
 pub(super) fn toml_positive_integer(item: &Item) -> Option<u64> {
