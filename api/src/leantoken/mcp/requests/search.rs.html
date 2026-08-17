@@ -146,7 +146,7 @@
 <a href=#146 id=146 data-nosnippet>146</a><span class="attr">#[derive(Debug, Clone, Deserialize, JsonSchema)]
 <a href=#147 id=147 data-nosnippet>147</a>#[serde(deny_unknown_fields)]
 <a href=#148 id=148 data-nosnippet>148</a>#[schemars(
-<a href=#149 id=149 data-nosnippet>149</a>    description = <span class="string">"Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection."
+<a href=#149 id=149 data-nosnippet>149</a>    description = <span class="string">"Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor."
 <a href=#150 id=150 data-nosnippet>150</a></span>)]
 <a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) <span class="kw">struct </span>SearchMcpOptions {
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) query: SearchMcpQuery,

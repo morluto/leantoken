@@ -199,17 +199,18 @@
 <a href=#199 id=199 data-nosnippet>199</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Cancelled);
 <a href=#200 id=200 data-nosnippet>200</a>        }
 <a href=#201 id=201 data-nosnippet>201</a>
-<a href=#202 id=202 data-nosnippet>202</a>        deduplicate_symbols(<span class="kw-2">&amp;mut </span>symbols);
-<a href=#203 id=203 data-nosnippet>203</a>        compute_symbol_parents(<span class="kw-2">&amp;mut </span>symbols);
-<a href=#204 id=204 data-nosnippet>204</a>        compute_reference_enclosing(<span class="kw-2">&amp;</span>symbols, <span class="kw-2">&amp;mut </span>references);
-<a href=#205 id=205 data-nosnippet>205</a>
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="prelude-val">Ok</span>(ParseOutput {
-<a href=#207 id=207 data-nosnippet>207</a>            language: <span class="prelude-val">Some</span>(language.to_string()),
-<a href=#208 id=208 data-nosnippet>208</a>            structurally_complete,
-<a href=#209 id=209 data-nosnippet>209</a>            symbols,
-<a href=#210 id=210 data-nosnippet>210</a>            references,
-<a href=#211 id=211 data-nosnippet>211</a>            imports,
-<a href=#212 id=212 data-nosnippet>212</a>        })
-<a href=#213 id=213 data-nosnippet>213</a>    })
-<a href=#214 id=214 data-nosnippet>214</a>}
+<a href=#202 id=202 data-nosnippet>202</a>        deduplicate_imports(<span class="kw-2">&amp;mut </span>imports);
+<a href=#203 id=203 data-nosnippet>203</a>        deduplicate_symbols(<span class="kw-2">&amp;mut </span>symbols);
+<a href=#204 id=204 data-nosnippet>204</a>        compute_symbol_parents(<span class="kw-2">&amp;mut </span>symbols);
+<a href=#205 id=205 data-nosnippet>205</a>        compute_reference_enclosing(<span class="kw-2">&amp;</span>symbols, <span class="kw-2">&amp;mut </span>references);
+<a href=#206 id=206 data-nosnippet>206</a>
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="prelude-val">Ok</span>(ParseOutput {
+<a href=#208 id=208 data-nosnippet>208</a>            language: <span class="prelude-val">Some</span>(language.to_string()),
+<a href=#209 id=209 data-nosnippet>209</a>            structurally_complete,
+<a href=#210 id=210 data-nosnippet>210</a>            symbols,
+<a href=#211 id=211 data-nosnippet>211</a>            references,
+<a href=#212 id=212 data-nosnippet>212</a>            imports,
+<a href=#213 id=213 data-nosnippet>213</a>        })
+<a href=#214 id=214 data-nosnippet>214</a>    })
+<a href=#215 id=215 data-nosnippet>215</a>}
 </code></pre></div></section></main></body></html>

@@ -14,7 +14,7 @@
     Context(<a class="struct" href="https://doc.rust-lang.org/1.95.0/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;ContextArgs&gt;),
     Doctor(<a class="struct" href="struct.DoctorArgs.html" title="struct leantoken::cli::DoctorArgs">DoctorArgs</a>),
     Mcp(McpArgs),
-    Setup(IntegrationArgs),
+    Setup(SetupArgs),
     Remove(IntegrationArgs),
     Cache(CacheArgs),
     Runtime(RuntimeArgs),
@@ -35,7 +35,7 @@
 </div><section id="variant.Context" class="variant"><a href="#variant.Context" class="anchor">§</a><h3 class="code-header">Context(<a class="struct" href="https://doc.rust-lang.org/1.95.0/alloc/boxed/struct.Box.html" title="struct alloc::boxed::Box">Box</a>&lt;ContextArgs&gt;)</h3></section><div class="docblock"><p>Retrieve ranked task context within a token budget.</p>
 </div><section id="variant.Doctor" class="variant"><a href="#variant.Doctor" class="anchor">§</a><h3 class="code-header">Doctor(<a class="struct" href="struct.DoctorArgs.html" title="struct leantoken::cli::DoctorArgs">DoctorArgs</a>)</h3></section><div class="docblock"><p>Verify MCP identity, tools, and first-retrieval readiness.</p>
 </div><section id="variant.Mcp" class="variant"><a href="#variant.Mcp" class="anchor">§</a><h3 class="code-header">Mcp(McpArgs)</h3></section><div class="docblock"><p>Run the MCP server over stdio.</p>
-</div><section id="variant.Setup" class="variant"><a href="#variant.Setup" class="anchor">§</a><h3 class="code-header">Setup(IntegrationArgs)</h3></section><div class="docblock"><p>Configure LeanToken as a global MCP server for coding clients.</p>
+</div><section id="variant.Setup" class="variant"><a href="#variant.Setup" class="anchor">§</a><h3 class="code-header">Setup(SetupArgs)</h3></section><div class="docblock"><p>Configure LeanToken as a global MCP server for coding clients.</p>
 </div><section id="variant.Remove" class="variant"><a href="#variant.Remove" class="anchor">§</a><h3 class="code-header">Remove(IntegrationArgs)</h3></section><div class="docblock"><p>Remove LeanToken’s global MCP server entries.</p>
 </div><section id="variant.Cache" class="variant"><a href="#variant.Cache" class="anchor">§</a><h3 class="code-header">Cache(CacheArgs)</h3></section><div class="docblock"><p>Inspect or prune centrally managed repository caches.</p>
 </div><section id="variant.Runtime" class="variant"><a href="#variant.Runtime" class="anchor">§</a><h3 class="code-header">Runtime(RuntimeArgs)</h3></section><div class="docblock"><p>Inspect or prune application-owned private runtimes.</p>

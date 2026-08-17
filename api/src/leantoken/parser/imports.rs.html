@@ -52,16 +52,23 @@
 <a href=#52 id=52 data-nosnippet>52</a>}
 <a href=#53 id=53 data-nosnippet>53</a>
 <a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>push_import(imports: <span class="kw-2">&amp;mut </span>Vec&lt;Import&gt;, raw_target: <span class="kw-2">&amp;</span>str, line: usize) {
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">if </span>imports
-<a href=#56 id=56 data-nosnippet>56</a>        .iter()
-<a href=#57 id=57 data-nosnippet>57</a>        .any(|import| import.line == line &amp;&amp; import.raw_target == raw_target)
-<a href=#58 id=58 data-nosnippet>58</a>    {
-<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">return</span>;
-<a href=#60 id=60 data-nosnippet>60</a>    }
-<a href=#61 id=61 data-nosnippet>61</a>    imports.push(Import {
-<a href=#62 id=62 data-nosnippet>62</a>        raw_target: raw_target.to_string(),
-<a href=#63 id=63 data-nosnippet>63</a>        resolved_path: <span class="prelude-val">None</span>,
-<a href=#64 id=64 data-nosnippet>64</a>        line,
-<a href=#65 id=65 data-nosnippet>65</a>    });
-<a href=#66 id=66 data-nosnippet>66</a>}
+<a href=#55 id=55 data-nosnippet>55</a>    imports.push(Import {
+<a href=#56 id=56 data-nosnippet>56</a>        raw_target: raw_target.to_string(),
+<a href=#57 id=57 data-nosnippet>57</a>        resolved_path: <span class="prelude-val">None</span>,
+<a href=#58 id=58 data-nosnippet>58</a>        line,
+<a href=#59 id=59 data-nosnippet>59</a>    });
+<a href=#60 id=60 data-nosnippet>60</a>}
+<a href=#61 id=61 data-nosnippet>61</a>
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>deduplicate_imports(imports: <span class="kw-2">&amp;mut </span>Vec&lt;Import&gt;) {
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen = HashSet::with_capacity(imports.len());
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="comment">// Decide before mutating so the set can borrow targets instead of cloning
+<a href=#65 id=65 data-nosnippet>65</a>    // every string solely for deduplication.
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">let </span>keep = imports
+<a href=#67 id=67 data-nosnippet>67</a>        .iter()
+<a href=#68 id=68 data-nosnippet>68</a>        .map(|import| seen.insert((import.line, import.raw_target.as_str())))
+<a href=#69 id=69 data-nosnippet>69</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#70 id=70 data-nosnippet>70</a>    drop(seen);
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span><span class="kw-2">mut </span>keep = keep.into_iter();
+<a href=#72 id=72 data-nosnippet>72</a>    imports.retain(|<span class="kw">_</span>| keep.next().expect(<span class="string">"one decision per import"</span>));
+<a href=#73 id=73 data-nosnippet>73</a>}
 </code></pre></div></section></main></body></html>
