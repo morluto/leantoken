@@ -1745,6 +1745,13 @@ fn files_schema_matches_operation_specific_runtime_requirements() {
         variants[2]["required"],
         serde_json::json!(["kind", "pattern"])
     );
+    for variant in variants {
+        assert_eq!(
+            variant["properties"]["cursor"]["maxLength"],
+            crate::services::MAX_FILES_CURSOR_ENCODED_BYTES,
+            "files must accept every cursor emitted by the service"
+        );
+    }
 }
 
 #[test]

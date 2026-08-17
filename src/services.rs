@@ -34,6 +34,7 @@ pub(crate) mod cursor;
 mod execution_options;
 mod executor;
 mod files;
+pub(crate) use files::MAX_FILES_CURSOR_ENCODED_BYTES;
 mod handoff;
 mod history;
 mod index_read;

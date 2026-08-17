@@ -554,7 +554,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
@@ -628,7 +629,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
@@ -690,7 +692,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
