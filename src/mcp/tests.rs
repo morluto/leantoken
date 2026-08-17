@@ -1778,6 +1778,19 @@ fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
     for variant in variants {
         assert!(!variant["properties"]["query"].is_null());
         assert!(!variant["properties"]["all_occurrences"].is_null());
+        let description = variant["description"]
+            .as_str()
+            .expect("search operation description");
+        for rule in [
+            "prefer_structural requires auto or identifier mode",
+            "query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection",
+            "cannot be combined with focus_paths, receipt_id, or cursor",
+        ] {
+            assert!(
+                description.contains(rule),
+                "search operation description is missing `{rule}`"
+            );
+        }
     }
 }
 
