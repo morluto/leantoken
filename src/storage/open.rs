@@ -279,6 +279,7 @@ impl Storage {
             fs::create_dir_all(parent)?;
         }
         let mut conn = Connection::open(&path)?;
+        conn.busy_timeout(startup_timeout)?;
         if let Some((repository_root, index_scope_digest)) = repository_binding {
             verify_repository_binding_before_mutation(
                 &conn,
