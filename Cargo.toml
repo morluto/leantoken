@@ -26,6 +26,8 @@ homepage = "https://github.com/morluto/leantoken"
 readme = "README.md"
 include = [
     "/src",
+    "/tests",
+    "/assets/leantoken-hero-v3.jpg",
     "/Cargo.lock",
     "/README.md",
     "/CHANGELOG.md",
