@@ -300,184 +300,200 @@
 <a href=#300 id=300 data-nosnippet>300</a>    /// Candidate generation remains owned by the indexer callback. Storage owns
 <a href=#301 id=301 data-nosnippet>301</a>    /// the transaction and resolves each bounded candidate vector against the
 <a href=#302 id=302 data-nosnippet>302</a>    /// exact file membership that graph readers observe after this publication.
-<a href=#303 id=303 data-nosnippet>303</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>repair_import_projections(
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw-2">mut </span>derive_candidates: <span class="kw">impl </span>FnMut(<span class="kw-2">&amp;</span>ImportSeed) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;&gt;,
-<a href=#306 id=306 data-nosnippet>306</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;usize&gt; {
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span><span class="kw-2">mut </span>after_id = <span class="prelude-val">None</span>;
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span><span class="kw-2">mut </span>repaired = <span class="number">0usize</span>;
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">loop </span>{
-<a href=#310 id=310 data-nosnippet>310</a>            <span class="kw">let </span>stored = <span class="self">self</span>.import_projection_page(after_id)<span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">if </span>stored.is_empty() {
-<a href=#312 id=312 data-nosnippet>312</a>                <span class="kw">break</span>;
-<a href=#313 id=313 data-nosnippet>313</a>            }
-<a href=#314 id=314 data-nosnippet>314</a>            after_id = stored.last().map(|(seed, <span class="kw">_</span>)| seed.id);
-<a href=#315 id=315 data-nosnippet>315</a>            <span class="kw">let </span>persisted_candidates = <span class="self">self</span>.persisted_import_candidates(<span class="kw-2">&amp;</span>stored)<span class="question-mark">?</span>;
-<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">let </span><span class="kw-2">mut </span>repairs = Vec::new();
-<a href=#317 id=317 data-nosnippet>317</a>            {
-<a href=#318 id=318 data-nosnippet>318</a>                <span class="kw">let </span><span class="kw-2">mut </span>resolve = <span class="self">self
-<a href=#319 id=319 data-nosnippet>319</a>                    </span>.transaction
-<a href=#320 id=320 data-nosnippet>320</a>                    .prepare_cached(IMPORT_CANDIDATE_RESOLUTION_SQL)<span class="question-mark">?</span>;
-<a href=#321 id=321 data-nosnippet>321</a>                <span class="kw">for </span>(seed, resolved_path) <span class="kw">in </span>stored {
-<a href=#322 id=322 data-nosnippet>322</a>                    <span class="kw">let </span>candidate_paths = derive_candidates(<span class="kw-2">&amp;</span>seed)<span class="question-mark">?</span>;
-<a href=#323 id=323 data-nosnippet>323</a>                    <span class="kw">if </span>candidate_paths.len() &gt; MAX_IMPORT_CANDIDATES_PER_IMPORT
-<a href=#324 id=324 data-nosnippet>324</a>                        || candidate_paths.iter().any(|candidate| {
-<a href=#325 id=325 data-nosnippet>325</a>                            candidate.is_empty()
-<a href=#326 id=326 data-nosnippet>326</a>                                || candidate.len() &gt; MAX_IMPORT_CANDIDATE_PATH_BYTES
-<a href=#327 id=327 data-nosnippet>327</a>                        })
-<a href=#328 id=328 data-nosnippet>328</a>                    {
-<a href=#329 id=329 data-nosnippet>329</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
-<a href=#330 id=330 data-nosnippet>330</a>                            <span class="string">"derived import candidates exceed persisted bounds"</span>.into(),
-<a href=#331 id=331 data-nosnippet>331</a>                        ));
-<a href=#332 id=332 data-nosnippet>332</a>                    }
-<a href=#333 id=333 data-nosnippet>333</a>                    <span class="kw">let </span>candidate_input = serde_json::to_string(<span class="kw-2">&amp;</span>candidate_paths)<span class="question-mark">?</span>;
-<a href=#334 id=334 data-nosnippet>334</a>                    <span class="kw">let </span>expected_resolved = resolve
-<a href=#335 id=335 data-nosnippet>335</a>                        .query_row(<span class="macro">params!</span>[candidate_input], |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>))
-<a href=#336 id=336 data-nosnippet>336</a>                        .optional()<span class="question-mark">?</span>;
-<a href=#337 id=337 data-nosnippet>337</a>                    <span class="kw">let </span>value = ImportProjectionValue {
-<a href=#338 id=338 data-nosnippet>338</a>                        resolved_path: expected_resolved,
-<a href=#339 id=339 data-nosnippet>339</a>                        candidate_paths,
-<a href=#340 id=340 data-nosnippet>340</a>                    };
-<a href=#341 id=341 data-nosnippet>341</a>                    <span class="kw">let </span>candidates = persisted_candidates
-<a href=#342 id=342 data-nosnippet>342</a>                        .get(<span class="kw-2">&amp;</span>seed.id)
-<a href=#343 id=343 data-nosnippet>343</a>                        .map(Vec::as_slice)
-<a href=#344 id=344 data-nosnippet>344</a>                        .unwrap_or_default();
-<a href=#345 id=345 data-nosnippet>345</a>                    <span class="kw">let </span>candidates_match = candidates.len() == value.candidate_paths.len()
-<a href=#346 id=346 data-nosnippet>346</a>                        &amp;&amp; candidates.iter().enumerate().all(
-<a href=#347 id=347 data-nosnippet>347</a>                            |(priority, (stored_priority, stored_path))| {
-<a href=#348 id=348 data-nosnippet>348</a>                                <span class="kw-2">*</span>stored_priority == i64::try_from(priority).unwrap_or(i64::MAX)
-<a href=#349 id=349 data-nosnippet>349</a>                                    &amp;&amp; stored_path == <span class="kw-2">&amp;</span>value.candidate_paths[priority]
-<a href=#350 id=350 data-nosnippet>350</a>                            },
-<a href=#351 id=351 data-nosnippet>351</a>                        );
-<a href=#352 id=352 data-nosnippet>352</a>                    <span class="kw">if </span>resolved_path != value.resolved_path || !candidates_match {
-<a href=#353 id=353 data-nosnippet>353</a>                        repairs.push(ImportProjection {
-<a href=#354 id=354 data-nosnippet>354</a>                            id: seed.id,
-<a href=#355 id=355 data-nosnippet>355</a>                            file_id: seed.file_id,
-<a href=#356 id=356 data-nosnippet>356</a>                            value,
-<a href=#357 id=357 data-nosnippet>357</a>                        });
-<a href=#358 id=358 data-nosnippet>358</a>                    }
-<a href=#359 id=359 data-nosnippet>359</a>                }
-<a href=#360 id=360 data-nosnippet>360</a>            }
-<a href=#361 id=361 data-nosnippet>361</a>            repaired = repaired.saturating_add(repairs.len());
-<a href=#362 id=362 data-nosnippet>362</a>            <span class="self">self</span>.refresh_import_projections(<span class="kw-2">&amp;</span>repairs)<span class="question-mark">?</span>;
-<a href=#363 id=363 data-nosnippet>363</a>        }
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">if </span>repaired &gt; <span class="number">0 </span>{
-<a href=#365 id=365 data-nosnippet>365</a>            <span class="macro">tracing::warn!</span>(repaired, <span class="string">"persisted import projections repaired"</span>);
-<a href=#366 id=366 data-nosnippet>366</a>        }
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="prelude-val">Ok</span>(repaired)
-<a href=#368 id=368 data-nosnippet>368</a>    }
-<a href=#369 id=369 data-nosnippet>369</a>
-<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">fn </span>import_projection_page(
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#372 id=372 data-nosnippet>372</a>        after_id: <span class="prelude-ty">Option</span>&lt;i64&gt;,
-<a href=#373 id=373 data-nosnippet>373</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(ImportSeed, <span class="prelude-ty">Option</span>&lt;String&gt;)&gt;&gt; {
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = <span class="self">self</span>.transaction.prepare(
-<a href=#375 id=375 data-nosnippet>375</a>            <span class="string">"SELECT imports.id, imports.file_id, files.path,
-<a href=#376 id=376 data-nosnippet>376</a>                    imports.raw_target, imports.resolved_path
-<a href=#377 id=377 data-nosnippet>377</a>             FROM imports
-<a href=#378 id=378 data-nosnippet>378</a>             JOIN files ON files.id = imports.file_id
-<a href=#379 id=379 data-nosnippet>379</a>             WHERE (?1 IS NULL OR imports.id &gt; ?1)
-<a href=#380 id=380 data-nosnippet>380</a>             ORDER BY imports.id
-<a href=#381 id=381 data-nosnippet>381</a>             LIMIT ?2"</span>,
-<a href=#382 id=382 data-nosnippet>382</a>        )<span class="question-mark">?</span>;
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="prelude-val">Ok</span>(statement
-<a href=#384 id=384 data-nosnippet>384</a>            .query_map(
-<a href=#385 id=385 data-nosnippet>385</a>                <span class="macro">params!</span>[after_id, usize_to_i64(IMPORT_REPAIR_PAGE_SIZE)<span class="question-mark">?</span>],
-<a href=#386 id=386 data-nosnippet>386</a>                |row| {
-<a href=#387 id=387 data-nosnippet>387</a>                    <span class="prelude-val">Ok</span>((
-<a href=#388 id=388 data-nosnippet>388</a>                        ImportSeed {
-<a href=#389 id=389 data-nosnippet>389</a>                            id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#390 id=390 data-nosnippet>390</a>                            file_id: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#391 id=391 data-nosnippet>391</a>                            source_path: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#392 id=392 data-nosnippet>392</a>                            raw_target: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-<a href=#393 id=393 data-nosnippet>393</a>                        },
-<a href=#394 id=394 data-nosnippet>394</a>                        row.get::&lt;<span class="kw">_</span>, <span class="prelude-ty">Option</span>&lt;String&gt;&gt;(<span class="number">4</span>)<span class="question-mark">?</span>,
-<a href=#395 id=395 data-nosnippet>395</a>                    ))
-<a href=#396 id=396 data-nosnippet>396</a>                },
-<a href=#397 id=397 data-nosnippet>397</a>            )<span class="question-mark">?
-<a href=#398 id=398 data-nosnippet>398</a>            </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
-<a href=#399 id=399 data-nosnippet>399</a>    }
-<a href=#400 id=400 data-nosnippet>400</a>
-<a href=#401 id=401 data-nosnippet>401</a>    <span class="kw">fn </span>persisted_import_candidates(
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#403 id=403 data-nosnippet>403</a>        stored: <span class="kw-2">&amp;</span>[(ImportSeed, <span class="prelude-ty">Option</span>&lt;String&gt;)],
-<a href=#404 id=404 data-nosnippet>404</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;HashMap&lt;i64, Vec&lt;(i64, String)&gt;&gt;&gt; {
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>input =
-<a href=#406 id=406 data-nosnippet>406</a>            serde_json::to_string(<span class="kw-2">&amp;</span>stored.iter().map(|(seed, <span class="kw">_</span>)| seed.id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;())<span class="question-mark">?</span>;
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span><span class="kw-2">mut </span>by_import = HashMap::&lt;i64, Vec&lt;(i64, String)&gt;&gt;::new();
-<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = <span class="self">self</span>.transaction.prepare(
-<a href=#409 id=409 data-nosnippet>409</a>            <span class="string">"WITH requested(import_id) AS (
-<a href=#410 id=410 data-nosnippet>410</a>                 SELECT CAST(value AS INTEGER) FROM json_each(?1)
-<a href=#411 id=411 data-nosnippet>411</a>             )
-<a href=#412 id=412 data-nosnippet>412</a>             SELECT import_candidates.import_id,
-<a href=#413 id=413 data-nosnippet>413</a>                    import_candidates.priority,
-<a href=#414 id=414 data-nosnippet>414</a>                    import_candidates.candidate_path
-<a href=#415 id=415 data-nosnippet>415</a>             FROM requested
-<a href=#416 id=416 data-nosnippet>416</a>             JOIN import_candidates USING(import_id)
-<a href=#417 id=417 data-nosnippet>417</a>             ORDER BY import_candidates.import_id,
-<a href=#418 id=418 data-nosnippet>418</a>                      import_candidates.priority,
-<a href=#419 id=419 data-nosnippet>419</a>                      import_candidates.candidate_path"</span>,
-<a href=#420 id=420 data-nosnippet>420</a>        )<span class="question-mark">?</span>;
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>rows = statement.query_map(<span class="macro">params!</span>[input], |row| {
-<a href=#422 id=422 data-nosnippet>422</a>            <span class="prelude-val">Ok</span>((
-<a href=#423 id=423 data-nosnippet>423</a>                row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">0</span>)<span class="question-mark">?</span>,
-<a href=#424 id=424 data-nosnippet>424</a>                row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">1</span>)<span class="question-mark">?</span>,
-<a href=#425 id=425 data-nosnippet>425</a>                row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">2</span>)<span class="question-mark">?</span>,
-<a href=#426 id=426 data-nosnippet>426</a>            ))
-<a href=#427 id=427 data-nosnippet>427</a>        })<span class="question-mark">?</span>;
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">let </span>(import_id, priority, candidate_path) = row<span class="question-mark">?</span>;
-<a href=#430 id=430 data-nosnippet>430</a>            by_import
-<a href=#431 id=431 data-nosnippet>431</a>                .entry(import_id)
-<a href=#432 id=432 data-nosnippet>432</a>                .or_default()
-<a href=#433 id=433 data-nosnippet>433</a>                .push((priority, candidate_path));
-<a href=#434 id=434 data-nosnippet>434</a>        }
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="prelude-val">Ok</span>(by_import)
-<a href=#436 id=436 data-nosnippet>436</a>    }
-<a href=#437 id=437 data-nosnippet>437</a>}
-<a href=#438 id=438 data-nosnippet>438</a>
-<a href=#439 id=439 data-nosnippet>439</a><span class="attr">#[cfg(test)]
-<a href=#440 id=440 data-nosnippet>440</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>path_projection_is_current(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
-<a href=#441 id=441 data-nosnippet>441</a>    path_projection_matches(conn)
-<a href=#442 id=442 data-nosnippet>442</a>}
-<a href=#443 id=443 data-nosnippet>443</a>
-<a href=#444 id=444 data-nosnippet>444</a><span class="kw">fn </span>path_projection_matches(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">let </span>mismatched: bool = conn.query_row(
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="string">"WITH RECURSIVE prefixes(remaining, prefix, depth) AS (
-<a href=#447 id=447 data-nosnippet>447</a>             SELECT path, '', 0 FROM files
-<a href=#448 id=448 data-nosnippet>448</a>             UNION ALL
-<a href=#449 id=449 data-nosnippet>449</a>             SELECT substr(remaining, instr(remaining, '/') + 1),
-<a href=#450 id=450 data-nosnippet>450</a>                    CASE WHEN prefix = ''
-<a href=#451 id=451 data-nosnippet>451</a>                         THEN substr(remaining, 1, instr(remaining, '/') - 1)
-<a href=#452 id=452 data-nosnippet>452</a>                         ELSE prefix || '/' || substr(remaining, 1, instr(remaining, '/') - 1)
-<a href=#453 id=453 data-nosnippet>453</a>                    END,
-<a href=#454 id=454 data-nosnippet>454</a>                    depth + 1
-<a href=#455 id=455 data-nosnippet>455</a>             FROM prefixes
-<a href=#456 id=456 data-nosnippet>456</a>             WHERE instr(remaining, '/') &gt; 0
-<a href=#457 id=457 data-nosnippet>457</a>         ), expected AS (
-<a href=#458 id=458 data-nosnippet>458</a>             SELECT path,
-<a href=#459 id=459 data-nosnippet>459</a>                    length(path) - length(replace(path, '/', '')) + 1 AS depth,
-<a href=#460 id=460 data-nosnippet>460</a>                    1 AS kind,
-<a href=#461 id=461 data-nosnippet>461</a>                    id AS file_id
-<a href=#462 id=462 data-nosnippet>462</a>             FROM files
-<a href=#463 id=463 data-nosnippet>463</a>             UNION
-<a href=#464 id=464 data-nosnippet>464</a>             SELECT prefix, depth, 0, NULL
-<a href=#465 id=465 data-nosnippet>465</a>             FROM prefixes
-<a href=#466 id=466 data-nosnippet>466</a>             WHERE depth &gt; 0
-<a href=#467 id=467 data-nosnippet>467</a>         ), difference AS (
-<a href=#468 id=468 data-nosnippet>468</a>             SELECT path, depth, kind, file_id FROM expected
-<a href=#469 id=469 data-nosnippet>469</a>             EXCEPT
-<a href=#470 id=470 data-nosnippet>470</a>             SELECT path, depth, kind, file_id FROM path_entries
-<a href=#471 id=471 data-nosnippet>471</a>         ), reverse_difference AS (
-<a href=#472 id=472 data-nosnippet>472</a>             SELECT path, depth, kind, file_id FROM path_entries
-<a href=#473 id=473 data-nosnippet>473</a>             EXCEPT
-<a href=#474 id=474 data-nosnippet>474</a>             SELECT path, depth, kind, file_id FROM expected
-<a href=#475 id=475 data-nosnippet>475</a>         )
-<a href=#476 id=476 data-nosnippet>476</a>         SELECT EXISTS(SELECT 1 FROM difference)
-<a href=#477 id=477 data-nosnippet>477</a>             OR EXISTS(SELECT 1 FROM reverse_difference)"</span>,
-<a href=#478 id=478 data-nosnippet>478</a>        [],
-<a href=#479 id=479 data-nosnippet>479</a>        |row| row.get(<span class="number">0</span>),
-<a href=#480 id=480 data-nosnippet>480</a>    )<span class="question-mark">?</span>;
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="prelude-val">Ok</span>(!mismatched)
-<a href=#482 id=482 data-nosnippet>482</a>}
+<a href=#303 id=303 data-nosnippet>303</a>    /// The live membership is passed to the callback so candidates (for example
+<a href=#304 id=304 data-nosnippet>304</a>    /// Go module indexes and package targets) derive from the same generation
+<a href=#305 id=305 data-nosnippet>305</a>    /// the reader will observe, not a pre-publication snapshot.
+<a href=#306 id=306 data-nosnippet>306</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>repair_import_projections(
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw-2">mut </span>derive_candidates: <span class="kw">impl </span>FnMut(<span class="kw-2">&amp;</span>ImportSeed, <span class="kw-2">&amp;</span>HashSet&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;String&gt;&gt;,
+<a href=#309 id=309 data-nosnippet>309</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;usize&gt; {
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span><span class="kw-2">mut </span>after_id = <span class="prelude-val">None</span>;
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span><span class="kw-2">mut </span>repaired = <span class="number">0usize</span>;
+<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">let </span>membership = <span class="self">self</span>.transaction_membership()<span class="question-mark">?</span>;
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">loop </span>{
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">let </span>stored = <span class="self">self</span>.import_projection_page(after_id)<span class="question-mark">?</span>;
+<a href=#315 id=315 data-nosnippet>315</a>            <span class="kw">if </span>stored.is_empty() {
+<a href=#316 id=316 data-nosnippet>316</a>                <span class="kw">break</span>;
+<a href=#317 id=317 data-nosnippet>317</a>            }
+<a href=#318 id=318 data-nosnippet>318</a>            after_id = stored.last().map(|(seed, <span class="kw">_</span>)| seed.id);
+<a href=#319 id=319 data-nosnippet>319</a>            <span class="kw">let </span>persisted_candidates = <span class="self">self</span>.persisted_import_candidates(<span class="kw-2">&amp;</span>stored)<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>            <span class="kw">let </span><span class="kw-2">mut </span>repairs = Vec::new();
+<a href=#321 id=321 data-nosnippet>321</a>            {
+<a href=#322 id=322 data-nosnippet>322</a>                <span class="kw">let </span><span class="kw-2">mut </span>resolve = <span class="self">self
+<a href=#323 id=323 data-nosnippet>323</a>                    </span>.transaction
+<a href=#324 id=324 data-nosnippet>324</a>                    .prepare_cached(IMPORT_CANDIDATE_RESOLUTION_SQL)<span class="question-mark">?</span>;
+<a href=#325 id=325 data-nosnippet>325</a>                <span class="kw">for </span>(seed, resolved_path) <span class="kw">in </span>stored {
+<a href=#326 id=326 data-nosnippet>326</a>                    <span class="kw">let </span>candidate_paths = derive_candidates(<span class="kw-2">&amp;</span>seed, <span class="kw-2">&amp;</span>membership)<span class="question-mark">?</span>;
+<a href=#327 id=327 data-nosnippet>327</a>                    <span class="kw">if </span>candidate_paths.len() &gt; MAX_IMPORT_CANDIDATES_PER_IMPORT
+<a href=#328 id=328 data-nosnippet>328</a>                        || candidate_paths.iter().any(|candidate| {
+<a href=#329 id=329 data-nosnippet>329</a>                            candidate.is_empty()
+<a href=#330 id=330 data-nosnippet>330</a>                                || candidate.len() &gt; MAX_IMPORT_CANDIDATE_PATH_BYTES
+<a href=#331 id=331 data-nosnippet>331</a>                        })
+<a href=#332 id=332 data-nosnippet>332</a>                    {
+<a href=#333 id=333 data-nosnippet>333</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
+<a href=#334 id=334 data-nosnippet>334</a>                            <span class="string">"derived import candidates exceed persisted bounds"</span>.into(),
+<a href=#335 id=335 data-nosnippet>335</a>                        ));
+<a href=#336 id=336 data-nosnippet>336</a>                    }
+<a href=#337 id=337 data-nosnippet>337</a>                    <span class="kw">let </span>candidate_input = serde_json::to_string(<span class="kw-2">&amp;</span>candidate_paths)<span class="question-mark">?</span>;
+<a href=#338 id=338 data-nosnippet>338</a>                    <span class="kw">let </span>expected_resolved = resolve
+<a href=#339 id=339 data-nosnippet>339</a>                        .query_row(<span class="macro">params!</span>[candidate_input], |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>))
+<a href=#340 id=340 data-nosnippet>340</a>                        .optional()<span class="question-mark">?</span>;
+<a href=#341 id=341 data-nosnippet>341</a>                    <span class="kw">let </span>value = ImportProjectionValue {
+<a href=#342 id=342 data-nosnippet>342</a>                        resolved_path: expected_resolved,
+<a href=#343 id=343 data-nosnippet>343</a>                        candidate_paths,
+<a href=#344 id=344 data-nosnippet>344</a>                    };
+<a href=#345 id=345 data-nosnippet>345</a>                    <span class="kw">let </span>candidates = persisted_candidates
+<a href=#346 id=346 data-nosnippet>346</a>                        .get(<span class="kw-2">&amp;</span>seed.id)
+<a href=#347 id=347 data-nosnippet>347</a>                        .map(Vec::as_slice)
+<a href=#348 id=348 data-nosnippet>348</a>                        .unwrap_or_default();
+<a href=#349 id=349 data-nosnippet>349</a>                    <span class="kw">let </span>candidates_match = candidates.len() == value.candidate_paths.len()
+<a href=#350 id=350 data-nosnippet>350</a>                        &amp;&amp; candidates.iter().enumerate().all(
+<a href=#351 id=351 data-nosnippet>351</a>                            |(priority, (stored_priority, stored_path))| {
+<a href=#352 id=352 data-nosnippet>352</a>                                <span class="kw-2">*</span>stored_priority == i64::try_from(priority).unwrap_or(i64::MAX)
+<a href=#353 id=353 data-nosnippet>353</a>                                    &amp;&amp; stored_path == <span class="kw-2">&amp;</span>value.candidate_paths[priority]
+<a href=#354 id=354 data-nosnippet>354</a>                            },
+<a href=#355 id=355 data-nosnippet>355</a>                        );
+<a href=#356 id=356 data-nosnippet>356</a>                    <span class="kw">if </span>resolved_path != value.resolved_path || !candidates_match {
+<a href=#357 id=357 data-nosnippet>357</a>                        repairs.push(ImportProjection {
+<a href=#358 id=358 data-nosnippet>358</a>                            id: seed.id,
+<a href=#359 id=359 data-nosnippet>359</a>                            file_id: seed.file_id,
+<a href=#360 id=360 data-nosnippet>360</a>                            value,
+<a href=#361 id=361 data-nosnippet>361</a>                        });
+<a href=#362 id=362 data-nosnippet>362</a>                    }
+<a href=#363 id=363 data-nosnippet>363</a>                }
+<a href=#364 id=364 data-nosnippet>364</a>            }
+<a href=#365 id=365 data-nosnippet>365</a>            repaired = repaired.saturating_add(repairs.len());
+<a href=#366 id=366 data-nosnippet>366</a>            <span class="self">self</span>.refresh_import_projections(<span class="kw-2">&amp;</span>repairs)<span class="question-mark">?</span>;
+<a href=#367 id=367 data-nosnippet>367</a>        }
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">if </span>repaired &gt; <span class="number">0 </span>{
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="macro">tracing::warn!</span>(repaired, <span class="string">"persisted import projections repaired"</span>);
+<a href=#370 id=370 data-nosnippet>370</a>        }
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(repaired)
+<a href=#372 id=372 data-nosnippet>372</a>    }
+<a href=#373 id=373 data-nosnippet>373</a>
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="doccomment">/// File membership exactly as the publication transaction leaves it,
+<a href=#375 id=375 data-nosnippet>375</a>    /// including files staged by `staged.apply` in the same transaction.
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">fn </span>transaction_membership(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;HashSet&lt;String&gt;&gt; {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = <span class="self">self</span>.transaction.prepare(<span class="string">"SELECT path FROM files"</span>)<span class="question-mark">?</span>;
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>rows = statement.query_map([], |row| row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">0</span>))<span class="question-mark">?</span>;
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span><span class="kw-2">mut </span>membership = HashSet::new();
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#381 id=381 data-nosnippet>381</a>            membership.insert(row<span class="question-mark">?</span>);
+<a href=#382 id=382 data-nosnippet>382</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>        <span class="prelude-val">Ok</span>(membership)
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">fn </span>import_projection_page(
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#388 id=388 data-nosnippet>388</a>        after_id: <span class="prelude-ty">Option</span>&lt;i64&gt;,
+<a href=#389 id=389 data-nosnippet>389</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(ImportSeed, <span class="prelude-ty">Option</span>&lt;String&gt;)&gt;&gt; {
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = <span class="self">self</span>.transaction.prepare(
+<a href=#391 id=391 data-nosnippet>391</a>            <span class="string">"SELECT imports.id, imports.file_id, files.path,
+<a href=#392 id=392 data-nosnippet>392</a>                    imports.raw_target, imports.resolved_path
+<a href=#393 id=393 data-nosnippet>393</a>             FROM imports
+<a href=#394 id=394 data-nosnippet>394</a>             JOIN files ON files.id = imports.file_id
+<a href=#395 id=395 data-nosnippet>395</a>             WHERE (?1 IS NULL OR imports.id &gt; ?1)
+<a href=#396 id=396 data-nosnippet>396</a>             ORDER BY imports.id
+<a href=#397 id=397 data-nosnippet>397</a>             LIMIT ?2"</span>,
+<a href=#398 id=398 data-nosnippet>398</a>        )<span class="question-mark">?</span>;
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="prelude-val">Ok</span>(statement
+<a href=#400 id=400 data-nosnippet>400</a>            .query_map(
+<a href=#401 id=401 data-nosnippet>401</a>                <span class="macro">params!</span>[after_id, usize_to_i64(IMPORT_REPAIR_PAGE_SIZE)<span class="question-mark">?</span>],
+<a href=#402 id=402 data-nosnippet>402</a>                |row| {
+<a href=#403 id=403 data-nosnippet>403</a>                    <span class="prelude-val">Ok</span>((
+<a href=#404 id=404 data-nosnippet>404</a>                        ImportSeed {
+<a href=#405 id=405 data-nosnippet>405</a>                            id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#406 id=406 data-nosnippet>406</a>                            file_id: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#407 id=407 data-nosnippet>407</a>                            source_path: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#408 id=408 data-nosnippet>408</a>                            raw_target: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+<a href=#409 id=409 data-nosnippet>409</a>                        },
+<a href=#410 id=410 data-nosnippet>410</a>                        row.get::&lt;<span class="kw">_</span>, <span class="prelude-ty">Option</span>&lt;String&gt;&gt;(<span class="number">4</span>)<span class="question-mark">?</span>,
+<a href=#411 id=411 data-nosnippet>411</a>                    ))
+<a href=#412 id=412 data-nosnippet>412</a>                },
+<a href=#413 id=413 data-nosnippet>413</a>            )<span class="question-mark">?
+<a href=#414 id=414 data-nosnippet>414</a>            </span>.collect::&lt;std::result::Result&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>)
+<a href=#415 id=415 data-nosnippet>415</a>    }
+<a href=#416 id=416 data-nosnippet>416</a>
+<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">fn </span>persisted_import_candidates(
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#419 id=419 data-nosnippet>419</a>        stored: <span class="kw-2">&amp;</span>[(ImportSeed, <span class="prelude-ty">Option</span>&lt;String&gt;)],
+<a href=#420 id=420 data-nosnippet>420</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;HashMap&lt;i64, Vec&lt;(i64, String)&gt;&gt;&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>input =
+<a href=#422 id=422 data-nosnippet>422</a>            serde_json::to_string(<span class="kw-2">&amp;</span>stored.iter().map(|(seed, <span class="kw">_</span>)| seed.id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;())<span class="question-mark">?</span>;
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span><span class="kw-2">mut </span>by_import = HashMap::&lt;i64, Vec&lt;(i64, String)&gt;&gt;::new();
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span><span class="kw-2">mut </span>statement = <span class="self">self</span>.transaction.prepare(
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="string">"WITH requested(import_id) AS (
+<a href=#426 id=426 data-nosnippet>426</a>                 SELECT CAST(value AS INTEGER) FROM json_each(?1)
+<a href=#427 id=427 data-nosnippet>427</a>             )
+<a href=#428 id=428 data-nosnippet>428</a>             SELECT import_candidates.import_id,
+<a href=#429 id=429 data-nosnippet>429</a>                    import_candidates.priority,
+<a href=#430 id=430 data-nosnippet>430</a>                    import_candidates.candidate_path
+<a href=#431 id=431 data-nosnippet>431</a>             FROM requested
+<a href=#432 id=432 data-nosnippet>432</a>             JOIN import_candidates USING(import_id)
+<a href=#433 id=433 data-nosnippet>433</a>             ORDER BY import_candidates.import_id,
+<a href=#434 id=434 data-nosnippet>434</a>                      import_candidates.priority,
+<a href=#435 id=435 data-nosnippet>435</a>                      import_candidates.candidate_path"</span>,
+<a href=#436 id=436 data-nosnippet>436</a>        )<span class="question-mark">?</span>;
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>rows = statement.query_map(<span class="macro">params!</span>[input], |row| {
+<a href=#438 id=438 data-nosnippet>438</a>            <span class="prelude-val">Ok</span>((
+<a href=#439 id=439 data-nosnippet>439</a>                row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">0</span>)<span class="question-mark">?</span>,
+<a href=#440 id=440 data-nosnippet>440</a>                row.get::&lt;<span class="kw">_</span>, i64&gt;(<span class="number">1</span>)<span class="question-mark">?</span>,
+<a href=#441 id=441 data-nosnippet>441</a>                row.get::&lt;<span class="kw">_</span>, String&gt;(<span class="number">2</span>)<span class="question-mark">?</span>,
+<a href=#442 id=442 data-nosnippet>442</a>            ))
+<a href=#443 id=443 data-nosnippet>443</a>        })<span class="question-mark">?</span>;
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>(import_id, priority, candidate_path) = row<span class="question-mark">?</span>;
+<a href=#446 id=446 data-nosnippet>446</a>            by_import
+<a href=#447 id=447 data-nosnippet>447</a>                .entry(import_id)
+<a href=#448 id=448 data-nosnippet>448</a>                .or_default()
+<a href=#449 id=449 data-nosnippet>449</a>                .push((priority, candidate_path));
+<a href=#450 id=450 data-nosnippet>450</a>        }
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="prelude-val">Ok</span>(by_import)
+<a href=#452 id=452 data-nosnippet>452</a>    }
+<a href=#453 id=453 data-nosnippet>453</a>}
+<a href=#454 id=454 data-nosnippet>454</a>
+<a href=#455 id=455 data-nosnippet>455</a><span class="attr">#[cfg(test)]
+<a href=#456 id=456 data-nosnippet>456</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>path_projection_is_current(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+<a href=#457 id=457 data-nosnippet>457</a>    path_projection_matches(conn)
+<a href=#458 id=458 data-nosnippet>458</a>}
+<a href=#459 id=459 data-nosnippet>459</a>
+<a href=#460 id=460 data-nosnippet>460</a><span class="kw">fn </span>path_projection_matches(conn: <span class="kw-2">&amp;</span>Connection) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">let </span>mismatched: bool = conn.query_row(
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="string">"WITH RECURSIVE prefixes(remaining, prefix, depth) AS (
+<a href=#463 id=463 data-nosnippet>463</a>             SELECT path, '', 0 FROM files
+<a href=#464 id=464 data-nosnippet>464</a>             UNION ALL
+<a href=#465 id=465 data-nosnippet>465</a>             SELECT substr(remaining, instr(remaining, '/') + 1),
+<a href=#466 id=466 data-nosnippet>466</a>                    CASE WHEN prefix = ''
+<a href=#467 id=467 data-nosnippet>467</a>                         THEN substr(remaining, 1, instr(remaining, '/') - 1)
+<a href=#468 id=468 data-nosnippet>468</a>                         ELSE prefix || '/' || substr(remaining, 1, instr(remaining, '/') - 1)
+<a href=#469 id=469 data-nosnippet>469</a>                    END,
+<a href=#470 id=470 data-nosnippet>470</a>                    depth + 1
+<a href=#471 id=471 data-nosnippet>471</a>             FROM prefixes
+<a href=#472 id=472 data-nosnippet>472</a>             WHERE instr(remaining, '/') &gt; 0
+<a href=#473 id=473 data-nosnippet>473</a>         ), expected AS (
+<a href=#474 id=474 data-nosnippet>474</a>             SELECT path,
+<a href=#475 id=475 data-nosnippet>475</a>                    length(path) - length(replace(path, '/', '')) + 1 AS depth,
+<a href=#476 id=476 data-nosnippet>476</a>                    1 AS kind,
+<a href=#477 id=477 data-nosnippet>477</a>                    id AS file_id
+<a href=#478 id=478 data-nosnippet>478</a>             FROM files
+<a href=#479 id=479 data-nosnippet>479</a>             UNION
+<a href=#480 id=480 data-nosnippet>480</a>             SELECT prefix, depth, 0, NULL
+<a href=#481 id=481 data-nosnippet>481</a>             FROM prefixes
+<a href=#482 id=482 data-nosnippet>482</a>             WHERE depth &gt; 0
+<a href=#483 id=483 data-nosnippet>483</a>         ), difference AS (
+<a href=#484 id=484 data-nosnippet>484</a>             SELECT path, depth, kind, file_id FROM expected
+<a href=#485 id=485 data-nosnippet>485</a>             EXCEPT
+<a href=#486 id=486 data-nosnippet>486</a>             SELECT path, depth, kind, file_id FROM path_entries
+<a href=#487 id=487 data-nosnippet>487</a>         ), reverse_difference AS (
+<a href=#488 id=488 data-nosnippet>488</a>             SELECT path, depth, kind, file_id FROM path_entries
+<a href=#489 id=489 data-nosnippet>489</a>             EXCEPT
+<a href=#490 id=490 data-nosnippet>490</a>             SELECT path, depth, kind, file_id FROM expected
+<a href=#491 id=491 data-nosnippet>491</a>         )
+<a href=#492 id=492 data-nosnippet>492</a>         SELECT EXISTS(SELECT 1 FROM difference)
+<a href=#493 id=493 data-nosnippet>493</a>             OR EXISTS(SELECT 1 FROM reverse_difference)"</span>,
+<a href=#494 id=494 data-nosnippet>494</a>        [],
+<a href=#495 id=495 data-nosnippet>495</a>        |row| row.get(<span class="number">0</span>),
+<a href=#496 id=496 data-nosnippet>496</a>    )<span class="question-mark">?</span>;
+<a href=#497 id=497 data-nosnippet>497</a>    <span class="prelude-val">Ok</span>(!mismatched)
+<a href=#498 id=498 data-nosnippet>498</a>}
 </code></pre></div></section></main></body></html>
