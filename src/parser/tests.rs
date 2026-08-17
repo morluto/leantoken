@@ -254,32 +254,6 @@ fn import_deduplication_preserves_first_occurrence_order() {
 }
 
 #[test]
-#[ignore = "manual parser scaling profile"]
-fn profile_unique_import_scaling() -> Result<()> {
-    use std::fmt::Write as _;
-    use std::time::Instant;
-
-    // The largest source is about 1.6 MiB, below the default per-file indexing
-    // limit, so this exercises an admitted production workload.
-    for imports in [8_000, 16_000, 32_000, 64_000] {
-        let mut source = String::with_capacity(imports * 32);
-        for index in 0..imports {
-            writeln!(source, "use crate::module_{index:05};")
-                .expect("writing to a String cannot fail");
-        }
-        let started = Instant::now();
-        let output = parse_language("rust", &source)?;
-        println!(
-            "imports={imports} bytes={} elapsed_ms={}",
-            source.len(),
-            started.elapsed().as_millis()
-        );
-        assert_eq!(output.imports.len(), imports);
-    }
-    Ok(())
-}
-
-#[test]
 fn c_family_indexes_named_calls_without_declaration_false_positives() -> Result<()> {
     let source = "\
 static int target(int value);\n\

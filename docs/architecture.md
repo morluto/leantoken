@@ -336,8 +336,7 @@ passes, then apply one stable exact-deduplication pass keyed by source line and
 raw target. The pass is linear in extracted imports and retains first-occurrence
 order; its hash set borrows the already-owned targets and its Boolean retention
 mask is linear in the import count. That count remains bounded by the admitted
-`max_file_bytes` source. Run the opt-in admitted-file scaling profile with
-`cargo test --release --lib profile_unique_import_scaling -- --ignored --nocapture`.
+`max_file_bytes` source.
 
 The stage uses ordinary rollback-journal SQLite rather than a custom spool
 format. Its schema is versioned and records baseline generation, configuration
