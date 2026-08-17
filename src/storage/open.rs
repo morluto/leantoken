@@ -294,7 +294,7 @@ impl Storage {
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
                 Self::ensure_token_savings_schema(conn)?;
-                Self::regenerate_receipt_namespaces_if_cloned(conn)
+                Self::regenerate_receipt_namespaces_if_cloned(conn, &path)
             },
         )?;
         if let Some((repository_root, index_scope_digest)) = repository_binding {
@@ -616,8 +616,12 @@ impl Storage {
         Ok(())
     }
 
-    /// Regenerate receipt namespaces if the database appears to be a clone.
-    fn regenerate_receipt_namespaces_if_cloned(conn: &mut Connection) -> Result<()> {
+    /// Regenerate receipt namespaces if the database file appears to be a
+    /// clone. The stored identity records the physical file (device and
+    /// inode on Unix, volume serial and file index on Windows), which stays
+    /// stable across ordinary reopens of the same file but changes when the
+    /// database is copied to another location or replaced in place.
+    fn regenerate_receipt_namespaces_if_cloned(conn: &mut Connection, path: &Path) -> Result<()> {
         let has_receipts: bool = conn
             .query_row(
                 "SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='retrieval_receipt_usage'",
@@ -637,7 +641,7 @@ impl Storage {
             conn.execute_batch(
                 "ALTER TABLE meta ADD COLUMN database_identity TEXT NOT NULL DEFAULT '';",
             )?;
-            let identity = database_identity();
+            let identity = database_identity(path)?;
             conn.execute_batch(&format!(
                 "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
                 identity
@@ -652,14 +656,14 @@ impl Storage {
             )
             .unwrap_or_default();
         if stored_identity.is_empty() {
-            let identity = database_identity();
+            let identity = database_identity(path)?;
             conn.execute_batch(&format!(
                 "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
                 identity
             ))?;
             return Ok(());
         }
-        let new_identity = database_identity();
+        let new_identity = database_identity(path)?;
         if stored_identity != new_identity {
             conn.execute_batch(
                 "UPDATE retrieval_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
@@ -676,14 +680,24 @@ impl Storage {
     }
 }
 
-fn database_identity() -> String {
-    use std::time::SystemTime;
-    let now = SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id();
-    format!("{:016x}{:016x}", now, pid as u128)
+/// Physical identity of the database file: stable across ordinary reopens,
+/// but distinct for a copied or replaced file.
+fn database_identity(path: &Path) -> Result<String> {
+    let metadata = fs::metadata(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(format!("{:016x}{:016x}", metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        Ok(format!(
+            "{:08x}{:016x}",
+            metadata.volume_serial_number(),
+            metadata.file_index()
+        ))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

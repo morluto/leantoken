@@ -427,7 +427,12 @@ impl Indexer {
                         }
                     }
                 }
-                resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                resolve_imports(
+                    &mut indexed,
+                    &repository_paths,
+                    &self.repository_root,
+                    cancellation,
+                )?;
                 for file in indexed {
                     check_cancelled(cancellation)?;
                     updated_paths.insert(file.path.clone());

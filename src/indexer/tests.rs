@@ -668,9 +668,53 @@ fn resolve_import(
     raw_target: &str,
     repository_paths: &HashSet<String>,
 ) -> Option<String> {
-    resolve_import_candidates(
-        &import_candidates(source_path, raw_target),
+    let sorted_paths = sorted_indexed_paths(repository_paths);
+    let go_modules = GoModuleIndex::load(
         repository_paths,
+        &Dir::open_ambient_dir(".", cap_std::ambient_authority()).unwrap(),
+        &CancellationToken::new(),
+    )
+    .unwrap();
+    resolve_import_candidates(
+        &import_candidates(source_path, raw_target, &sorted_paths, &go_modules),
+        &sorted_paths,
+    )
+}
+
+fn resolve_go_import(
+    source_path: &str,
+    raw_target: &str,
+    repository_paths: &HashSet<String>,
+    go_mod_content: &str,
+) -> Option<String> {
+    resolve_go_import_at(
+        source_path,
+        raw_target,
+        repository_paths,
+        go_mod_content,
+        "go.mod",
+    )
+}
+
+fn resolve_go_import_at(
+    source_path: &str,
+    raw_target: &str,
+    repository_paths: &HashSet<String>,
+    go_mod_content: &str,
+    go_mod_path: &str,
+) -> Option<String> {
+    let directory = tempfile::tempdir().expect("directory");
+    let on_disk = directory.path().join(go_mod_path);
+    std::fs::create_dir_all(on_disk.parent().expect("go.mod directory")).expect("go.mod dir");
+    std::fs::write(&on_disk, go_mod_content).expect("go.mod");
+    let root = Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority())
+        .expect("repository root");
+    let sorted_paths = sorted_indexed_paths(repository_paths);
+    let go_modules = GoModuleIndex::load(repository_paths, &root, &CancellationToken::new())
+        .expect("go module index");
+    resolve_import_candidates(
+        &import_candidates(source_path, raw_target, &sorted_paths, &go_modules),
+        &sorted_paths,
     )
 }
 
@@ -1065,6 +1109,126 @@ fn unsupported_package_imports_do_not_manufacture_repository_edges() {
 }
 
 #[test]
+fn go_imports_resolve_to_the_minimum_indexed_go_file_in_the_package() {
+    let paths = [
+        "go.mod".to_string(),
+        "cmd/main.go".to_string(),
+        "pkg/service/main.go".to_string(),
+        "pkg/service/util.go".to_string(),
+        "pkg/service/deep/extra.go".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let go_mod = "module example.com/acme\n\ngo 1.22\n";
+
+    assert_eq!(
+        resolve_go_import(
+            "cmd/main.go",
+            "example.com/acme/pkg/service",
+            &paths,
+            go_mod
+        )
+        .as_deref(),
+        Some("pkg/service/main.go"),
+        "the direct package files are ordered deterministically and nested \
+         packages are not treated as part of the imported package"
+    );
+}
+
+#[test]
+fn go_module_root_imports_resolve_to_top_level_go_files() {
+    let paths = [
+        "go.mod".to_string(),
+        "cmd/main.go".to_string(),
+        "main.go".to_string(),
+        "README.md".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let go_mod = "module example.com/acme\n";
+
+    assert_eq!(
+        resolve_go_import("cmd/main.go", "example.com/acme", &paths, go_mod).as_deref(),
+        Some("main.go"),
+        "the module root package names only its own top-level Go files"
+    );
+}
+
+#[test]
+fn go_imports_respect_module_path_boundaries_and_ancestor_go_mods() {
+    let paths = [
+        "go.mod".to_string(),
+        "cmd/main.go".to_string(),
+        "pkg/other.go".to_string(),
+        "internal/foo/x.go".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let go_mod = "module example.com/acme\n";
+
+    assert!(
+        resolve_go_import("cmd/main.go", "example.com/acme2/pkg", &paths, go_mod).is_none(),
+        "a module path must end at a segment boundary"
+    );
+    assert!(
+        resolve_go_import("cmd/main.go", "example.com/other/pkg", &paths, go_mod).is_none(),
+        "an unrelated module must not resolve"
+    );
+}
+
+#[test]
+fn go_imports_without_indexed_go_mod_metadata_do_not_resolve() {
+    let paths = ["cmd/main.go".to_string(), "pkg/other.go".to_string()]
+        .into_iter()
+        .collect();
+    let oversized = format!("module example.com/acme\n{}", "// comment\n".repeat(10_000));
+    let indexed_paths_with_go_mod = ["go.mod".to_string(), "cmd/main.go".to_string()]
+        .into_iter()
+        .collect();
+
+    assert!(
+        resolve_go_import("cmd/main.go", "example.com/acme/pkg", &paths, "").is_none(),
+        "a repository without an indexed go.mod has no module metadata"
+    );
+    assert!(
+        resolve_go_import(
+            "cmd/main.go",
+            "example.com/acme/pkg",
+            &indexed_paths_with_go_mod,
+            &oversized
+        )
+        .is_none(),
+        "an oversized go.mod is skipped by the byte bound"
+    );
+}
+
+#[test]
+fn nested_go_modules_resolve_imports_inside_their_own_tree() {
+    let paths = [
+        "internal/go.mod".to_string(),
+        "cmd/main.go".to_string(),
+        "internal/foo/x.go".to_string(),
+        "internal/foo/deep/y.go".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let go_mod = "module example.com/internal\n";
+
+    assert_eq!(
+        resolve_go_import_at(
+            "internal/a.go",
+            "example.com/internal/foo",
+            &paths,
+            go_mod,
+            "internal/go.mod"
+        )
+        .as_deref(),
+        Some("internal/foo/x.go"),
+        "the walk stops at the nearest indexed go.mod ancestor"
+    );
+}
+
+#[test]
 fn import_resolution_honors_cancellation() {
     let mut files = vec![IndexedFile {
         path: "src/app.ts".into(),
@@ -1090,7 +1254,12 @@ fn import_resolution_honors_cancellation() {
     cancellation.cancel();
 
     assert!(matches!(
-        resolve_imports(&mut files, &paths, &cancellation),
+        resolve_imports(
+            &mut files,
+            &paths,
+            &Dir::open_ambient_dir(".", cap_std::ambient_authority()).expect("repository root"),
+            &cancellation
+        ),
         Err(Error::Cancelled)
     ));
 }
@@ -1175,7 +1344,17 @@ fn startup_projection_repair_does_not_trust_the_corrupt_candidate_index() {
     assert_eq!(imports.len(), 1);
     assert_eq!(imports[0].resolved_path.as_deref(), Some("src/feature.rs"));
 
-    let expected = import_candidates("src/main.rs", &imports[0].raw_target);
+    let expected = import_candidates(
+        "src/main.rs",
+        &imports[0].raw_target,
+        &[],
+        &GoModuleIndex::load(
+            &HashSet::new(),
+            &Dir::open_ambient_dir(".", cap_std::ambient_authority()).expect("repository root"),
+            &CancellationToken::new(),
+        )
+        .expect("go module index"),
+    );
     let connection = rusqlite::Connection::open(&database).expect("inspect repaired candidates");
     let persisted = connection
         .prepare(
@@ -1680,6 +1859,9 @@ fn worker_pool_is_lazy_and_threads_follow_config_per_indexer() {
 
 #[test]
 fn import_candidate_expansion_fails_closed_at_its_explicit_bounds() {
+    let root = Dir::open_ambient_dir(".", cap_std::ambient_authority()).expect("repository root");
+    let go_modules = GoModuleIndex::load(&HashSet::new(), &root, &CancellationToken::new())
+        .expect("go module index");
     let deep_rust_target = format!(
         "crate::{}",
         (0..=MAX_RUST_MODULE_BASES)
@@ -1687,7 +1869,7 @@ fn import_candidate_expansion_fails_closed_at_its_explicit_bounds() {
             .collect::<Vec<_>>()
             .join("::")
     );
-    assert!(import_candidates("src/lib.rs", &deep_rust_target).is_empty());
+    assert!(import_candidates("src/lib.rs", &deep_rust_target, &[], &go_modules).is_empty());
 
     let oversized_group = format!(
         "crate::module::{{{}}}",
@@ -1696,10 +1878,18 @@ fn import_candidate_expansion_fails_closed_at_its_explicit_bounds() {
             .collect::<Vec<_>>()
             .join(",")
     );
-    assert!(import_candidates("src/lib.rs", &oversized_group).is_empty());
-    assert!(import_candidates("src/main.py", &"x".repeat(MAX_IMPORT_TARGET_BYTES + 1)).is_empty());
+    assert!(import_candidates("src/lib.rs", &oversized_group, &[], &go_modules).is_empty());
+    assert!(
+        import_candidates(
+            "src/main.py",
+            &"x".repeat(MAX_IMPORT_TARGET_BYTES + 1),
+            &[],
+            &go_modules
+        )
+        .is_empty()
+    );
 
-    let ordinary = import_candidates("src/lib.rs", "crate::module::item");
+    let ordinary = import_candidates("src/lib.rs", "crate::module::item", &[], &go_modules);
     assert!(!ordinary.is_empty());
     assert!(ordinary.len() <= MAX_IMPORT_CANDIDATES_PER_IMPORT);
     assert!(

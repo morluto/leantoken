@@ -3,18 +3,84 @@ use super::*;
 pub(super) const MAX_IMPORT_TARGET_BYTES: usize = 16 * 1024;
 // Every Rust module base expands to at most `path.rs` and `path/mod.rs`.
 pub(super) const MAX_RUST_MODULE_BASES: usize = MAX_IMPORT_CANDIDATES_PER_IMPORT / 2;
+// A go.mod must fit this bound or its module metadata is ignored.
+pub(super) const MAX_GO_MOD_BYTES: u64 = 64 * 1024;
+// The upward go.mod walk stops at this many ancestors regardless of path depth.
+pub(super) const MAX_GO_MOD_WALK_DEPTH: usize = 64;
+
+/// Module metadata parsed once per resolution run from indexed `go.mod`
+/// files, read through the repository root with a byte bound so projections
+/// depend only on the repository snapshot and never on the process working
+/// directory.
+pub(super) struct GoModuleIndex {
+    modules: HashMap<String, String>,
+}
+
+impl GoModuleIndex {
+    pub(super) fn load(
+        repository_paths: &HashSet<String>,
+        repository_root: &Dir,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
+        let mut modules = HashMap::new();
+        for path in repository_paths {
+            check_cancelled(cancellation)?;
+            if path != "go.mod" && !path.ends_with("/go.mod") {
+                continue;
+            }
+            let Some(bytes) = read_bounded(repository_root, path, MAX_GO_MOD_BYTES)? else {
+                continue;
+            };
+            let content = String::from_utf8_lossy(&bytes);
+            if let Some(module_path) = parse_module_directive(&content) {
+                modules.insert(path.clone(), module_path);
+            }
+        }
+        Ok(Self { modules })
+    }
+}
+
+fn parse_module_directive(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        let Some(module_path) = line.strip_prefix("module ") else {
+            continue;
+        };
+        let module_path = module_path.trim().trim_matches('"').trim_matches('\'');
+        if module_path.is_empty() || module_path.len() > MAX_IMPORT_TARGET_BYTES {
+            continue;
+        }
+        return Some(module_path.to_owned());
+    }
+    None
+}
+
+/// Deterministically sorted copy of the indexed file paths, enabling binary
+/// search for exact candidates and prefix lookups for package directories.
+pub(super) fn sorted_indexed_paths(repository_paths: &HashSet<String>) -> Vec<String> {
+    let mut sorted = repository_paths.iter().cloned().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    sorted
+}
 
 pub(super) fn resolve_imports(
     files: &mut [IndexedFile],
     repository_paths: &HashSet<String>,
+    repository_root: &Dir,
     cancellation: &CancellationToken,
 ) -> Result<()> {
+    let go_modules = GoModuleIndex::load(repository_paths, repository_root, cancellation)?;
+    let sorted_paths = sorted_indexed_paths(repository_paths);
     for file in files {
         check_cancelled(cancellation)?;
         for import in &mut file.imports {
             check_cancelled(cancellation)?;
-            let projection =
-                derive_import_projection(&file.path, &import.raw_target, repository_paths);
+            let projection = derive_import_projection(
+                &file.path,
+                &import.raw_target,
+                &sorted_paths,
+                &go_modules,
+            );
             import.resolved_path = projection.resolved_path;
             import.candidate_paths = projection.candidate_paths;
         }
@@ -25,17 +91,23 @@ pub(super) fn resolve_imports(
 pub(super) fn derive_import_projection(
     source_path: &str,
     raw_target: &str,
-    repository_paths: &HashSet<String>,
+    sorted_paths: &[String],
+    go_modules: &GoModuleIndex,
 ) -> ImportProjectionValue {
-    let candidate_paths = import_candidates(source_path, raw_target);
-    let resolved_path = resolve_import_candidates(&candidate_paths, repository_paths);
+    let candidate_paths = import_candidates(source_path, raw_target, sorted_paths, go_modules);
+    let resolved_path = resolve_import_candidates(&candidate_paths, sorted_paths);
     ImportProjectionValue {
         resolved_path,
         candidate_paths,
     }
 }
 
-pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<String> {
+pub(super) fn import_candidates(
+    source_path: &str,
+    raw_target: &str,
+    sorted_paths: &[String],
+    go_modules: &GoModuleIndex,
+) -> Vec<String> {
     if raw_target.len() > MAX_IMPORT_TARGET_BYTES {
         return Vec::new();
     }
@@ -49,7 +121,9 @@ pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<Stri
         ImportResolutionPolicy::WebResource => {
             web_resource_import_candidates(source_path, raw_target)
         }
-        ImportResolutionPolicy::Go => go_import_candidates(source, raw_target),
+        ImportResolutionPolicy::Go => {
+            go_import_candidates(source, raw_target, go_modules, sorted_paths)
+        }
         ImportResolutionPolicy::Unsupported => Vec::new(),
     }
 }
@@ -469,7 +543,7 @@ pub(super) fn rust_crate_roots(source: &std::path::Path) -> Vec<std::path::PathB
 
 pub(super) fn resolve_import_candidates(
     candidates: &[String],
-    repository_paths: &HashSet<String>,
+    sorted_paths: &[String],
 ) -> Option<String> {
     // Candidates are ordered from most-specific to least-specific. Return the
     // first existing candidate; a more specific match always wins over a
@@ -477,7 +551,7 @@ pub(super) fn resolve_import_candidates(
     // same-priority candidates (e.g. exact file vs directory init) while
     // allowing module prefix fallback for Rust imports.
     for candidate in candidates {
-        if repository_paths.contains(candidate) {
+        if sorted_paths.binary_search(candidate).is_ok() {
             return Some(candidate.clone());
         }
     }
@@ -504,45 +578,88 @@ pub(super) fn normalize_relative(path: &std::path::Path) -> Option<std::path::Pa
 /// Resolve Go imports using module-path to directory mapping.
 ///
 /// Go imports are module paths like "example.com/acme/pkg/internal/service".
-/// We resolve them by finding go.mod files in the repository, parsing the
-/// `module` directive, and mapping the import path to a directory by
-/// stripping the module prefix and appending the remainder as a relative path.
-fn go_import_candidates(source: &std::path::Path, raw_target: &str) -> Vec<String> {
+/// We resolve them against the indexed snapshot: the nearest indexed `go.mod`
+/// ancestor (read once, bounded, through the repository root) supplies the
+/// `module` directive, and the module-relative remainder maps to a package
+/// directory. The candidate is the lexicographically smallest indexed `.go`
+/// file directly inside that package directory, so the projection always
+/// names an indexed file rather than a directory.
+fn go_import_candidates(
+    source: &std::path::Path,
+    raw_target: &str,
+    go_modules: &GoModuleIndex,
+    sorted_paths: &[String],
+) -> Vec<String> {
     let target = raw_target.trim_matches(|c| c == '"' || c == '\'');
     if target.is_empty() {
         return Vec::new();
     }
-    // Walk up from the source file to find a go.mod in an ancestor directory.
+    // Walk up from the source file to find the nearest indexed go.mod.
     let mut dir = source.parent();
+    let mut depth = 0usize;
     while let Some(parent) = dir {
-        let go_mod = parent.join("go.mod");
-        if go_mod.is_file() {
-            if let Ok(content) = std::fs::read_to_string(&go_mod) {
-                for line in content.lines() {
-                    let line = line.trim();
-                    if let Some(module_path) = line.strip_prefix("module ") {
-                        let module_path = module_path.trim();
-                        if !module_path.is_empty() && target.starts_with(module_path) {
-                            // Strip the module prefix to get the package-relative path
-                            let remainder = &target[module_path.len()..];
-                            let remainder = remainder.strip_prefix('/').unwrap_or(remainder);
-                            if remainder.is_empty() {
-                                // Import is the module root itself
-                                return vec![".".into()];
-                            }
-                            // Convert the module-relative path to a directory path
-                            let path = std::path::Path::new(remainder)
-                                .components()
-                                .map(|c| c.as_os_str().to_owned())
-                                .collect::<std::path::PathBuf>();
-                            return vec![path.to_string_lossy().into_owned()];
-                        }
-                    }
-                }
-            }
-            break; // Found go.mod but module path didn't match — stop walking up
+        if depth >= MAX_GO_MOD_WALK_DEPTH {
+            break;
         }
-        dir = parent.parent();
+        depth += 1;
+        let go_mod_path = parent.join("go.mod").to_string_lossy().into_owned();
+        let Some(module_path) = go_modules.modules.get(&go_mod_path) else {
+            dir = parent.parent();
+            continue;
+        };
+        // The module prefix must end at a path segment boundary: an import of
+        // "example.com/acme2" must not match module "example.com/acme".
+        if target != module_path
+            && !(target.starts_with(module_path.as_str())
+                && target.as_bytes().get(module_path.len()) == Some(&b'/'))
+        {
+            break; // Nearest go.mod did not declare this module — stop walking up
+        }
+        let remainder = &target[module_path.len()..];
+        let remainder = remainder.strip_prefix('/').unwrap_or(remainder);
+        let go_mod_dir = std::path::Path::new(&go_mod_path)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""));
+        let package_dir = if remainder.is_empty() {
+            go_mod_dir.to_path_buf()
+        } else {
+            match normalize_relative(std::path::Path::new(remainder)) {
+                Some(package_dir) => go_mod_dir.join(package_dir),
+                None => break,
+            }
+        };
+        return minimum_indexed_go_file(&package_dir, sorted_paths)
+            .into_iter()
+            .collect();
     }
     Vec::new()
+}
+
+/// The lexicographically smallest indexed `.go` file directly inside the
+/// package directory, or `None` when the package has no indexed Go files.
+fn minimum_indexed_go_file(
+    package_dir: &std::path::Path,
+    sorted_paths: &[String],
+) -> Option<String> {
+    let package_dir = package_dir.to_string_lossy();
+    let prefix = if package_dir.is_empty() {
+        String::new()
+    } else {
+        format!("{package_dir}/")
+    };
+    let start = if prefix.is_empty() {
+        0
+    } else {
+        sorted_paths.partition_point(|path| path.as_str() < prefix.as_str())
+    };
+    for path in &sorted_paths[start..] {
+        if !path.starts_with(&prefix) {
+            break;
+        }
+        let direct = &path[prefix.len()..];
+        if !direct.contains('/') && direct.ends_with(".go") {
+            return Some(path.clone());
+        }
+    }
+    None
 }

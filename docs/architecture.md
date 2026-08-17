@@ -877,13 +877,22 @@ cookies have separate hard bounds. Overflow or ambiguity discards detailed
 path state in favor of one sticky full-reconciliation request, so a long initial
 scan cannot accumulate an unbounded event backlog.
 
-Watcher initialization exposes a bounded diagnostic snapshot containing the
-selected native or periodic-polling backend, the exact admission entries and
-directories examined, the fallback reason, and atomic poll/path/full-delivery
-counters. A polling fallback schedules its first full reconciliation only after
-the 30-second interval. It never emits an immediate poll after the mandatory
-startup reconciliation; subsequent missed ticks are skipped rather than
-replayed in a burst.
+ Watcher initialization exposes a bounded diagnostic snapshot containing the
+ selected native or periodic-polling backend, the exact admission entries and
+ directories examined, the fallback reason, and atomic poll/path/full-delivery
+ counters. A polling fallback schedules its first full reconciliation only after
+ the 30-second interval. It never emits an immediate poll after the mandatory
+ startup reconciliation; subsequent missed ticks are skipped rather than
+ replayed in a burst.
+
+ A native watcher reconciles reported paths on demand, but silently dropped
+ events would otherwise never be repaired, so every native watcher also runs a
+ full repository reconciliation at a five-minute interval, the same cadence as
+ the poll-fallback first scan. That recurring scan is subject to the same
+ change detection, cooldown, retry, cancellation, and memory bounds as any
+ other full reconciliation: unchanged files are skipped on their content hash,
+ and every full scan admits at most the configured walk, file, and total-source
+ byte limits.
 
 After any scan, queued messages drain into one bounded scheduler state. Path
 changes deduplicate and wait for the configured quiet period. Ambiguous rename

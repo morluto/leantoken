@@ -340,7 +340,12 @@ impl Indexer {
                         }
                     }
                 }
-                resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                resolve_imports(
+                    &mut indexed,
+                    &repository_paths,
+                    &self.repository_root,
+                    cancellation,
+                )?;
                 let staged_files = indexed.len();
                 files_indexed = files_indexed.saturating_add(indexed.len());
                 for file in indexed {
