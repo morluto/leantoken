@@ -2096,6 +2096,25 @@ fn context_focus_candidate_schema_exposes_generation_bounds() {
 }
 
 #[test]
+fn context_task_schema_accepts_every_wire_valid_value() {
+    let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({"task": "x"}))
+        .expect("one-character non-empty task is wire-valid");
+    assert_eq!(request.task.as_str(), "x");
+
+    let context = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "context")
+        .expect("context tool");
+    let schema = serde_json::Value::Object((*context.input_schema).clone());
+    assert_eq!(
+        schema.pointer("/properties/task/minLength"),
+        Some(&serde_json::json!(1)),
+        "the schema must accept every non-empty task accepted on the wire"
+    );
+}
+
+#[test]
 fn retrieval_response_budget_limits_are_validated_for_every_tool() {
     fn set_limit(value: &mut serde_json::Value, nested: bool, limit: usize) {
         if nested {

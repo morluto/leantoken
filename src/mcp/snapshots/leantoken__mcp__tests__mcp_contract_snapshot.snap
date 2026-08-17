@@ -497,7 +497,7 @@ expression: mcp_contract()
           "task": {
             "description": "Natural-language coding task; include known identifiers and constraints.",
             "maxLength": 65536,
-            "minLength": 3,
+            "minLength": 1,
             "type": "string"
           },
           "token_budget": {
