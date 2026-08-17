@@ -1002,6 +1002,7 @@ dependencies = [
  "rmcp",
  "rusqlite",
  "rusqlite_migration",
+ "rustix",
  "schemars",
  "semver",
  "serde",
