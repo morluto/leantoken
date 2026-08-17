@@ -2115,6 +2115,23 @@ fn context_task_schema_accepts_every_wire_valid_value() {
 }
 
 #[test]
+fn workflow_evidence_path_schema_matches_repository_path_bound() {
+    let context = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "context")
+        .expect("context tool");
+    let schema = serde_json::Value::Object((*context.input_schema).clone());
+    assert_eq!(
+        schema.pointer("/$defs/WorkflowEvidence/properties/paths/items/maxLength"),
+        Some(&serde_json::json!(
+            crate::repository::MAX_REPOSITORY_PATH_BYTES
+        )),
+        "workflow evidence paths must advertise the repository path ceiling"
+    );
+}
+
+#[test]
 fn retrieval_response_budget_limits_are_validated_for_every_tool() {
     fn set_limit(value: &mut serde_json::Value, nested: bool, limit: usize) {
         if nested {

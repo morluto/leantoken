@@ -982,7 +982,7 @@ claims.
 | Path | Bound |
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
-| Workflow-evidence items | 8 per class, 8 KiB per item, 32 KiB total |
+| Workflow-evidence items | 8 per class, 8 KiB per text item, 4 KiB per path, 32 KiB total |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
 | Focus patterns with local candidate generation | 32 |
 | Focused indexed files inspected per pattern | First 4 policy-eligible paths in lexical order |
@@ -1121,8 +1121,9 @@ task length.
 Opt-in workflow evidence shares that same 12-query ceiling and the existing
 per-query symbol, reference, and FTS hit caps. The caller may supply at most
 eight directly observed failure traces, symbols, repository-relative paths,
-and test intents per class. Each item is capped at 8 KiB and all four classes
-at 32 KiB combined. Evidence order is preserved; deterministic class quotas
+and test intents per class. Text items are capped at 8 KiB, paths use the
+shared 4 KiB repository-path ceiling, and all four classes are capped at
+32 KiB combined. Evidence order is preserved; deterministic class quotas
 reserve lanes before the ordinary task planner fills the remaining query
 slots. Test intent contributes bounded path-prior scoring but does not trigger
 an additional executable search lane. Empty evidence delegates to the original

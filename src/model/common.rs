@@ -192,7 +192,10 @@ pub struct WorkflowEvidence {
     #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
     pub symbols: Vec<String>,
     /// Normalized repository-relative paths observed by the caller.
-    #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]
+    #[schemars(
+        length(max = 8),
+        inner(length(min = 1, max = "crate::repository::MAX_REPOSITORY_PATH_BYTES"))
+    )]
     pub paths: Vec<String>,
     /// Test names, commands, or behavioral checks relevant to the task.
     #[schemars(length(max = 8), inner(length(min = 1, max = 8192)))]

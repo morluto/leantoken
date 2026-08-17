@@ -1246,8 +1246,9 @@ the CLI accepts the same object as repeatable JSON, for example
 `workflow_evidence` is an opt-in object for facts the caller directly observed
 while executing the workflow. Its four arrays are `failure_traces`, `symbols`,
 repository-relative `paths`, and `test_intents`. Each class accepts at most
-eight items, each item accepts at most 8 KiB, and the combined payload accepts
-at most 32 KiB. Evidence shares the existing 12-query context fan-out instead
+eight items; text items accept at most 8 KiB, paths use the shared 4 KiB
+repository-path ceiling, and the combined payload accepts at most 32 KiB.
+Evidence shares the existing 12-query context fan-out instead
 of starting an unbounded second search. Do not populate it from benchmark gold
 labels or guesses:
 
