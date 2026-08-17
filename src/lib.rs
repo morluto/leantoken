@@ -42,6 +42,7 @@ pub mod services;
 pub mod setup;
 /// SQLite schema, transactions, FTS5 queries, and indexed records.
 pub mod storage;
+mod subprocess;
 mod symbol_identity;
 /// UTF-8 preparation, chunking, hashing, and line-range helpers.
 pub mod text;

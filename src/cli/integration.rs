@@ -20,7 +20,7 @@ pub struct McpArgs {
     pub result_mode: McpResultMode,
 }
 
-/// Client selection shared by `setup` and `remove`.
+/// Client selection and controls shared by `setup` and `remove`.
 #[derive(Debug, Clone, Args)]
 pub struct IntegrationArgs {
     /// Configure Claude Code.
@@ -44,6 +44,23 @@ pub struct IntegrationArgs {
     /// Select every supported client.
     #[arg(long)]
     pub all: bool,
+    /// Apply an explicitly scoped plan without prompting.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Show the exact configuration plan without making changes.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Replace or remove a `leantoken` entry not recognized as setup-managed.
+    #[arg(long)]
+    pub force_unmanaged: bool,
+}
+
+/// Options specific to the setup workflow.
+#[derive(Debug, Clone, Args)]
+pub struct SetupArgs {
+    /// Client selection and controls shared with removal.
+    #[command(flatten)]
+    pub integration: IntegrationArgs,
     /// Refresh existing LeanToken MCP entries without selecting new clients.
     #[arg(long)]
     pub refresh: bool,
@@ -51,18 +68,9 @@ pub struct IntegrationArgs {
     /// retaining an npx/Node process chain.
     #[arg(long)]
     pub private_runtime: bool,
-    /// Apply without prompting; requires explicit clients, --all, or --refresh.
-    #[arg(short = 'y', long)]
-    pub yes: bool,
-    /// Show the exact configuration plan without making changes.
-    #[arg(long)]
-    pub dry_run: bool,
     /// Permit setup from an older npx release for an intentional rollback.
     #[arg(long)]
     pub allow_outdated: bool,
-    /// Replace or remove a `leantoken` entry not recognized as setup-managed.
-    #[arg(long)]
-    pub force_unmanaged: bool,
 }
 
 impl From<IntegrationArgs> for SetupRequest {
@@ -89,12 +97,22 @@ impl From<IntegrationArgs> for SetupRequest {
         Self {
             clients,
             all: args.all,
-            refresh: args.refresh,
-            private_runtime: args.private_runtime,
+            refresh: false,
+            private_runtime: false,
             yes: args.yes,
             dry_run: args.dry_run,
-            allow_outdated: args.allow_outdated,
+            allow_outdated: false,
             force_unmanaged: args.force_unmanaged,
         }
+    }
+}
+
+impl From<SetupArgs> for SetupRequest {
+    fn from(args: SetupArgs) -> Self {
+        let mut request = Self::from(args.integration);
+        request.refresh = args.refresh;
+        request.private_runtime = args.private_runtime;
+        request.allow_outdated = args.allow_outdated;
+        request
     }
 }

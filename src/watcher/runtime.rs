@@ -173,19 +173,20 @@ impl RepositoryWatcher {
                 admission,
             });
 
+            let native_reconciliation_interval = Duration::from_secs(60 * 5); // 5 minutes
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
             let mut pending = PendingReconciliation::empty();
             let poll_started_at = Instant::now()
                 + if selection.is_native() {
-                    long_sleep
+                    native_reconciliation_interval
                 } else {
                     poll_interval
                 };
             let mut poll_timer = if !selection.is_native() {
                 interval_at(poll_started_at, poll_interval)
             } else {
-                interval_at(poll_started_at, long_sleep)
+                interval_at(poll_started_at, native_reconciliation_interval)
             };
             poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -223,10 +224,8 @@ impl RepositoryWatcher {
                         }
                     }
                     _ = poll_timer.tick() => {
-                        if !selection.is_native() {
-                            task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
-                            pending.require_full();
-                        }
+                        task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
+                        pending.require_full();
                     }
                     _ = sleep.as_mut() => {
                         if !flush(

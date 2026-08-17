@@ -146,7 +146,7 @@ impl<'de> Deserialize<'de> for SearchMcpOperation {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(
-    description = "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection."
+    description = "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor."
 )]
 pub(in crate::mcp) struct SearchMcpOptions {
     pub(in crate::mcp) query: SearchMcpQuery,

@@ -23,7 +23,7 @@ use crate::{Error, Result};
 
 /// Page size for bounded lean scans over the indexed file table (find / glob fallback).
 pub(super) const FILE_LIST_PAGE_SIZE: usize = 1_000;
-const MAX_FILES_CURSOR_BYTES: usize = MAX_PATH_BYTES * 2 + 64;
+pub(crate) const MAX_FILES_CURSOR_ENCODED_BYTES: usize = MAX_PATH_BYTES * 2 + 64;
 
 struct FilePage {
     entries: Vec<FileEntry>,
@@ -150,7 +150,7 @@ impl FilesInput {
         validate_optional_input(pattern.as_deref(), "pattern", MAX_PATTERN_BYTES)?;
         let cursor = cursor
             .as_deref()
-            .map(|cursor| CursorEnvelope::parse(cursor, MAX_FILES_CURSOR_BYTES))
+            .map(|cursor| CursorEnvelope::parse(cursor, MAX_FILES_CURSOR_ENCODED_BYTES))
             .transpose()?;
         let query = match operation {
             FileOperation::Tree => FilesQuery::Tree {
@@ -964,7 +964,21 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
 
 #[cfg(test)]
 mod tests {
-    use super::sql_glob_patterns;
+    use super::*;
+
+    #[test]
+    fn encoded_file_cursor_bound_covers_the_longest_valid_path() {
+        let stream_id = StreamIdentityBuilder::new(CursorKind::Files).finish();
+        let encoded = FileCursor::Path {
+            operation: PathOperation::Tree,
+            path: "x".repeat(MAX_PATH_BYTES),
+        }
+        .encode(1, stream_id)
+        .expect("maximum path cursor");
+
+        assert!(encoded.len() > MAX_PATH_BYTES);
+        assert!(encoded.len() <= MAX_FILES_CURSOR_ENCODED_BYTES);
+    }
 
     #[test]
     fn sql_glob_patterns_map_common_double_star_forms() {

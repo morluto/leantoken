@@ -368,6 +368,12 @@ impl Indexer {
         let mut skip_reasons = IndexSkipReasonCounts::default();
         before_preparation();
 
+        // Load Go module metadata once for the whole reconciliation instead
+        // of rereading every indexed go.mod for every preparation batch.
+        let go_modules =
+            GoModuleIndex::load(&repository_paths, &self.repository_root, cancellation)?;
+        let sorted_paths = sorted_indexed_paths(&repository_paths);
+
         // Phase 1: Preparation runs outside BEGIN IMMEDIATE so the SQLite
         // writer lock is not held during filesystem reads, hashing, parsing,
         // tokenization, or import resolution. Prepared records are flushed
@@ -427,7 +433,7 @@ impl Indexer {
                         }
                     }
                 }
-                resolve_imports(&mut indexed, &repository_paths, cancellation)?;
+                resolve_imports(&mut indexed, &go_modules, &sorted_paths, cancellation)?;
                 for file in indexed {
                     check_cancelled(cancellation)?;
                     updated_paths.insert(file.path.clone());
@@ -443,8 +449,9 @@ impl Indexer {
         source_bytes.enforce()?;
         let staged = staged.finish()?;
         check_cancelled(cancellation)?;
-        let publication_changed_import_semantics =
-            !change_set.created.is_empty() || !deletions.is_empty();
+        let publication_changed_import_semantics = !change_set.created.is_empty()
+            || !deletions.is_empty()
+            || change_set.modified.iter().any(|path| is_go_mod_path(path));
 
         // Phase 2: Publication inside BEGIN IMMEDIATE.  Relocations and import
         // projection refresh remain inside the transaction because they

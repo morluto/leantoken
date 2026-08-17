@@ -24,6 +24,25 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/morluto/leantoken"
 homepage = "https://github.com/morluto/leantoken"
 readme = "README.md"
+include = [
+    "/src",
+    "/tests",
+    "/assets/leantoken-hero-v3.jpg",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/docs/architecture.md",
+    "/docs/i18n",
+    "/docs/roadmap.md",
+    "/docs/usage.md",
+    "/benchmarks/reports/codex-host-receipt-0.144.1.json",
+    "/benchmarks/reports/model-ab-trajectory-v1.json",
+    "/benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json",
+    "/benchmarks/reports/multi-agent-context-suite-v2-codex-0.144.1.json",
+    "/benchmarks/reports/wire-trace-synthetic-v2.json",
+]
 
 [lints]
 workspace = true

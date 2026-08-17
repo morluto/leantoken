@@ -238,6 +238,22 @@ fn development_languages_are_detected_by_path() {
 }
 
 #[test]
+fn import_deduplication_preserves_first_occurrence_order() {
+    let mut imports = Vec::new();
+    for (target, line) in [("alpha", 1), ("beta", 2), ("alpha", 1), ("alpha", 3)] {
+        push_import(&mut imports, target, line);
+    }
+    deduplicate_imports(&mut imports);
+    assert_eq!(
+        imports
+            .iter()
+            .map(|import| (import.raw_target.as_str(), import.line))
+            .collect::<Vec<_>>(),
+        vec![("alpha", 1), ("beta", 2), ("alpha", 3)]
+    );
+}
+
+#[test]
 fn c_family_indexes_named_calls_without_declaration_false_positives() -> Result<()> {
     let source = "\
 static int target(int value);\n\

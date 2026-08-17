@@ -192,20 +192,44 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
 
-      - name: Get version from PR title
+      - name: Verify release version
         id: version
+        env:
+          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          VERSION=$(echo "$TITLE" | grep -oP 'release leantoken \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
-          if [ -z "$VERSION" ]; then
-            echo "Could not extract version from PR title: $TITLE"
+          checked_out_sha=$(git rev-parse HEAD)
+          title_version=$(grep -oP 'release leantoken \K[0-9]+\.[0-9]+\.[0-9]+' <<< "$PR_TITLE" || true)
+          cargo_version=$(awk '
+            $0 == "[package]" { in_package = 1; next }
+            in_package && /^\[/ { exit }
+            in_package && /^version = "/ {
+              value = $0
+              sub(/^version = "/, "", value)
+              sub(/".*$/, "", value)
+              print value
+              exit
+            }
+          ' Cargo.toml)
+          server_version=$(jq -r '.version' server.json)
+          package_version=$(jq -r '.packages[0].version' server.json)
+
+          if [[ -z "$title_version" || -z "$cargo_version" ]]; then
+            echo "Could not determine the release version from the PR title and Cargo.toml" >&2
             exit 1
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$checked_out_sha" != "$MERGE_COMMIT_SHA" ||
+                "$title_version" != "$cargo_version" ||
+                "$cargo_version" != "$server_version" ||
+                "$server_version" != "$package_version" ]]; then
+            echo "Release identity does not match: checkout=$checked_out_sha event=$MERGE_COMMIT_SHA title=$title_version cargo=$cargo_version server=$server_version package=$package_version" >&2
+            exit 1
+          fi
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$cargo_version" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
         run: |

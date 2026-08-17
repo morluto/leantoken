@@ -1,12 +1,11 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    io::{BufRead, Write},
+    io::BufRead,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, UNIX_EPOCH},
 };
 
-use command_group::CommandGroup;
 use ignore::WalkBuilder;
 use tokio_util::sync::CancellationToken;
 use wait_timeout::ChildExt;

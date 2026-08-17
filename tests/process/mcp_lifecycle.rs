@@ -175,9 +175,21 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
         )
         .expect("hold database lock");
 
-    let mut process = McpProcess::spawn(root.path(), &database);
+    let mut process = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     process.initialize();
     process.send_initialized();
+
+    // Closing stdin before the runtime reaches its cancellable startup loop
+    // races the production shutdown budget against config and coordination
+    // work that has no cancellation checkpoint. Wait until the runtime
+    // demonstrably holds the exclusive `.init.lock` coordination lock, which
+    // it keeps while retrying the contended database open, so the EOF
+    // cancellation always lands on a checkpoint.
+    wait_until_lock_held(
+        &std::path::PathBuf::from(format!("{}.init.lock", database.display())),
+        Duration::from_secs(10),
+        &mut process,
+    );
     process.stdin.take();
 
     // Startup cancellation joins the runtime task under the production
@@ -186,8 +198,47 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
         .wait_timeout(Duration::from_secs(15))
         .expect("wait for MCP process")
         .expect("MCP process should honor startup cancellation");
-    assert!(status.success(), "MCP process exited with {status}");
+    assert!(
+        status.success(),
+        "MCP process exited with {status}: {}",
+        String::from_utf8_lossy(&process.take_stderr())
+    );
     blocker.execute_batch("ROLLBACK").expect("release database");
+}
+
+fn wait_until_lock_held(path: &std::path::Path, timeout: Duration, process: &mut McpProcess) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+        {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => {}
+                Err(std::fs::TryLockError::WouldBlock) => return,
+                Err(std::fs::TryLockError::Error(error)) => {
+                    panic!("probing initialization lock {path:?} failed: {error}")
+                }
+            },
+            Err(error) => panic!("opening initialization lock {path:?} failed: {error}"),
+        }
+        let mut stderr_diagnostics = || {
+            // take_stderr joins a reader blocked on EOF, so stop the child
+            // first when the deadline fails and the runtime stays alive.
+            process.kill_now();
+            String::from_utf8_lossy(&process.take_stderr()).into_owned()
+        };
+        assert!(
+            Instant::now() < deadline,
+            "MCP runtime never reached the cancellable startup phase while waiting \
+             for {path:?}: {}",
+            stderr_diagnostics()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
