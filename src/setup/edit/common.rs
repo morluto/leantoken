@@ -146,6 +146,17 @@ pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Re
     if original == updated {
         return Ok(());
     }
+    // Compare-and-swap: re-read the file immediately before the atomic persist
+    // to verify no external process has modified it since the preflight check.
+    // This shrinks the TOCTOU window from "between two separate function calls"
+    // to "a few microseconds within this function".
+    let on_disk = read_optional(path)?;
+    if on_disk.as_deref() != Some(original) {
+        return Err(Error::SetupFailure(format!(
+            "configuration changed before persist: {}",
+            path.display()
+        )));
+    }
     let parent = path.parent().ok_or_else(|| {
         Error::SetupFailure(format!("config path has no parent: {}", path.display()))
     })?;

@@ -235,6 +235,36 @@ fn open_lock_file(path: &Path) -> Result<File> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    open_lock_file_impl(path)
+}
+
+#[cfg(unix)]
+fn open_lock_file_impl(path: &Path) -> Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_NOFOLLOW prevents following symlinks at the final path component,
+    // eliminating the TOCTOU window between the pre-open symlink check and
+    // the open call. 0x020000 is O_NOFOLLOW on Linux; 0x0100000 on macOS.
+    // std::os::unix::fs::OpenOptionsExt does not expose O_NOFOLLOW directly,
+    // but custom_flags passes raw flags to the open(2) syscall.
+    const O_NOFOLLOW_LINUX: i32 = 0x020000;
+    const O_NOFOLLOW_MACOS: i32 = 0x0100000;
+    let flags = if cfg!(target_os = "macos") {
+        O_NOFOLLOW_MACOS
+    } else {
+        O_NOFOLLOW_LINUX
+    };
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .custom_flags(flags)
+        .open(path)
+        .map_err(Into::into)
+}
+
+#[cfg(not(unix))]
+fn open_lock_file_impl(path: &Path) -> Result<File> {
     OpenOptions::new()
         .read(true)
         .write(true)

@@ -26,11 +26,19 @@ use super::{McpResultMode, RequestAdmission, RetryableToolResponse, retryable_to
 const MAX_MCP_STDIO_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 
+/// Dispatch entry state: active (holding a permit) or tombstoned (cancelled
+/// but handler still draining). Tombstoned entries prevent ID reuse until the
+/// handler's response arrives and cleans up the entry.
+#[allow(dead_code)]
+enum DispatchEntry {
+    Active(tokio::sync::OwnedSemaphorePermit),
+    Tombstoned,
+}
+
 #[derive(Clone)]
 struct DispatchedToolCall {
     id: rmcp::model::RequestId,
-    dispatched_calls:
-        Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
+    dispatched_calls: Arc<Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>>,
 }
 
 impl Drop for DispatchedToolCall {
@@ -50,8 +58,7 @@ pub(super) struct BoundedStdioTransport {
     decoder: JsonRpcMessageCodec<RxJsonRpcMessage<RoleServer>>,
     read_buffer: BytesMut,
     request_dispatch: RequestAdmission,
-    dispatched_calls:
-        Arc<Mutex<HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>>>,
+    dispatched_calls: Arc<Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>>,
     result_mode: McpResultMode,
     negotiated_protocol: Arc<RwLock<Option<ProtocolVersion>>>,
 }
@@ -104,7 +111,7 @@ impl BoundedStdioTransport {
                     &notification.notification
                     && let Some(id) = &cancelled.params.request_id
                 {
-                    Self::finish_dispatch(&self.dispatched_calls, id);
+                    Self::tombstone_dispatch(&self.dispatched_calls, id);
                 }
                 return Ok(());
             }
@@ -126,7 +133,7 @@ impl BoundedStdioTransport {
             Ok(permit) => permit,
             Err(_) => return Err(id),
         };
-        dispatched.insert(id.clone(), permit);
+        dispatched.insert(id.clone(), DispatchEntry::Active(permit));
         drop(dispatched);
         request.request.extensions_mut().insert(DispatchedToolCall {
             id,
@@ -144,15 +151,28 @@ impl BoundedStdioTransport {
     }
 
     fn finish_dispatch(
-        dispatched_calls: &Mutex<
-            HashMap<rmcp::model::RequestId, tokio::sync::OwnedSemaphorePermit>,
-        >,
+        dispatched_calls: &Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>,
         id: &rmcp::model::RequestId,
     ) {
         dispatched_calls
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(id);
+    }
+
+    /// Replace an active dispatch entry with a tombstone, releasing the
+    /// semaphore permit but keeping the ID reserved so it cannot be reused
+    /// until the handler's response arrives and cleans up the entry.
+    fn tombstone_dispatch(
+        dispatched_calls: &Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>,
+        id: &rmcp::model::RequestId,
+    ) {
+        let mut dispatched = dispatched_calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = dispatched.get_mut(id) {
+            *entry = DispatchEntry::Tombstoned;
+        }
     }
 
     fn overloaded_response(&self, id: rmcp::model::RequestId) -> TxJsonRpcMessage<RoleServer> {
