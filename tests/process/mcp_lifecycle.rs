@@ -225,11 +225,17 @@ fn wait_until_lock_held(path: &std::path::Path, timeout: Duration, process: &mut
             },
             Err(error) => panic!("opening initialization lock {path:?} failed: {error}"),
         }
+        let mut stderr_diagnostics = || {
+            // take_stderr joins a reader blocked on EOF, so stop the child
+            // first when the deadline fails and the runtime stays alive.
+            process.kill_now();
+            String::from_utf8_lossy(&process.take_stderr()).into_owned()
+        };
         assert!(
             Instant::now() < deadline,
             "MCP runtime never reached the cancellable startup phase while waiting \
              for {path:?}: {}",
-            String::from_utf8_lossy(&process.take_stderr())
+            stderr_diagnostics()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
