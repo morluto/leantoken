@@ -55,6 +55,11 @@ impl Services {
                 resolved_paths.dedup();
                 for path in resolved_paths {
                     if changed_paths.len() == MAX_DIFF_CHANGED_PATHS {
+                        tracing::warn!(
+                            changed_paths = MAX_DIFF_CHANGED_PATHS,
+                            "context diff scope truncated at {} entries;                             the change set has more paths than the bound",
+                            MAX_DIFF_CHANGED_PATHS,
+                        );
                         break;
                     }
                     if !changed_paths.contains(&path) {

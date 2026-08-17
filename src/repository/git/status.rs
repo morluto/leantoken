@@ -205,6 +205,11 @@ pub(crate) fn parse_git_status_observation<R: BufRead>(
         };
         changed.insert(slash_path(Path::new(path)));
         if changed.len() == max {
+            tracing::warn!(
+                changed_paths = max,
+                "git status changed-path set truncated at {} entries;                 the working tree has more changed paths than the bound",
+                max,
+            );
             break;
         }
     }

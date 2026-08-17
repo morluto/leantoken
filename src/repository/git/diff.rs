@@ -483,6 +483,11 @@ pub(crate) fn parse_diff_names<R: BufRead>(
         };
         changed.push(slash_path(Path::new(path)));
         if changed.len() == max {
+            tracing::warn!(
+                changed_paths = max,
+                "git diff changed-path set truncated at {} entries;                 the diff has more changed paths than the bound",
+                max,
+            );
             break;
         }
     }
