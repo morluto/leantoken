@@ -284,8 +284,8 @@ npm and Node wrapper processes for every MCP session. It remains explicit so a
 zero-install setup does not silently add an application-data write:
 
 ```bash
-npx --yes leantoken@0.1.10 setup --codex --private-runtime --dry-run
-npx --yes leantoken@0.1.10 setup --codex --private-runtime --yes
+npx --yes leantoken@latest setup --codex --private-runtime --dry-run
+npx --yes leantoken@latest setup --codex --private-runtime --yes
 ```
 
 Dry-run reports the exact versioned application-data path and BLAKE3 digest.

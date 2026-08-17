@@ -162,7 +162,7 @@ npm 包含以下平台的原生二进制：
 C/C++ 工具链，然后运行：
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
+cargo install --locked --git https://github.com/morluto/leantoken leantoken
 ```
 
 显式更新已有的客户端集成：

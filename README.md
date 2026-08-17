@@ -358,7 +358,7 @@ postinstall hook. Other targets, including musl Linux, must build from source.
 Install Rust 1.95 or later and a native C/C++ toolchain, then run:
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
+cargo install --locked --git https://github.com/morluto/leantoken leantoken
 ```
 
 ## Updating
