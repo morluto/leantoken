@@ -887,12 +887,13 @@ scan cannot accumulate an unbounded event backlog.
 
  A native watcher reconciles reported paths on demand, but silently dropped
  events would otherwise never be repaired, so every native watcher also runs a
- full repository reconciliation at a five-minute interval, the same cadence as
- the poll-fallback first scan. That recurring scan is subject to the same
- change detection, cooldown, retry, cancellation, and memory bounds as any
- other full reconciliation: unchanged files are skipped on their content hash,
- and every full scan admits at most the configured walk, file, and total-source
- byte limits.
+ full repository reconciliation at a five-minute interval. That recurring scan
+ is subject to the same change detection, cooldown, retry, cancellation, and
+ memory bounds as any other full reconciliation: unchanged files are skipped on
+ their content hash, and every full scan admits at most the configured walk,
+ file, and total-source byte limits. The polling fallback instead starts its
+ first full reconciliation only after the 30-second interval and repeats on its
+ configured poll cadence.
 
 After any scan, queued messages drain into one bounded scheduler state. Path
 changes deduplicate and wait for the configured quiet period. Ambiguous rename

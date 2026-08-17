@@ -1115,6 +1115,7 @@ fn go_imports_resolve_to_the_minimum_indexed_go_file_in_the_package() {
         "cmd/main.go".to_string(),
         "pkg/service/main.go".to_string(),
         "pkg/service/util.go".to_string(),
+        "pkg/service/a_test.go".to_string(),
         "pkg/service/deep/extra.go".to_string(),
     ]
     .into_iter()
@@ -1130,8 +1131,9 @@ fn go_imports_resolve_to_the_minimum_indexed_go_file_in_the_package() {
         )
         .as_deref(),
         Some("pkg/service/main.go"),
-        "the direct package files are ordered deterministically and nested \
-         packages are not treated as part of the imported package"
+        "the direct package files are ordered deterministically, test files are \
+         not package targets, and nested packages are not treated as part of the \
+         imported package"
     );
 }
 
@@ -1151,6 +1153,42 @@ fn go_module_root_imports_resolve_to_top_level_go_files() {
         resolve_go_import("cmd/main.go", "example.com/acme", &paths, go_mod).as_deref(),
         Some("main.go"),
         "the module root package names only its own top-level Go files"
+    );
+}
+
+#[test]
+fn go_module_directives_ignore_trailing_line_comments() {
+    let paths = [
+        "go.mod".to_string(),
+        "cmd/main.go".to_string(),
+        "pkg/other.go".to_string(),
+    ]
+    .into_iter()
+    .collect();
+    let go_mod = "module example.com/acme // repository module\n\ngo 1.22\n";
+
+    assert_eq!(
+        resolve_go_import("cmd/main.go", "example.com/acme/pkg", &paths, go_mod).as_deref(),
+        Some("pkg/other.go"),
+        "a trailing go.mod comment must not become part of the module path"
+    );
+}
+
+#[test]
+fn missing_go_mod_on_disk_is_stale_metadata_not_a_failure() {
+    let directory = tempfile::tempdir().expect("directory");
+    let root = Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority())
+        .expect("repository root");
+    let paths = ["go.mod".to_string(), "cmd/main.go".to_string()]
+        .into_iter()
+        .collect();
+    let cancellation = CancellationToken::new();
+
+    let modules = GoModuleIndex::load(&paths, &root, &cancellation)
+        .expect("a go.mod deleted after the path snapshot is tolerated");
+    assert!(
+        modules.modules.is_empty(),
+        "the deleted go.mod contributes no module metadata"
     );
 }
 
@@ -1251,13 +1289,15 @@ fn import_resolution_honors_cancellation() {
         .into_iter()
         .collect();
     let cancellation = CancellationToken::new();
+    let root = Dir::open_ambient_dir(".", cap_std::ambient_authority()).expect("repository root");
+    let go_modules = GoModuleIndex::load(&paths, &root, &cancellation).expect("load go modules");
     cancellation.cancel();
 
     assert!(matches!(
         resolve_imports(
             &mut files,
-            &paths,
-            &Dir::open_ambient_dir(".", cap_std::ambient_authority()).expect("repository root"),
+            &go_modules,
+            &sorted_indexed_paths(&paths),
             &cancellation
         ),
         Err(Error::Cancelled)

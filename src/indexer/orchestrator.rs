@@ -292,6 +292,11 @@ impl Indexer {
                 staged.flush()?;
             }
         }
+        // Load Go module metadata once for the whole reconciliation instead of
+        // rereading every indexed go.mod for every preparation batch.
+        let go_modules =
+            GoModuleIndex::load(&repository_paths, &self.repository_root, cancellation)?;
+        let sorted_paths = sorted_indexed_paths(&repository_paths);
         let preparation = self.prepare_candidate_batches_with_progress(
             &candidates,
             cancellation,
@@ -340,12 +345,7 @@ impl Indexer {
                         }
                     }
                 }
-                resolve_imports(
-                    &mut indexed,
-                    &repository_paths,
-                    &self.repository_root,
-                    cancellation,
-                )?;
+                resolve_imports(&mut indexed, &go_modules, &sorted_paths, cancellation)?;
                 let staged_files = indexed.len();
                 files_indexed = files_indexed.saturating_add(indexed.len());
                 for file in indexed {

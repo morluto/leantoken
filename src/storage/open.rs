@@ -642,10 +642,15 @@ impl Storage {
                 "ALTER TABLE meta ADD COLUMN database_identity TEXT NOT NULL DEFAULT '';",
             )?;
             let identity = database_identity(path)?;
-            conn.execute_batch(&format!(
-                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
-                identity
-            ))?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![identity],
+            )?;
+            // The persisted identity is being recorded for the first time, so
+            // this database's clone history is unknown: rotate the receipt
+            // namespaces so pre-change copies diverge from the moment identity
+            // recording begins.
+            rotate_receipt_namespaces(conn)?;
             return Ok(());
         }
         let stored_identity: String = conn
@@ -657,27 +662,31 @@ impl Storage {
             .unwrap_or_default();
         if stored_identity.is_empty() {
             let identity = database_identity(path)?;
-            conn.execute_batch(&format!(
-                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
-                identity
-            ))?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![identity],
+            )?;
+            rotate_receipt_namespaces(conn)?;
             return Ok(());
         }
         let new_identity = database_identity(path)?;
         if stored_identity != new_identity {
-            conn.execute_batch(
-                "UPDATE retrieval_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
+            rotate_receipt_namespaces(conn)?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![new_identity],
             )?;
-            conn.execute_batch(
-                "UPDATE query_coverage_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
-            )?;
-            conn.execute_batch(&format!(
-                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
-                new_identity
-            ))?;
         }
         Ok(())
     }
+}
+
+fn rotate_receipt_namespaces(conn: &mut Connection) -> Result<()> {
+    conn.execute_batch(
+        "UPDATE retrieval_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;
+         UPDATE query_coverage_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
+    )?;
+    Ok(())
 }
 
 /// Physical identity of the database file: stable across ordinary reopens,

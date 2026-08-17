@@ -107,7 +107,7 @@ impl CacheManager {
                 && current
                     .entry
                     .age_seconds
-                    .is_some_and(|age| age < older_than_days.get() * 86400)
+                    .is_some_and(|age| age < older_than_days.get().saturating_mul(SECONDS_PER_DAY))
             {
                 reasons.retain(|reason| reason != "older_than");
                 if reasons.is_empty() {

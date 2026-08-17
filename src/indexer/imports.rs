@@ -12,11 +12,10 @@ impl Indexer {
         {
             return Ok(0);
         }
-        let membership = self.existing_files(cancellation)?.into_keys().collect();
-        let go_modules = GoModuleIndex::load(&membership, &self.repository_root, cancellation)?;
-        let sorted_paths = sorted_indexed_paths(&membership);
-        writer.repair_import_projections(|seed| {
+        writer.repair_import_projections(|seed, membership| {
             check_cancelled(cancellation)?;
+            let go_modules = GoModuleIndex::load(membership, &self.repository_root, cancellation)?;
+            let sorted_paths = sorted_indexed_paths(membership);
             Ok(import_candidates(
                 &seed.source_path,
                 &seed.raw_target,

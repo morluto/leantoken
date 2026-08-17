@@ -13,7 +13,7 @@ pub(super) const MAX_GO_MOD_WALK_DEPTH: usize = 64;
 /// depend only on the repository snapshot and never on the process working
 /// directory.
 pub(super) struct GoModuleIndex {
-    modules: HashMap<String, String>,
+    pub(super) modules: HashMap<String, String>,
 }
 
 impl GoModuleIndex {
@@ -25,11 +25,16 @@ impl GoModuleIndex {
         let mut modules = HashMap::new();
         for path in repository_paths {
             check_cancelled(cancellation)?;
-            if path != "go.mod" && !path.ends_with("/go.mod") {
+            if !is_go_mod_path(path) {
                 continue;
             }
-            let Some(bytes) = read_bounded(repository_root, path, MAX_GO_MOD_BYTES)? else {
-                continue;
+            let bytes = match read_bounded(repository_root, path, MAX_GO_MOD_BYTES) {
+                Ok(Some(bytes)) => bytes,
+                // A go.mod deleted or renamed after the path snapshot was
+                // captured is stale metadata, not a reconciliation failure.
+                Ok(None) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
             };
             let content = String::from_utf8_lossy(&bytes);
             if let Some(module_path) = parse_module_directive(&content) {
@@ -40,13 +45,25 @@ impl GoModuleIndex {
     }
 }
 
+pub(super) fn is_go_mod_path(path: &str) -> bool {
+    path == "go.mod" || path.ends_with("/go.mod")
+}
+
 fn parse_module_directive(content: &str) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
         let Some(module_path) = line.strip_prefix("module ") else {
             continue;
         };
-        let module_path = module_path.trim().trim_matches('"').trim_matches('\'');
+        // A valid directive may carry a trailing `//` comment; go.mod module
+        // paths never contain `//`, so the first occurrence is the comment.
+        let module_path = module_path
+            .split("//")
+            .next()
+            .unwrap_or(module_path)
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
         if module_path.is_empty() || module_path.len() > MAX_IMPORT_TARGET_BYTES {
             continue;
         }
@@ -65,22 +82,16 @@ pub(super) fn sorted_indexed_paths(repository_paths: &HashSet<String>) -> Vec<St
 
 pub(super) fn resolve_imports(
     files: &mut [IndexedFile],
-    repository_paths: &HashSet<String>,
-    repository_root: &Dir,
+    go_modules: &GoModuleIndex,
+    sorted_paths: &[String],
     cancellation: &CancellationToken,
 ) -> Result<()> {
-    let go_modules = GoModuleIndex::load(repository_paths, repository_root, cancellation)?;
-    let sorted_paths = sorted_indexed_paths(repository_paths);
     for file in files {
         check_cancelled(cancellation)?;
         for import in &mut file.imports {
             check_cancelled(cancellation)?;
-            let projection = derive_import_projection(
-                &file.path,
-                &import.raw_target,
-                &sorted_paths,
-                &go_modules,
-            );
+            let projection =
+                derive_import_projection(&file.path, &import.raw_target, sorted_paths, go_modules);
             import.resolved_path = projection.resolved_path;
             import.candidate_paths = projection.candidate_paths;
         }
@@ -665,7 +676,9 @@ fn minimum_indexed_go_file(package_dir: &str, sorted_paths: &[String]) -> Option
             break;
         }
         let direct = &path[prefix.len()..];
-        if !direct.contains('/') && direct.ends_with(".go") {
+        // Dependency imports never compile a package's test files, so a
+        // `_test.go` member cannot represent the package to readers.
+        if !direct.contains('/') && direct.ends_with(".go") && !direct.ends_with("_test.go") {
             return Some(path.clone());
         }
     }
