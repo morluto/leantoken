@@ -1,6 +1,113 @@
-# Weekly profiling policy. Merge checks use Cargo/libtest; this profile is
-# deliberately explicit and never retries a failed test.
+# Local commands select this baseline through the named `local` profile. Every
+# evidence profile restates the no-retry contract so drift is easy to audit.
 [profile.default]
 retries = 0
 flaky-result = "fail"
-slow-timeout = { period = "10s", terminate-after = 6, grace-period = "10s" }
+fail-fast = true
+global-timeout = "30m"
+test-threads = 4
+
+[profile.local]
+inherits = "default"
+retries = 0
+flaky-result = "fail"
+fail-fast = true
+global-timeout = "30m"
+
+[profile.local.junit]
+path = "junit.xml"
+
+[profile.ci]
+inherits = "default"
+retries = 0
+flaky-result = "fail"
+fail-fast = false
+global-timeout = "45m"
+status-level = "fail"
+final-status-level = "slow"
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.stress]
+inherits = "default"
+retries = 0
+flaky-result = "fail"
+fail-fast = false
+global-timeout = "30m"
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
+
+[profile.stress.junit]
+path = "junit.xml"
+
+[profile.profile]
+inherits = "ci"
+retries = 0
+flaky-result = "fail"
+fail-fast = false
+global-timeout = "2h"
+status-level = "slow"
+final-status-level = "slow"
+failure-output = "final"
+
+[profile.profile.junit]
+path = "junit.xml"
+
+# One nextest scheduler owns the complete product graph. These semaphores and
+# per-test slot reservations are nested inside that global platform job bound.
+[test-groups.cheap]
+max-threads = 8
+
+[test-groups.cold-index-sqlite]
+max-threads = 2
+
+[test-groups.git-fixtures]
+max-threads = 2
+
+[test-groups.filesystem-watcher]
+max-threads = 1
+
+[test-groups.process-mcp]
+max-threads = 4
+
+[test-groups.extended]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(leantoken-benchmarks) or test(/^services::concurrency_profile::/)'
+test-group = "extended"
+threads-required = "num-test-threads"
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+[[profile.default.overrides]]
+filter = 'test(/^process::/) or test(/^mcp::/) or test(/^domains::protocol::/)'
+test-group = "process-mcp"
+threads-required = 1
+slow-timeout = { period = "30s", terminate-after = 6 }
+
+[[profile.default.overrides]]
+filter = 'test(/^watcher::/) or test(/^setup::/) or test(/^sandbox::/) or test(/^domains::platform::/)'
+test-group = "filesystem-watcher"
+threads-required = 1
+slow-timeout = { period = "20s", terminate-after = 6 }
+
+[[profile.default.overrides]]
+filter = 'test(/^repository::/) or test(/::(history|diff)::/) or test(/git/)'
+test-group = "git-fixtures"
+threads-required = 1
+slow-timeout = { period = "20s", terminate-after = 6 }
+
+[[profile.default.overrides]]
+filter = 'test(/^storage::/) or test(/^indexer::/) or test(/^cache::/) or test(/^query_receipt::/) or test(/^domains::(indexing_repository|storage)::/) or test(/^services::tests::/) or test(/^services::(read|query_receipts|receipts|lifecycle|repository|reconciliation)::/)'
+test-group = "cold-index-sqlite"
+threads-required = 1
+slow-timeout = { period = "20s", terminate-after = 6 }
+
+[[profile.default.overrides]]
+filter = 'all()'
+test-group = "cheap"
+threads-required = 1
+slow-timeout = { period = "10s", terminate-after = 3 }

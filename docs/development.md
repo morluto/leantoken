@@ -18,8 +18,9 @@ Local hooks deliberately do not compile the project or run tests. The full
 lint and test gates run in GitHub Actions, where they do not block commits or
 the first push.
 
-Install `cargo-nextest` when running the complete local product suite; CI
-installs the repository's nextest release automatically:
+Install `cargo-nextest` when running the complete local product suite or the
+test-architecture check; CI installs the repository's nextest release
+automatically:
 
 ```bash
 cargo install cargo-nextest --locked
@@ -89,10 +90,11 @@ benchmark contract or examples:
 cargo test-product
 ```
 
-For a visible, resource-safe phase plan use the Rust workspace task runner:
+For the exact local scheduler command, or the command CI uses, inspect the plan:
 
 ```bash
 cargo xtask test plan --dry-run
+cargo xtask test plan --profile ci --dry-run
 cargo xtask check-test-architecture
 ```
 
@@ -103,25 +105,36 @@ inventory, and rejects actual `include!()` syntax without matching comments or
 strings. The raw SQLite read session is private to storage, so the compiler—not
 a source-text scan—enforces the service snapshot boundary.
 
-The runner sequences units, ordinary domain integration, and process-heavy
-tests. CI uses `cargo xtask test product --parallel` to overlap only the
-library/binary unit lane and ordinary integration lane; those phases use
-`cargo-nextest` with two workers each (a maximum of four across the overlap),
-while process-heavy executable/MCP behavior uses three nextest workers on macOS,
-four on Linux, and two on Windows. Windows process tests can each launch
-several child processes, so the lower bound avoids starving those children.
-Doctests stay on their explicit Cargo command.
-The runner prints per-lane elapsed time and preserves child exit codes. It also
+The product runner starts one `cargo nextest run` for product units, private
+domain suites, ordinary integration, and executable/MCP process behavior. That
+single Cargo build graph and nextest scheduler has one platform-wide bound:
+four tests on Linux, three on macOS, and two on Windows. Nested nextest groups
+reserve capacity for cold indexing/SQLite, Git fixtures, filesystem/watcher,
+real-process/MCP, extended, and cheap tests. No second Cargo planner competes
+for package-cache or artifact locks. Local runs select the `local` profile; CI
+passes `--profile ci`. Both produce owner- and test-level JUnit metadata under
+`target/nextest/`. Doctests stay on their explicit Cargo command.
+
+The runner prints elapsed time and preserves the scheduler's exit code. It also
 owns the opt-in profile and stress commands. Checked-in corpora and benchmark
 reports execute through their explicit domain, contract, or example owner
 rather than a generic serialized-case phase.
 
-The stress lane accepts `LEANTOKEN_STRESS_REPETITIONS` for scheduled
-repetition. Required checks never retry failures.
+The stress lane accepts 1–100 `LEANTOKEN_STRESS_REPETITIONS` for scheduled
+repetition. When more than one run is requested, it preserves the bounded
+JUnit result from each run under
+`target/nextest/stress/repetitions/junit-NNN.xml`. Before each repetition it
+removes the current report, so a command that fails to publish new evidence
+cannot inherit a stale JUnit file. Every report ancestor and destination must
+remain a real, workspace-owned directory or file; symlinks and Windows reparse
+points are rejected. Required checks never retry failures.
 
-The weekly `cargo xtask test profile` lane uses the checked-in nextest policy:
-tests slower than ten seconds are reported, a deadlocked test is terminated
-after a bounded interval, and retries are disabled.
+The weekly `cargo xtask test profile` lane selects the `profile` policy
+explicitly. It continues after individual failures, records JUnit timing, and
+reports slow owners. Cheap tests retain a 30-second hang bound; cold
+indexing/SQLite, Git, and filesystem owners have documented two-minute bounds;
+real-process/MCP tests have three minutes; and the opt-in extended owner has ten
+minutes. Retries remain disabled in every profile.
 
 Run the token-economy contract explicitly when changing retrieval accounting or
 its fixture. CI selects this lane for its owned source, suite, fixture, and
@@ -131,10 +144,11 @@ manifest paths on every supported OS:
 cargo test-contract
 ```
 
-This full local command uses a platform-aware process-test bound: three workers
-on macOS, four on Linux, and two on Windows. That keeps child-process load
-bounded while using the standard runner capacity. Focused tests retain Cargo's
-normal host parallelism.
+This full local command uses the same platform-aware global scheduler bound as
+CI: three workers on macOS, four on Linux, and two on Windows. Resource groups
+cap heavy owners within that pool, so child processes and SQLite publication
+cannot expand without bound. Focused tests retain Cargo's normal host
+parallelism.
 
 Benchmark and example tests are a separate target group because Cargo executes
 test binaries serially. Run them when changing `examples/`, benchmark fixtures,
@@ -256,9 +270,9 @@ process-test changes; macOS, Windows, token-economy, example, and coverage
 owners remain mandatory on the merge, main, scheduled, or manual events named
 in `ci/test-topology.json`. The planner emits the exact runner and command for
 every selected matrix entry, and GitHub Actions consumes that JSON directly.
-The process-heavy phase uses three workers on macOS, four on Linux, and two on
-Windows because each test can start several child processes; ordinary tests
-retain the runner's default parallelism. The scheduled instrumented coverage
+The product job uses one scheduler with four global workers on Linux, three on
+macOS, and two on Windows; checked resource groups further bound process,
+filesystem, Git, and SQLite work. The scheduled instrumented coverage
 gate retains its 50% line floor; the opt-in `concurrency_profile` harness and
 subprocess-only CLI entrypoints are excluded. The stable Required checks job
 validates one source- and topology-bound receipt per planned job, so failures,

@@ -12,6 +12,7 @@ const MAX_CHANGED_PATHS_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHANGED_PATHS: usize = 100_000;
 const MAX_RECEIPT_BYTES: u64 = 64 * 1024;
 const MAX_STRESS_REPETITIONS: usize = 100;
+const MAX_MATRIX_ENTRIES: usize = 32;
 const ALLOWED_RUNNERS: &[&str] = &["ubuntu-latest", "macos-latest", "windows-latest"];
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -230,7 +231,16 @@ pub(crate) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
 
 pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
     let topology = read_topology(root)?;
-    if topology.schema_version != PLAN_SCHEMA_VERSION || topology.max_matrix_entries == 0 {
+    validate_topology_structure(&topology)?;
+    check_tracked_path_ownership(root, &topology)?;
+    Ok(())
+}
+
+fn validate_topology_structure(topology: &Topology) -> Result<(), String> {
+    if topology.schema_version != PLAN_SCHEMA_VERSION
+        || topology.max_matrix_entries == 0
+        || topology.max_matrix_entries > MAX_MATRIX_ENTRIES
+    {
         return Err("topology schema or matrix bound is invalid".to_owned());
     }
     let lanes = topology
@@ -287,8 +297,7 @@ pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
             topology.max_matrix_entries
         ));
     }
-    check_tracked_path_ownership(root, &topology)?;
-    ensure_acyclic(&topology)?;
+    ensure_acyclic(topology)?;
     Ok(())
 }
 
@@ -511,13 +520,7 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
     if input.head_revision.trim().is_empty() {
         return Err("head revision must not be empty".to_owned());
     }
-    let topology = read_topology(root)?;
-    if topology.schema_version != PLAN_SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported topology schema {}",
-            topology.schema_version
-        ));
-    }
+    let topology = read_validated_topology(root)?;
     validate_schedule(&topology, &input)?;
     let paths = normalize_paths(&input.changed_paths)?;
     let known = paths.iter().all(|path| {
@@ -702,7 +705,7 @@ fn build_jobs<'a>(
 }
 
 fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
-    let topology = read_topology(root)?;
+    let topology = read_validated_topology(root)?;
     if plan.schema_version != PLAN_SCHEMA_VERSION || plan.planner_version != PLANNER_VERSION {
         return Err("plan schema or planner version is unsupported".to_owned());
     }
@@ -801,7 +804,7 @@ fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
     if plan.jobs != expected_jobs || receipt_identities.len() != plan.jobs.len() {
         return Err("executable jobs do not match the canonical topology matrix".to_owned());
     }
-    if plan.jobs.len() > topology.max_matrix_entries {
+    if plan.jobs.len() > topology.max_matrix_entries || plan.jobs.len() > MAX_MATRIX_ENTRIES {
         return Err(format!(
             "executable plan has {} jobs, limit is {}",
             plan.jobs.len(),
@@ -987,6 +990,12 @@ fn read_topology(root: &Path) -> Result<Topology, String> {
     read_json(&root.join(TOPOLOGY_PATH))
 }
 
+fn read_validated_topology(root: &Path) -> Result<Topology, String> {
+    let topology = read_topology(root)?;
+    validate_topology_structure(&topology)?;
+    Ok(topology)
+}
+
 fn topology_digest(root: &Path) -> Result<String, String> {
     let bytes = fs::read(root.join(TOPOLOGY_PATH)).map_err(|error| error.to_string())?;
     let mut hasher = Hasher::new();
@@ -1007,8 +1016,8 @@ fn usage() -> String {
 mod tests {
     use super::{
         CommandClass, Event, LaneReceipt, MatrixEntry, PlannerInput, ReceiptStatus, build_plan,
-        classify_receipt, normalize_paths, parse_changed_paths, valid_matrix_entry, validate_plan,
-        validate_receipts,
+        classify_receipt, normalize_paths, parse_changed_paths, run, valid_matrix_entry,
+        validate_plan, validate_receipts,
     };
     use crate::workspace_root;
     use std::fs;
@@ -1337,6 +1346,40 @@ mod tests {
     }
 
     #[test]
+    fn planner_command_rejects_an_untrusted_topology_before_writing_matrix_json() {
+        let root = tempfile::tempdir().expect("planner fixture");
+        fs::create_dir(root.path().join("ci")).expect("fixture CI directory");
+        let topology =
+            fs::read(workspace_root().join("ci/test-topology.json")).expect("checked topology");
+        let mut topology: serde_json::Value =
+            serde_json::from_slice(&topology).expect("topology JSON");
+        topology["lanes"][0]["matrix"][0]["name"] = serde_json::json!("self-hosted");
+        fs::write(
+            root.path().join("ci/test-topology.json"),
+            serde_json::to_vec(&topology).expect("fixture topology JSON"),
+        )
+        .expect("fixture topology");
+        let output = root.path().join("plan.json");
+        let error = run(
+            root.path(),
+            vec![
+                "plan".to_owned(),
+                "--event".to_owned(),
+                "pull_request".to_owned(),
+                "--head".to_owned(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                "--changed-path".to_owned(),
+                "src/config.rs".to_owned(),
+                "--output".to_owned(),
+                output.display().to_string(),
+            ],
+        )
+        .expect_err("untrusted runner reached plan output");
+        assert!(error.contains("invalid event eligibility, matrix entries, or dependencies"));
+        assert!(!output.exists());
+    }
+
+    #[test]
     fn malformed_plan_cannot_unselect_a_required_merge_group_lane() {
         let mut plan = build_plan(
             &workspace_root(),
@@ -1468,6 +1511,15 @@ mod tests {
         assert!(workflow.contains("cargo xtask ci validate-receipts"));
         assert!(workflow.contains("status=unexpectedly_skipped"));
         assert!(workflow.contains("target/ci-command-completed"));
+        assert!(workflow.contains("Checkout complete history for secret scanning"));
+        assert!(workflow.contains("fetch-depth: 0"));
+        assert!(workflow.contains("scripts/ci-secret-scan-range.sh"));
+        assert!(workflow.contains("gitleaks --redact --timeout=5m git"));
+        assert!(!workflow.contains("gitleaks/gitleaks-action"));
+        assert_eq!(workflow.matches("overwrite: true").count(), 5);
+        assert!(workflow.contains(
+            "matrix.command == 'rust-quality' || matrix.command == 'product' || matrix.command == 'stress' || matrix.command == 'profile'"
+        ));
         assert!(!workflow.contains("os: [ubuntu-latest, macos-latest, windows-latest]"));
     }
 }

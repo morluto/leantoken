@@ -1764,16 +1764,28 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
-The product test orchestrator may overlap exactly two Cargo children: the
-library/binary unit lane and ordinary integration lane, each with two nextest
-workers. It waits for both before starting executable/MCP process behavior,
-whose nextest concurrency uses three workers on macOS, four on Linux, and two
-on Windows. The Windows bound leaves capacity for the child processes each test
-can launch. Any parallel-lane failure prevents the process phase and is
-reported with its original child exit code. Checked-in corpora and derived
-benchmark reports are verified by their semantic domain, contract, or executable owner;
-small input/output cases stay as ordinary named tests rather than passing
-through a generic fixture interpreter.
+The product test orchestrator starts exactly one Cargo build planner and one
+nextest scheduler for the complete product graph. Its global execution bound is
+four tests on Linux, three on macOS, and two on Windows. Within that pool,
+checked groups cap cheap work at eight, cold-index/SQLite and Git fixtures at
+two each, filesystem/watcher and extended work at one each, and process/MCP
+work at four. The extended owner alone reserves the whole pool; the other
+groups rely on their explicit semaphore bound so unrelated cheap work can use
+remaining capacity. Named local, CI, stress, and profiling
+policies all disable retries and write JUnit evidence. CI and profiling continue
+after individual failures so the already-built graph yields complete evidence.
+Stress repetition is bounded to 100 runs and preserves each regular JUnit file,
+up to 8 MiB, in a workspace-owned report directory before the next run replaces
+the profile's current report. The orchestrator clears that current report
+before every repetition and validates each ancestor without following symlinks
+or Windows reparse points; publication creates a new destination rather than
+overwriting a path that could have been redirected.
+Cheap tests terminate after three 10-second slow periods; cold-index/SQLite,
+Git, and filesystem owners after six 20-second periods; process/MCP after six
+30-second periods; and extended work after ten 60-second periods. Checked-in
+corpora and derived benchmark reports are verified by their semantic domain,
+contract, or executable owner; small input/output cases stay as ordinary named
+tests rather than passing through a generic fixture interpreter.
 
 The manual TypeScript recovery evaluator is example-only and does not alter
 services, indexing, storage, ranking, or MCP schemas. It accepts at most
