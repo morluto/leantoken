@@ -146,6 +146,7 @@ pub(super) fn write_if_changed(path: &Path, original: &str, updated: &str) -> Re
     if original == updated {
         return Ok(());
     }
+    reject_symlink_target(path)?;
     let parent = path.parent().ok_or_else(|| {
         Error::SetupFailure(format!("config path has no parent: {}", path.display()))
     })?;
@@ -186,6 +187,24 @@ pub(super) fn invalid_config(path: &Path, error: impl fmt::Display) -> Error {
         "refusing to overwrite malformed config {}: {error}",
         path.display()
     ))
+}
+
+#[cfg(unix)]
+fn reject_symlink_target(path: &Path) -> Result<()> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            return Err(Error::SetupFailure(format!(
+                "refusing to overwrite symlinked config: {} is a symbolic link; remove the symlink or replace it with a regular file before running setup",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn reject_symlink_target(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 pub(super) fn toml_positive_integer(item: &Item) -> Option<u64> {
