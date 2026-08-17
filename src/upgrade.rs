@@ -346,6 +346,7 @@ fn upgrade_command(context: InstallContext, latest_version: Option<&str>) -> Opt
             if let Some(version) = latest_version {
                 arguments.extend(["--tag".into(), format!("v{version}")]);
             }
+            arguments.push("--locked".into());
             arguments.push("--force".into());
             Some(CommandSpec::new("cargo", arguments))
         }
@@ -556,7 +557,10 @@ fn write_report(output: &mut impl Write, report: UpgradeReport, json: bool) -> R
 fn print_manual_commands(output: &mut impl Write) -> Result<()> {
     writeln!(output, "Update manually with one of:")?;
     writeln!(output, "  npm install --global {NPM_PACKAGE}")?;
-    writeln!(output, "  cargo install --git {GIT_REPOSITORY} --force")?;
+    writeln!(
+        output,
+        "  cargo install --git {GIT_REPOSITORY} --locked --force"
+    )?;
     Ok(())
 }
 
@@ -601,7 +605,7 @@ mod tests {
             upgrade_command(InstallContext::Cargo, Some("1.2.3"))
                 .unwrap()
                 .display(),
-            "cargo install --git https://github.com/morluto/leantoken --tag v1.2.3 --force"
+            "cargo install --git https://github.com/morluto/leantoken --tag v1.2.3 --locked --force"
         );
     }
 
