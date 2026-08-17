@@ -250,24 +250,26 @@ cargo test-contract
 ```
 
 The CI planner selects product, token-economy contract, benchmark/example, and
-coverage lanes independently from their owned paths. Selected benchmark,
-example, and documentation tests run once on Linux. Selected product and
-contract lanes run on Linux, macOS, and Windows with per-lane elapsed summaries
-from xtask. The process-heavy phase uses three workers on macOS, four on Linux,
-and two on Windows because each test can start several child processes;
-ordinary tests retain the runner's default parallelism. Selected Rust changes
-also run the instrumented coverage gate in parallel (50% line floor; the opt-in
-`concurrency_profile` harness and subprocess-only CLI entrypoints are
-excluded). The stable Required checks job fails if a selected lane fails,
-cancels, times out, or disappears, while intentionally unselected lanes remain
-conditional.
+coverage lanes independently from their owned paths and explicit event
+eligibility. Pull requests run Linux product evidence for product or
+process-test changes; macOS, Windows, token-economy, example, and coverage
+owners remain mandatory on the merge, main, scheduled, or manual events named
+in `ci/test-topology.json`. The planner emits the exact runner and command for
+every selected matrix entry, and GitHub Actions consumes that JSON directly.
+The process-heavy phase uses three workers on macOS, four on Linux, and two on
+Windows because each test can start several child processes; ordinary tests
+retain the runner's default parallelism. The scheduled instrumented coverage
+gate retains its 50% line floor; the opt-in `concurrency_profile` harness and
+subprocess-only CLI entrypoints are excluded. The stable Required checks job
+validates one source- and topology-bound receipt per planned job, so failures,
+cancellation, timeouts, missing work, or stale matrix identities fail closed
+while intentionally unselected lanes remain conditional.
 A pull request is not ready to merge until its required CI checks pass.
 
 Repository rules for `main` should require the CI workflow's `Required checks`
-job. That stable aggregate check fails when any job relevant to the changed
-paths fails, while allowing intentionally skipped jobs to remain conditional.
-Requiring the aggregate avoids coupling branch rules to every matrix entry and
-path-filtered job name.
+job. That stable aggregate verifies the checked plan and its complete receipt
+set while allowing intentionally unselected lanes to remain conditional.
+Requiring the aggregate avoids coupling branch rules to dynamic matrix names.
 
 Run a complete gate locally when reproducing a CI failure, working without CI,
 or changing the gate itself. Otherwise, do not routinely duplicate the full CI

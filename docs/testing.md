@@ -81,23 +81,35 @@ evidence rather than recovery for a failed merge test.
 CI selection is produced by the checked-in `xtask` planner and
 [`ci/test-topology.json`](../ci/test-topology.json). It records the event,
 source revision, topology digest, selected and intentionally unselected lanes,
-dependency edges, bounded matrices, and human-readable reasons:
+dependency edges, bounded executable jobs, and human-readable reasons. Each
+lane declares `allowed_events` separately from the `required_events` that make
+it mandatory without a path match. Every executable job carries its lane,
+runner, command class, source revision, topology digest, bounded command
+parameters, and deterministic receipt identity:
 
 ```bash
 cargo xtask ci plan --event pull_request --base BASE --head HEAD \
   --changed-paths-file changed-paths.txt --dry-run
 cargo xtask ci validate-plan --input target/ci-plan.json
+cargo xtask ci validate-receipts --plan target/ci-plan.json \
+  --receipts target/ci-receipts
 ```
 
 Unknown paths, unavailable pull-request or merge-group bases, fork inputs, and
 planner inconsistencies select the conservative evidence set and record a
-fallback reason. `--full-run` and `--diagnostic` only add lanes. The stable
-`Required checks` aggregate runs for both pull requests and merge queues; a
-selected job that fails, cancels, times out, or disappears is not treated as a
-successful skip. Branch protection must require that aggregate before PR
-platform coverage is narrowed.
+fallback reason, but still cannot select a lane on an event it does not allow.
+`--full-run` and `--diagnostic` only add event-eligible lanes. GitHub Actions
+consumes the planner's job list directly; it does not reconstruct an OS matrix
+from lane booleans. Each matrix entry uploads an identity-bound result receipt,
+and the stable `Required checks` aggregate validates the complete receipt set
+for pull requests and merge queues. A selected job that fails, cancels, times
+out, changes identity, or disappears is not treated as a successful skip.
 
-All merge and CI Cargo commands use `--locked`. Dependency updates are the
+Pull requests run the fast Linux product owner for product and process-test
+changes. Cross-platform product, token-economy, example, coverage, profile, and
+stress evidence remains explicit in the merge, main, scheduled, or manual
+events declared by the topology. All merge and CI Cargo commands use
+`--locked`. Dependency updates are the
 only workflow that intentionally changes `Cargo.lock`.
 
 ## Hermetic setup

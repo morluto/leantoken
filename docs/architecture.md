@@ -1917,6 +1917,23 @@ aggregate strata only; private labels must use safe relative paths, and Unix
 sealing rejects label files readable by group or other users. Output uses
 create-new semantics so a previous seal cannot be overwritten.
 
+CI fan-out is a checked application contract rather than workflow-owned
+reconstruction. `ci/test-topology.json` separates an owner's event eligibility
+from events where its evidence is mandatory, and caps the complete executable
+plan at 32 matrix entries. The plan records its schedule identity; every job
+then carries its command class, runner, bounded command parameters, source
+revision, topology digest, and deterministic receipt identity. The provider
+consumes that list directly. Each job
+must use one of the three hosted runner classes; stress entries additionally
+require 1–100 repetitions, while every other command rejects a repetition
+field. Each job returns one receipt; aggregation accepts no more files than
+planned, reads only regular non-symlink files that remain under the receipt
+directory, and caps each receipt at 64 KiB. Missing, duplicate, stale, failed,
+cancelled, or extra receipts—and jobs that never reach their command completion
+marker—fail the stable required check. Unknown changed paths and unavailable
+comparison revisions expand selection monotonically within the event's allowed
+lane set; they cannot silently create an event-ineligible job.
+
 ## Failure behavior
 
 - Request validation failures are typed and do not terminate MCP.
