@@ -976,9 +976,9 @@ expression: mcp_contract()
                   },
                   "max_results": {
                     "default": null,
-                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "description": "Maximum symbol targets returned on this page (default 20, maximum 32).",
                     "format": "uint",
-                    "maximum": 100,
+                    "maximum": 32,
                     "minimum": 1,
                     "type": [
                       "integer",
