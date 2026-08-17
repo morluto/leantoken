@@ -602,7 +602,7 @@ fn go_import_candidates(
             break;
         }
         depth += 1;
-        let go_mod_path = parent.join("go.mod").to_string_lossy().into_owned();
+        let go_mod_path = parent.join("go.mod").to_string_lossy().replace('\\', "/");
         let Some(module_path) = go_modules.modules.get(&go_mod_path) else {
             dir = parent.parent();
             continue;
@@ -619,12 +619,24 @@ fn go_import_candidates(
         let remainder = remainder.strip_prefix('/').unwrap_or(remainder);
         let go_mod_dir = std::path::Path::new(&go_mod_path)
             .parent()
-            .unwrap_or_else(|| std::path::Path::new(""));
+            .unwrap_or_else(|| std::path::Path::new(""))
+            .to_string_lossy()
+            .into_owned();
+        // Build the package directory as a forward-slash string: indexed paths
+        // are slash-separated on every platform, so joining native `Path`
+        // buffers would leak backslashes on Windows.
         let package_dir = if remainder.is_empty() {
-            go_mod_dir.to_path_buf()
+            go_mod_dir
         } else {
             match normalize_relative(std::path::Path::new(remainder)) {
-                Some(package_dir) => go_mod_dir.join(package_dir),
+                Some(package_dir) => {
+                    let package_dir = package_dir.to_string_lossy().replace('\\', "/");
+                    if package_dir.is_empty() || go_mod_dir.is_empty() {
+                        package_dir
+                    } else {
+                        format!("{go_mod_dir}/{package_dir}")
+                    }
+                }
                 None => break,
             }
         };
@@ -637,11 +649,7 @@ fn go_import_candidates(
 
 /// The lexicographically smallest indexed `.go` file directly inside the
 /// package directory, or `None` when the package has no indexed Go files.
-fn minimum_indexed_go_file(
-    package_dir: &std::path::Path,
-    sorted_paths: &[String],
-) -> Option<String> {
-    let package_dir = package_dir.to_string_lossy();
+fn minimum_indexed_go_file(package_dir: &str, sorted_paths: &[String]) -> Option<String> {
     let prefix = if package_dir.is_empty() {
         String::new()
     } else {
