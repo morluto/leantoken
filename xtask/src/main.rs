@@ -115,19 +115,16 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         }
         build_focused_test_command(FocusedTestTarget::Suite, &filter, false)
     } else {
-        let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+        // Single-pass: probe the product target first (the common case).
+        // Only probe the suite target if the product probe finds nothing.
         let product_match = focused_target_has_test(root, FocusedTestTarget::Product, selector)?;
-        match (suite_match, product_match) {
-            (true, true) => {
-                return Err(XtaskError::Usage(format!(
-                    "ambiguous test selector `{selector}` matches both {SUITE} and {PRODUCT}; use a domain-qualified selector or run the owning package directly"
-                )));
-            }
-            (true, false) => build_focused_test_command(FocusedTestTarget::Suite, selector, false),
-            (false, true) => {
-                build_focused_test_command(FocusedTestTarget::Product, selector, false)
-            }
-            (false, false) => {
+        if product_match {
+            build_focused_test_command(FocusedTestTarget::Product, selector, false)
+        } else {
+            let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+            if suite_match {
+                build_focused_test_command(FocusedTestTarget::Suite, selector, false)
+            } else {
                 return Err(XtaskError::NoTestsMatched(selector.clone()));
             }
         }
@@ -420,6 +417,10 @@ impl TestPlan {
                 "LEANTOKEN_STRESS_REPETITIONS must be a positive integer".to_owned(),
             ));
         }
+        // Target lifecycle and liveness tests specifically rather than replaying
+        // the entire process test suite. These tests exercise retry, failover,
+        // startup contention, and cancellation — the stochastic invariants most
+        // likely to surface race conditions under repetition.
         Ok(Self {
             commands: vec![nextest_command([
                 "--locked",
@@ -428,7 +429,7 @@ impl TestPlan {
                 "--all-features",
                 "--test",
                 "integration",
-                "process::",
+                "process::mcp_lifecycle::",
                 "-j",
                 process_test_jobs(),
             ])],

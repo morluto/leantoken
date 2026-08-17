@@ -267,6 +267,20 @@ async fn main() {
             .iter()
             .all(|task| task.known_fragments_resent == 0)
     );
+    // Assert token economy is not degraded: source savings should be positive.
+    // A non-positive savings fraction indicates a regression where LeanToken
+    // emits more tokens than the baseline of reading files directly.
+    assert!(
+        aggregate_savings > 0.0,
+        "source token savings fraction must be positive, got {aggregate_savings}"
+    );
+    // Assert total JSON savings are also positive — a regression in the
+    // wire format could increase JSON overhead even if source savings hold.
+    assert!(
+        aggregate_total_json_savings_against_minimal_baseline_fraction.is_finite()
+            && aggregate_total_json_savings > 0.0,
+        "total JSON savings fraction must be positive, got {aggregate_total_json_savings}"
+    );
 }
 
 fn ratio(numerator: usize, denominator: usize) -> f64 {
