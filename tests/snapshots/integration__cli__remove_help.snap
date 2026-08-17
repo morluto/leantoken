@@ -1,10 +1,10 @@
 ---
 source: tests/cli.rs
-expression: "help(&[\"setup\"])"
+expression: "help(&[\"remove\"])"
 ---
-Configure LeanToken as a global MCP server for coding clients
+Remove LeanToken's global MCP server entries
 
-Usage: leantoken setup [OPTIONS]
+Usage: leantoken remove [OPTIONS]
 
 Options:
       --claude
@@ -41,15 +41,6 @@ Options:
 
       --force-unmanaged
           Replace or remove a `leantoken` entry not recognized as setup-managed
-
-      --refresh
-          Refresh existing LeanToken MCP entries without selecting new clients
-
-      --private-runtime
-          Recommended: register a verified private native runtime instead of retaining an npx/Node process chain
-
-      --allow-outdated
-          Permit setup from an older npx release for an intentional rollback
 
       --database <PATH>
           SQLite database path

@@ -32,6 +32,32 @@ pub(in crate::mcp) struct HistoryMcpLimits {
     pub(in crate::mcp) max_response_tokens: Option<usize>,
 }
 
+fn diff_symbols_result_limit_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "description": "Maximum symbol targets returned on this page; omitted values use config.default_results capped at the diff_symbols ceiling.",
+        "type": ["integer", "null"],
+        "format": "uint",
+        "minimum": 1,
+        "maximum": crate::services::MAX_DIFF_SYMBOL_RESULTS,
+    })
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(in crate::mcp) struct DiffSymbolsMcpLimits {
+    /// Maximum symbol targets returned on this page (default 20, maximum 32).
+    #[serde(default)]
+    #[schemars(schema_with = "diff_symbols_result_limit_schema")]
+    pub(in crate::mcp) max_results: Option<usize>,
+    /// Maximum source or diff tokens to return (default 8000, maximum 32000).
+    #[serde(default)]
+    #[schemars(schema_with = "token_limit_schema")]
+    pub(in crate::mcp) max_tokens: Option<usize>,
+    /// Maximum tokens in the final serialized service response.
+    #[serde(default)]
+    #[schemars(schema_with = "response_token_limit_schema")]
+    pub(in crate::mcp) max_response_tokens: Option<usize>,
+}
+
 #[derive(Debug, Clone, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(in crate::mcp) enum HistoryMcpOperation {
@@ -68,7 +94,7 @@ pub(in crate::mcp) enum HistoryMcpOperation {
         #[schemars(length(min = 1, max = 4096))]
         head_revision: NonEmptyText,
         #[serde(flatten)]
-        limits: HistoryMcpLimits,
+        limits: DiffSymbolsMcpLimits,
         /// Opaque cursor returned by `diff_symbols`; reuse the exact operation.
         #[serde(default)]
         #[schemars(length(min = 1, max = 128))]
@@ -153,6 +179,18 @@ fn history_limits(
     }
 }
 
+fn diff_symbols_limits(
+    max_results: Option<usize>,
+    max_tokens: Option<usize>,
+    max_response_tokens: Option<usize>,
+) -> DiffSymbolsMcpLimits {
+    DiffSymbolsMcpLimits {
+        max_results,
+        max_tokens,
+        max_response_tokens,
+    }
+}
+
 impl<'de> Deserialize<'de> for HistoryMcpOperation {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -199,7 +237,7 @@ impl<'de> Deserialize<'de> for HistoryMcpOperation {
                 targets,
                 base_revision,
                 head_revision,
-                limits: history_limits(max_results, max_tokens, max_response_tokens),
+                limits: diff_symbols_limits(max_results, max_tokens, max_response_tokens),
                 cursor,
             },
             HistoryMcpOperationWire::SymbolLog {
@@ -251,21 +289,34 @@ impl HistoryMcpRequest {
     }
 
     pub(in crate::mcp) fn validate_limits(&self, limits: McpLimitPolicy) -> crate::Result<()> {
-        let options = match &self.operation {
-            HistoryMcpOperation::ReadSymbol { limits, .. }
-            | HistoryMcpOperation::DiffSymbol { limits, .. }
-            | HistoryMcpOperation::SymbolLog { limits, .. } => limits,
-            HistoryMcpOperation::DiffSymbols { limits, .. } => limits,
-        };
-        validate_optional_positive_limit("max_results", options.max_results, limits.max_results)?;
+        let (max_results, max_tokens, max_response_tokens, max_results_limit) =
+            match &self.operation {
+                HistoryMcpOperation::ReadSymbol { limits, .. }
+                | HistoryMcpOperation::DiffSymbol { limits, .. }
+                | HistoryMcpOperation::SymbolLog { limits, .. } => (
+                    limits.max_results,
+                    limits.max_tokens,
+                    limits.max_response_tokens,
+                    None,
+                ),
+                HistoryMcpOperation::DiffSymbols { limits, .. } => (
+                    limits.max_results,
+                    limits.max_tokens,
+                    limits.max_response_tokens,
+                    Some(crate::services::MAX_DIFF_SYMBOL_RESULTS),
+                ),
+            };
         validate_optional_positive_limit(
-            "max_tokens",
-            options.max_tokens,
-            limits.max_output_tokens,
+            "max_results",
+            max_results,
+            max_results_limit
+                .unwrap_or(limits.max_results)
+                .min(limits.max_results),
         )?;
+        validate_optional_positive_limit("max_tokens", max_tokens, limits.max_output_tokens)?;
         validate_optional_positive_limit(
             "max_response_tokens",
-            options.max_response_tokens,
+            max_response_tokens,
             limits.max_response_tokens,
         )
     }

@@ -44,7 +44,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(schema_with = "response_token_limit_schema")]
         max_response_tokens: Option<usize>,
         #[serde(default)]
-        #[schemars(length(max = 4096))]
+        #[schemars(schema_with = "files_cursor_schema")]
         cursor: Option<String>,
         #[serde(default)]
         #[schemars(schema_with = "index_consistency_schema")]
@@ -63,7 +63,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(schema_with = "response_token_limit_schema")]
         max_response_tokens: Option<usize>,
         #[serde(default)]
-        #[schemars(length(max = 4096))]
+        #[schemars(schema_with = "files_cursor_schema")]
         cursor: Option<String>,
         #[serde(default)]
         #[schemars(schema_with = "index_consistency_schema")]
@@ -82,7 +82,7 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[schemars(schema_with = "response_token_limit_schema")]
         max_response_tokens: Option<usize>,
         #[serde(default)]
-        #[schemars(length(max = 4096))]
+        #[schemars(schema_with = "files_cursor_schema")]
         cursor: Option<String>,
         #[serde(default)]
         #[schemars(schema_with = "index_consistency_schema")]
@@ -90,6 +90,14 @@ pub(in crate::mcp) enum FilesMcpOperation {
         #[serde(default)]
         projection: FilesMcpProjection,
     },
+}
+
+fn files_cursor_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+        "type": ["string", "null"],
+        "maxLength": crate::services::MAX_FILES_CURSOR_ENCODED_BYTES
+    })
 }
 
 impl FilesMcpRequest {

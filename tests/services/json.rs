@@ -394,6 +394,110 @@ async fn json_schema_degrades_breadth_first_under_token_limits() {
 }
 
 #[tokio::test]
+async fn json_schema_diff_reports_exact_remaining_items_and_limiting_dimension() {
+    let root = tempfile::tempdir().expect("root");
+    let base = serde_json::json!({
+        "alpha": {"left": 1, "right": 2},
+        "beta": {"left": 3, "right": 4},
+    });
+    let head = serde_json::json!({
+        "alpha": {"left": 10, "right": 20},
+        "beta": {"left": 30, "right": 40},
+    });
+    std::fs::write(
+        root.path().join("base.json"),
+        serde_json::to_vec(&base).expect("serialize base"),
+    )
+    .expect("write base");
+    std::fs::write(
+        root.path().join("head.json"),
+        serde_json::to_vec(&head).expect("serialize head"),
+    )
+    .expect("write head");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+
+    let item_limited = services
+        .json(JsonRequest {
+            operation: JsonOperation::DiffFields {
+                base_path: "base.json".into(),
+                head_path: "head.json".into(),
+                selectors: vec![
+                    JsonSelector::Pointer {
+                        pointer: "/alpha".into(),
+                    },
+                    JsonSelector::Pointer {
+                        pointer: "/beta".into(),
+                    },
+                ],
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(10_000),
+            max_items: Some(3),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("item-limited schema diff");
+    assert_eq!(item_limited.total_items, Some(12));
+    assert_eq!(item_limited.returned_items, Some(3));
+    assert_eq!(item_limited.remaining_items, Some(9));
+    assert_eq!(
+        item_limited.incomplete_reason,
+        Some(JsonIncompleteReason::MaxItems)
+    );
+
+    let one_schema = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "base.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/alpha".into(),
+                }),
+                projection: JsonProjection::Schema,
+            },
+            max_tokens: Some(10_000),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("single complete schema");
+    let token_limited = services
+        .json(JsonRequest {
+            operation: JsonOperation::DiffFields {
+                base_path: "base.json".into(),
+                head_path: "head.json".into(),
+                selectors: vec![JsonSelector::Pointer {
+                    pointer: "/alpha".into(),
+                }],
+                projection: JsonProjection::Schema,
+            },
+            // Leave a non-zero remainder that still cannot fit the next
+            // schema root. A completed earlier field should be returned
+            // instead of turning the bounded response into an error.
+            max_tokens: Some(one_schema.meta.source_tokens.saturating_add(1)),
+            max_items: Some(100),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("token-limited schema diff");
+    assert_eq!(token_limited.total_items, Some(6));
+    assert_eq!(token_limited.returned_items, Some(3));
+    assert_eq!(token_limited.remaining_items, Some(3));
+    assert_eq!(
+        token_limited.meta.source_tokens,
+        one_schema.meta.source_tokens
+    );
+    assert_eq!(
+        token_limited.incomplete_reason,
+        Some(JsonIncompleteReason::MaxTokens)
+    );
+}
+
+#[tokio::test]
 async fn compact_response_projections_preserve_verifiable_coverage_and_reduce_tokens() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("src")).expect("create src");

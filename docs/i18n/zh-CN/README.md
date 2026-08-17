@@ -28,7 +28,7 @@
 
 > **实测 token 节省：** 在一项包含 60 次受控运行的研究中，与智能体内置工具相比，
 > LeanToken 在有限代码库探索中减少了 20.1% 的模型输入 token，在广泛探索中减少了
-> 37.6%。完整方法参见[测量方法](../../measurement.md)。
+> 37.6%。完整方法参见[测量方法](https://github.com/morluto/leantoken/blob/main/docs/measurement.md)。
 
 ## 快速开始
 
@@ -162,7 +162,7 @@ npm 包含以下平台的原生二进制：
 C/C++ 工具链，然后运行：
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
+cargo install --locked --git https://github.com/morluto/leantoken leantoken
 ```
 
 显式更新已有的客户端集成：
@@ -196,9 +196,9 @@ LeanToken 对源码建立一次索引，然后提供紧凑路径、排序匹配�
 | [使用和工具参考](../../usage.md) | 命令、MCP 工具、请求选项和示例 |
 | [架构与可靠性](../../architecture.md) | 组件、数据流、存储和故障行为 |
 | [路线图](../../roadmap.md) | 当前方向和计划工作 |
-| [开发与测试](../../development.md) | 本地设置、验证和发布流程 |
-| [基准测试方法](../../../benchmarks/README.md) | token 经济性测量与解读 |
-| [测量工具](../../measurement.md) | 实验、传输成本和性能分析工具 |
+| [开发与测试](https://github.com/morluto/leantoken/blob/main/docs/development.md) | 本地设置、验证和发布流程 |
+| [基准测试方法](https://github.com/morluto/leantoken/blob/main/benchmarks/README.md) | token 经济性测量与解读 |
+| [测量工具](https://github.com/morluto/leantoken/blob/main/docs/measurement.md) | 实验、传输成本和性能分析工具 |
 
 ## 许可证
 

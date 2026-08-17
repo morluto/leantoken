@@ -43,9 +43,11 @@ leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken update [--check] [--yes]
 leantoken upgrade [--check] [--yes]
 leantoken mcp [--result-mode dual|text|structured]
-leantoken setup [CLIENT...] [--all] [--refresh] [--private-runtime] [--yes]
+leantoken setup [--claude] [--cursor] [--opencode] [--codex] [--gemini]
+                [--antigravity] [--all] [--refresh] [--private-runtime] [--yes]
                 [--dry-run] [--allow-outdated] [--force-unmanaged]
-leantoken remove [CLIENT...] [--all] [--yes] [--dry-run] [--force-unmanaged]
+leantoken remove [--claude] [--cursor] [--opencode] [--codex] [--gemini]
+                 [--antigravity] [--all] [--yes] [--dry-run] [--force-unmanaged]
 leantoken runtime list
 leantoken runtime prune [--keep-latest COUNT] [--dry-run] [--yes]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
@@ -284,8 +286,8 @@ npm and Node wrapper processes for every MCP session. It remains explicit so a
 zero-install setup does not silently add an application-data write:
 
 ```bash
-npx --yes leantoken@0.1.10 setup --codex --private-runtime --dry-run
-npx --yes leantoken@0.1.10 setup --codex --private-runtime --yes
+npx --yes leantoken@latest setup --codex --private-runtime --dry-run
+npx --yes leantoken@latest setup --codex --private-runtime --yes
 ```
 
 Dry-run reports the exact versioned application-data path and BLAKE3 digest.
@@ -1195,7 +1197,7 @@ and use the evidence directly. Make at most one focused follow-up only when the
 returned coverage identifies a concrete missing implementation or
 regression-test owner. This is a host usage contract, not service session state
 or a restriction on implementation agents. The
-[repeated multi-agent context suite](measurement.md#repeated-multi-agent-context-suite)
+[repeated multi-agent context suite](https://github.com/morluto/leantoken/blob/main/docs/measurement.md#repeated-multi-agent-context-suite)
 records the four-task, 60-run evidence and its limits.
 
 Optional inputs focus or exclude paths and symbols, provide hashes already held
@@ -1246,8 +1248,9 @@ the CLI accepts the same object as repeatable JSON, for example
 `workflow_evidence` is an opt-in object for facts the caller directly observed
 while executing the workflow. Its four arrays are `failure_traces`, `symbols`,
 repository-relative `paths`, and `test_intents`. Each class accepts at most
-eight items, each item accepts at most 8 KiB, and the combined payload accepts
-at most 32 KiB. Evidence shares the existing 12-query context fan-out instead
+eight items; text items accept at most 8 KiB, paths use the shared 4 KiB
+repository-path ceiling, and the combined payload accepts at most 32 KiB.
+Evidence shares the existing 12-query context fan-out instead
 of starting an unbounded second search. Do not populate it from benchmark gold
 labels or guesses:
 

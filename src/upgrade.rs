@@ -5,6 +5,7 @@ use std::{
     io::{IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    time::Duration,
 };
 
 use dialoguer::Confirm;
@@ -12,11 +13,14 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::invocation::{InvocationIdentity, InvocationMetadata, PackageManager};
+use crate::subprocess::{CaptureOptions, capture_stdout_bounded};
 use crate::{Error, Result};
 
 const PACKAGE_NAME: &str = "leantoken";
 const NPM_PACKAGE: &str = "leantoken@latest";
 const GIT_REPOSITORY: &str = "https://github.com/morluto/leantoken";
+const RELEASE_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+const RELEASE_PROBE_MAX_STDOUT_BYTES: usize = 1024 * 1024;
 
 /// User-selected update behavior.
 #[derive(Debug, Clone, Copy)]
@@ -433,7 +437,29 @@ fn select_latest_stable_tag(output: String) -> Option<String> {
 }
 
 fn command_stdout(program: &str, arguments: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(arguments).output().ok()?;
+    let mut command = Command::new(program);
+    command.args(arguments);
+    command_stdout_with_limits(
+        &mut command,
+        RELEASE_PROBE_TIMEOUT,
+        RELEASE_PROBE_MAX_STDOUT_BYTES,
+    )
+}
+
+fn command_stdout_with_limits(
+    command: &mut Command,
+    timeout: Duration,
+    max_stdout_bytes: usize,
+) -> Option<String> {
+    let output = capture_stdout_bounded(
+        command,
+        None,
+        CaptureOptions {
+            timeout,
+            max_stdout_bytes,
+        },
+    )
+    .ok()?;
     output
         .status
         .success()
@@ -567,6 +593,40 @@ fn print_manual_commands(output: &mut impl Write) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BLOCKING_PROBE_ENV: &str = "LEANTOKEN_TEST_BLOCKING_UPGRADE_PROBE";
+
+    #[test]
+    fn release_probe_times_out_and_reaps_the_process() {
+        let mut command = Command::new(env::current_exe().expect("current test executable"));
+        command
+            .args([
+                "--exact",
+                "upgrade::tests::blocking_release_probe_fixture",
+                "--nocapture",
+            ])
+            .env(BLOCKING_PROBE_ENV, "1");
+        let started = std::time::Instant::now();
+
+        let output = command_stdout_with_limits(
+            &mut command,
+            Duration::from_millis(50),
+            RELEASE_PROBE_MAX_STDOUT_BYTES,
+        );
+
+        assert!(output.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "release probe exceeded its timeout"
+        );
+    }
+
+    #[test]
+    fn blocking_release_probe_fixture() {
+        if env::var_os(BLOCKING_PROBE_ENV).is_some() {
+            std::thread::sleep(Duration::from_secs(30));
+        }
+    }
 
     #[test]
     fn distinguishes_ephemeral_global_npm_cargo_and_unknown() {

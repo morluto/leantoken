@@ -243,7 +243,7 @@ expression: mcp_contract()
                 "default": [],
                 "description": "Normalized repository-relative paths observed by the caller.",
                 "items": {
-                  "maxLength": 8192,
+                  "maxLength": 4096,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -497,7 +497,7 @@ expression: mcp_contract()
           "task": {
             "description": "Natural-language coding task; include known identifiers and constraints.",
             "maxLength": 65536,
-            "minLength": 3,
+            "minLength": 1,
             "type": "string"
           },
           "token_budget": {
@@ -554,7 +554,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
@@ -628,7 +629,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
@@ -690,7 +692,8 @@ expression: mcp_contract()
                   },
                   "cursor": {
                     "default": null,
-                    "maxLength": 4096,
+                    "description": "Opaque cursor returned by the preceding files page; reuse the exact operation.",
+                    "maxLength": 8256,
                     "type": [
                       "string",
                       "null"
@@ -973,9 +976,9 @@ expression: mcp_contract()
                   },
                   "max_results": {
                     "default": null,
-                    "description": "Maximum results (default 20; service-specific operations may use a lower bound).",
+                    "description": "Maximum symbol targets returned on this page (default 20, maximum 32).",
                     "format": "uint",
-                    "maximum": 100,
+                    "maximum": 32,
                     "minimum": 1,
                     "type": [
                       "integer",
@@ -2071,7 +2074,7 @@ expression: mcp_contract()
             "oneOf": [
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,
@@ -2218,7 +2221,7 @@ expression: mcp_contract()
               },
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,
@@ -2365,7 +2368,7 @@ expression: mcp_contract()
               },
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,
@@ -2512,7 +2515,7 @@ expression: mcp_contract()
               },
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,
@@ -2659,7 +2662,7 @@ expression: mcp_contract()
               },
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,
@@ -2806,7 +2809,7 @@ expression: mcp_contract()
               },
               {
                 "additionalProperties": false,
-                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode, occurrences projection requires all_occurrences=true, coordinates_only requires all_occurrences=true with auto or occurrences projection, and query_receipt requires occurrence projection.",
+                "description": "Search options are structurally generated here; runtime validation additionally enforces cross-field rules: all_occurrences requires text or regex mode; occurrences projection requires all_occurrences=true; coordinates_only requires all_occurrences=true with auto or occurrences projection; prefer_structural requires auto or identifier mode; query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection, and cannot be combined with focus_paths, receipt_id, or cursor.",
                 "properties": {
                   "all_occurrences": {
                     "default": false,

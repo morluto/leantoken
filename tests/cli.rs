@@ -52,6 +52,20 @@ fn cli_setup_help_snapshot() {
 }
 
 #[test]
+fn cli_remove_help_snapshot() {
+    insta::assert_snapshot!("remove_help", help(&["remove"]));
+}
+
+#[test]
+fn cli_remove_rejects_setup_only_options() {
+    for option in ["--refresh", "--private-runtime", "--allow-outdated"] {
+        let error = Cli::try_parse_from(["leantoken", "remove", option])
+            .expect_err("setup-only option must be rejected by remove");
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument, "{option}");
+    }
+}
+
+#[test]
 fn cli_cache_help_snapshot() {
     insta::assert_snapshot!("cache_help", help(&["cache"]));
 }
@@ -941,13 +955,16 @@ fn cli_setup_and_remove_select_clients() {
     assert!(request.clients.is_empty());
     assert!(request.all);
     assert!(!request.refresh);
+    assert!(!request.private_runtime);
     assert!(request.yes);
+    assert!(!request.allow_outdated);
 
-    let cli = parse(&["setup", "--cursor", "--dry-run"]);
+    let cli = parse(&["setup", "--cursor", "--private-runtime", "--dry-run"]);
     let AppRequest::Setup(request) = cli.app_request() else {
         panic!("expected setup request");
     };
     assert_eq!(request.clients, vec![SetupClient::Cursor]);
+    assert!(request.private_runtime);
     assert!(request.dry_run);
 
     let cli = parse(&["setup", "--refresh", "--yes"]);

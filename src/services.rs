@@ -34,6 +34,7 @@ pub(crate) mod cursor;
 mod execution_options;
 mod executor;
 mod files;
+pub(crate) use files::MAX_FILES_CURSOR_ENCODED_BYTES;
 mod handoff;
 mod history;
 mod index_read;
@@ -55,7 +56,7 @@ pub(crate) mod validation;
 
 pub use context::ContextWorkflowOptions;
 pub(crate) use context::MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN;
-pub(crate) use history::MAX_DIFF_SYMBOL_TARGETS;
+pub(crate) use history::{MAX_DIFF_SYMBOL_RESULTS, MAX_DIFF_SYMBOL_TARGETS};
 pub(crate) use json::{JsonExecutionOptions, MAX_JSON_DEPTH};
 pub use process_runtime::ServicesRuntime;
 

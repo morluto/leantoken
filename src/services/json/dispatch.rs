@@ -331,9 +331,8 @@ impl Services {
         let mut differences = Vec::with_capacity(selectors.len());
         let mut total_items = 0usize;
         let mut returned_items = 0usize;
-        let mut remaining_items = 0usize;
         let mut projected_tokens = 0usize;
-        let mut incomplete = false;
+        let mut incomplete_reason = None;
         for selector in selectors {
             check_cancelled(cancellation)?;
             let before_selected = select_json(before.value(), Some(&selector))?;
@@ -355,16 +354,31 @@ impl Services {
                 if projection == JsonProjection::Schema {
                     let item_budget = limits.max_items.saturating_sub(returned_items);
                     let token_budget = limits.max_tokens.saturating_sub(projected_tokens);
-                    if item_budget == 0 || token_budget == 0 {
-                        incomplete = true;
+                    if item_budget == 0 {
+                        incomplete_reason.get_or_insert(JsonIncompleteReason::MaxItems);
                         return Ok(None);
                     }
-                    let page = project_schema_page(self, value, item_budget, token_budget)?;
-                    let (projected, _total, returned, remaining, reason, tokens) =
+                    if token_budget == 0 {
+                        incomplete_reason.get_or_insert(JsonIncompleteReason::MaxTokens);
+                        return Ok(None);
+                    }
+                    let page = match project_schema_page(self, value, item_budget, token_budget) {
+                        Ok(page) => page,
+                        Err(Error::RequestLimitExceeded {
+                            field: "one projected JSON item tokens",
+                            ..
+                        }) if returned_items > 0 => {
+                            incomplete_reason.get_or_insert(JsonIncompleteReason::MaxTokens);
+                            return Ok(None);
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    let (projected, _total, returned, _remaining, reason, tokens) =
                         page.into_parts();
                     returned_items = returned_items.saturating_add(returned);
-                    remaining_items = remaining_items.saturating_add(remaining);
-                    incomplete |= reason.is_some();
+                    if let Some(reason) = reason {
+                        incomplete_reason.get_or_insert(reason);
+                    }
                     projected_tokens = projected_tokens.saturating_add(tokens);
                     Ok(Some(projected))
                 } else {
@@ -387,11 +401,16 @@ impl Services {
                 changed,
             });
         }
-        if projection != JsonProjection::Schema {
+        let remaining_items = if projection == JsonProjection::Schema {
+            total_items.saturating_sub(returned_items)
+        } else {
             returned_items = total_items.min(limits.max_items);
-            remaining_items = total_items.saturating_sub(returned_items);
-            incomplete = !state.is_complete();
-        }
+            if !state.is_complete() {
+                incomplete_reason = Some(JsonIncompleteReason::MaxItems);
+            }
+            total_items.saturating_sub(returned_items)
+        };
+        let incomplete = incomplete_reason.is_some();
         Ok(JsonOperationResult {
             response: JsonResponse {
                 kind: "diff_fields".into(),
@@ -403,7 +422,7 @@ impl Services {
                 total_items: incomplete.then_some(total_items),
                 returned_items: incomplete.then_some(returned_items),
                 remaining_items: incomplete.then_some(remaining_items),
-                incomplete_reason: incomplete.then_some(JsonIncompleteReason::MaxItems),
+                incomplete_reason,
                 meta: self.meta(generation, 0, None),
             },
             baseline_source_tokens,

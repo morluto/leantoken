@@ -72,6 +72,13 @@ MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
 input bound and pre-dispatch tool-call admission that the stock unbounded stdio
 reader does not provide.
 
+Package-manager and Git release probes used by `upgrade` run in isolated
+process groups with a 15-second wall-clock deadline and a one-MiB stdout bound.
+Timeout, oversized output, launch failure, and non-zero exit all degrade to the
+existing check-failed report. The selected install command remains an explicit,
+unbounded foreground operation so package-manager progress and prompts are not
+cut off by the probe policy.
+
 ## Storage
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
@@ -323,6 +330,13 @@ cancellation error removes the temporary stage without affecting the live
 database. A stale baseline detected inside the transaction rolls back all
 publication writes. Replacements, deletions, and generation advancement become
 visible together at the final commit.
+
+Import extractors append syntax-derived facts during their existing parser
+passes, then apply one stable exact-deduplication pass keyed by source line and
+raw target. The pass is linear in extracted imports and retains first-occurrence
+order; its hash set borrows the already-owned targets and its Boolean retention
+mask is linear in the import count. That count remains bounded by the admitted
+`max_file_bytes` source.
 
 The stage uses ordinary rollback-journal SQLite rather than a custom spool
 format. Its schema is versioned and records baseline generation, configuration
@@ -967,7 +981,7 @@ claims.
 | Path | Bound |
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |
-| Workflow-evidence items | 8 per class, 8 KiB per item, 32 KiB total |
+| Workflow-evidence items | 8 per class, 8 KiB per text item, 4 KiB per path, 32 KiB total |
 | Context hits per term/source | 20 symbols/refs, 30 FTS |
 | Focus patterns with local candidate generation | 32 |
 | Focused indexed files inspected per pattern | First 4 policy-eligible paths in lexical order |
@@ -1106,8 +1120,9 @@ task length.
 Opt-in workflow evidence shares that same 12-query ceiling and the existing
 per-query symbol, reference, and FTS hit caps. The caller may supply at most
 eight directly observed failure traces, symbols, repository-relative paths,
-and test intents per class. Each item is capped at 8 KiB and all four classes
-at 32 KiB combined. Evidence order is preserved; deterministic class quotas
+and test intents per class. Text items are capped at 8 KiB, paths use the
+shared 4 KiB repository-path ceiling, and all four classes are capped at
+32 KiB combined. Evidence order is preserved; deterministic class quotas
 reserve lanes before the ordinary task planner fills the remaining query
 slots. Test intent contributes bounded path-prior scoring but does not trigger
 an additional executable search lane. Empty evidence delegates to the original
