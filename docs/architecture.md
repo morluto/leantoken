@@ -72,6 +72,13 @@ MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
 input bound and pre-dispatch tool-call admission that the stock unbounded stdio
 reader does not provide.
 
+Package-manager and Git release probes used by `upgrade` run in isolated
+process groups with a 15-second wall-clock deadline and a one-MiB stdout bound.
+Timeout, oversized output, launch failure, and non-zero exit all degrade to the
+existing check-failed report. The selected install command remains an explicit,
+unbounded foreground operation so package-manager progress and prompts are not
+cut off by the probe policy.
+
 ## Storage
 
 SQLite stores repository metadata, files, text chunks, definitions, syntactic
