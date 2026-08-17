@@ -293,7 +293,8 @@ impl Storage {
             AutoCheckpointCompletion::CheckpointIfMutated,
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
-                Self::ensure_token_savings_schema(conn)
+                Self::ensure_token_savings_schema(conn)?;
+                Self::regenerate_receipt_namespaces_if_cloned(conn)
             },
         )?;
         if let Some((repository_root, index_scope_digest)) = repository_binding {
@@ -614,6 +615,75 @@ impl Storage {
         tx.commit()?;
         Ok(())
     }
+
+    /// Regenerate receipt namespaces if the database appears to be a clone.
+    fn regenerate_receipt_namespaces_if_cloned(conn: &mut Connection) -> Result<()> {
+        let has_receipts: bool = conn
+            .query_row(
+                "SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='retrieval_receipt_usage'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_receipts {
+            return Ok(());
+        }
+        let has_identity_col: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(meta)")?;
+            let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            cols.any(|r| r.is_ok_and(|c| c == "database_identity"))
+        };
+        if !has_identity_col {
+            conn.execute_batch(
+                "ALTER TABLE meta ADD COLUMN database_identity TEXT NOT NULL DEFAULT '';",
+            )?;
+            let identity = database_identity();
+            conn.execute_batch(&format!(
+                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
+                identity
+            ))?;
+            return Ok(());
+        }
+        let stored_identity: String = conn
+            .query_row(
+                "SELECT database_identity FROM meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        if stored_identity.is_empty() {
+            let identity = database_identity();
+            conn.execute_batch(&format!(
+                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
+                identity
+            ))?;
+            return Ok(());
+        }
+        let new_identity = database_identity();
+        if stored_identity != new_identity {
+            conn.execute_batch(
+                "UPDATE retrieval_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
+            )?;
+            conn.execute_batch(
+                "UPDATE query_coverage_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
+            )?;
+            conn.execute_batch(&format!(
+                "UPDATE meta SET database_identity = '{}' WHERE id = 1;",
+                new_identity
+            ))?;
+        }
+        Ok(())
+    }
+}
+
+fn database_identity() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    format!("{:016x}{:016x}", now, pid as u128)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

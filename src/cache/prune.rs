@@ -102,6 +102,20 @@ impl CacheManager {
                 ));
                 continue;
             }
+            // Re-check older_than eligibility using the fresh post-lease inspection.
+            if let Some(older_than_days) = plan.older_than_days
+                && current
+                    .entry
+                    .age_seconds
+                    .is_some_and(|age| age < older_than_days.get() * 86400)
+            {
+                reasons.retain(|reason| reason != "older_than");
+                if reasons.is_empty() {
+                    reasons.push("older_than_revalidated_young".to_string());
+                    results.push(prune_result(&current, CachePruneOutcome::Kept, reasons));
+                    continue;
+                }
+            }
             if reasons.len() == 1
                 && reasons[0] == "missing_repository"
                 && current.entry.repository_available != Some(false)

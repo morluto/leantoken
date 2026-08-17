@@ -49,6 +49,7 @@ pub(super) fn import_candidates(source_path: &str, raw_target: &str) -> Vec<Stri
         ImportResolutionPolicy::WebResource => {
             web_resource_import_candidates(source_path, raw_target)
         }
+        ImportResolutionPolicy::Go => go_import_candidates(source, raw_target),
         ImportResolutionPolicy::Unsupported => Vec::new(),
     }
 }
@@ -61,6 +62,7 @@ enum ImportResolutionPolicy {
     Rust,
     Latex,
     WebResource,
+    Go,
     Unsupported,
 }
 
@@ -73,6 +75,7 @@ impl ImportResolutionPolicy {
             Some("rs") => Self::Rust,
             Some("tex" | "ltx") => Self::Latex,
             Some("html" | "htm") => Self::WebResource,
+            Some("go") => Self::Go,
             _ => Self::Unsupported,
         }
     }
@@ -496,4 +499,50 @@ pub(super) fn normalize_relative(path: &std::path::Path) -> Option<std::path::Pa
         }
     }
     Some(normalized)
+}
+
+/// Resolve Go imports using module-path to directory mapping.
+///
+/// Go imports are module paths like "example.com/acme/pkg/internal/service".
+/// We resolve them by finding go.mod files in the repository, parsing the
+/// `module` directive, and mapping the import path to a directory by
+/// stripping the module prefix and appending the remainder as a relative path.
+fn go_import_candidates(source: &std::path::Path, raw_target: &str) -> Vec<String> {
+    let target = raw_target.trim_matches(|c| c == '"' || c == '\'');
+    if target.is_empty() {
+        return Vec::new();
+    }
+    // Walk up from the source file to find a go.mod in an ancestor directory.
+    let mut dir = source.parent();
+    while let Some(parent) = dir {
+        let go_mod = parent.join("go.mod");
+        if go_mod.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&go_mod) {
+                for line in content.lines() {
+                    let line = line.trim();
+                    if let Some(module_path) = line.strip_prefix("module ") {
+                        let module_path = module_path.trim();
+                        if !module_path.is_empty() && target.starts_with(module_path) {
+                            // Strip the module prefix to get the package-relative path
+                            let remainder = &target[module_path.len()..];
+                            let remainder = remainder.strip_prefix('/').unwrap_or(remainder);
+                            if remainder.is_empty() {
+                                // Import is the module root itself
+                                return vec![".".into()];
+                            }
+                            // Convert the module-relative path to a directory path
+                            let path = std::path::Path::new(remainder)
+                                .components()
+                                .map(|c| c.as_os_str().to_owned())
+                                .collect::<std::path::PathBuf>();
+                            return vec![path.to_string_lossy().into_owned()];
+                        }
+                    }
+                }
+            }
+            break; // Found go.mod but module path didn't match — stop walking up
+        }
+        dir = parent.parent();
+    }
+    Vec::new()
 }
