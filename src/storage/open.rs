@@ -293,7 +293,8 @@ impl Storage {
             AutoCheckpointCompletion::CheckpointIfMutated,
             |conn| {
                 MIGRATIONS.to_latest(conn)?;
-                Self::ensure_token_savings_schema(conn)
+                Self::ensure_token_savings_schema(conn)?;
+                Self::regenerate_receipt_namespaces_if_cloned(conn, &path)
             },
         )?;
         if let Some((repository_root, index_scope_digest)) = repository_binding {
@@ -613,6 +614,103 @@ impl Storage {
         tx.execute_batch(SERVICE_FAILURES_TABLE_SQL)?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Regenerate receipt namespaces if the database file appears to be a
+    /// clone. The stored identity records the physical file (device and
+    /// inode on Unix, volume serial and file index on Windows), which stays
+    /// stable across ordinary reopens of the same file but changes when the
+    /// database is copied to another location or replaced in place.
+    fn regenerate_receipt_namespaces_if_cloned(conn: &mut Connection, path: &Path) -> Result<()> {
+        let has_receipts: bool = conn
+            .query_row(
+                "SELECT count(*) > 0 FROM sqlite_master WHERE type='table' AND name='retrieval_receipt_usage'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_receipts {
+            return Ok(());
+        }
+        let has_identity_col: bool = {
+            let mut stmt = conn.prepare("PRAGMA table_info(meta)")?;
+            let mut cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            cols.any(|r| r.is_ok_and(|c| c == "database_identity"))
+        };
+        if !has_identity_col {
+            conn.execute_batch(
+                "ALTER TABLE meta ADD COLUMN database_identity TEXT NOT NULL DEFAULT '';",
+            )?;
+            let identity = database_identity(path)?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![identity],
+            )?;
+            // The persisted identity is being recorded for the first time, so
+            // this database's clone history is unknown: rotate the receipt
+            // namespaces so pre-change copies diverge from the moment identity
+            // recording begins.
+            rotate_receipt_namespaces(conn)?;
+            return Ok(());
+        }
+        let stored_identity: String = conn
+            .query_row(
+                "SELECT database_identity FROM meta WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        if stored_identity.is_empty() {
+            let identity = database_identity(path)?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![identity],
+            )?;
+            rotate_receipt_namespaces(conn)?;
+            return Ok(());
+        }
+        let new_identity = database_identity(path)?;
+        if stored_identity != new_identity {
+            rotate_receipt_namespaces(conn)?;
+            conn.execute(
+                "UPDATE meta SET database_identity = ?1 WHERE id = 1",
+                params![new_identity],
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn rotate_receipt_namespaces(conn: &mut Connection) -> Result<()> {
+    conn.execute_batch(
+        "UPDATE retrieval_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;
+         UPDATE query_coverage_receipt_usage SET namespace = lower(hex(randomblob(16))) WHERE id = 1;",
+    )?;
+    Ok(())
+}
+
+/// Physical identity of the database file: stable across ordinary reopens,
+/// but distinct for a copied or replaced file.
+fn database_identity(path: &Path) -> Result<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(path)?;
+        Ok(format!("{:016x}{:016x}", metadata.dev(), metadata.ino()))
+    }
+    #[cfg(windows)]
+    {
+        // The Windows file-index APIs are unstable, so the canonical path is
+        // the stable clone signal on this platform: an ordinary reopen keeps
+        // it, while a copy or replacement resolves to a different path.
+        Ok(fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Ok(path.to_string_lossy().into_owned())
     }
 }
 
