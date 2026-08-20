@@ -7,63 +7,93 @@
 <a href=#7 id=7 data-nosnippet>7</a>    </span><span class="kw">pub </span>head_revision: String,
 <a href=#8 id=8 data-nosnippet>8</a>    <span class="doccomment">/// Repository-relative changed paths in the resolved diff scope.
 <a href=#9 id=9 data-nosnippet>9</a>    </span><span class="kw">pub </span>changed_paths: Vec&lt;String&gt;,
-<a href=#10 id=10 data-nosnippet>10</a>}
-<a href=#11 id=11 data-nosnippet>11</a>
-<a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// One target-side line range parsed from a zero-context Git diff.
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">pub struct </span>GitHunkRange {
-<a href=#15 id=15 data-nosnippet>15</a>    <span class="doccomment">/// Repository-relative target path.
-<a href=#16 id=16 data-nosnippet>16</a>    </span><span class="kw">pub </span>path: String,
-<a href=#17 id=17 data-nosnippet>17</a>    <span class="doccomment">/// First target line touched by the hunk, or the line after an empty hunk boundary.
-<a href=#18 id=18 data-nosnippet>18</a>    </span><span class="kw">pub </span>start_line: usize,
-<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// Last target line touched by the hunk, inclusive.
-<a href=#20 id=20 data-nosnippet>20</a>    ///
-<a href=#21 id=21 data-nosnippet>21</a>    /// An empty target-side hunk has `end_line &lt; start_line`.
-<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub </span>end_line: usize,
-<a href=#23 id=23 data-nosnippet>23</a>}
-<a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// One immutable UTF-8 file blob loaded from a resolved Git revision.
-<a href=#26 id=26 data-nosnippet>26</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitBlob {
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="doccomment">/// Resolved 12-character revision.
-<a href=#29 id=29 data-nosnippet>29</a>    </span><span class="kw">pub </span>revision: String,
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="doccomment">/// File contents at the revision.
-<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="kw">pub </span>content: String,
-<a href=#32 id=32 data-nosnippet>32</a>}
-<a href=#33 id=33 data-nosnippet>33</a>
-<a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// Bounded UTF-8 blobs loaded together from one immutable Git revision.
-<a href=#35 id=35 data-nosnippet>35</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#36 id=36 data-nosnippet>36</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitBlobBatch {
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Resolved 12-character revision.
-<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub </span>revision: String,
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Repository-relative paths mapped to UTF-8 contents.
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>blobs: BTreeMap&lt;String, String&gt;,
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Requested paths that do not exist at the revision.
-<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub </span>missing_paths: Vec&lt;String&gt;,
-<a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// Requested paths larger than the per-file byte limit.
-<a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>oversized_paths: Vec&lt;String&gt;,
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// Requested paths omitted after the aggregate byte limit was reached.
-<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">pub </span>total_limit_paths: Vec&lt;String&gt;,
-<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// Requested paths whose blobs are not valid UTF-8.
-<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub </span>invalid_utf8_paths: Vec&lt;String&gt;,
-<a href=#49 id=49 data-nosnippet>49</a>    <span class="doccomment">/// Requested paths that resolve to non-blob Git entries.
-<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub </span>unsupported_paths: Vec&lt;String&gt;,
-<a href=#51 id=51 data-nosnippet>51</a>}
-<a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// One commit from Git's tracked line history.
-<a href=#54 id=54 data-nosnippet>54</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#55 id=55 data-nosnippet>55</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitLineCommit {
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub </span>commit: String,
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub </span>authored_at: String,
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">pub </span>subject: String,
-<a href=#59 id=59 data-nosnippet>59</a>}
-<a href=#60 id=60 data-nosnippet>60</a>
-<a href=#61 id=61 data-nosnippet>61</a><span class="doccomment">/// Shared metadata for one exact immutable commit endpoint.
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitCommitMetadata {
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">pub </span>revision: String,
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub </span>authored_at: String,
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">pub </span>subject: String,
-<a href=#67 id=67 data-nosnippet>67</a>}
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#10 id=10 data-nosnippet>10</a>    <span class="doccomment">/// Whether Git reached the end of the changed-path stream before the
+<a href=#11 id=11 data-nosnippet>11</a>    /// configured path bound.
+<a href=#12 id=12 data-nosnippet>12</a>    </span><span class="kw">pub </span>changed_paths_complete: bool,
+<a href=#13 id=13 data-nosnippet>13</a>    <span class="doccomment">/// Governing path bound when [`Self::changed_paths_complete`] is false.
+<a href=#14 id=14 data-nosnippet>14</a>    </span><span class="kw">pub </span>changed_paths_limit: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#15 id=15 data-nosnippet>15</a>}
+<a href=#16 id=16 data-nosnippet>16</a>
+<a href=#17 id=17 data-nosnippet>17</a><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitChangedPathSet {
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) paths: Vec&lt;String&gt;,
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) complete: bool,
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) limit: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#22 id=22 data-nosnippet>22</a>}
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">impl </span>GitChangedPathSet {
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>complete(paths: Vec&lt;String&gt;) -&gt; <span class="self">Self </span>{
+<a href=#26 id=26 data-nosnippet>26</a>        <span class="self">Self </span>{
+<a href=#27 id=27 data-nosnippet>27</a>            paths,
+<a href=#28 id=28 data-nosnippet>28</a>            complete: <span class="bool-val">true</span>,
+<a href=#29 id=29 data-nosnippet>29</a>            limit: <span class="prelude-val">None</span>,
+<a href=#30 id=30 data-nosnippet>30</a>        }
+<a href=#31 id=31 data-nosnippet>31</a>    }
+<a href=#32 id=32 data-nosnippet>32</a>
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>truncated(paths: Vec&lt;String&gt;, limit: usize) -&gt; <span class="self">Self </span>{
+<a href=#34 id=34 data-nosnippet>34</a>        <span class="self">Self </span>{
+<a href=#35 id=35 data-nosnippet>35</a>            paths,
+<a href=#36 id=36 data-nosnippet>36</a>            complete: <span class="bool-val">false</span>,
+<a href=#37 id=37 data-nosnippet>37</a>            limit: <span class="prelude-val">Some</span>(limit),
+<a href=#38 id=38 data-nosnippet>38</a>        }
+<a href=#39 id=39 data-nosnippet>39</a>    }
+<a href=#40 id=40 data-nosnippet>40</a>}
+<a href=#41 id=41 data-nosnippet>41</a>
+<a href=#42 id=42 data-nosnippet>42</a><span class="doccomment">/// One target-side line range parsed from a zero-context Git diff.
+<a href=#43 id=43 data-nosnippet>43</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">pub struct </span>GitHunkRange {
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// Repository-relative target path.
+<a href=#46 id=46 data-nosnippet>46</a>    </span><span class="kw">pub </span>path: String,
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// First target line touched by the hunk, or the line after an empty hunk boundary.
+<a href=#48 id=48 data-nosnippet>48</a>    </span><span class="kw">pub </span>start_line: usize,
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="doccomment">/// Last target line touched by the hunk, inclusive.
+<a href=#50 id=50 data-nosnippet>50</a>    ///
+<a href=#51 id=51 data-nosnippet>51</a>    /// An empty target-side hunk has `end_line &lt; start_line`.
+<a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">pub </span>end_line: usize,
+<a href=#53 id=53 data-nosnippet>53</a>}
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a><span class="doccomment">/// One immutable UTF-8 file blob loaded from a resolved Git revision.
+<a href=#56 id=56 data-nosnippet>56</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitBlob {
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// Resolved 12-character revision.
+<a href=#59 id=59 data-nosnippet>59</a>    </span><span class="kw">pub </span>revision: String,
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// File contents at the revision.
+<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="kw">pub </span>content: String,
+<a href=#62 id=62 data-nosnippet>62</a>}
+<a href=#63 id=63 data-nosnippet>63</a>
+<a href=#64 id=64 data-nosnippet>64</a><span class="doccomment">/// Bounded UTF-8 blobs loaded together from one immutable Git revision.
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitBlobBatch {
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// Resolved 12-character revision.
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub </span>revision: String,
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// Repository-relative paths mapped to UTF-8 contents.
+<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="kw">pub </span>blobs: BTreeMap&lt;String, String&gt;,
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Requested paths that do not exist at the revision.
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub </span>missing_paths: Vec&lt;String&gt;,
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Requested paths larger than the per-file byte limit.
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">pub </span>oversized_paths: Vec&lt;String&gt;,
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="doccomment">/// Requested paths omitted after the aggregate byte limit was reached.
+<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub </span>total_limit_paths: Vec&lt;String&gt;,
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Requested paths whose blobs are not valid UTF-8.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub </span>invalid_utf8_paths: Vec&lt;String&gt;,
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Requested paths that resolve to non-blob Git entries.
+<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub </span>unsupported_paths: Vec&lt;String&gt;,
+<a href=#81 id=81 data-nosnippet>81</a>}
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// One commit from Git's tracked line history.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitLineCommit {
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">pub </span>commit: String,
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">pub </span>authored_at: String,
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">pub </span>subject: String,
+<a href=#89 id=89 data-nosnippet>89</a>}
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a><span class="doccomment">/// Shared metadata for one exact immutable commit endpoint.
+<a href=#92 id=92 data-nosnippet>92</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GitCommitMetadata {
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">pub </span>revision: String,
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub </span>authored_at: String,
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">pub </span>subject: String,
+<a href=#97 id=97 data-nosnippet>97</a>}
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
 </code></pre></div></section></main></body></html>
