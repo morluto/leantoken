@@ -964,6 +964,13 @@ projection (`id`, `path`, `language`, `size_bytes`) because fuzzy nucleo scoring
 does not map to SQL. The numbers are safety limits, not monorepo performance
 claims.
 
+Git changed-path discovery asks each name-only command for one record beyond
+the caller's path limit. That `max + 1` probe is what distinguishes an exactly
+full result from a truncated result without collecting the repository-sized
+tail. The subprocess byte allowance is derived from the same probe count at
+4,096 bytes per possible path, subject to the shared Git-output ceiling; a byte
+overflow fails closed rather than being reported as a complete path set.
+
 | Path | Bound |
 | --- | --- |
 | Context query terms | 12 (`MAX_CONTEXT_QUERIES`) |

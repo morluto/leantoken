@@ -302,6 +302,19 @@ async fn strict_working_tree_rejects_modified_and_untracked_path_overflow() {
     let handoff = response.handoff_manifest.as_ref().expect("handoff");
     assert!(!handoff.changed_paths_complete);
     assert_eq!(handoff.changed_paths_limit, Some(512));
+
+    let mut ordinary = context_limit_request(1_000);
+    ordinary.task = "review only_task_relevant_tail_marker".into();
+    let response = services
+        .context(ordinary)
+        .await
+        .expect("ordinary advisory context");
+    assert!(response.diff_scope.is_none());
+    assert!(response.warnings.iter().any(|warning| {
+        warning.contains(
+            "working-tree path discovery is incomplete at 512 paths; advisory results may omit changed files",
+        )
+    }));
 }
 
 fn write_bounded_diff_fixture(root: &std::path::Path, changed: bool) {

@@ -345,6 +345,13 @@ impl Services {
             },
         };
         response.provenance = Some(provenance.clone());
+        if !working_tree_paths_complete && diff_scope.is_none() {
+            let bound = working_tree_paths_limit
+                .map_or_else(|| "the configured bound".into(), |limit| limit.to_string());
+            response.warnings.push(format!(
+                "working-tree path discovery is incomplete at {bound} paths; advisory results may omit changed files"
+            ));
+        }
         if let Some(scope) = diff_scope {
             let mut scope = scope.clone();
             let mut indexed = 0usize;
