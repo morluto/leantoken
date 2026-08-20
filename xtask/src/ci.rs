@@ -1511,6 +1511,8 @@ mod tests {
         assert!(workflow.contains("cargo xtask ci validate-receipts"));
         assert!(workflow.contains("status=unexpectedly_skipped"));
         assert!(workflow.contains("target/ci-command-completed"));
+        assert!(workflow.contains("PLANNED_RUNNER: ${{ matrix.runner }}"));
+        assert!(!workflow.contains("RUNNER_NAME: ${{ matrix.runner }}"));
         assert!(workflow.contains("Checkout complete history for secret scanning"));
         assert!(workflow.contains("fetch-depth: 0"));
         assert!(workflow.contains("scripts/ci-secret-scan-range.sh"));

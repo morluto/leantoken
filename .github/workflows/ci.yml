@@ -399,7 +399,7 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
           LANE: ${{ matrix.lane }}
-          RUNNER_NAME: ${{ matrix.runner }}
+          PLANNED_RUNNER: ${{ matrix.runner }}
           COMMAND_CLASS: ${{ matrix.command }}
           SOURCE_REVISION: ${{ matrix.source_revision }}
           TOPOLOGY_DIGEST: ${{ matrix.topology_digest }}
@@ -420,7 +420,7 @@ jobs:
             --arg topology_digest "$TOPOLOGY_DIGEST" \
             --arg source_revision "$SOURCE_REVISION" \
             --arg lane "$LANE" \
-            --arg runner "$RUNNER_NAME" \
+            --arg runner "$PLANNED_RUNNER" \
             --arg command "$COMMAND_CLASS" \
             --arg receipt_identity "$RECEIPT_IDENTITY" \
             --arg status "$status" \
