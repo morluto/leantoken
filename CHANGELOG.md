@@ -1,6 +1,26 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.27] - 2026-08-20
+### Bug Fixes
+
+- Security hardening — tombstone MCP IDs, O_NOFOLLOW sidecars, CAS setup writes (#589) ([#589](https://github.com/morluto/leantoken/pull/589))
+- Reject symlinked setup config and warn on changed-path truncation (#587) ([#587](https://github.com/morluto/leantoken/pull/587))
+- Test infrastructure — targeted stress, stronger contract assertions, single-pass test-focused (#591) ([#591](https://github.com/morluto/leantoken/pull/591))
+- Architectural improvements — watcher reconciliation, Go imports, receipt disambiguation, cache LRU (#590) ([#590](https://github.com/morluto/leantoken/pull/590))
+- **package:** Include tests and README hero image in published crate
+- Bound upgrade probes, align MCP schemas, and harden release tagging (#592) ([#592](https://github.com/morluto/leantoken/pull/592))
+- **upgrade:** Add --locked to cargo install for reproducible builds (#588) ([#588](https://github.com/morluto/leantoken/pull/588))
+- **receipts:** Bump access_sequence on query receipt reuse (#582) ([#582](https://github.com/morluto/leantoken/pull/582))
+- **receipts:** Bump source access_sequence during rebase (#583) ([#583](https://github.com/morluto/leantoken/pull/583))
+- **upgrade:** Select Cargo releases by parsed SemVer (#581) ([#581](https://github.com/morluto/leantoken/pull/581))
+- **setup:** Reject duplicate JSONC keys before editing (#584) ([#584](https://github.com/morluto/leantoken/pull/584))
+- Correct read/outline/history tool description examples to match schema (#586) ([#586](https://github.com/morluto/leantoken/pull/586))
+- **setup:** Use text results for Codex registrations (#580) ([#580](https://github.com/morluto/leantoken/pull/580))
+### Continuous Integration
+
+- Make test evidence authoritative and single-scheduler (#593) ([#593](https://github.com/morluto/leantoken/pull/593))
+
 ## [0.1.26] - 2026-08-13
 ### Bug Fixes
 
