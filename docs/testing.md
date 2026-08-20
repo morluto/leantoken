@@ -54,50 +54,72 @@ cargo xtask test profile
 `xtask` prints every Cargo command before execution and preserves its exit
 status. Focused selectors for named suite domains build only the owning suite;
 other filters search both product and suite packages. Zero matches and
-cross-package ambiguity are errors. `plan --dry-run` performs no test work. The
+cross-package ambiguity are errors. `plan --dry-run` performs no test work and
+prints an explicitly named `local` or `ci` profile. The
 contract benchmark is an explicit `test = false` example and is run only by
 `cargo test-contract`; it is not an ignored default test. The product plan has
-three visible owners: library and binary units, ordinary integration, and
-executable or MCP process behavior. Checked-in corpora and generated reports
-run through the domain, contract, or benchmark target that owns their meaning;
+one Cargo build graph and one scheduler spanning library and binary units,
+private domains, ordinary integration, and executable or MCP process behavior.
+JUnit suites and module-qualified test names preserve owner timing without
+starting a second scheduler. Checked-in corpora and generated reports run
+through the domain, contract, or benchmark target that owns their meaning;
 there is no generic fixture runner or blessing path.
 
 `cargo xtask test stress` runs its explicit process-lifecycle command once by
 default. Scheduled jobs set `LEANTOKEN_STRESS_REPETITIONS` to their
-platform-specific repetition count; these are deliberate repeated evidence
-runs, not retries of failed merge tests.
+platform-specific repetition count, bounded from 1 through 100. Multi-run
+invocations preserve each bounded JUnit report under
+`target/nextest/stress/repetitions/`; these are deliberate repeated evidence
+runs, not retries of failed merge tests. The runner clears the current JUnit
+file before every repetition and rejects symlinked or reparse-point ancestors,
+so each preserved report is fresh evidence rooted in the workspace.
 
-`cargo xtask test profile` is the weekly timing lane. `.config/nextest.toml`
-marks tests slower than ten seconds, terminates a hung test after six periods,
-and sets retries to zero. The command prints slow tests and final failures;
-profiling never turns a retry into merge evidence.
+`cargo xtask test profile` is the weekly timing lane and selects the named
+`profile` policy. It continues after a failure, writes complete JUnit metadata,
+and prints slow tests and final failures. The `stress` profile similarly owns
+its process-only repetition and output policy. Neither mode turns a retry into
+merge evidence.
 
-The deterministic product phases use `cargo-nextest` with the same feature
-graph and explicit process bounds. Doctests remain a separate Cargo command;
-nextest does not silently replace documentation evidence. Required lanes use
-zero retries, while scheduled stress and profiling are separate lifecycle
-evidence rather than recovery for a failed merge test.
+The deterministic product run uses `cargo-nextest` once with the complete
+feature graph and a global platform bound. Six checked resource groups classify
+cheap, cold-index/SQLite, Git, filesystem/watcher, real-process/MCP, and
+extended tests; their semaphores, scheduler-slot reservations, and per-owner
+timeouts are inherited by every named profile. Doctests remain a separate Cargo
+command. Required lanes use zero retries, while scheduled stress and profiling
+are separate lifecycle evidence rather than recovery for a failed merge test.
 
 CI selection is produced by the checked-in `xtask` planner and
 [`ci/test-topology.json`](../ci/test-topology.json). It records the event,
 source revision, topology digest, selected and intentionally unselected lanes,
-dependency edges, bounded matrices, and human-readable reasons:
+dependency edges, bounded executable jobs, and human-readable reasons. Each
+lane declares `allowed_events` separately from the `required_events` that make
+it mandatory without a path match. Every executable job carries its lane,
+runner, command class, source revision, topology digest, bounded command
+parameters, and deterministic receipt identity:
 
 ```bash
 cargo xtask ci plan --event pull_request --base BASE --head HEAD \
   --changed-paths-file changed-paths.txt --dry-run
 cargo xtask ci validate-plan --input target/ci-plan.json
+cargo xtask ci validate-receipts --plan target/ci-plan.json \
+  --receipts target/ci-receipts
 ```
 
 Unknown paths, unavailable pull-request or merge-group bases, fork inputs, and
 planner inconsistencies select the conservative evidence set and record a
-fallback reason. `--full-run` and `--diagnostic` only add lanes. The stable
-`Required checks` aggregate runs for both pull requests and merge queues; a
-selected job that fails, cancels, times out, or disappears is not treated as a
-successful skip. Branch protection must require that aggregate before PR
-platform coverage is narrowed.
+fallback reason, but still cannot select a lane on an event it does not allow.
+`--full-run` and `--diagnostic` only add event-eligible lanes. GitHub Actions
+consumes the planner's job list directly; it does not reconstruct an OS matrix
+from lane booleans. Each matrix entry uploads an identity-bound result receipt,
+and the stable `Required checks` aggregate validates the complete receipt set
+for pull requests and merge queues. A selected job that fails, cancels, times
+out, changes identity, or disappears is not treated as a successful skip.
 
-All merge and CI Cargo commands use `--locked`. Dependency updates are the
+Pull requests run the fast Linux product owner for product and process-test
+changes. Cross-platform product, token-economy, example, coverage, profile, and
+stress evidence remains explicit in the merge, main, scheduled, or manual
+events declared by the topology. All merge and CI Cargo commands use
+`--locked`. Dependency updates are the
 only workflow that intentionally changes `Cargo.lock`.
 
 ## Hermetic setup

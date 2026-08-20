@@ -1796,16 +1796,28 @@ The index contains local source text in SQLite. Users should place an explicit
 database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
-The product test orchestrator may overlap exactly two Cargo children: the
-library/binary unit lane and ordinary integration lane, each with two nextest
-workers. It waits for both before starting executable/MCP process behavior,
-whose nextest concurrency uses three workers on macOS, four on Linux, and two
-on Windows. The Windows bound leaves capacity for the child processes each test
-can launch. Any parallel-lane failure prevents the process phase and is
-reported with its original child exit code. Checked-in corpora and derived
-benchmark reports are verified by their semantic domain, contract, or executable owner;
-small input/output cases stay as ordinary named tests rather than passing
-through a generic fixture interpreter.
+The product test orchestrator starts exactly one Cargo build planner and one
+nextest scheduler for the complete product graph. Its global execution bound is
+four tests on Linux, three on macOS, and two on Windows. Within that pool,
+checked groups cap cheap work at eight, cold-index/SQLite and Git fixtures at
+two each, filesystem/watcher and extended work at one each, and process/MCP
+work at four. The extended owner alone reserves the whole pool; the other
+groups rely on their explicit semaphore bound so unrelated cheap work can use
+remaining capacity. Named local, CI, stress, and profiling
+policies all disable retries and write JUnit evidence. CI and profiling continue
+after individual failures so the already-built graph yields complete evidence.
+Stress repetition is bounded to 100 runs and preserves each regular JUnit file,
+up to 8 MiB, in a workspace-owned report directory before the next run replaces
+the profile's current report. The orchestrator clears that current report
+before every repetition and validates each ancestor without following symlinks
+or Windows reparse points; publication creates a new destination rather than
+overwriting a path that could have been redirected.
+Cheap tests terminate after three 10-second slow periods; cold-index/SQLite,
+Git, and filesystem owners after six 20-second periods; process/MCP after six
+30-second periods; and extended work after ten 60-second periods. Checked-in
+corpora and derived benchmark reports are verified by their semantic domain,
+contract, or executable owner; small input/output cases stay as ordinary named
+tests rather than passing through a generic fixture interpreter.
 
 The manual TypeScript recovery evaluator is example-only and does not alter
 services, indexing, storage, ranking, or MCP schemas. It accepts at most
@@ -1948,6 +1960,23 @@ task execution while sealing. Public receipts contain artifact commitments and
 aggregate strata only; private labels must use safe relative paths, and Unix
 sealing rejects label files readable by group or other users. Output uses
 create-new semantics so a previous seal cannot be overwritten.
+
+CI fan-out is a checked application contract rather than workflow-owned
+reconstruction. `ci/test-topology.json` separates an owner's event eligibility
+from events where its evidence is mandatory, and caps the complete executable
+plan at 32 matrix entries. The plan records its schedule identity; every job
+then carries its command class, runner, bounded command parameters, source
+revision, topology digest, and deterministic receipt identity. The provider
+consumes that list directly. Each job
+must use one of the three hosted runner classes; stress entries additionally
+require 1–100 repetitions, while every other command rejects a repetition
+field. Each job returns one receipt; aggregation accepts no more files than
+planned, reads only regular non-symlink files that remain under the receipt
+directory, and caps each receipt at 64 KiB. Missing, duplicate, stale, failed,
+cancelled, or extra receipts—and jobs that never reach their command completion
+marker—fail the stable required check. Unknown changed paths and unavailable
+comparison revisions expand selection monotonically within the event's allowed
+lane set; they cannot silently create an event-ineligible job.
 
 ## Failure behavior
 

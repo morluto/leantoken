@@ -4,25 +4,25 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::thread;
 use std::time::Instant;
 use syn::visit::Visit;
+use toml_edit::{DocumentMut, Item, TableLike};
 
 const PRODUCT: &str = "leantoken";
 const SUPPORT: &str = "leantoken-test-support";
 const SUITE: &str = "leantoken-test-suite";
 const XTASK: &str = "leantoken-xtask";
 const BENCHMARKS: &str = "leantoken-benchmarks";
-const PRODUCT_PARALLEL_LANES: usize = 2;
-const PARALLEL_NEXTTEST_JOBS: &str = "2";
-const PRODUCT_PHASE_NAMES: [&str; 3] = [
-    "library and binary units",
-    "ordinary integration",
-    "executable and MCP process behavior",
-];
+const LOCAL_NEXTEST_PROFILE: &str = "local";
+const CI_NEXTEST_PROFILE: &str = "ci";
+const STRESS_NEXTEST_PROFILE: &str = "stress";
+const TIMING_NEXTEST_PROFILE: &str = "profile";
+const MAX_STRESS_REPETITIONS: usize = 100;
+const MAX_NEXTEST_JUNIT_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum FocusedTestTarget {
@@ -216,17 +216,7 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
         return Err(XtaskError::Usage(test_usage()));
     };
     match command {
-        "product" => {
-            if args.len() == 2 && args[1] == "--parallel" {
-                return run_parallel_product_plan(root, TestPlan::product());
-            }
-            if args.len() != 1 {
-                return Err(XtaskError::Usage(
-                    "`test product` accepts only --parallel".to_owned(),
-                ));
-            }
-            run_plan(root, TestPlan::product())
-        }
+        "product" => run_plan(root, TestPlan::product(parse_product_profile(&args[1..])?)),
         "stress" if args.len() == 1 => run_plan(root, TestPlan::stress()?),
         "stress" => Err(XtaskError::Usage(
             "`test stress` does not accept additional arguments".to_owned(),
@@ -236,112 +226,294 @@ fn run_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError> {
             "`test profile` does not accept additional arguments".to_owned(),
         )),
         "plan" => {
-            if args.iter().skip(1).any(|arg| arg != "--dry-run") {
-                return Err(XtaskError::Usage(
-                    "`test plan` accepts only --dry-run".to_owned(),
-                ));
-            }
-            TestPlan::product().print();
+            let profile = parse_plan_profile(&args[1..])?;
+            TestPlan::product(profile).print();
             Ok(())
         }
         _ => Err(XtaskError::Usage(test_usage())),
     }
 }
 
+fn parse_product_profile(args: &[String]) -> Result<&'static str, XtaskError> {
+    match args {
+        [] => Ok(LOCAL_NEXTEST_PROFILE),
+        [flag, profile] if flag == "--profile" && profile == CI_NEXTEST_PROFILE => {
+            Ok(CI_NEXTEST_PROFILE)
+        }
+        [flag, profile] if flag == "--profile" && profile == LOCAL_NEXTEST_PROFILE => {
+            Ok(LOCAL_NEXTEST_PROFILE)
+        }
+        _ => Err(XtaskError::Usage(
+            "`test product` accepts only --profile local|ci".to_owned(),
+        )),
+    }
+}
+
+fn parse_plan_profile(args: &[String]) -> Result<&'static str, XtaskError> {
+    match args {
+        [] => Ok(LOCAL_NEXTEST_PROFILE),
+        [arg] if arg == "--dry-run" => Ok(LOCAL_NEXTEST_PROFILE),
+        [flag, profile]
+            if flag == "--profile"
+                && matches!(profile.as_str(), LOCAL_NEXTEST_PROFILE | CI_NEXTEST_PROFILE) =>
+        {
+            parse_product_profile(args)
+        }
+        [dry_run, flag, profile]
+            if dry_run == "--dry-run"
+                && flag == "--profile"
+                && matches!(profile.as_str(), LOCAL_NEXTEST_PROFILE | CI_NEXTEST_PROFILE) =>
+        {
+            parse_product_profile(&args[1..])
+        }
+        [flag, profile, dry_run]
+            if flag == "--profile"
+                && dry_run == "--dry-run"
+                && matches!(profile.as_str(), LOCAL_NEXTEST_PROFILE | CI_NEXTEST_PROFILE) =>
+        {
+            parse_product_profile(&args[..2])
+        }
+        _ => Err(XtaskError::Usage(
+            "`test plan` accepts only --dry-run and --profile local|ci".to_owned(),
+        )),
+    }
+}
+
 fn run_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
+    if plan.preserve_repetition_reports && plan.repetitions > 1 {
+        prepare_repetition_reports(root)?;
+    }
     for repetition in 1..=plan.repetitions {
         if plan.repetitions > 1 {
             println!("==> stress repetition {repetition}/{}", plan.repetitions);
         }
         for command in &plan.commands {
+            if plan.preserve_repetition_reports && plan.repetitions > 1 {
+                clear_current_stress_report(root)?;
+            }
+            let started = Instant::now();
             let status = print_and_run(root, command)?;
+            println!(
+                "==> {} completed in {:.2}s",
+                plan.owner,
+                started.elapsed().as_secs_f64()
+            );
+            let report = if plan.preserve_repetition_reports && plan.repetitions > 1 {
+                preserve_repetition_report(root, repetition)
+            } else {
+                Ok(())
+            };
             if !status.success() {
+                if let Err(error) = report {
+                    eprintln!("==> could not preserve failed stress report: {error}");
+                }
                 return Err(XtaskError::CommandFailed {
                     command: command.join(" "),
                     code: status.code(),
                 });
             }
+            report?;
         }
     }
     Ok(())
 }
 
-fn run_parallel_product_plan(root: &Path, plan: TestPlan) -> Result<(), XtaskError> {
-    if plan.repetitions != 1 || plan.commands.len() != PRODUCT_PHASE_NAMES.len() {
+fn stress_report_directory(root: &Path) -> PathBuf {
+    root.join("target/nextest/stress/repetitions")
+}
+
+fn prepare_repetition_reports(root: &Path) -> Result<(), XtaskError> {
+    let parent = ensure_workspace_directory(root, Path::new("target/nextest/stress"))?;
+    let directory = parent.join("repetitions");
+    match fs::symlink_metadata(&directory) {
+        Ok(metadata) if is_real_directory(&metadata) => {
+            ensure_path_is_in_workspace(root, &directory)?;
+            fs::remove_dir_all(&directory).map_err(XtaskError::Io)?;
+        }
+        Ok(_) => {
+            return Err(XtaskError::Architecture(
+                "stress report directory must not be a symlink or regular file".to_owned(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(XtaskError::Io(error)),
+    }
+    fs::create_dir(&directory).map_err(XtaskError::Io)?;
+    let metadata = fs::symlink_metadata(&directory).map_err(XtaskError::Io)?;
+    if !is_real_directory(&metadata) {
         return Err(XtaskError::Architecture(
-            "parallel product plan shape drifted".to_owned(),
+            "stress report directory must be a real directory".to_owned(),
         ));
     }
-    let parallel_lanes = product_parallel_lanes();
-    let (parallel, sequential) = plan.commands.split_at(parallel_lanes);
-    let results = thread::scope(|scope| {
-        parallel
-            .iter()
-            .enumerate()
-            .map(|(index, command)| {
-                scope.spawn(move || {
-                    let started = Instant::now();
-                    let status = print_and_run(root, command);
-                    (index, status, started.elapsed())
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|handle| handle.join())
-            .collect::<Vec<_>>()
-    });
+    ensure_path_is_in_workspace(root, &directory)?;
+    Ok(())
+}
 
-    let mut first_failure = None;
-    for result in results {
-        match result {
-            Ok((index, status, elapsed)) => {
-                println!(
-                    "==> {} completed in {:.2}s",
-                    PRODUCT_PHASE_NAMES[index],
-                    elapsed.as_secs_f64()
-                );
-                let error = match status {
-                    Ok(status) if status.success() => None,
-                    Ok(status) => Some(XtaskError::CommandFailed {
-                        command: parallel[index].join(" "),
-                        code: status.code(),
-                    }),
-                    Err(error) => Some(error),
-                };
-                if let Some(error) = error {
-                    eprintln!("==> {} failed: {error}", PRODUCT_PHASE_NAMES[index]);
-                    if first_failure.is_none() {
-                        first_failure = Some(error);
-                    }
+fn ensure_workspace_directory(root: &Path, relative: &Path) -> Result<PathBuf, XtaskError> {
+    let canonical_root = root.canonicalize().map_err(XtaskError::Io)?;
+    let mut directory = root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return Err(XtaskError::Architecture(
+                "stress report paths must be workspace-relative components".to_owned(),
+            ));
+        };
+        directory.push(component);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if is_real_directory(&metadata) => {}
+            Ok(_) => {
+                return Err(XtaskError::Architecture(format!(
+                    "stress report ancestor {} must be a real directory",
+                    directory.display()
+                )));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&directory).map_err(XtaskError::Io)?;
+                let metadata = fs::symlink_metadata(&directory).map_err(XtaskError::Io)?;
+                if !is_real_directory(&metadata) {
+                    return Err(XtaskError::Architecture(
+                        "created stress report ancestor is not a real directory".to_owned(),
+                    ));
                 }
             }
-            Err(_) if first_failure.is_none() => {
-                first_failure = Some(XtaskError::Architecture(
-                    "parallel product lane panicked".to_owned(),
-                ));
-            }
-            Err(_) => {}
+            Err(error) => return Err(XtaskError::Io(error)),
+        }
+        let canonical = directory.canonicalize().map_err(XtaskError::Io)?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(XtaskError::Architecture(
+                "stress report ancestor resolves outside the workspace".to_owned(),
+            ));
         }
     }
-    if let Some(error) = first_failure {
-        return Err(error);
+    Ok(directory)
+}
+
+fn is_real_directory(metadata: &fs::Metadata) -> bool {
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn ensure_path_is_in_workspace(root: &Path, path: &Path) -> Result<(), XtaskError> {
+    let canonical_root = root.canonicalize().map_err(XtaskError::Io)?;
+    let canonical_path = path.canonicalize().map_err(XtaskError::Io)?;
+    if !canonical_path.starts_with(canonical_root) {
+        return Err(XtaskError::Architecture(
+            "stress report path resolves outside the workspace".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bounded_regular_report(
+    root: &Path,
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), XtaskError> {
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(XtaskError::Architecture(
+            "stress JUnit report must be a regular file".to_owned(),
+        ));
+    }
+    if metadata.len() > MAX_NEXTEST_JUNIT_BYTES {
+        return Err(XtaskError::Architecture(format!(
+            "stress JUnit report exceeds its {MAX_NEXTEST_JUNIT_BYTES}-byte bound"
+        )));
+    }
+    ensure_path_is_in_workspace(root, path)
+}
+
+fn clear_current_stress_report(root: &Path) -> Result<(), XtaskError> {
+    let stress = ensure_workspace_directory(root, Path::new("target/nextest/stress"))?;
+    let source = stress.join("junit.xml");
+    match fs::symlink_metadata(&source) {
+        Ok(metadata) => {
+            validate_bounded_regular_report(root, &source, &metadata)?;
+            fs::remove_file(source).map_err(XtaskError::Io)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(XtaskError::Io(error)),
+    }
+}
+
+fn preserve_repetition_report(root: &Path, repetition: usize) -> Result<(), XtaskError> {
+    let source = root.join("target/nextest/stress/junit.xml");
+    let path_metadata = fs::symlink_metadata(&source).map_err(XtaskError::Io)?;
+    validate_bounded_regular_report(root, &source, &path_metadata)?;
+    let source_file = OpenOptions::new()
+        .read(true)
+        .open(&source)
+        .map_err(XtaskError::Io)?;
+    let opened_metadata = source_file.metadata().map_err(XtaskError::Io)?;
+    validate_bounded_regular_report(root, &source, &opened_metadata)?;
+    let current_metadata = fs::symlink_metadata(&source).map_err(XtaskError::Io)?;
+    validate_bounded_regular_report(root, &source, &current_metadata)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if path_metadata.dev() != opened_metadata.dev()
+            || path_metadata.ino() != opened_metadata.ino()
+            || current_metadata.dev() != opened_metadata.dev()
+            || current_metadata.ino() != opened_metadata.ino()
+        {
+            return Err(XtaskError::Architecture(
+                "stress JUnit source changed while it was opened".to_owned(),
+            ));
+        }
     }
 
-    for (offset, command) in sequential.iter().enumerate() {
-        let index = parallel_lanes + offset;
-        let started = Instant::now();
-        let status = print_and_run(root, command)?;
-        println!(
-            "==> {} completed in {:.2}s",
-            PRODUCT_PHASE_NAMES[index],
-            started.elapsed().as_secs_f64()
-        );
-        if !status.success() {
-            return Err(XtaskError::CommandFailed {
-                command: command.join(" "),
-                code: status.code(),
-            });
+    let destination = stress_report_directory(root).join(format!("junit-{repetition:03}.xml"));
+    ensure_path_is_in_workspace(root, &stress_report_directory(root))?;
+    let mut destination_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&destination)
+        .map_err(XtaskError::Io)?;
+    let publication = (|| {
+        let copied = io::copy(
+            &mut source_file.take(MAX_NEXTEST_JUNIT_BYTES + 1),
+            &mut destination_file,
+        )
+        .map_err(XtaskError::Io)?;
+        if copied > MAX_NEXTEST_JUNIT_BYTES {
+            return Err(XtaskError::Architecture(
+                "stress JUnit report grew beyond its byte bound while copying".to_owned(),
+            ));
         }
+        destination_file.sync_all().map_err(XtaskError::Io)?;
+        let metadata = destination_file.metadata().map_err(XtaskError::Io)?;
+        Ok((copied, metadata))
+    })();
+    drop(destination_file);
+    let (copied, opened_destination) = match publication {
+        Ok(published) => published,
+        Err(error) => {
+            let _ = fs::remove_file(&destination);
+            return Err(error);
+        }
+    };
+    let validation = (|| {
+        let destination_metadata = fs::symlink_metadata(&destination).map_err(XtaskError::Io)?;
+        validate_bounded_regular_report(root, &destination, &destination_metadata)?;
+        if opened_destination.len() != copied || destination_metadata.len() != copied {
+            return Err(XtaskError::Architecture(
+                "preserved stress JUnit report changed after publication".to_owned(),
+            ));
+        }
+        Ok(())
+    })();
+    if let Err(error) = validation {
+        let _ = fs::remove_file(&destination);
+        return Err(error);
     }
     Ok(())
 }
@@ -360,105 +532,75 @@ fn print_and_run(root: &Path, command: &[String]) -> Result<std::process::ExitSt
 
 #[derive(Debug, Clone)]
 struct TestPlan {
+    owner: &'static str,
     commands: Vec<Vec<String>>,
     repetitions: usize,
+    preserve_repetition_reports: bool,
 }
 
 impl TestPlan {
-    fn product() -> Self {
-        let commands = vec![
-            nextest_command([
-                "--locked",
-                "--workspace",
-                "--exclude",
-                BENCHMARKS,
-                "--all-features",
-                "--lib",
-                "--bins",
-                "-j",
-                PARALLEL_NEXTTEST_JOBS,
-            ]),
-            nextest_command([
-                "--locked",
-                "--package",
-                PRODUCT,
-                "--all-features",
-                "--test",
-                "integration",
-                "-j",
-                PARALLEL_NEXTTEST_JOBS,
-                "--",
-                "--skip",
-                "process::",
-            ]),
-            nextest_command([
-                "--locked",
-                "--package",
-                PRODUCT,
-                "--all-features",
-                "--test",
-                "integration",
-                "process::",
-                "-j",
-                process_test_jobs(),
-            ]),
-        ];
+    fn product(profile: &'static str) -> Self {
+        let commands = vec![nextest_command(&[
+            "--locked",
+            "--workspace",
+            "--exclude",
+            BENCHMARKS,
+            "--all-features",
+            "--profile",
+            profile,
+            "-j",
+            product_test_jobs(),
+        ])];
         Self {
+            owner: "complete product graph",
             commands,
             repetitions: 1,
+            preserve_repetition_reports: false,
         }
     }
     fn stress() -> Result<Self, XtaskError> {
-        let repetitions = env::var("LEANTOKEN_STRESS_REPETITIONS")
-            .unwrap_or_else(|_| "1".to_owned())
-            .parse::<usize>()
-            .map_err(|_| {
-                XtaskError::Usage(
-                    "LEANTOKEN_STRESS_REPETITIONS must be a positive integer".to_owned(),
-                )
-            })?;
-        if repetitions == 0 {
-            return Err(XtaskError::Usage(
-                "LEANTOKEN_STRESS_REPETITIONS must be a positive integer".to_owned(),
-            ));
-        }
-        // Target lifecycle and liveness tests specifically rather than replaying
-        // the entire process test suite. These tests exercise retry, failover,
-        // startup contention, and cancellation — the stochastic invariants most
-        // likely to surface race conditions under repetition. The filter matches
-        // the registered wrapper names in tests/process.rs, which share the
-        // `mcp_lifecycle_` prefix.
-        Ok(Self {
-            commands: vec![nextest_command([
+        let repetitions = stress_repetitions(
+            &env::var("LEANTOKEN_STRESS_REPETITIONS").unwrap_or_else(|_| "1".to_owned()),
+        )?;
+        Ok(Self::stress_with_repetitions(repetitions))
+    }
+    fn stress_with_repetitions(repetitions: usize) -> Self {
+        Self {
+            owner: "process lifecycle stress",
+            commands: vec![nextest_command(&[
                 "--locked",
                 "--package",
                 PRODUCT,
                 "--all-features",
                 "--test",
                 "integration",
-                "process::mcp_lifecycle_",
+                "--filterset",
+                "test(/^process::mcp_lifecycle_/)",
+                "--profile",
+                STRESS_NEXTEST_PROFILE,
                 "-j",
-                process_test_jobs(),
+                product_test_jobs(),
             ])],
             repetitions,
-        })
+            preserve_repetition_reports: true,
+        }
     }
     fn profile() -> Self {
         Self {
-            commands: vec![nextest_command([
+            owner: "product timing profile",
+            commands: vec![nextest_command(&[
                 "--locked",
                 "--workspace",
                 "--exclude",
                 BENCHMARKS,
                 "--all-features",
-                "--status-level",
-                "slow",
-                "--final-status-level",
-                "slow",
-                "--failure-output",
-                "final",
+                "--profile",
+                TIMING_NEXTEST_PROFILE,
+                "-j",
+                product_test_jobs(),
             ])],
             repetitions: 1,
+            preserve_repetition_reports: false,
         }
     }
     fn print(&self) {
@@ -468,39 +610,38 @@ impl TestPlan {
     }
 }
 
+fn stress_repetitions(value: &str) -> Result<usize, XtaskError> {
+    let repetitions = value.parse::<usize>().map_err(|_| {
+        XtaskError::Usage(format!(
+            "LEANTOKEN_STRESS_REPETITIONS must be between 1 and {MAX_STRESS_REPETITIONS}"
+        ))
+    })?;
+    if !(1..=MAX_STRESS_REPETITIONS).contains(&repetitions) {
+        return Err(XtaskError::Usage(format!(
+            "LEANTOKEN_STRESS_REPETITIONS must be between 1 and {MAX_STRESS_REPETITIONS}"
+        )));
+    }
+    Ok(repetitions)
+}
+
 fn cargo_command<const N: usize>(args: [&str; N]) -> Vec<String> {
     std::iter::once("cargo".to_owned())
         .chain(args.into_iter().map(str::to_owned))
         .collect()
 }
 
-fn nextest_command<const N: usize>(args: [&str; N]) -> Vec<String> {
+fn nextest_command(args: &[&str]) -> Vec<String> {
     std::iter::once("cargo".to_owned())
         .chain(["nextest".to_owned(), "run".to_owned()])
-        .chain(args.into_iter().map(str::to_owned))
+        .chain(args.iter().map(|arg| (*arg).to_owned()))
         .collect()
 }
 
-fn process_test_jobs() -> &'static str {
-    process_test_jobs_for_os(std::env::consts::OS)
+fn product_test_jobs() -> &'static str {
+    product_test_jobs_for_os(std::env::consts::OS)
 }
 
-fn product_parallel_lanes() -> usize {
-    product_parallel_lanes_for_os(std::env::consts::OS)
-}
-
-fn product_parallel_lanes_for_os(os: &str) -> usize {
-    // Windows runners time out ordinary integration reads when they compete
-    // with the library suite for filesystem and SQLite capacity. Keep the
-    // evidence complete while serializing those two heavy lanes there.
-    if os == "windows" {
-        1
-    } else {
-        PRODUCT_PARALLEL_LANES
-    }
-}
-
-fn process_test_jobs_for_os(os: &str) -> &'static str {
+fn product_test_jobs_for_os(os: &str) -> &'static str {
     match os {
         "macos" => "3",
         "linux" => "4",
@@ -680,13 +821,298 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
             target.name == "integration" && target.kind.iter().any(|kind| kind == "test")
         })
         .ok_or_else(|| XtaskError::Architecture("root integration target is missing".to_owned()))?;
+    check_nextest_policy(root)?;
     check_test_inventory(root, &metadata, integration_target)?;
     check_ignored_test_policy(root)?;
     check_organizational_includes(root)?;
     println!(
-        "test architecture: ok (workspace resolver 3, Cargo-owned targets, directed private packages, compiled ignored-test inventory, syntax-tree macro policy)"
+        "test architecture: ok (workspace resolver 3, Cargo-owned targets, one-scheduler nextest policy, directed private packages, compiled ignored-test inventory, syntax-tree macro policy)"
     );
     Ok(())
+}
+
+fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
+    let path = root.join(".config/nextest.toml");
+    let contents = fs::read_to_string(&path).map_err(XtaskError::Io)?;
+    let document = contents.parse::<DocumentMut>().map_err(|error| {
+        XtaskError::Architecture(format!("could not parse {}: {error}", path.display()))
+    })?;
+    let profiles = required_table(document.get("profile"), "profile")?;
+    let profile_specs = [
+        ("default", None, true, None),
+        (
+            LOCAL_NEXTEST_PROFILE,
+            Some("default"),
+            true,
+            Some("junit.xml"),
+        ),
+        (
+            CI_NEXTEST_PROFILE,
+            Some("default"),
+            false,
+            Some("junit.xml"),
+        ),
+        (
+            STRESS_NEXTEST_PROFILE,
+            Some("default"),
+            false,
+            Some("junit.xml"),
+        ),
+        (
+            TIMING_NEXTEST_PROFILE,
+            Some(CI_NEXTEST_PROFILE),
+            false,
+            Some("junit.xml"),
+        ),
+    ];
+    for (name, inherited, fail_fast, junit_path) in profile_specs {
+        let profile = required_table(profiles.get(name), &format!("profile.{name}"))?;
+        if profile.get("retries").and_then(Item::as_integer) != Some(0)
+            || profile.get("flaky-result").and_then(Item::as_str) != Some("fail")
+            || profile.get("fail-fast").and_then(Item::as_bool) != Some(fail_fast)
+            || profile
+                .get("global-timeout")
+                .and_then(Item::as_str)
+                .is_none_or(str::is_empty)
+        {
+            return Err(XtaskError::Architecture(format!(
+                "profile.{name} must declare zero retries, flaky failures, fail-fast={fail_fast}, and a global timeout"
+            )));
+        }
+        if name == "default" && profile.get("test-threads").and_then(Item::as_integer) != Some(4) {
+            return Err(XtaskError::Architecture(
+                "profile.default must retain a bounded four-thread direct-run fallback".to_owned(),
+            ));
+        }
+        if profile.get("inherits").and_then(Item::as_str) != inherited {
+            return Err(XtaskError::Architecture(format!(
+                "profile.{name} has the wrong inheritance owner"
+            )));
+        }
+        if let Some(expected_path) = junit_path {
+            let junit = required_table(profile.get("junit"), &format!("profile.{name}.junit"))?;
+            if junit.get("path").and_then(Item::as_str) != Some(expected_path) {
+                return Err(XtaskError::Architecture(format!(
+                    "profile.{name} must write JUnit evidence to {expected_path}"
+                )));
+            }
+        }
+        reject_retry_overrides(profile, name)?;
+    }
+
+    let groups = required_table(document.get("test-groups"), "test-groups")?;
+    let expected_groups = [
+        ("cheap", 8),
+        ("cold-index-sqlite", 2),
+        ("git-fixtures", 2),
+        ("filesystem-watcher", 1),
+        ("process-mcp", 4),
+        ("extended", 1),
+    ];
+    for (name, max_threads) in expected_groups {
+        let group = required_table(groups.get(name), &format!("test-groups.{name}"))?;
+        if group.get("max-threads").and_then(Item::as_integer) != Some(max_threads) {
+            return Err(XtaskError::Architecture(format!(
+                "test group {name} must retain its checked max-threads={max_threads} bound"
+            )));
+        }
+    }
+
+    let default = required_table(profiles.get("default"), "profile.default")?;
+    let overrides = default
+        .get("overrides")
+        .and_then(Item::as_array_of_tables)
+        .ok_or_else(|| {
+            XtaskError::Architecture(
+                "profile.default must classify every resource owner through overrides".to_owned(),
+            )
+        })?;
+    let expected_overrides: [(&str, &[&str]); 6] = [
+        (
+            "extended",
+            &["package(leantoken-benchmarks)", "concurrency_profile"],
+        ),
+        ("process-mcp", &["process::", "mcp::", "domains::protocol"]),
+        (
+            "filesystem-watcher",
+            &["watcher::", "setup::", "sandbox::", "domains::platform"],
+        ),
+        ("git-fixtures", &["repository::", "history|diff", "git"]),
+        (
+            "cold-index-sqlite",
+            &[
+                "storage::",
+                "indexer::",
+                "domains::(indexing_repository|storage)",
+                "services::tests",
+                "read|query_receipts|receipts|lifecycle|repository|reconciliation",
+            ],
+        ),
+        ("cheap", &["all()"]),
+    ];
+    let mut classified = BTreeSet::new();
+    for override_table in overrides {
+        let group = override_table
+            .get("test-group")
+            .and_then(Item::as_str)
+            .ok_or_else(|| {
+                XtaskError::Architecture(
+                    "every nextest override must assign a checked test group".to_owned(),
+                )
+            })?;
+        if !classified.insert(group.to_owned()) {
+            return Err(XtaskError::Architecture(format!(
+                "test group {group} has more than one classification override"
+            )));
+        }
+        let Some((_, fragments)) = expected_overrides
+            .iter()
+            .find(|(expected, _)| *expected == group)
+        else {
+            return Err(XtaskError::Architecture(format!(
+                "unexpected nextest resource group {group}"
+            )));
+        };
+        let filter = override_table
+            .get("filter")
+            .and_then(Item::as_str)
+            .unwrap_or_default();
+        if fragments.iter().any(|fragment| !filter.contains(fragment))
+            || override_table.get("threads-required").is_none()
+            || override_table.get("slow-timeout").is_none()
+            || override_table
+                .get("retries")
+                .and_then(Item::as_integer)
+                .is_some_and(|retries| retries != 0)
+        {
+            return Err(XtaskError::Architecture(format!(
+                "test group {group} lacks its semantic filter, scheduler reservation, timeout, or zero-retry policy"
+            )));
+        }
+    }
+    let expected_group_names = expected_overrides
+        .iter()
+        .map(|(group, _)| (*group).to_owned())
+        .collect::<BTreeSet<_>>();
+    if classified != expected_group_names {
+        return Err(XtaskError::Architecture(format!(
+            "nextest resource classifications drifted: {classified:?}"
+        )));
+    }
+
+    for test_name in [
+        "services::tests::concurrent_consistency_requests_share_one_waiting_wave",
+        "services::tests::index_search_read_and_hash_delta",
+    ] {
+        check_nextest_group_assignment(root, "cold-index-sqlite", test_name)?;
+    }
+
+    let plans = [
+        (
+            LOCAL_NEXTEST_PROFILE,
+            TestPlan::product(LOCAL_NEXTEST_PROFILE),
+        ),
+        (CI_NEXTEST_PROFILE, TestPlan::product(CI_NEXTEST_PROFILE)),
+        (STRESS_NEXTEST_PROFILE, TestPlan::stress_with_repetitions(1)),
+        (TIMING_NEXTEST_PROFILE, TestPlan::profile()),
+    ];
+    for (profile, plan) in plans {
+        if plan.commands.len() != 1
+            || command_option(&plan.commands[0], "--profile") != Some(profile)
+        {
+            return Err(XtaskError::Architecture(format!(
+                "xtask mode for {profile} must select exactly one authoritative nextest scheduler with its named profile"
+            )));
+        }
+    }
+    println!(
+        "nextest policy: ok (one product scheduler, explicit profiles, zero retries, six bounded resource groups)"
+    );
+    Ok(())
+}
+
+fn check_nextest_group_assignment(
+    root: &Path,
+    group: &str,
+    test_name: &str,
+) -> Result<(), XtaskError> {
+    let output = Command::new("cargo")
+        .args([
+            "nextest",
+            "show-config",
+            "test-groups",
+            "--profile",
+            CI_NEXTEST_PROFILE,
+            "--groups",
+            group,
+            "--locked",
+            "--workspace",
+            "--exclude",
+            BENCHMARKS,
+            "--all-features",
+            "--no-pager",
+            test_name,
+        ])
+        .current_dir(root)
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .map_err(XtaskError::Io)?;
+    if !output.status.success() {
+        return Err(XtaskError::Architecture(format!(
+            "could not resolve nextest group for {test_name}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    if output.stdout.len() > 64 * 1024 {
+        return Err(XtaskError::Architecture(
+            "nextest group resolution exceeded its diagnostic bound".to_owned(),
+        ));
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == test_name);
+    if !resolved {
+        return Err(XtaskError::Architecture(format!(
+            "compiled test {test_name} is not assigned to nextest group {group}"
+        )));
+    }
+    Ok(())
+}
+
+fn required_table<'a>(
+    item: Option<&'a Item>,
+    context: &str,
+) -> Result<&'a dyn TableLike, XtaskError> {
+    item.and_then(Item::as_table_like).ok_or_else(|| {
+        XtaskError::Architecture(format!("nextest configuration is missing table {context}"))
+    })
+}
+
+fn reject_retry_overrides(profile: &dyn TableLike, name: &str) -> Result<(), XtaskError> {
+    if profile
+        .get("overrides")
+        .and_then(Item::as_array_of_tables)
+        .is_some_and(|overrides| {
+            overrides.iter().any(|override_table| {
+                override_table
+                    .get("retries")
+                    .and_then(Item::as_integer)
+                    .is_some_and(|retries| retries != 0)
+            })
+        })
+    {
+        return Err(XtaskError::Architecture(format!(
+            "profile.{name} contains a nonzero retry override"
+        )));
+    }
+    Ok(())
+}
+
+fn command_option<'a>(command: &'a [String], option: &str) -> Option<&'a str> {
+    command
+        .windows(2)
+        .find(|arguments| arguments[0] == option)
+        .map(|arguments| arguments[1].as_str())
 }
 
 fn check_organizational_includes(root: &Path) -> Result<(), XtaskError> {
@@ -936,10 +1362,10 @@ fn workspace_root() -> PathBuf {
         .expect("xtask lives below workspace root")
 }
 fn usage() -> String {
-    "cargo xtask check-test-architecture | test-focused <selector> | test {product [--parallel]|stress|profile|plan}".to_owned()
+    "cargo xtask check-test-architecture | test-focused <selector> | test {product [--profile local|ci]|stress|profile|plan}".to_owned()
 }
 fn test_usage() -> String {
-    "cargo xtask test product [--parallel] | stress | profile | plan --dry-run".to_owned()
+    "cargo xtask test product [--profile local|ci] | stress | profile | plan [--profile local|ci] --dry-run".to_owned()
 }
 
 #[derive(Debug)]
@@ -984,10 +1410,12 @@ impl std::error::Error for XtaskError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        BENCHMARKS, PARALLEL_NEXTTEST_JOBS, PRODUCT, PRODUCT_PARALLEL_LANES, TestPlan, XtaskError,
-        contains_include_macro, listed_test_count, module_path_value, parse_compiled_test_list,
-        process_test_jobs_for_os, product_parallel_lanes_for_os, run_parallel_product_plan,
-        workspace_root,
+        BENCHMARKS, CI_NEXTEST_PROFILE, LOCAL_NEXTEST_PROFILE, MAX_NEXTEST_JUNIT_BYTES,
+        STRESS_NEXTEST_PROFILE, TIMING_NEXTEST_PROFILE, TestPlan, XtaskError,
+        clear_current_stress_report, contains_include_macro, listed_test_count, module_path_value,
+        parse_compiled_test_list, parse_plan_profile, parse_product_profile,
+        prepare_repetition_reports, preserve_repetition_report, product_test_jobs_for_os, run_plan,
+        stress_repetitions, workspace_root,
     };
 
     #[test]
@@ -1038,61 +1466,37 @@ mod tests {
     }
 
     #[test]
-    fn plan_contains_visible_locked_phases() {
-        let plan = TestPlan::product();
-        assert_eq!(plan.commands.len(), 3);
+    fn product_plan_uses_one_locked_scheduler_for_the_complete_graph() {
+        let plan = TestPlan::product(CI_NEXTEST_PROFILE);
+        assert_eq!(plan.commands.len(), 1);
+        let command = &plan.commands[0];
+        assert!(command.contains(&"--locked".to_owned()));
+        assert!(command.contains(&"--workspace".to_owned()));
         assert!(
-            plan.commands
-                .iter()
-                .all(|command| command.contains(&"--locked".to_owned()))
-        );
-        assert_eq!(PRODUCT_PARALLEL_LANES, 2);
-        assert!(plan.commands[0].contains(&"--workspace".to_owned()));
-        assert!(
-            plan.commands[1]
+            command
                 .windows(2)
-                .any(|args| args == ["--package", PRODUCT])
+                .any(|args| args == ["--exclude", BENCHMARKS])
         );
         assert!(
-            plan.commands[1]
+            command
                 .windows(2)
-                .any(|args| args == ["--skip", "process::"])
+                .any(|args| args == ["--profile", CI_NEXTEST_PROFILE])
         );
-        assert!(!plan.commands[0].contains(&"process::".to_owned()));
-        assert!(plan.commands[PRODUCT_PARALLEL_LANES].contains(&"process::".to_owned()));
         assert!(
-            plan.commands[PRODUCT_PARALLEL_LANES]
+            command
                 .windows(2)
-                .any(|args| args == ["-j", process_test_jobs_for_os(std::env::consts::OS)])
+                .any(|args| args == ["-j", product_test_jobs_for_os(std::env::consts::OS)])
         );
-        for command in &plan.commands[..PRODUCT_PARALLEL_LANES] {
-            assert!(
-                command
-                    .windows(2)
-                    .any(|args| args == ["-j", PARALLEL_NEXTTEST_JOBS])
-            );
-        }
-        assert!(
-            plan.commands
-                .iter()
-                .filter(|command| command.contains(&"--workspace".to_owned()))
-                .all(|command| command
-                    .windows(2)
-                    .any(|args| args == ["--exclude", BENCHMARKS]))
-        );
+        assert!(!command.contains(&"--skip".to_owned()));
+        assert!(!command.contains(&"--lib".to_owned()));
+        assert!(!command.contains(&"--test".to_owned()));
     }
 
     #[test]
-    fn windows_product_lanes_avoid_cross_suite_resource_contention() {
-        assert_eq!(
-            product_parallel_lanes_for_os("linux"),
-            PRODUCT_PARALLEL_LANES
-        );
-        assert_eq!(
-            product_parallel_lanes_for_os("macos"),
-            PRODUCT_PARALLEL_LANES
-        );
-        assert_eq!(product_parallel_lanes_for_os("windows"), 1);
+    fn product_scheduler_has_one_platform_global_bound() {
+        assert_eq!(product_test_jobs_for_os("linux"), "4");
+        assert_eq!(product_test_jobs_for_os("macos"), "3");
+        assert_eq!(product_test_jobs_for_os("windows"), "2");
     }
 
     #[test]
@@ -1105,33 +1509,32 @@ mod tests {
     }
 
     #[test]
-    fn parallel_product_runner_executes_its_bounded_plan() {
+    fn sequential_plan_runner_executes_its_bounded_plan() {
         let command = vec!["cargo".to_owned(), "--version".to_owned()];
         let plan = TestPlan {
-            commands: vec![command.clone(), command.clone(), command],
+            owner: "test plan",
+            commands: vec![command],
             repetitions: 1,
+            preserve_repetition_reports: false,
         };
-        run_parallel_product_plan(&workspace_root(), plan).expect("parallel plan");
+        run_plan(&workspace_root(), plan).expect("sequential plan");
     }
 
     #[test]
-    fn parallel_product_runner_preserves_a_lane_failure_and_stops() {
+    fn sequential_plan_runner_preserves_a_command_failure() {
         let plan = TestPlan {
-            commands: vec![
-                vec![
-                    "cargo".to_owned(),
-                    "--invalid-parallel-test-flag".to_owned(),
-                ],
-                vec!["cargo".to_owned(), "--version".to_owned()],
-                vec!["this-program-must-not-run".to_owned()],
-            ],
+            owner: "test plan",
+            commands: vec![vec![
+                "cargo".to_owned(),
+                "--invalid-product-test-flag".to_owned(),
+            ]],
             repetitions: 1,
+            preserve_repetition_reports: false,
         };
-        let error =
-            run_parallel_product_plan(&workspace_root(), plan).expect_err("failed lane passed");
+        let error = run_plan(&workspace_root(), plan).expect_err("failed command passed");
         match error {
             XtaskError::CommandFailed { command, code } => {
-                assert!(command.contains("--invalid-parallel-test-flag"));
+                assert!(command.contains("--invalid-product-test-flag"));
                 assert!(code.is_some());
             }
             error => panic!("unexpected error: {error}"),
@@ -1154,17 +1557,126 @@ mod tests {
         assert!(
             command
                 .windows(2)
-                .any(|args| args == ["--status-level", "slow"])
+                .any(|args| args == ["--profile", TIMING_NEXTEST_PROFILE])
+        );
+    }
+
+    #[test]
+    fn stress_selects_only_lifecycle_process_tests_with_its_named_profile() {
+        let plan = TestPlan::stress_with_repetitions(2);
+        assert_eq!(plan.repetitions, 2);
+        let command = &plan.commands[0];
+        assert!(
+            command
+                .windows(2)
+                .any(|args| args == ["--profile", STRESS_NEXTEST_PROFILE])
         );
         assert!(
             command
                 .windows(2)
-                .any(|args| args == ["--final-status-level", "slow"])
+                .any(|args| args == ["--filterset", "test(/^process::mcp_lifecycle_/)"])
         );
+    }
+
+    #[test]
+    fn stress_repetition_reports_are_bounded_preserved_and_reset() {
+        let root = tempfile::tempdir().expect("workspace");
+        let stress = root.path().join("target/nextest/stress");
+        std::fs::create_dir_all(&stress).expect("stress directory");
+        std::fs::write(stress.join("junit.xml"), "<testsuites />").expect("JUnit report");
+
+        prepare_repetition_reports(root.path()).expect("prepare reports");
+        preserve_repetition_report(root.path(), 1).expect("preserve report");
+        let report = stress.join("repetitions/junit-001.xml");
+        assert_eq!(std::fs::read_to_string(&report).unwrap(), "<testsuites />");
+
+        clear_current_stress_report(root.path()).expect("clear current report");
+        assert!(!stress.join("junit.xml").exists());
+        assert!(preserve_repetition_report(root.path(), 2).is_err());
+        std::fs::write(stress.join("junit.xml"), "<testsuites tests=\"2\" />")
+            .expect("fresh JUnit report");
+        preserve_repetition_report(root.path(), 2).expect("preserve fresh report");
+
+        prepare_repetition_reports(root.path()).expect("reset reports");
+        assert!(!report.exists());
+        assert_eq!(stress_repetitions("1").unwrap(), 1);
+        assert_eq!(stress_repetitions("100").unwrap(), 100);
+        assert!(stress_repetitions("0").is_err());
+        assert!(stress_repetitions("101").is_err());
+    }
+
+    #[test]
+    fn stress_repetition_report_rejects_oversized_sources() {
+        let root = tempfile::tempdir().expect("workspace");
+        prepare_repetition_reports(root.path()).expect("prepare reports");
+        let source = root.path().join("target/nextest/stress/junit.xml");
+        let file = std::fs::File::create(&source).expect("JUnit report");
+        file.set_len(MAX_NEXTEST_JUNIT_BYTES + 1)
+            .expect("oversized sparse report");
+
+        assert!(preserve_repetition_report(root.path(), 1).is_err());
         assert!(
-            command
-                .windows(2)
-                .any(|args| args == ["--failure-output", "final"])
+            !root
+                .path()
+                .join("target/nextest/stress/repetitions/junit-001.xml")
+                .exists()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stress_repetition_report_rejects_symlinked_ancestors() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("workspace");
+        let outside = tempfile::tempdir().expect("outside directory");
+        std::fs::write(outside.path().join("sentinel"), "unchanged").expect("sentinel");
+        symlink(outside.path(), root.path().join("target")).expect("target symlink");
+
+        assert!(prepare_repetition_reports(root.path()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("sentinel")).unwrap(),
+            "unchanged"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stress_repetition_report_never_follows_a_destination_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("workspace");
+        let outside = tempfile::NamedTempFile::new().expect("outside report");
+        std::fs::write(outside.path(), "unchanged").expect("outside contents");
+        prepare_repetition_reports(root.path()).expect("prepare reports");
+        let stress = root.path().join("target/nextest/stress");
+        std::fs::write(stress.join("junit.xml"), "<testsuites />").expect("JUnit report");
+        symlink(outside.path(), stress.join("repetitions/junit-001.xml"))
+            .expect("destination symlink");
+
+        assert!(preserve_repetition_report(root.path(), 1).is_err());
+        assert_eq!(
+            std::fs::read_to_string(outside.path()).unwrap(),
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn product_and_dry_run_profiles_are_explicit_and_bounded() {
+        assert_eq!(parse_product_profile(&[]).unwrap(), LOCAL_NEXTEST_PROFILE);
+        assert_eq!(
+            parse_product_profile(&["--profile".to_owned(), "ci".to_owned()]).unwrap(),
+            CI_NEXTEST_PROFILE
+        );
+        assert!(parse_product_profile(&["--parallel".to_owned()]).is_err());
+        assert_eq!(
+            parse_plan_profile(&[
+                "--dry-run".to_owned(),
+                "--profile".to_owned(),
+                "ci".to_owned()
+            ])
+            .unwrap(),
+            CI_NEXTEST_PROFILE
         );
     }
 }

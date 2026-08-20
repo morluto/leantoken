@@ -1087,6 +1087,8 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.119",
+ "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

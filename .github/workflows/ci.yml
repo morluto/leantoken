@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       full_run:
-        description: "Select every validation lane"
+        description: "Select every event-eligible validation lane"
         required: false
         default: false
         type: boolean
@@ -44,16 +44,8 @@ jobs:
       selected_lanes: ${{ steps.plan.outputs.selected_lanes }}
       unselected_lanes: ${{ steps.plan.outputs.unselected_lanes }}
       fallback_reason: ${{ steps.plan.outputs.fallback_reason }}
-      manifests: ${{ steps.filter.outputs.manifests }}
-      npm: ${{ steps.filter.outputs.npm }}
-      release: ${{ steps.filter.outputs.release }}
-      quality: ${{ steps.filter.outputs.quality }}
-      rust_quality: ${{ steps.filter.outputs.rust_quality }}
-      topology: ${{ steps.filter.outputs.topology }}
-      product: ${{ steps.filter.outputs.product }}
-      contract: ${{ steps.filter.outputs.contract }}
-      examples: ${{ steps.filter.outputs.examples }}
-      coverage: ${{ steps.filter.outputs.coverage }}
+      job_matrix: ${{ steps.plan.outputs.job_matrix }}
+      job_count: ${{ steps.plan.outputs.job_count }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -104,7 +96,7 @@ jobs:
             if [[ "$event" == "pull_request" && "$PR_FORK" == "true" ]]; then echo "fork=true"; else echo "fork=false"; fi
           } >> "$GITHUB_OUTPUT"
 
-      - name: Generate and validate provider-neutral CI plan
+      - name: Generate and validate executable CI plan
         id: plan
         env:
           EVENT: ${{ steps.context.outputs.event }}
@@ -135,561 +127,367 @@ jobs:
           echo "selected_lanes=$(jq -c '[.selected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
           echo "unselected_lanes=$(jq -c '[.unselected_lanes[].lane]' "$plan")" >> "$GITHUB_OUTPUT"
           echo "fallback_reason=$(jq -r '.fallback_reason // ""' "$plan")" >> "$GITHUB_OUTPUT"
-          jq '{schema_version, event, schedule, source_revision, topology_digest, selected_lanes, unselected_lanes, fallback_reason}' "$plan" >> "$GITHUB_STEP_SUMMARY"
-          selected=$(jq -r '[.selected_lanes[].lane] | join(",")' "$plan")
-          echo "::notice::Selected CI lanes: $selected"
+          echo "job_matrix=$(jq -c '{include: .jobs}' "$plan")" >> "$GITHUB_OUTPUT"
+          echo "job_count=$(jq '.jobs | length' "$plan")" >> "$GITHUB_OUTPUT"
+          jq '{schema_version, event, schedule, source_revision, topology_digest, selected_lanes, unselected_lanes, jobs, fallback_reason}' "$plan" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Export lane selectors
-        id: filter
-        env:
-          SELECTED: ${{ steps.plan.outputs.selected_lanes }}
-          CHANGED_PATHS: ${{ steps.context.outputs.paths }}
-        shell: bash
-        run: |
-          has() { jq -e --arg lane "$1" 'index($lane) != null' <<< "$SELECTED" >/dev/null; }
-          echo "manifests=$(has dependency-audit && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "npm=$(has npm && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "release=$(has release-plan && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "quality=$(has quality && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          if has product-linux || has product-macos || has product-windows; then product=true; else product=false; fi
-          if has contract; then contract=true; else contract=false; fi
-          if has examples; then examples=true; else examples=false; fi
-          if has coverage; then coverage=true; else coverage=false; fi
-          if [[ "$product" == true || "$contract" == true || "$examples" == true || "$coverage" == true ]]; then
-            rust_quality=true
-          else
-            rust_quality=false
-          fi
-          topology=false
-          if [[ -n "$CHANGED_PATHS" && -f "$CHANGED_PATHS" ]]; then
-            if tr '\0' '\n' < "$CHANGED_PATHS" | grep -qx 'ci/test-topology.json'; then
-              topology=true
-            fi
-          fi
-          echo "topology=$topology" >> "$GITHUB_OUTPUT"
-          echo "product=$product" >> "$GITHUB_OUTPUT"
-          echo "contract=$contract" >> "$GITHUB_OUTPUT"
-          echo "examples=$examples" >> "$GITHUB_OUTPUT"
-          echo "coverage=$coverage" >> "$GITHUB_OUTPUT"
-          echo "rust_quality=$rust_quality" >> "$GITHUB_OUTPUT"
+      - name: Upload immutable CI plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-plan-${{ github.sha }}
+          path: ${{ runner.temp }}/leantoken-ci-plan.json
+          overwrite: true
+          retention-days: 7
 
-  quality:
-    name: Code quality checks
+  evidence:
+    name: ${{ matrix.lane }} (${{ matrix.runner }})
     needs: changes
-    if: needs.changes.outputs.quality == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    if: needs.changes.outputs.job_count != '0'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.job_matrix) }}
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout bounded evidence source
+        if: matrix.command != 'secret-scan'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.source_revision }}
+
+      - name: Checkout complete history for secret scanning
+        if: matrix.command == 'secret-scan'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.source_revision }}
+          fetch-depth: 0
 
       - name: Install Node.js
-        if: needs.changes.outputs.npm == 'true'
+        if: matrix.command == 'npm'
         uses: actions/setup-node@v7
         with:
           node-version: 22
 
-      - name: Install Rust
-        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
+      - name: Install Rust quality toolchain
+        if: matrix.command == 'rust-quality'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
           components: rustfmt, clippy
 
-      - name: Cache Rust dependencies
-        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: quality
-          cache-workspace-crates: true
-
-      - name: Verify locked dependency graph
-        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
-        run: cargo metadata --locked --format-version 1 > /dev/null
-
-      - name: Check duplicate files
-        run: bash scripts/check-duplicates.sh
-
-      - name: Test development support scripts
-        run: |
-          python3 -m unittest \
-            scripts/test_report_target_footprint.py \
-            scripts/test_validate_agents_md.py
-
-      - name: Validate AGENTS.md
-        run: bash scripts/validate-agents-md.sh
-
-      - name: Test npm packaging
-        if: needs.changes.outputs.npm == 'true'
-        run: node --test npm/npm-packaging.test.mjs
-
-      - name: Check formatting
-        if: needs.changes.outputs.rust_quality == 'true'
-        run: cargo fmt --all -- --check
-
-      - name: Check test architecture
-        if: needs.changes.outputs.rust_quality == 'true' || needs.changes.outputs.topology == 'true'
-        run: cargo xtask check-test-architecture
-
-      - name: Lint all targets
-        if: needs.changes.outputs.rust_quality == 'true'
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-      - name: Validate public API documentation
-        if: needs.changes.outputs.rust_quality == 'true'
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --locked --workspace --no-deps
-
-      - name: Upload documentation for deployment
-        if: needs.changes.outputs.rust_quality == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v7
-        with:
-          name: rustdoc
-          path: target/doc/
-          retention-days: 7
-
-  secret-scan:
-    name: Secret scan
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-  dependency-audit:
-    name: Dependency audit
-    needs: changes
-    if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      RUSTUP_TOOLCHAIN: stable
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: audit
-          cache-workspace-crates: true
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Audit dependencies
-        run: cargo audit
-
-  unused-deps:
-    name: Unused dependencies
-    needs: changes
-    if: github.event_name == 'schedule' || needs.changes.outputs.manifests == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install nightly Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: udeps
-          cache-workspace-crates: true
-
-      - name: Install cargo-udeps
-        uses: taiki-e/install-action@cargo-udeps
-
-      - name: Check unused dependencies
-        run: cargo +nightly udeps --all-targets --all-features
-
-  release-plan:
-    name: Release plan
-    needs: changes
-    if: needs.changes.outputs.release == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install dist
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-dist@0.32.0
-
-      - name: Validate release plan
-        run: dist plan
-
-  ci:
-    name: ${{ matrix.os }}
-    needs: changes
-    if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true' || needs.changes.outputs.npm == 'true'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Node.js
-        if: needs.changes.outputs.npm == 'true' && matrix.os == 'ubuntu-latest'
-        uses: actions/setup-node@v7
-        with:
-          node-version: 22
-
-      - name: Install Rust
-        if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true'
+      - name: Install project Rust
+        if: contains(fromJSON('["product","contract","examples","release-plan","stress","profile"]'), matrix.command)
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
 
-      - name: Cache Rust dependencies
-        if: needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true'
-        id: rust-cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci-${{ matrix.os }}
-          cache-workspace-crates: true
-
-      - name: Install nextest
-        if: needs.changes.outputs.product == 'true'
-        uses: taiki-e/install-action@nextest
-
-      - name: Test npm installation
-        if: needs.changes.outputs.npm == 'true' && matrix.os == 'ubuntu-latest'
-        timeout-minutes: 5
-        run: node --test npm/npm-install-e2e.mjs
-
-      - name: Test product behavior
-        if: needs.changes.outputs.product == 'true'
-        timeout-minutes: 15
-        run: |
-          started=$(date +%s)
-          cargo xtask test product --parallel
-          elapsed=$(( $(date +%s) - started ))
-          echo "Product nextest lane (${elapsed}s; cache-hit=${{ steps.rust-cache.outputs.cache-hit || 'unknown' }})" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Test token-economy contract
-        if: needs.changes.outputs.contract == 'true'
-        timeout-minutes: 10
-        run: cargo test-contract
-
-      - name: Upload preserved test failures
-        if: always() && (needs.changes.outputs.product == 'true' || needs.changes.outputs.contract == 'true')
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-failures-${{ matrix.os }}-${{ github.sha }}
-          path: target/test-failures/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  scheduled-stress:
-    name: Nightly stress (${{ matrix.os }})
-    if: (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') || (github.event_name == 'workflow_dispatch' && (inputs.full_run || inputs.diagnostic))
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            repetitions: 100
-          - os: macos-latest
-            repetitions: 25
-          - os: windows-latest
-            repetitions: 25
-    defaults:
-      run:
-        shell: bash
-    env:
-      LEANTOKEN_STRESS_REPETITIONS: ${{ matrix.repetitions }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95"
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: stress-${{ matrix.os }}
-          cache-workspace-crates: true
-
-      - name: Run repeated process lifecycle evidence
-        run: cargo xtask test stress
-
-      - name: Upload preserved test failures
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: nightly-test-failures-${{ matrix.os }}-${{ github.sha }}
-          path: target/test-failures/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  scheduled-profile:
-    name: Weekly test profile
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '0 4 * * 1')
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95"
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: profile
-          cache-workspace-crates: true
-
-      - name: Profile merge tests without retries
-        run: cargo xtask test profile
-
-  example-tests:
-    name: Benchmark and example tests
-    needs: changes
-    if: needs.changes.outputs.examples == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.95"
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: example-tests
-          cache-workspace-crates: true
-
-      - name: Test benchmark, example, and documentation targets
-        run: |
-          cargo test --locked --package leantoken-benchmarks --bins
-          cargo test --locked --workspace --all-features --doc
-
-      - name: Test performance support scripts
-        run: |
-          python3 -m unittest \
-            scripts/test_agent_walltime_ab.py \
-            scripts/test_paired_performance.py
-
-  required:
-    name: Required checks
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
-    needs:
-      - changes
-      - quality
-      - secret-scan
-      - dependency-audit
-      - unused-deps
-      - release-plan
-      - ci
-      - example-tests
-      - coverage
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      CHANGES_RESULT: ${{ needs.changes.result }}
-      QUALITY_RESULT: ${{ needs.quality.result }}
-      SECRET_SCAN_RESULT: ${{ needs.secret-scan.result }}
-      DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
-      UNUSED_DEPS_RESULT: ${{ needs.unused-deps.result }}
-      RELEASE_PLAN_RESULT: ${{ needs.release-plan.result }}
-      PRODUCT_RESULT: ${{ needs.ci.result }}
-      EXAMPLE_TESTS_RESULT: ${{ needs.example-tests.result }}
-      COVERAGE_RESULT: ${{ needs.coverage.result }}
-      MANIFESTS_CHANGED: ${{ needs.changes.outputs.manifests }}
-      RELEASE_CHANGED: ${{ needs.changes.outputs.release }}
-      PRODUCT_SELECTED: ${{ needs.changes.outputs.product }}
-      CONTRACT_SELECTED: ${{ needs.changes.outputs.contract }}
-      NPM_SELECTED: ${{ needs.changes.outputs.npm }}
-      EXAMPLES_SELECTED: ${{ needs.changes.outputs.examples }}
-      COVERAGE_SELECTED: ${{ needs.changes.outputs.coverage }}
-      SELECTED_LANES: ${{ needs.changes.outputs.selected_lanes }}
-      UNSELECTED_LANES: ${{ needs.changes.outputs.unselected_lanes }}
-      FALLBACK_REASON: ${{ needs.changes.outputs.fallback_reason }}
-    steps:
-      - name: Verify relevant jobs passed
-        run: |
-          failed=0
-
-          require_success() {
-            local name="$1"
-            local result="$2"
-            if [[ "$result" != "success" ]]; then
-              echo "::error::$name finished with result '$result'"
-              failed=1
-            fi
-          }
-
-          result_for_lane() {
-            case "$1" in
-              quality) echo "$QUALITY_RESULT" ;;
-              secret-scan) echo "$SECRET_SCAN_RESULT" ;;
-              product-linux|product-macos|product-windows|contract|npm) echo "$PRODUCT_RESULT" ;;
-              examples) echo "$EXAMPLE_TESTS_RESULT" ;;
-              coverage) echo "$COVERAGE_RESULT" ;;
-              dependency-audit) echo "$DEPENDENCY_AUDIT_RESULT" ;;
-              release-plan) echo "$RELEASE_PLAN_RESULT" ;;
-              *) echo invalid-plan ;;
-            esac
-          }
-
-          require_when() {
-            local condition="$1"
-            local name="$2"
-            local result="$3"
-            if [[ "$condition" == "true" ]]; then
-              require_success "$name" "$result"
-            elif [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              echo "::error::$name unexpectedly finished with result '$result'"
-              failed=1
-            fi
-          }
-
-          if [[ "$CHANGES_RESULT" != "success" ]]; then
-            echo "::error::invalid-plan: planner finished with result '$CHANGES_RESULT'"
-            exit 1
-          fi
-          if [[ -n "$FALLBACK_REASON" ]]; then
-            echo "::warning::planner fallback: $FALLBACK_REASON"
-          fi
-          echo 'Selected lane decisions:'
-          while IFS= read -r lane; do
-            result=$(result_for_lane "$lane")
-            case "$result" in
-              success) echo "- $lane: passed" ;;
-              skipped) echo "- $lane: unexpectedly skipped"; failed=1 ;;
-              cancelled|failure|timed_out) echo "- $lane: failed/cancelled ($result)"; failed=1 ;;
-              *) echo "- $lane: invalid-plan ($result)"; failed=1 ;;
-            esac
-          done < <(jq -r '.[]' <<< "$SELECTED_LANES")
-          while IFS= read -r lane; do
-            echo "- $lane: intentionally unselected"
-          done < <(jq -r '.[]' <<< "$UNSELECTED_LANES")
-          require_success "code quality" "$QUALITY_RESULT"
-          require_success "secret scan" "$SECRET_SCAN_RESULT"
-          require_when "$MANIFESTS_CHANGED" "dependency audit" "$DEPENDENCY_AUDIT_RESULT"
-          require_when "$MANIFESTS_CHANGED" "unused dependencies" "$UNUSED_DEPS_RESULT"
-          require_when "$RELEASE_CHANGED" "release plan" "$RELEASE_PLAN_RESULT"
-
-          product_changed=false
-          if [[ "$PRODUCT_SELECTED" == "true" || "$CONTRACT_SELECTED" == "true" || "$NPM_SELECTED" == "true" ]]; then
-            product_changed=true
-          fi
-          require_when "$product_changed" "cross-platform product tests" "$PRODUCT_RESULT"
-          require_when "$CONTRACT_SELECTED" "token-economy contract" "$PRODUCT_RESULT"
-          require_when "$NPM_SELECTED" "npm installation" "$PRODUCT_RESULT"
-          require_when "$EXAMPLES_SELECTED" "benchmark and example tests" "$EXAMPLE_TESTS_RESULT"
-          require_when "$COVERAGE_SELECTED" "test coverage" "$COVERAGE_RESULT"
-
-          exit "$failed"
-
-  coverage:
-    name: Test coverage
-    needs: changes
-    if: needs.changes.outputs.coverage == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      RUSTUP_TOOLCHAIN: stable
-      # Rust attributes `include!` bodies to both the physical source and the
-      # include-only façade. Count the physical files, but not those duplicate
-      # zero-coverage aliases or the subprocess-only CLI entrypoints; mixed
-      # façades with executable logic stay gated.
-      COVERAGE_IGNORE_REGEX: >-
-        concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/main/dispatch\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
+      - name: Install stable coverage Rust
+        if: matrix.command == 'coverage'
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: llvm-tools
 
+      - name: Install stable audit Rust
+        if: matrix.command == 'dependency-audit'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install nightly Rust
+        if: matrix.command == 'dependency-audit'
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
       - name: Cache Rust dependencies
+        if: contains(fromJSON('["rust-quality","product","contract","examples","coverage","dependency-audit","stress","profile"]'), matrix.command)
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: coverage
+          shared-key: evidence-${{ matrix.lane }}-${{ matrix.runner }}
           cache-workspace-crates: true
 
+      - name: Install nextest
+        if: matrix.command == 'rust-quality' || matrix.command == 'product' || matrix.command == 'stress' || matrix.command == 'profile'
+        uses: taiki-e/install-action@nextest
+
+      - name: Install Gitleaks
+        if: matrix.command == 'secret-scan'
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="$RUNNER_TEMP/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          destination="$RUNNER_TEMP/gitleaks-bin"
+          curl --fail --silent --show-error --location --retry 3 \
+            --connect-timeout 10 --max-time 120 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "$archive"
+          printf '%s  %s\n' "$GITLEAKS_SHA256" "$archive" | sha256sum --check --status
+          mkdir -p "$destination"
+          tar -xzf "$archive" -C "$destination" gitleaks
+          echo "$destination" >> "$GITHUB_PATH"
+
+      - name: Install cargo-audit
+        if: matrix.command == 'dependency-audit'
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install cargo-udeps
+        if: matrix.command == 'dependency-audit'
+        uses: taiki-e/install-action@cargo-udeps
+
+      - name: Install cargo-dist
+        if: matrix.command == 'release-plan'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-dist@0.32.0
+
       - name: Install cargo-llvm-cov
+        if: matrix.command == 'coverage'
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Run repository static validation
+        if: matrix.command == 'quality'
+        run: |
+          bash scripts/check-duplicates.sh
+          python3 -m unittest \
+            scripts/test_report_target_footprint.py \
+            scripts/test_validate_agents_md.py
+          bash scripts/test-ci-secret-scan-range.sh
+          bash scripts/validate-agents-md.sh
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Run Rust quality validation
+        if: matrix.command == 'rust-quality'
+        run: |
+          cargo metadata --locked --format-version 1 > /dev/null
+          cargo fmt --all -- --check
+          cargo xtask check-test-architecture
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Upload documentation for deployment
+        if: matrix.command == 'rust-quality' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: rustdoc
+          path: target/doc/
+          overwrite: true
+          retention-days: 7
+
+      - name: Run secret scan
+        if: matrix.command == 'secret-scan'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SCAN_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          SCAN_HEAD: ${{ matrix.source_revision }}
+        run: |
+          log_options="$(bash scripts/ci-secret-scan-range.sh "$EVENT_NAME" "$SCAN_BASE" "$SCAN_HEAD")"
+          gitleaks --redact --timeout=300 git --log-opts="$log_options" .
+
+      - name: Mark secret scan complete
+        if: matrix.command == 'secret-scan'
+        run: mkdir -p target && touch target/ci-command-completed
+
+      - name: Test product behavior
+        if: matrix.command == 'product'
+        run: |
+          cargo xtask test product --profile ci
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Test token-economy contract
+        if: matrix.command == 'contract'
+        run: |
+          cargo test-contract
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Test npm packaging and installation
+        if: matrix.command == 'npm'
+        run: |
+          node --test npm/npm-packaging.test.mjs
+          node --test npm/npm-install-e2e.mjs
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Test benchmark, example, and documentation targets
+        if: matrix.command == 'examples'
+        run: |
+          cargo test --locked --package leantoken-benchmarks --bins
+          cargo test --locked --workspace --all-features --doc
+          python3 -m unittest \
+            scripts/test_agent_walltime_ab.py \
+            scripts/test_paired_performance.py
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Audit dependencies and unused entries
+        if: matrix.command == 'dependency-audit'
+        run: |
+          cargo +stable audit
+          cargo +nightly udeps --all-targets --all-features
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Validate release plan
+        if: matrix.command == 'release-plan'
+        run: |
+          dist plan
+          mkdir -p target && touch target/ci-command-completed
+
       - name: Remove stale LLVM profiles
+        if: matrix.command == 'coverage'
         run: cargo llvm-cov clean --profraw-only
 
       - name: Run instrumented tests
+        if: matrix.command == 'coverage'
         run: >
           cargo llvm-cov --locked --all-features --workspace --no-report
           -- --test-threads=2
 
       - name: Enforce line coverage and write LCOV
-        if: success() || failure()
-        run: >
-          cargo llvm-cov report --lcov --output-path lcov.info
-          --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
-          --fail-under-lines 50
-
-      - name: Print coverage summary
-        if: success() || failure()
-        run: >
-          cargo llvm-cov report
-          --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
+        if: matrix.command == 'coverage' && (success() || failure())
+        env:
+          COVERAGE_IGNORE_REGEX: >-
+            concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/main/dispatch\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX" --fail-under-lines 50
+          cargo llvm-cov report --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
+          mkdir -p target && touch target/ci-command-completed
 
       - name: Upload coverage artifact
+        if: matrix.command == 'coverage' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov-${{ matrix.receipt_identity }}
+          path: lcov.info
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 7
+
+      - name: Run repeated process lifecycle evidence
+        if: matrix.command == 'stress'
+        env:
+          LEANTOKEN_STRESS_REPETITIONS: ${{ matrix.repetitions }}
+        run: |
+          cargo xtask test stress
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Profile merge tests without retries
+        if: matrix.command == 'profile'
+        run: |
+          cargo xtask test profile
+          mkdir -p target && touch target/ci-command-completed
+
+      - name: Upload test results and preserved failures
+        if: always() && contains(fromJSON('["product","contract","stress","profile"]'), matrix.command)
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-failures-${{ matrix.lane }}-${{ matrix.runner }}-${{ github.sha }}
+          path: |
+            target/nextest/
+            target/test-failures/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
+
+      - name: Write identity-bound lane receipt
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          LANE: ${{ matrix.lane }}
+          PLANNED_RUNNER: ${{ matrix.runner }}
+          COMMAND_CLASS: ${{ matrix.command }}
+          SOURCE_REVISION: ${{ matrix.source_revision }}
+          TOPOLOGY_DIGEST: ${{ matrix.topology_digest }}
+          RECEIPT_IDENTITY: ${{ matrix.receipt_identity }}
+        run: |
+          case "$JOB_STATUS" in
+            success) status=passed ;;
+            failure) status=failed ;;
+            cancelled) status=cancelled ;;
+            *) status=unexpectedly_skipped ;;
+          esac
+          if [[ "$status" == passed && ! -f target/ci-command-completed ]]; then
+            status=unexpectedly_skipped
+          fi
+          mkdir -p target/ci-receipt
+          jq -n \
+            --arg planner_version ci-planner-v3 \
+            --arg topology_digest "$TOPOLOGY_DIGEST" \
+            --arg source_revision "$SOURCE_REVISION" \
+            --arg lane "$LANE" \
+            --arg runner "$PLANNED_RUNNER" \
+            --arg command "$COMMAND_CLASS" \
+            --arg receipt_identity "$RECEIPT_IDENTITY" \
+            --arg status "$status" \
+            '{schema_version: 2, $planner_version, $topology_digest, $source_revision, $lane, $runner, $command, $receipt_identity, $status}' \
+            > "target/ci-receipt/receipt-$RECEIPT_IDENTITY.json"
+
+      - name: Upload lane receipt
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-lcov
-          path: lcov.info
+          name: ci-receipt-${{ matrix.receipt_identity }}
+          path: target/ci-receipt/receipt-${{ matrix.receipt_identity }}.json
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
+
+  required:
+    name: Required checks
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    needs: [changes, evidence]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install receipt verifier Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - name: Download immutable CI plan
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-plan-${{ github.sha }}
+          path: target/ci-plan
+
+      - name: Download lane receipts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ci-receipt-*
+          path: target/ci-receipts
+          merge-multiple: true
+
+      - name: Verify selected jobs and receipts
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          EVIDENCE_RESULT: ${{ needs.evidence.result }}
+          FALLBACK_REASON: ${{ needs.changes.outputs.fallback_reason }}
+        run: |
+          if [[ "$CHANGES_RESULT" != "success" ]]; then
+            echo "::error::CI planner finished with result '$CHANGES_RESULT'"
+            exit 1
+          fi
+          [[ -z "$FALLBACK_REASON" ]] || echo "::warning::planner fallback: $FALLBACK_REASON"
+          cargo xtask ci validate-plan --input target/ci-plan/leantoken-ci-plan.json
+          cargo xtask ci validate-receipts \
+            --plan target/ci-plan/leantoken-ci-plan.json \
+            --receipts target/ci-receipts
+          if [[ "$EVIDENCE_RESULT" != "success" ]]; then
+            echo "::error::executable evidence matrix finished with result '$EVIDENCE_RESULT'"
+            exit 1
+          fi
 
   docs-deploy:
     name: Deploy API documentation
-    needs: [changes, quality]
-    if: needs.changes.outputs.rust_quality == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, evidence]
+    if: needs.evidence.result == 'success' && contains(fromJSON(needs.changes.outputs.selected_lanes), 'rust-quality') && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

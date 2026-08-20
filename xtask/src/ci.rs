@@ -6,10 +6,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const TOPOLOGY_PATH: &str = "ci/test-topology.json";
-const PLAN_SCHEMA_VERSION: u32 = 1;
-const PLANNER_VERSION: &str = "ci-planner-v2";
+const PLAN_SCHEMA_VERSION: u32 = 2;
+const PLANNER_VERSION: &str = "ci-planner-v3";
 const MAX_CHANGED_PATHS_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CHANGED_PATHS: usize = 100_000;
+const MAX_RECEIPT_BYTES: u64 = 64 * 1024;
+const MAX_STRESS_REPETITIONS: usize = 100;
+const MAX_MATRIX_ENTRIES: usize = 32;
+const ALLOWED_RUNNERS: &[&str] = &["ubuntu-latest", "macos-latest", "windows-latest"];
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -66,7 +70,9 @@ struct Topology {
 struct Lane {
     id: String,
     owner: String,
+    allowed_events: Vec<Event>,
     required_events: Vec<Event>,
+    command: CommandClass,
     paths: Vec<String>,
     matrix: Vec<MatrixEntry>,
     #[serde(default)]
@@ -75,9 +81,40 @@ struct Lane {
     depends_on: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum CommandClass {
+    Quality,
+    SecretScan,
+    RustQuality,
+    Product,
+    Contract,
+    Examples,
+    Coverage,
+    DependencyAudit,
+    ReleasePlan,
+    Npm,
+    Stress,
+    Profile,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub(crate) struct MatrixEntry {
+struct MatrixEntry {
     name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repetitions: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct JobSpec {
+    pub(crate) lane: String,
+    pub(crate) runner: String,
+    pub(crate) command: CommandClass,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) repetitions: Option<usize>,
+    pub(crate) source_revision: String,
+    pub(crate) topology_digest: String,
+    pub(crate) receipt_identity: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -105,11 +142,12 @@ pub(crate) struct Plan {
     pub(crate) selected_lanes: Vec<LaneDecision>,
     pub(crate) unselected_lanes: Vec<LaneDecision>,
     pub(crate) dependencies: Vec<DependencyEdge>,
-    pub(crate) matrices: BTreeMap<String, Vec<MatrixEntry>>,
+    pub(crate) jobs: Vec<JobSpec>,
     pub(crate) fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 #[allow(
     dead_code,
     reason = "receipt fields are the stable CI handoff contract"
@@ -135,6 +173,9 @@ pub(crate) struct LaneReceipt {
     pub(crate) topology_digest: String,
     pub(crate) source_revision: String,
     pub(crate) lane: String,
+    pub(crate) runner: String,
+    pub(crate) command: CommandClass,
+    pub(crate) receipt_identity: String,
     pub(crate) status: ReceiptStatus,
 }
 
@@ -145,20 +186,27 @@ pub(crate) struct LaneReceipt {
 pub(crate) fn classify_receipt(
     plan: &Plan,
     lane: &str,
+    runner: &str,
     receipt: Option<&LaneReceipt>,
 ) -> ReceiptStatus {
     let selected = plan
-        .selected_lanes
+        .jobs
         .iter()
-        .any(|decision| decision.lane == lane);
-    let Some(receipt) = receipt else {
-        return if selected {
-            ReceiptStatus::Missing
-        } else {
+        .find(|job| job.lane == lane && job.runner == runner);
+    let Some(selected) = selected else {
+        return if receipt.is_none() {
             ReceiptStatus::IntentionallyUnselected
+        } else {
+            ReceiptStatus::InvalidPlan
         };
     };
-    if receipt.lane != lane
+    let Some(receipt) = receipt else {
+        return ReceiptStatus::Missing;
+    };
+    if receipt.lane != selected.lane
+        || receipt.runner != selected.runner
+        || receipt.command != selected.command
+        || receipt.receipt_identity != selected.receipt_identity
         || receipt.schema_version != plan.schema_version
         || receipt.planner_version != plan.planner_version
         || receipt.topology_digest != plan.topology_digest
@@ -166,11 +214,7 @@ pub(crate) fn classify_receipt(
     {
         return ReceiptStatus::InvalidPlan;
     }
-    if selected {
-        receipt.status.clone()
-    } else {
-        ReceiptStatus::InvalidPlan
-    }
+    receipt.status.clone()
 }
 
 pub(crate) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
@@ -180,13 +224,23 @@ pub(crate) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
     match command {
         "plan" => run_plan(root, &args[1..]),
         "validate-plan" => run_validate_plan(root, &args[1..]),
+        "validate-receipts" => run_validate_receipts(root, &args[1..]),
         _ => Err(usage()),
     }
 }
 
 pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
     let topology = read_topology(root)?;
-    if topology.schema_version != PLAN_SCHEMA_VERSION || topology.max_matrix_entries == 0 {
+    validate_topology_structure(&topology)?;
+    check_tracked_path_ownership(root, &topology)?;
+    Ok(())
+}
+
+fn validate_topology_structure(topology: &Topology) -> Result<(), String> {
+    if topology.schema_version != PLAN_SCHEMA_VERSION
+        || topology.max_matrix_entries == 0
+        || topology.max_matrix_entries > MAX_MATRIX_ENTRIES
+    {
         return Err("topology schema or matrix bound is invalid".to_owned());
     }
     let lanes = topology
@@ -199,22 +253,39 @@ pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
     }
     let mut matrix_count = 0;
     for lane in &topology.lanes {
-        if lane.owner.trim().is_empty() || lane.matrix.is_empty() {
-            return Err(format!("lane {} has no owner or matrix", lane.id));
+        if lane.owner.trim().is_empty() || lane.allowed_events.is_empty() || lane.matrix.is_empty()
+        {
+            return Err(format!(
+                "lane {} has no owner, allowed events, or matrix",
+                lane.id
+            ));
         }
+        let allowed_events = lane.allowed_events.iter().copied().collect::<BTreeSet<_>>();
+        let required_events = lane
+            .required_events
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         let matrix_names = lane
             .matrix
             .iter()
             .map(|entry| entry.name.as_str())
             .collect::<BTreeSet<_>>();
-        if matrix_names.len() != lane.matrix.len()
+        if allowed_events.len() != lane.allowed_events.len()
+            || required_events.len() != lane.required_events.len()
+            || !required_events.is_subset(&allowed_events)
+            || matrix_names.len() != lane.matrix.len()
+            || lane
+                .matrix
+                .iter()
+                .any(|entry| !valid_matrix_entry(lane.command, entry))
             || lane
                 .depends_on
                 .iter()
                 .any(|dependency| !lanes.contains(dependency.as_str()))
         {
             return Err(format!(
-                "lane {} has duplicate matrix entries or unknown dependencies",
+                "lane {} has invalid event eligibility, matrix entries, or dependencies",
                 lane.id
             ));
         }
@@ -226,9 +297,18 @@ pub(crate) fn check_topology(root: &Path) -> Result<(), String> {
             topology.max_matrix_entries
         ));
     }
-    check_tracked_path_ownership(root, &topology)?;
-    ensure_acyclic(&topology)?;
+    ensure_acyclic(topology)?;
     Ok(())
+}
+
+fn valid_matrix_entry(command: CommandClass, entry: &MatrixEntry) -> bool {
+    ALLOWED_RUNNERS.contains(&entry.name.as_str())
+        && match (command, entry.repetitions) {
+            (CommandClass::Stress, Some(1..=MAX_STRESS_REPETITIONS)) => true,
+            (CommandClass::Stress, _) => false,
+            (_, None) => true,
+            (_, Some(_)) => false,
+        }
 }
 
 fn check_tracked_path_ownership(root: &Path, topology: &Topology) -> Result<(), String> {
@@ -304,6 +384,87 @@ fn run_validate_plan(root: &Path, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_validate_receipts(root: &Path, args: &[String]) -> Result<(), String> {
+    let plan_path = option_value(args, "--plan")?.ok_or("--plan is required")?;
+    let receipts_path = option_value(args, "--receipts")?.ok_or("--receipts is required")?;
+    if args.len() != 4 {
+        return Err(
+            "`cargo xtask ci validate-receipts` requires --plan <plan.json> --receipts <directory>"
+                .to_owned(),
+        );
+    }
+    let plan: Plan = read_json(Path::new(&plan_path))?;
+    validate_plan(root, &plan)?;
+    validate_receipts(&plan, Path::new(&receipts_path))?;
+    println!("CI receipts: valid ({} jobs)", plan.jobs.len());
+    Ok(())
+}
+
+fn validate_receipts(plan: &Plan, directory: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(directory)
+        .map_err(|error| format!("could not inspect receipt directory: {error}"))?;
+    if !metadata.file_type().is_dir() {
+        return Err("receipt directory must be a real directory, not a symlink".to_owned());
+    }
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|error| format!("could not resolve receipt directory: {error}"))?;
+    let mut receipts = BTreeMap::<String, LaneReceipt>::new();
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("could not read receipt directory: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("could not read receipt entry: {error}"))?;
+        if receipts.len() >= plan.jobs.len() {
+            return Err(
+                "receipt directory contains more entries than the executable plan".to_owned(),
+            );
+        }
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("could not inspect receipt entry: {error}"))?;
+        if !metadata.file_type().is_file() || metadata.len() > MAX_RECEIPT_BYTES {
+            return Err("receipt entries must be bounded regular files".to_owned());
+        }
+        let canonical = path
+            .canonicalize()
+            .map_err(|error| format!("could not resolve receipt entry: {error}"))?;
+        if !canonical.starts_with(&canonical_directory) {
+            return Err("receipt entry resolves outside the receipt directory".to_owned());
+        }
+        let receipt: LaneReceipt = read_json(&canonical)?;
+        if receipts
+            .insert(receipt.receipt_identity.clone(), receipt)
+            .is_some()
+        {
+            return Err("receipt identities must be unique".to_owned());
+        }
+    }
+
+    for job in &plan.jobs {
+        let status = classify_receipt(
+            plan,
+            &job.lane,
+            &job.runner,
+            receipts.get(&job.receipt_identity),
+        );
+        if status != ReceiptStatus::Passed {
+            return Err(format!(
+                "job {} on {} has receipt status {:?}",
+                job.lane, job.runner, status
+            ));
+        }
+    }
+    if receipts.keys().any(|identity| {
+        !plan
+            .jobs
+            .iter()
+            .any(|job| &job.receipt_identity == identity)
+    }) {
+        return Err("receipt directory contains an identity absent from the plan".to_owned());
+    }
+    Ok(())
+}
+
 fn parse_plan_args(
     root: &Path,
     args: &[String],
@@ -359,13 +520,7 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
     if input.head_revision.trim().is_empty() {
         return Err("head revision must not be empty".to_owned());
     }
-    let topology = read_topology(root)?;
-    if topology.schema_version != PLAN_SCHEMA_VERSION {
-        return Err(format!(
-            "unsupported topology schema {}",
-            topology.schema_version
-        ));
-    }
+    let topology = read_validated_topology(root)?;
     validate_schedule(&topology, &input)?;
     let paths = normalize_paths(&input.changed_paths)?;
     let known = paths.iter().all(|path| {
@@ -472,12 +627,6 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
             },
         })
         .collect::<Vec<_>>();
-    let matrices = topology
-        .lanes
-        .iter()
-        .filter(|lane| selected.contains_key(&lane.id))
-        .map(|lane| (lane.id.clone(), lane.matrix.clone()))
-        .collect::<BTreeMap<_, _>>();
     let dependencies = topology
         .lanes
         .iter()
@@ -489,28 +638,74 @@ fn build_plan(root: &Path, input: PlannerInput) -> Result<Plan, String> {
             })
         })
         .collect::<Vec<_>>();
+    let topology_digest = topology_digest(root)?;
+    let source_revision = input
+        .source_revision
+        .filter(|revision| !revision.trim().is_empty())
+        .unwrap_or_else(|| input.head_revision.clone());
+    let jobs = build_jobs(
+        &topology,
+        selected.keys().map(String::as_str),
+        &source_revision,
+        &topology_digest,
+    );
     Ok(Plan {
         schema_version: PLAN_SCHEMA_VERSION,
         planner_version: PLANNER_VERSION.to_owned(),
-        topology_digest: topology_digest(root)?,
+        topology_digest,
         event: input.event,
         schedule: input.schedule,
         base_revision: input.base_revision,
         head_revision: input.head_revision.clone(),
-        source_revision: input
-            .source_revision
-            .filter(|revision| !revision.trim().is_empty())
-            .unwrap_or_else(|| input.head_revision.clone()),
+        source_revision,
         selected_lanes,
         unselected_lanes,
         dependencies,
-        matrices,
+        jobs,
         fallback_reason,
     })
 }
 
+fn build_jobs<'a>(
+    topology: &Topology,
+    selected: impl IntoIterator<Item = &'a str>,
+    source_revision: &str,
+    topology_digest: &str,
+) -> Vec<JobSpec> {
+    let selected = selected.into_iter().collect::<BTreeSet<_>>();
+    topology
+        .lanes
+        .iter()
+        .filter(|lane| selected.contains(lane.id.as_str()))
+        .flat_map(|lane| {
+            lane.matrix.iter().map(|entry| {
+                let mut hasher = Hasher::new();
+                for field in [
+                    "ci-lane-receipt-v1",
+                    source_revision,
+                    topology_digest,
+                    lane.id.as_str(),
+                    entry.name.as_str(),
+                ] {
+                    hasher.update(field.as_bytes());
+                    hasher.update(&[0]);
+                }
+                JobSpec {
+                    lane: lane.id.clone(),
+                    runner: entry.name.clone(),
+                    command: lane.command,
+                    repetitions: entry.repetitions,
+                    source_revision: source_revision.to_owned(),
+                    topology_digest: topology_digest.to_owned(),
+                    receipt_identity: hasher.finalize().to_hex().to_string(),
+                }
+            })
+        })
+        .collect()
+}
+
 fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
-    let topology = read_topology(root)?;
+    let topology = read_validated_topology(root)?;
     if plan.schema_version != PLAN_SCHEMA_VERSION || plan.planner_version != PLANNER_VERSION {
         return Err("plan schema or planner version is unsupported".to_owned());
     }
@@ -595,29 +790,24 @@ fn validate_plan(root: &Path, plan: &Plan) -> Result<(), String> {
             ));
         }
     }
-    let mut matrix_count = 0;
-    for lane in &topology.lanes {
-        let Some(matrix) = plan.matrices.get(&lane.id) else {
-            if selected.contains(lane.id.as_str()) {
-                return Err(format!("selected lane {} has no matrix", lane.id));
-            }
-            continue;
-        };
-        if !selected.contains(lane.id.as_str()) || matrix != &lane.matrix {
-            return Err(format!("matrix for lane {} is not canonical", lane.id));
-        }
-        let unique = matrix
-            .iter()
-            .map(|entry| &entry.name)
-            .collect::<BTreeSet<_>>();
-        if unique.len() != matrix.len() || matrix.is_empty() {
-            return Err(format!("matrix for lane {} is duplicate or empty", lane.id));
-        }
-        matrix_count += matrix.len();
+    let expected_jobs = build_jobs(
+        &topology,
+        selected.iter().copied(),
+        &plan.source_revision,
+        &plan.topology_digest,
+    );
+    let receipt_identities = plan
+        .jobs
+        .iter()
+        .map(|job| job.receipt_identity.as_str())
+        .collect::<BTreeSet<_>>();
+    if plan.jobs != expected_jobs || receipt_identities.len() != plan.jobs.len() {
+        return Err("executable jobs do not match the canonical topology matrix".to_owned());
     }
-    if matrix_count > topology.max_matrix_entries {
+    if plan.jobs.len() > topology.max_matrix_entries || plan.jobs.len() > MAX_MATRIX_ENTRIES {
         return Err(format!(
-            "matrix has {matrix_count} entries, limit is {}",
+            "executable plan has {} jobs, limit is {}",
+            plan.jobs.len(),
             topology.max_matrix_entries
         ));
     }
@@ -766,6 +956,9 @@ fn validate_schedule(topology: &Topology, input: &PlannerInput) -> Result<(), St
 }
 
 fn lane_runnable(lane: &Lane, event: Event, schedule: Option<&str>) -> bool {
+    if !lane.allowed_events.contains(&event) {
+        return false;
+    }
     match event {
         Event::PullRequest | Event::MergeGroup | Event::Push => lane.schedule.is_none(),
         Event::Schedule => lane.schedule.is_none() || lane.schedule.as_deref() == schedule,
@@ -797,6 +990,12 @@ fn read_topology(root: &Path) -> Result<Topology, String> {
     read_json(&root.join(TOPOLOGY_PATH))
 }
 
+fn read_validated_topology(root: &Path) -> Result<Topology, String> {
+    let topology = read_topology(root)?;
+    validate_topology_structure(&topology)?;
+    Ok(topology)
+}
+
 fn topology_digest(root: &Path) -> Result<String, String> {
     let bytes = fs::read(root.join(TOPOLOGY_PATH)).map_err(|error| error.to_string())?;
     let mut hasher = Hasher::new();
@@ -810,16 +1009,18 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
 }
 
 fn usage() -> String {
-    "cargo xtask ci plan [--input <input.json> | --event <event> --head <sha>] [--output <plan.json>] [--dry-run] | validate-plan --input <plan.json>".to_owned()
+    "cargo xtask ci plan [--input <input.json> | --event <event> --head <sha>] [--output <plan.json>] [--dry-run] | validate-plan --input <plan.json> | validate-receipts --plan <plan.json> --receipts <directory>".to_owned()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Event, LaneReceipt, PlannerInput, ReceiptStatus, build_plan, classify_receipt,
-        normalize_paths, parse_changed_paths, validate_plan,
+        CommandClass, Event, LaneReceipt, MatrixEntry, PlannerInput, ReceiptStatus, build_plan,
+        classify_receipt, normalize_paths, parse_changed_paths, run, valid_matrix_entry,
+        validate_plan, validate_receipts,
     };
     use crate::workspace_root;
+    use std::fs;
 
     fn input(event: Event, paths: &[&str]) -> PlannerInput {
         PlannerInput {
@@ -833,6 +1034,20 @@ mod tests {
             diagnostic: false,
             fork: false,
         }
+    }
+
+    fn selected_lanes(plan: &super::Plan) -> Vec<&str> {
+        plan.selected_lanes
+            .iter()
+            .map(|decision| decision.lane.as_str())
+            .collect()
+    }
+
+    fn job_matrix(plan: &super::Plan) -> Vec<(&str, &str)> {
+        plan.jobs
+            .iter()
+            .map(|job| (job.lane.as_str(), job.runner.as_str()))
+            .collect()
     }
 
     #[test]
@@ -865,97 +1080,132 @@ mod tests {
     }
 
     #[test]
-    fn pull_request_selection_is_owner_specific() {
-        let plan = build_plan(
-            &workspace_root(),
-            input(Event::PullRequest, &["docs/testing.md"]),
-        )
-        .expect("plan");
-        assert!(plan.selected_lanes.iter().all(|lane| {
-            matches!(
-                lane.lane.as_str(),
-                "quality" | "secret-scan" | "product-linux" | "product-macos" | "product-windows"
-            )
-        }));
-        assert!(
-            plan.selected_lanes
-                .iter()
-                .any(|lane| lane.lane == "product-linux")
-        );
-        assert!(plan.fallback_reason.is_none());
-    }
-
-    #[test]
-    fn representative_paths_select_each_pr_owned_lane() {
+    fn pull_request_policy_has_exact_owner_and_job_selection() {
         let cases = [
-            ("src/config.rs", "product-linux"),
-            ("tests/benchmark_contract.rs", "contract"),
-            ("examples/context_utilization.rs", "examples"),
-            ("Cargo.lock", "dependency-audit"),
-            ("npm/leantoken.cjs", "npm"),
-            ("dist-workspace.toml", "release-plan"),
+            (
+                "src/config.rs",
+                vec!["quality", "rust-quality", "secret-scan", "product-linux"],
+            ),
+            (
+                "crates/test-suite/src/domains/retrieval.rs",
+                vec!["quality", "rust-quality", "secret-scan", "product-linux"],
+            ),
+            (
+                "tests/process/mcp_protocol.rs",
+                vec!["quality", "rust-quality", "secret-scan", "product-linux"],
+            ),
+            (
+                "crates/benchmarks/src/bin/indexing_profile.rs",
+                vec!["quality", "rust-quality", "secret-scan"],
+            ),
+            ("docs/testing.md", vec!["quality", "secret-scan"]),
+            (
+                "npm/leantoken.cjs",
+                vec!["quality", "secret-scan", "release-plan", "npm"],
+            ),
+            (
+                "Cargo.lock",
+                vec![
+                    "quality",
+                    "rust-quality",
+                    "secret-scan",
+                    "product-linux",
+                    "dependency-audit",
+                    "release-plan",
+                ],
+            ),
         ];
-        for (path, lane) in cases {
-            let plan =
-                build_plan(&workspace_root(), input(Event::PullRequest, &[path])).expect("plan");
-            assert!(
-                plan.selected_lanes
+        for (path, expected) in cases {
+            let plan = build_plan(&workspace_root(), input(Event::PullRequest, &[path]))
+                .expect("pull-request plan");
+            assert_eq!(selected_lanes(&plan), expected, "path: {path}");
+            assert_eq!(
+                job_matrix(&plan),
+                expected
                     .iter()
-                    .any(|decision| decision.lane == lane),
-                "{path} did not select {lane}: {plan:?}"
+                    .map(|lane| (*lane, "ubuntu-latest"))
+                    .collect::<Vec<_>>(),
+                "path: {path}"
             );
-            assert!(
-                plan.fallback_reason.is_none(),
-                "{path} unexpectedly selected the conservative fallback: {plan:?}"
-            );
+            assert!(plan.fallback_reason.is_none(), "path: {path}");
         }
     }
 
     #[test]
-    fn test_only_and_quality_paths_do_not_overselect_expensive_lanes() {
-        for path in [
-            "crates/test-suite/src/domains/retrieval.rs",
-            "crates/test-support/src/sandbox.rs",
-        ] {
-            let plan = build_plan(&workspace_root(), input(Event::PullRequest, &[path]))
-                .expect("test-only crate plan");
-            assert!(
-                plan.fallback_reason.is_none(),
-                "unexpected fallback for {path}"
+    fn merge_push_schedule_and_manual_policies_have_exact_jobs() {
+        for event in [Event::MergeGroup, Event::Push] {
+            let plan = build_plan(&workspace_root(), input(event, &["src/config.rs"]))
+                .expect("merge or push plan");
+            assert_eq!(
+                selected_lanes(&plan),
+                vec![
+                    "quality",
+                    "rust-quality",
+                    "secret-scan",
+                    "product-linux",
+                    "product-macos",
+                    "product-windows",
+                    "contract",
+                    "examples",
+                    "npm",
+                ]
             );
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .any(|lane| lane.lane == "product-linux")
-            );
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .any(|lane| lane.lane == "coverage")
-            );
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .all(|lane| lane.lane != "contract" && lane.lane != "examples")
+            assert_eq!(
+                job_matrix(&plan),
+                vec![
+                    ("quality", "ubuntu-latest"),
+                    ("rust-quality", "ubuntu-latest"),
+                    ("secret-scan", "ubuntu-latest"),
+                    ("product-linux", "ubuntu-latest"),
+                    ("product-macos", "macos-latest"),
+                    ("product-windows", "windows-latest"),
+                    ("contract", "ubuntu-latest"),
+                    ("contract", "macos-latest"),
+                    ("contract", "windows-latest"),
+                    ("examples", "ubuntu-latest"),
+                    ("npm", "ubuntu-latest"),
+                ]
             );
         }
 
-        for path in [
-            "scripts/test_validate_agents_md.py",
-            "ci/test-topology.json",
-        ] {
-            let plan = build_plan(&workspace_root(), input(Event::PullRequest, &[path]))
-                .expect("quality-only plan");
-            assert!(
-                plan.fallback_reason.is_none(),
-                "unexpected fallback for {path}"
-            );
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .all(|lane| { matches!(lane.lane.as_str(), "quality" | "secret-scan") })
-            );
-        }
+        let mut nightly = input(Event::Schedule, &[]);
+        nightly.schedule = Some("0 3 * * *".to_owned());
+        let nightly = build_plan(&workspace_root(), nightly).expect("nightly plan");
+        assert_eq!(
+            selected_lanes(&nightly),
+            vec![
+                "quality",
+                "rust-quality",
+                "secret-scan",
+                "product-linux",
+                "product-macos",
+                "product-windows",
+                "contract",
+                "examples",
+                "coverage",
+                "dependency-audit",
+                "scheduled-stress",
+            ]
+        );
+        assert_eq!(
+            nightly
+                .jobs
+                .iter()
+                .filter(|job| job.lane == "scheduled-stress")
+                .map(|job| (job.runner.as_str(), job.repetitions))
+                .collect::<Vec<_>>(),
+            vec![
+                ("ubuntu-latest", Some(100)),
+                ("macos-latest", Some(25)),
+                ("windows-latest", Some(25)),
+            ]
+        );
+
+        let mut manual = input(Event::Manual, &[]);
+        manual.full_run = true;
+        let manual = build_plan(&workspace_root(), manual).expect("manual full plan");
+        assert_eq!(manual.unselected_lanes.len(), 0);
+        assert_eq!(manual.jobs.len(), 18);
     }
 
     #[test]
@@ -1055,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_paths_and_duplicate_matrices_are_rejected() {
+    fn malformed_paths_and_noncanonical_jobs_are_rejected() {
         assert!(normalize_paths(&["/absolute".to_owned()]).is_err());
         assert!(normalize_paths(&["src\\config.rs".to_owned()]).is_err());
         let mut plan = build_plan(
@@ -1063,13 +1313,70 @@ mod tests {
             input(Event::PullRequest, &["src/config.rs"]),
         )
         .expect("plan");
-        plan.matrices
-            .get_mut("quality")
-            .unwrap()
-            .push(super::MatrixEntry {
-                name: "ubuntu-latest".to_owned(),
-            });
+        plan.jobs.push(plan.jobs[0].clone());
         assert!(validate_plan(&workspace_root(), &plan).is_err());
+    }
+
+    #[test]
+    fn executable_matrix_rejects_untrusted_runners_and_unbounded_repetition() {
+        let ubuntu = MatrixEntry {
+            name: "ubuntu-latest".to_owned(),
+            repetitions: None,
+        };
+        assert!(valid_matrix_entry(CommandClass::Product, &ubuntu));
+
+        let arbitrary_runner = MatrixEntry {
+            name: "self-hosted".to_owned(),
+            repetitions: None,
+        };
+        assert!(!valid_matrix_entry(
+            CommandClass::Product,
+            &arbitrary_runner
+        ));
+
+        let excessive_stress = MatrixEntry {
+            name: "ubuntu-latest".to_owned(),
+            repetitions: Some(101),
+        };
+        assert!(!valid_matrix_entry(CommandClass::Stress, &excessive_stress));
+        assert!(!valid_matrix_entry(
+            CommandClass::Product,
+            &excessive_stress
+        ));
+    }
+
+    #[test]
+    fn planner_command_rejects_an_untrusted_topology_before_writing_matrix_json() {
+        let root = tempfile::tempdir().expect("planner fixture");
+        fs::create_dir(root.path().join("ci")).expect("fixture CI directory");
+        let topology =
+            fs::read(workspace_root().join("ci/test-topology.json")).expect("checked topology");
+        let mut topology: serde_json::Value =
+            serde_json::from_slice(&topology).expect("topology JSON");
+        topology["lanes"][0]["matrix"][0]["name"] = serde_json::json!("self-hosted");
+        fs::write(
+            root.path().join("ci/test-topology.json"),
+            serde_json::to_vec(&topology).expect("fixture topology JSON"),
+        )
+        .expect("fixture topology");
+        let output = root.path().join("plan.json");
+        let error = run(
+            root.path(),
+            vec![
+                "plan".to_owned(),
+                "--event".to_owned(),
+                "pull_request".to_owned(),
+                "--head".to_owned(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                "--changed-path".to_owned(),
+                "src/config.rs".to_owned(),
+                "--output".to_owned(),
+                output.display().to_string(),
+            ],
+        )
+        .expect_err("untrusted runner reached plan output");
+        assert!(error.contains("invalid event eligibility, matrix entries, or dependencies"));
+        assert!(!output.exists());
     }
 
     #[test]
@@ -1102,7 +1409,7 @@ mod tests {
         )
         .expect("plan");
         assert_eq!(
-            classify_receipt(&plan, "product-linux", None),
+            classify_receipt(&plan, "product-linux", "ubuntu-latest", None),
             ReceiptStatus::Missing
         );
         assert_eq!(
@@ -1113,21 +1420,108 @@ mod tests {
                 )
                 .expect("documentation plan"),
                 "product-windows",
+                "windows-latest",
                 None,
             ),
             ReceiptStatus::IntentionallyUnselected
         );
+        let quality_job = plan
+            .jobs
+            .iter()
+            .find(|job| job.lane == "quality")
+            .expect("quality job");
         let receipt = LaneReceipt {
             schema_version: plan.schema_version,
             planner_version: plan.planner_version.clone(),
             topology_digest: "stale".to_owned(),
             source_revision: plan.source_revision.clone(),
             lane: "quality".to_owned(),
+            runner: quality_job.runner.clone(),
+            command: quality_job.command,
+            receipt_identity: quality_job.receipt_identity.clone(),
             status: ReceiptStatus::Passed,
         };
         assert_eq!(
-            classify_receipt(&plan, "quality", Some(&receipt)),
+            classify_receipt(&plan, "quality", "ubuntu-latest", Some(&receipt)),
             ReceiptStatus::InvalidPlan
         );
+    }
+
+    #[test]
+    fn receipt_directory_must_cover_every_exact_planned_job() {
+        let plan = build_plan(
+            &workspace_root(),
+            input(Event::PullRequest, &["docs/testing.md"]),
+        )
+        .expect("plan");
+        let directory = tempfile::tempdir().expect("receipt directory");
+        for job in &plan.jobs {
+            let receipt = LaneReceipt {
+                schema_version: plan.schema_version,
+                planner_version: plan.planner_version.clone(),
+                topology_digest: plan.topology_digest.clone(),
+                source_revision: plan.source_revision.clone(),
+                lane: job.lane.clone(),
+                runner: job.runner.clone(),
+                command: job.command,
+                receipt_identity: job.receipt_identity.clone(),
+                status: ReceiptStatus::Passed,
+            };
+            fs::write(
+                directory
+                    .path()
+                    .join(format!("receipt-{}.json", job.receipt_identity)),
+                serde_json::to_vec(&receipt).expect("receipt JSON"),
+            )
+            .expect("write receipt");
+        }
+        validate_receipts(&plan, directory.path()).expect("complete receipt set");
+
+        fs::remove_file(
+            directory
+                .path()
+                .join(format!("receipt-{}.json", plan.jobs[0].receipt_identity)),
+        )
+        .expect("remove receipt");
+        assert!(validate_receipts(&plan, directory.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn receipt_directory_rejects_symlink_entries() {
+        use std::os::unix::fs::symlink;
+
+        let plan = build_plan(
+            &workspace_root(),
+            input(Event::PullRequest, &["docs/testing.md"]),
+        )
+        .expect("plan");
+        let directory = tempfile::tempdir().expect("receipt directory");
+        let outside = tempfile::NamedTempFile::new().expect("outside receipt");
+        symlink(outside.path(), directory.path().join("receipt.json")).expect("receipt symlink");
+
+        assert!(validate_receipts(&plan, directory.path()).is_err());
+    }
+
+    #[test]
+    fn workflow_consumes_planner_jobs_and_validates_receipts() {
+        let workflow = fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+            .expect("CI workflow");
+        assert!(workflow.contains("fromJSON(needs.changes.outputs.job_matrix)"));
+        assert!(workflow.contains("cargo xtask ci validate-receipts"));
+        assert!(workflow.contains("status=unexpectedly_skipped"));
+        assert!(workflow.contains("target/ci-command-completed"));
+        assert!(workflow.contains("PLANNED_RUNNER: ${{ matrix.runner }}"));
+        assert!(!workflow.contains("RUNNER_NAME: ${{ matrix.runner }}"));
+        assert!(workflow.contains("Checkout complete history for secret scanning"));
+        assert!(workflow.contains("fetch-depth: 0"));
+        assert!(workflow.contains("scripts/ci-secret-scan-range.sh"));
+        assert!(workflow.contains("gitleaks --redact --timeout=300 git"));
+        assert!(!workflow.contains("gitleaks/gitleaks-action"));
+        assert_eq!(workflow.matches("overwrite: true").count(), 5);
+        assert!(workflow.contains(
+            "matrix.command == 'rust-quality' || matrix.command == 'product' || matrix.command == 'stress' || matrix.command == 'profile'"
+        ));
+        assert!(!workflow.contains("os: [ubuntu-latest, macos-latest, windows-latest]"));
     }
 }
