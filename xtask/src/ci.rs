@@ -1514,7 +1514,7 @@ mod tests {
         assert!(workflow.contains("Checkout complete history for secret scanning"));
         assert!(workflow.contains("fetch-depth: 0"));
         assert!(workflow.contains("scripts/ci-secret-scan-range.sh"));
-        assert!(workflow.contains("gitleaks --redact --timeout=5m git"));
+        assert!(workflow.contains("gitleaks --redact --timeout=300 git"));
         assert!(!workflow.contains("gitleaks/gitleaks-action"));
         assert_eq!(workflow.matches("overwrite: true").count(), 5);
         assert!(workflow.contains(

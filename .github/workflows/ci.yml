@@ -290,7 +290,7 @@ jobs:
           SCAN_HEAD: ${{ matrix.source_revision }}
         run: |
           log_options="$(bash scripts/ci-secret-scan-range.sh "$EVENT_NAME" "$SCAN_BASE" "$SCAN_HEAD")"
-          gitleaks --redact --timeout=5m git --log-opts="$log_options" .
+          gitleaks --redact --timeout=300 git --log-opts="$log_options" .
 
       - name: Mark secret scan complete
         if: matrix.command == 'secret-scan'
