@@ -190,7 +190,7 @@ pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
     match edit.public.action {
         ClientPlanAction::Create | ClientPlanAction::Update => write_if_changed(
             &edit.public.path,
-            edit.original.as_deref(),
+            edit.original.as_deref().unwrap_or_default(),
             edit.updated.as_deref().unwrap_or_default(),
         ),
         ClientPlanAction::Remove => {
@@ -218,7 +218,11 @@ pub(super) fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
         )));
     }
     if let Some(updated) = edit.updated() {
-        write_if_changed(&edit.public.path, edit.original(), updated)?;
+        write_if_changed(
+            &edit.public.path,
+            edit.original().unwrap_or_default(),
+            updated,
+        )?;
     }
     Ok(())
 }

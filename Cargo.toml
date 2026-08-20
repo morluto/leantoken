@@ -71,7 +71,6 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 rayon = "1.11.0"
 r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.35.0", default-features = false }
-rustix = { version = "1.1.4", default-features = false, features = ["fs"] }
 regex = "1.12.2"
 regex-syntax = "0.8.11"
 rmcp = { version = "=3.1.2", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
