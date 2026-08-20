@@ -235,6 +235,27 @@ fn open_lock_file(path: &Path) -> Result<File> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    open_lock_file_impl(path)
+}
+
+#[cfg(unix)]
+fn open_lock_file_impl(path: &Path) -> Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_NOFOLLOW prevents following symlinks at the final path component,
+    // eliminating a check-then-open window. libc supplies the target's value;
+    // the raw flag is not shared by every Unix implementation.
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(Into::into)
+}
+
+#[cfg(not(unix))]
+fn open_lock_file_impl(path: &Path) -> Result<File> {
     OpenOptions::new()
         .read(true)
         .write(true)

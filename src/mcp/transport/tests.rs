@@ -156,6 +156,89 @@ fn overload_results_follow_the_negotiated_rmcp_result_shape() {
 }
 
 #[test]
+fn control_request_with_a_reserved_id_is_rejected_and_keeps_the_tombstone() {
+    let dispatch = RequestAdmission::new(1);
+    let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
+    let mut tool = incoming_request(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "files", "arguments": {}}
+    }));
+    transport.admit_message(&mut tool).expect("admit tool call");
+
+    let mut cancellation = incoming_request(serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/cancelled",
+        "params": {"requestId": 1, "reason": "no longer needed"}
+    }));
+    transport
+        .admit_message(&mut cancellation)
+        .expect("admit cancellation");
+
+    let mut ping = incoming_request(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "ping"
+    }));
+    let failure = transport
+        .admit_message(&mut ping)
+        .expect_err("control request with a reserved id must be rejected");
+    assert!(
+        !failure.tool_call,
+        "a control request must not receive a tool-call overload response"
+    );
+
+    let dispatched = transport.dispatched_calls.lock().expect("dispatch lock");
+    assert!(
+        dispatched.contains_key(&rmcp::model::NumberOrString::Number(1)),
+        "the tombstone must survive the rejected control request"
+    );
+}
+
+#[test]
+fn retained_tombstones_are_bounded() {
+    let dispatch = RequestAdmission::new(1);
+    let transport = BoundedStdioTransport::new(dispatch.clone(), McpResultMode::Dual);
+    let bound = RETAINED_TOMBSTONE_MULTIPLIER;
+
+    for id in 0..bound {
+        let mut tool = incoming_request(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": "files", "arguments": {}}
+        }));
+        transport.admit_message(&mut tool).expect("admit tool call");
+        let mut cancellation = incoming_request(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/cancelled",
+            "params": {"requestId": id, "reason": "no longer needed"}
+        }));
+        transport
+            .admit_message(&mut cancellation)
+            .expect("admit cancellation");
+    }
+
+    let mut excess = incoming_request(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": bound,
+        "method": "tools/call",
+        "params": {"name": "files", "arguments": {}}
+    }));
+    assert!(
+        transport.admit_message(&mut excess).is_err(),
+        "admission must be rejected once retained entries reach the bound"
+    );
+    let dispatched = transport.dispatched_calls.lock().expect("dispatch lock");
+    assert_eq!(
+        dispatched.len(),
+        bound,
+        "cancelled-but-draining entries must not grow past the bound"
+    );
+}
+
+#[test]
 fn native_rmcp_codec_recovers_after_the_bounded_frame_limit() {
     let mut transport = BoundedStdioTransport::new(RequestAdmission::new(1), McpResultMode::Dual);
     transport

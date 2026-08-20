@@ -1336,6 +1336,22 @@ create another task. That transport-originated result uses RMCP's native
 legacy-result adaptation with the negotiated protocol version. Initialization
 and `tools/list` bypass this dispatch gate.
 
+Cancelling a tool call releases its dispatch permit immediately but keeps the
+request ID reserved as a tombstone until the cancelled handler's response
+finishes, so a client that cancels faster than handlers drain cannot reuse an
+ID while the old handler is still draining. The transport retains at most four
+times the dispatch capacity (64 entries at the default 16-request gate) of
+active and tombstoned entries combined; once the retained map reaches that
+bound, further tool calls fail fast with the same retryable capacity response
+until draining handlers emit responses and release their reservations. Every
+request whose ID collides with an active or tombstoned entry is rejected
+regardless of kind: the tool call receives the retryable capacity result, and
+control requests such as `ping` receive an invalid-request error written
+directly, so a control response can never release a reserved ID early. The
+cancellation concurrency envelope is therefore the four-times-dispatch
+capacity, and handlers that never respond cap the map at that same bound
+rather than growing it without limit.
+
 Successful-result projection is static for explicit `dual`, `text`, and
 `structured` modes. Structured is the global default; the bounded transport
 and handler clones carry the same immutable mode without initialize-time host

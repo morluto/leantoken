@@ -65,6 +65,7 @@ ignore = "0.4.28"
 inquire = { version = "0.9.4", default-features = false, features = ["crossterm"] }
 jmespath = "0.5.0"
 jsonc-parser = { version = "0.32.4", features = ["cst", "serde"] }
+libc = "0.2.183"
 notify = "8.2.0"
 nucleo-matcher = "0.3.1"
 pulldown-cmark = { version = "0.13.4", default-features = false }
