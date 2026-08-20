@@ -239,6 +239,13 @@ pub struct RepositoryProvenance {
     pub branch: Option<String>,
     /// Bounded working-tree classification.
     pub working_tree_state: RepositoryWorkingTreeState,
+    /// Whether working-tree changed-path discovery reached the end of the Git
+    /// status stream.
+    #[serde(default)]
+    pub working_tree_paths_complete: bool,
+    /// Governing path bound when [`Self::working_tree_paths_complete`] is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_tree_paths_limit: Option<usize>,
     /// Atomic repository generation used for the response.
     pub repository_generation: u64,
     /// Index freshness observed for the response.
@@ -306,6 +313,12 @@ pub struct HandoffManifest {
     /// Resolved or explicitly supplied changed paths.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub changed_paths: Vec<String>,
+    /// Whether the changed-path list represents the complete resolved scope.
+    #[serde(default)]
+    pub changed_paths_complete: bool,
+    /// Governing path bound when [`Self::changed_paths_complete`] is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_paths_limit: Option<usize>,
     /// Paths related by bounded diff evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_paths: Vec<String>,
@@ -715,6 +728,12 @@ pub struct ContextRoutingReceipt {
     pub candidate_paths: usize,
     /// Changed paths represented by the diff scope.
     pub changed_paths: usize,
+    /// Whether the changed-path count represents the complete resolved scope.
+    #[serde(default)]
+    pub changed_paths_complete: bool,
+    /// Governing path bound when [`Self::changed_paths_complete`] is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_paths_limit: Option<usize>,
     /// Distinct paths selected into the bounded response.
     pub selected_paths: usize,
     /// Whether selected evidence is spread across multiple inferred groups.
@@ -750,6 +769,12 @@ pub struct DiffScopeReceipt {
     pub head_revision: Option<String>,
     /// Changed paths used as ranking seeds.
     pub changed_paths: Vec<String>,
+    /// Whether changed-path discovery reached the complete resolved scope.
+    #[serde(default)]
+    pub changed_paths_complete: bool,
+    /// Governing path bound when [`Self::changed_paths_complete`] is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_paths_limit: Option<usize>,
     /// Number of changed paths found in the committed index.
     pub indexed_changed_paths: usize,
     /// Bounded symbol and relationship evidence derived from changed paths.

@@ -31,6 +31,8 @@ struct PreparedContext {
     changed_paths: HashSet<String>,
     working_tree: WorkingTreeObservation,
     working_tree_paths: Vec<String>,
+    working_tree_paths_complete: bool,
+    working_tree_paths_limit: Option<usize>,
     path_filter: PathFilter,
 }
 
@@ -90,6 +92,8 @@ impl Services {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
+        let working_tree_paths_complete = working_tree.changed_paths_complete();
+        let working_tree_paths_limit = working_tree.changed_paths_limit();
         let mut changed_paths = working_tree.changed_paths;
         let mut scoped_request = request.clone();
         if let Some(scope) = &diff_scope {
@@ -112,6 +116,8 @@ impl Services {
                 changed_paths,
                 working_tree: working_tree_observation,
                 working_tree_paths,
+                working_tree_paths_complete,
+                working_tree_paths_limit,
                 path_filter,
             },
             retrieval,
@@ -135,6 +141,8 @@ impl Services {
             changed_paths,
             working_tree,
             working_tree_paths,
+            working_tree_paths_complete,
+            working_tree_paths_limit,
             path_filter,
         } = prepared;
         let ContextRetrieval {
@@ -294,6 +302,8 @@ impl Services {
                     diff_scope: diff_scope.as_ref(),
                     working_tree,
                     working_tree_paths: &working_tree_paths,
+                    working_tree_paths_complete,
+                    working_tree_paths_limit,
                     commit_revision: commit_revision.as_deref(),
                     branch: branch.as_deref(),
                     resolved_workflow,

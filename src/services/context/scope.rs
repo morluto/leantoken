@@ -1,4 +1,4 @@
-use crate::repository::GitWorkingTreeStatus;
+use crate::repository::{GitDiffResult, GitWorkingTreeStatus};
 
 pub(super) struct DiffScopeResolution {
     pub(super) diff_scope: Option<DiffScopeReceipt>,
@@ -38,6 +38,11 @@ impl Services {
         if !working_tree_status.is_available() {
             tracing::debug!("working-tree signal unavailable");
         }
+        let strict_automatic_scope = request.strict_changed_paths && !has_paths;
+        let uses_working_tree_paths = revision.is_none_or(|revision| !revision.is_range());
+        if strict_automatic_scope && uses_working_tree_paths {
+            working_tree_status.require_complete()?;
+        }
         if !has_base && !has_paths && !request.strict_changed_paths {
             return Ok(DiffScopeResolution {
                 diff_scope: None,
@@ -45,44 +50,70 @@ impl Services {
             });
         }
         if let Some(git_result) = git_result {
+            if strict_automatic_scope && !git_result.changed_paths_complete {
+                return Err(changed_path_limit_error(git_result.changed_paths_limit));
+            }
+            let GitDiffResult {
+                base_revision,
+                head_revision,
+                changed_paths: git_changed_paths,
+                changed_paths_complete: mut scope_complete,
+                changed_paths_limit: mut scope_limit,
+            } = git_result;
             let mut changed_paths = request.changed_paths.clone();
             if !explicit_hard_scope {
-                let mut resolved_paths = git_result.changed_paths;
+                let mut resolved_paths = git_changed_paths;
                 if !revision.is_some_and(ContextRevision::is_range) {
                     resolved_paths.extend(working_tree_status.changed_paths.iter().cloned());
+                    if !working_tree_status.changed_paths_complete() {
+                        scope_complete = false;
+                        scope_limit = scope_limit.or(working_tree_status.changed_paths_limit());
+                    }
                 }
                 resolved_paths.sort();
                 resolved_paths.dedup();
                 for path in resolved_paths {
+                    if changed_paths.contains(&path) {
+                        continue;
+                    }
                     if changed_paths.len() == MAX_DIFF_CHANGED_PATHS {
+                        scope_complete = false;
+                        scope_limit = Some(MAX_DIFF_CHANGED_PATHS);
                         break;
                     }
-                    if !changed_paths.contains(&path) {
-                        changed_paths.push(path);
-                    }
+                    changed_paths.push(path);
                 }
             }
             changed_paths.sort();
             changed_paths.dedup();
+            if strict_automatic_scope && !scope_complete {
+                return Err(changed_path_limit_error(scope_limit));
+            }
             return Ok(DiffScopeResolution {
                 diff_scope: Some(DiffScopeReceipt {
-                    base_revision: Some(git_result.base_revision),
-                    head_revision: Some(git_result.head_revision),
+                    base_revision: Some(base_revision),
+                    head_revision: Some(head_revision),
                     changed_paths,
+                    changed_paths_complete: scope_complete,
+                    changed_paths_limit: (!scope_complete).then_some(scope_limit).flatten(),
                     indexed_changed_paths: 0,
                     evidence: None,
                 }),
                 working_tree: working_tree_status,
             });
         }
-        let mut resolved_paths = if has_paths {
-            request.changed_paths.clone()
+        let (mut resolved_paths, changed_paths_complete, changed_paths_limit) = if has_paths {
+            (request.changed_paths.clone(), true, None)
         } else {
-            working_tree_status
-                .changed_paths
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
+            (
+                working_tree_status
+                    .changed_paths
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                working_tree_status.changed_paths_complete(),
+                working_tree_status.changed_paths_limit(),
+            )
         };
         resolved_paths.sort();
         resolved_paths.dedup();
@@ -91,11 +122,22 @@ impl Services {
                 base_revision: None,
                 head_revision: None,
                 changed_paths: resolved_paths,
+                changed_paths_complete,
+                changed_paths_limit,
                 indexed_changed_paths: 0,
                 evidence: None,
             }),
             working_tree: working_tree_status,
         })
+    }
+}
+
+fn changed_path_limit_error(limit: Option<usize>) -> Error {
+    let limit = limit.unwrap_or(MAX_DIFF_CHANGED_PATHS);
+    Error::RequestLimitExceeded {
+        field: "git changed paths",
+        requested: limit.saturating_add(1),
+        limit,
     }
 }
 use super::*;

@@ -142,6 +142,27 @@ pub(super) fn build(
         gaps.push("Git working-tree state was unavailable".into());
     }
 
+    let (mut changed_paths_complete, mut changed_paths_limit) =
+        response.diff_scope.as_ref().map_or(
+            (
+                provenance
+                    .provenance
+                    .as_ref()
+                    .is_some_and(|value| value.working_tree_paths_complete),
+                provenance
+                    .provenance
+                    .as_ref()
+                    .and_then(|value| value.working_tree_paths_limit),
+            ),
+            |scope| (scope.changed_paths_complete, scope.changed_paths_limit),
+        );
+    if !changed_paths_complete {
+        let bound = changed_paths_limit
+            .map_or_else(|| "the configured bound".into(), |limit| limit.to_string());
+        gaps.push(format!(
+            "changed-path discovery was incomplete at {bound} paths"
+        ));
+    }
     let mut changed_paths = response.diff_scope.as_ref().map_or_else(
         || provenance.working_tree_paths.clone(),
         |scope| scope.changed_paths.clone(),
@@ -196,6 +217,10 @@ pub(super) fn build(
         "focus symbols",
         &mut gaps,
     );
+    if changed_paths.len() > MAX_CHANGED_PATHS {
+        changed_paths_complete = false;
+        changed_paths_limit.get_or_insert(MAX_CHANGED_PATHS);
+    }
     changed_paths = bounded_sorted(changed_paths, MAX_CHANGED_PATHS, "changed paths", &mut gaps);
     related_paths = bounded_sorted(related_paths, MAX_RELATED_PATHS, "related paths", &mut gaps);
     test_paths = bounded_sorted(test_paths, MAX_TEST_PATHS, "test paths", &mut gaps);
@@ -227,6 +252,8 @@ pub(super) fn build(
         focus_paths,
         focus_symbols,
         changed_paths,
+        changed_paths_complete,
+        changed_paths_limit,
         related_paths,
         test_paths,
         validations: handoff.validations.clone(),

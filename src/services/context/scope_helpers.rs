@@ -300,6 +300,8 @@ pub(super) fn build_context_routing(
     Some(ContextRoutingReceipt {
         candidate_paths,
         changed_paths: scope.changed_paths.len(),
+        changed_paths_complete: scope.changed_paths_complete,
+        changed_paths_limit: scope.changed_paths_limit,
         selected_paths: selected_path_count,
         weakly_concentrated,
         consistency: IndexConsistency::IndexedGeneration,

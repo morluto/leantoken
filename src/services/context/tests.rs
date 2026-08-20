@@ -347,6 +347,8 @@ fn oversized_diff_routing_is_bounded_deterministic_and_preserves_retry_inputs() 
         base_revision: Some("base".into()),
         head_revision: Some("head".into()),
         changed_paths,
+        changed_paths_complete: true,
+        changed_paths_limit: None,
         indexed_changed_paths: 36,
         evidence: None,
     };
