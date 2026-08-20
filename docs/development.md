@@ -297,8 +297,15 @@ Build and verify the distributable crate when changing packaging or features:
 
 ```bash
 cargo build --release
-cargo package
+cargo package --locked --package leantoken
 ```
+
+The package command targets only the public crate; the workspace's test,
+benchmark, and orchestration packages are intentionally private. The root
+manifest's explicit package boundary retains the source, self-contained user
+and reference documentation, licenses, and test fixtures needed by in-crate
+tests without shipping the repository's CI, npm, development, measurement,
+benchmark-harness, or integration-test trees.
 
 `rmcp` is an upstream registry dependency pinned to the exact version in
 `Cargo.toml`; `Cargo.lock` records the resolved checksum. Update it only with the

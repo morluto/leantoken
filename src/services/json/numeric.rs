@@ -13,7 +13,7 @@ pub(super) fn numeric_summary(value: &Value) -> JsonNumericSummary {
     let median = match count {
         0 => None,
         count if count % 2 == 1 => Some(values[count / 2]),
-        count => Some((values[count / 2 - 1] + values[count / 2]) / 2.0),
+        count => Some(values[count / 2 - 1].midpoint(values[count / 2])),
     };
     let p95 = (count > 0).then(|| {
         let rank = (count.saturating_mul(95).saturating_add(99)) / 100;
@@ -49,5 +49,32 @@ fn collect_numbers(value: &Value, values: &mut Vec<f64>, non_numeric_count: &mut
             }
         }
         _ => *non_numeric_count = non_numeric_count.saturating_add(1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::numeric_summary;
+
+    #[test]
+    fn even_median_stays_finite_for_large_json_numbers() {
+        for (values, expected) in [
+            (json!([1e308, 1e308]), 1e308),
+            (json!([-1e308, 1e308]), 0.0),
+            (
+                json!([f64::from_bits(1), f64::from_bits(1)]),
+                f64::from_bits(1),
+            ),
+        ] {
+            let summary = numeric_summary(&values);
+
+            assert_eq!(summary.median, Some(expected));
+            assert!(
+                serde_json::to_value(summary).expect("serializable summary")["median"].is_number(),
+                "a finite input median must not serialize as null"
+            );
+        }
     }
 }

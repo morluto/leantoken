@@ -143,62 +143,62 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
 }
 
 #[test]
-fn mcp_initialize_precedes_storage_open() {
+fn mcp_lifecycle_mcp_initialize_precedes_storage_open() {
     mcp_lifecycle::mcp_initialize_precedes_storage_open();
 }
 
 #[test]
-fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
+fn mcp_lifecycle_mcp_cold_first_call_completes_the_public_acceptance_flow() {
     mcp_lifecycle::mcp_cold_first_call_completes_the_public_acceptance_flow();
 }
 
 #[test]
-fn mcp_recovers_when_startup_database_contention_clears() {
+fn mcp_lifecycle_mcp_recovers_when_startup_database_contention_clears() {
     mcp_lifecycle::mcp_recovers_when_startup_database_contention_clears();
 }
 
 #[test]
-fn mcp_eof_cancels_contended_startup_promptly() {
+fn mcp_lifecycle_mcp_eof_cancels_contended_startup_promptly() {
     mcp_lifecycle::mcp_eof_cancels_contended_startup_promptly();
 }
 
 #[test]
-fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
+fn mcp_lifecycle_mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     mcp_lifecycle::mcp_runtime_failure_transitions_tools_out_of_starting_state();
 }
 
 #[test]
-fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
+fn mcp_lifecycle_cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     mcp_lifecycle::cli_json_mcp_failure_is_one_document_after_a_logged_error();
 }
 
 #[test]
-fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
+fn mcp_lifecycle_mcp_rejects_home_root_after_initialize_without_opening_storage() {
     mcp_lifecycle::mcp_rejects_home_root_after_initialize_without_opening_storage();
 }
 
 #[test]
-fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
+fn mcp_lifecycle_mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     mcp_lifecycle::mcp_index_limit_failure_is_terminal_and_does_not_retry();
 }
 
 #[test]
-fn concurrent_mcp_startup_initializes_once_and_followers_read() {
+fn mcp_lifecycle_concurrent_mcp_startup_initializes_once_and_followers_read() {
     mcp_lifecycle::concurrent_mcp_startup_initializes_once_and_followers_read();
 }
 
 #[test]
-fn mcp_follower_takes_over_after_leader_exit() {
+fn mcp_lifecycle_mcp_follower_takes_over_after_leader_exit() {
     mcp_lifecycle::mcp_follower_takes_over_after_leader_exit();
 }
 
 #[test]
-fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
+fn mcp_lifecycle_mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     mcp_lifecycle::mcp_follower_does_not_hide_terminal_generation_zero_failover();
 }
 
 #[test]
-fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
+fn mcp_lifecycle_mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     mcp_lifecycle::mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation();
 }
 

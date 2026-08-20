@@ -115,18 +115,20 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
         }
         build_focused_test_command(FocusedTestTarget::Suite, &filter, false)
     } else {
-        let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+        // Probe both packages: a name present in both is ambiguous and must
+        // fail instead of silently running only one package.
         let product_match = focused_target_has_test(root, FocusedTestTarget::Product, selector)?;
-        match (suite_match, product_match) {
+        let suite_match = focused_target_has_test(root, FocusedTestTarget::Suite, selector)?;
+        match (product_match, suite_match) {
             (true, true) => {
                 return Err(XtaskError::Usage(format!(
                     "ambiguous test selector `{selector}` matches both {SUITE} and {PRODUCT}; use a domain-qualified selector or run the owning package directly"
                 )));
             }
-            (true, false) => build_focused_test_command(FocusedTestTarget::Suite, selector, false),
-            (false, true) => {
+            (true, false) => {
                 build_focused_test_command(FocusedTestTarget::Product, selector, false)
             }
+            (false, true) => build_focused_test_command(FocusedTestTarget::Suite, selector, false),
             (false, false) => {
                 return Err(XtaskError::NoTestsMatched(selector.clone()));
             }
@@ -573,7 +575,7 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "--filterset",
-                "test(/^process::/)",
+                "test(/^process::mcp_lifecycle_/)",
                 "--profile",
                 STRESS_NEXTEST_PROFILE,
                 "-j",
@@ -1560,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    fn stress_selects_only_process_tests_with_its_named_profile() {
+    fn stress_selects_only_lifecycle_process_tests_with_its_named_profile() {
         let plan = TestPlan::stress_with_repetitions(2);
         assert_eq!(plan.repetitions, 2);
         let command = &plan.commands[0];
@@ -1572,7 +1574,7 @@ mod tests {
         assert!(
             command
                 .windows(2)
-                .any(|args| args == ["--filterset", "test(/^process::/)"])
+                .any(|args| args == ["--filterset", "test(/^process::mcp_lifecycle_/)"])
         );
     }
 

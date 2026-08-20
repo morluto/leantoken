@@ -653,7 +653,7 @@ pub enum Commands {
     Mcp(McpArgs),
 
     /// Configure LeanToken as a global MCP server for coding clients.
-    Setup(IntegrationArgs),
+    Setup(SetupArgs),
 
     /// Remove LeanToken's global MCP server entries.
     Remove(IntegrationArgs),

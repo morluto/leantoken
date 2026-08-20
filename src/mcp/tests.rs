@@ -1745,6 +1745,40 @@ fn files_schema_matches_operation_specific_runtime_requirements() {
         variants[2]["required"],
         serde_json::json!(["kind", "pattern"])
     );
+    for variant in variants {
+        assert_eq!(
+            variant["properties"]["cursor"]["maxLength"],
+            crate::services::MAX_FILES_CURSOR_ENCODED_BYTES,
+            "files must accept every cursor emitted by the service"
+        );
+    }
+}
+
+#[test]
+fn history_schema_matches_operation_specific_result_limits() {
+    let tool = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "history")
+        .expect("history tool");
+    let schema = serde_json::Value::Object((*tool.input_schema).clone());
+    let variants = schema["$defs"]["HistoryMcpOperation"]["oneOf"]
+        .as_array()
+        .expect("history operation variants");
+    let maximum_for = |kind: &str| {
+        variants
+            .iter()
+            .find(|variant| variant["properties"]["kind"]["const"] == kind)
+            .unwrap_or_else(|| panic!("{kind} history variant"))["properties"]["max_results"]
+            ["maximum"]
+            .as_u64()
+            .expect("max_results maximum")
+    };
+    assert_eq!(
+        maximum_for("diff_symbols"),
+        crate::services::MAX_DIFF_SYMBOL_RESULTS as u64
+    );
+    assert_eq!(maximum_for("symbol_log"), MAX_RESULTS as u64);
 }
 
 #[test]
@@ -1771,6 +1805,19 @@ fn search_schema_matches_exhaustive_occurrence_runtime_requirements() {
     for variant in variants {
         assert!(!variant["properties"]["query"].is_null());
         assert!(!variant["properties"]["all_occurrences"].is_null());
+        let description = variant["description"]
+            .as_str()
+            .expect("search operation description");
+        for rule in [
+            "prefer_structural requires auto or identifier mode",
+            "query_receipt requires all_occurrences=true with text or regex mode and auto or occurrences projection",
+            "cannot be combined with focus_paths, receipt_id, or cursor",
+        ] {
+            assert!(
+                description.contains(rule),
+                "search operation description is missing `{rule}`"
+            );
+        }
     }
 }
 
@@ -2089,6 +2136,42 @@ fn context_focus_candidate_schema_exposes_generation_bounds() {
 }
 
 #[test]
+fn context_task_schema_accepts_every_wire_valid_value() {
+    let request = serde_json::from_value::<ContextMcpRequest>(serde_json::json!({"task": "x"}))
+        .expect("one-character non-empty task is wire-valid");
+    assert_eq!(request.task.as_str(), "x");
+
+    let context = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "context")
+        .expect("context tool");
+    let schema = serde_json::Value::Object((*context.input_schema).clone());
+    assert_eq!(
+        schema.pointer("/properties/task/minLength"),
+        Some(&serde_json::json!(1)),
+        "the schema must accept every non-empty task accepted on the wire"
+    );
+}
+
+#[test]
+fn workflow_evidence_path_schema_matches_repository_path_bound() {
+    let context = LeanTokenMcp::tool_router()
+        .list_all()
+        .into_iter()
+        .find(|tool| tool.name == "context")
+        .expect("context tool");
+    let schema = serde_json::Value::Object((*context.input_schema).clone());
+    assert_eq!(
+        schema.pointer("/$defs/WorkflowEvidence/properties/paths/items/maxLength"),
+        Some(&serde_json::json!(
+            crate::repository::MAX_REPOSITORY_PATH_BYTES
+        )),
+        "workflow evidence paths must advertise the repository path ceiling"
+    );
+}
+
+#[test]
 fn retrieval_response_budget_limits_are_validated_for_every_tool() {
     fn set_limit(value: &mut serde_json::Value, nested: bool, limit: usize) {
         if nested {
@@ -2279,6 +2362,25 @@ fn diff_symbols_history_maps_targets_cursor_and_response_budget() {
     assert_eq!(request.targets[0].symbol, "old_name");
     assert_eq!(request.targets[0].head_path.as_deref(), Some("src/new.rs"));
     assert_eq!(request.targets[0].head_symbol.as_deref(), Some("new_name"));
+
+    let oversized_page = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
+        "operation": {
+            "kind": "diff_symbols",
+            "targets": [{"path": "src/lib.rs", "symbol": {"name": "item"}}],
+            "base_revision": "main~1",
+            "head_revision": "main",
+            "max_results": crate::services::MAX_DIFF_SYMBOL_RESULTS + 1
+        }
+    }))
+    .expect("structurally valid oversized page");
+    assert!(matches!(
+        oversized_page.validate_limits(McpLimitPolicy::DEFAULT),
+        Err(crate::Error::RequestLimitExceeded {
+            field: "max_results",
+            requested,
+            limit: crate::services::MAX_DIFF_SYMBOL_RESULTS,
+        }) if requested == crate::services::MAX_DIFF_SYMBOL_RESULTS + 1
+    ));
 
     let single_with_cursor = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
         "operation": {

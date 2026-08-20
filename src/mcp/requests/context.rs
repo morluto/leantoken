@@ -21,7 +21,6 @@ pub(in crate::mcp) struct ContextMcpRequest {
     #[serde(default)]
     pub(in crate::mcp) workflow_evidence: WorkflowEvidence,
     /// Natural-language coding task; include known identifiers and constraints.
-    #[schemars(length(min = 3, max = 65536))]
     pub(in crate::mcp) task: NonEmptyText,
     /// Maximum source tokens across selected fragments (default 3000, maximum 32000).
     #[serde(default)]

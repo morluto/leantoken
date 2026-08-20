@@ -120,6 +120,146 @@ fn query_receipts_survive_restart_deduplicate_and_expire() {
 }
 
 #[test]
+fn query_receipt_namespaces_survive_ordinary_reopens() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = indexed_storage(&database);
+    let receipt_id = storage
+        .persist_query_receipt_at(&record(&storage, "absent"), 1_000)
+        .expect("persist receipt");
+    let namespace_before: String = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace");
+    drop(storage);
+
+    let reopened = Storage::open(&database).expect("reopen");
+    let namespace_after: String = reopened
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace after reopen");
+    assert_eq!(
+        namespace_before, namespace_after,
+        "a plain restart must not regenerate the receipt namespace"
+    );
+    let session = reopened.begin_read().expect("read");
+    assert_eq!(
+        session
+            .load_query_receipt_at(&receipt_id, 1_001)
+            .expect("load persisted receipt")
+            .predicate_blake3,
+        record(&reopened, "absent").predicate_blake3
+    );
+}
+
+#[test]
+fn cloned_databases_regenerate_receipt_namespaces() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = indexed_storage(&database);
+    storage
+        .persist_query_receipt_at(&record(&storage, "absent"), 1_000)
+        .expect("persist receipt");
+    let namespace_before: String = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace");
+    drop(storage);
+
+    let cloned = directory.path().join("clone.sqlite");
+    std::fs::copy(&database, &cloned).expect("clone main database");
+    for extension in ["-wal", "-shm"] {
+        let sidecar = database.with_extension("sqlite".to_owned() + extension);
+        if sidecar.exists() {
+            std::fs::copy(
+                &sidecar,
+                cloned.with_extension("sqlite".to_owned() + extension),
+            )
+            .expect("clone sidecar");
+        }
+    }
+    let reopened = Storage::open(&cloned).expect("reopen clone");
+    let namespace_after: String = reopened
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace after clone");
+    assert_ne!(
+        namespace_before, namespace_after,
+        "a copied database must regenerate the receipt namespace"
+    );
+}
+
+#[test]
+fn first_identity_recording_rotates_legacy_receipt_namespaces() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = indexed_storage(&database);
+    storage
+        .persist_query_receipt_at(&record(&storage, "absent"), 1_000)
+        .expect("persist receipt");
+    let namespace_before: String = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace");
+    drop(storage);
+
+    // Simulate a pre-change release database: receipts exist but the
+    // clone-signal column has never been recorded.
+    let connection = Connection::open(&database).expect("open legacy database");
+    connection
+        .execute_batch("ALTER TABLE meta DROP COLUMN database_identity;")
+        .expect("drop clone-signal column");
+    drop(connection);
+
+    let reopened = Storage::open(&database).expect("reopen");
+    let namespace_after: String = reopened
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace after first identity recording");
+    assert_ne!(
+        namespace_before, namespace_after,
+        "recording the identity for the first time must rotate namespaces so \
+         pre-change release clones diverge from the moment recording begins"
+    );
+}
+
+#[test]
 fn query_receipt_quota_is_bounded_and_generation_recheck_rolls_back() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");

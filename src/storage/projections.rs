@@ -300,12 +300,16 @@ impl ReconciliationWriter<'_, '_> {
     /// Candidate generation remains owned by the indexer callback. Storage owns
     /// the transaction and resolves each bounded candidate vector against the
     /// exact file membership that graph readers observe after this publication.
+    /// The live membership is passed to the callback so candidates (for example
+    /// Go module indexes and package targets) derive from the same generation
+    /// the reader will observe, not a pre-publication snapshot.
     pub(crate) fn repair_import_projections(
         &mut self,
-        mut derive_candidates: impl FnMut(&ImportSeed) -> Result<Vec<String>>,
+        mut derive_candidates: impl FnMut(&ImportSeed, &HashSet<String>) -> Result<Vec<String>>,
     ) -> Result<usize> {
         let mut after_id = None;
         let mut repaired = 0usize;
+        let membership = self.transaction_membership()?;
         loop {
             let stored = self.import_projection_page(after_id)?;
             if stored.is_empty() {
@@ -319,7 +323,7 @@ impl ReconciliationWriter<'_, '_> {
                     .transaction
                     .prepare_cached(IMPORT_CANDIDATE_RESOLUTION_SQL)?;
                 for (seed, resolved_path) in stored {
-                    let candidate_paths = derive_candidates(&seed)?;
+                    let candidate_paths = derive_candidates(&seed, &membership)?;
                     if candidate_paths.len() > MAX_IMPORT_CANDIDATES_PER_IMPORT
                         || candidate_paths.iter().any(|candidate| {
                             candidate.is_empty()
@@ -365,6 +369,18 @@ impl ReconciliationWriter<'_, '_> {
             tracing::warn!(repaired, "persisted import projections repaired");
         }
         Ok(repaired)
+    }
+
+    /// File membership exactly as the publication transaction leaves it,
+    /// including files staged by `staged.apply` in the same transaction.
+    fn transaction_membership(&self) -> Result<HashSet<String>> {
+        let mut statement = self.transaction.prepare("SELECT path FROM files")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut membership = HashSet::new();
+        for row in rows {
+            membership.insert(row?);
+        }
+        Ok(membership)
     }
 
     fn import_projection_page(

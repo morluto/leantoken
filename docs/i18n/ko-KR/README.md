@@ -29,7 +29,7 @@
 
 > **측정된 토큰 절감량:** 60회 통제 실험에서 LeanToken은 에이전트의 기본 도구보다
 > 제한적인 저장소 탐색 시 모델 입력 토큰을 20.1%, 광범위한 탐색 시 37.6% 적게
-> 사용했습니다. 자세한 내용은 [측정 방법](../../measurement.md)을 참고하세요.
+> 사용했습니다. 자세한 내용은 [측정 방법](https://github.com/morluto/leantoken/blob/main/docs/measurement.md)을 참고하세요.
 
 ## 빠른 시작
 
@@ -172,7 +172,7 @@ musl Linux를 포함한 다른 대상은 소스에서 빌드해야 합니다. Ru
 C/C++ 툴체인을 설치한 뒤 다음 명령을 실행하세요.
 
 ```bash
-cargo install --git https://github.com/morluto/leantoken --package leantoken leantoken
+cargo install --locked --git https://github.com/morluto/leantoken leantoken
 ```
 
 기존 클라이언트 통합을 명시적으로 업데이트합니다.
@@ -207,9 +207,9 @@ LeanToken은 소스를 한 번 인덱싱한 뒤 간결한 경로, 순위가 매�
 | [사용법 및 도구 참고서](../../usage.md) | 명령, MCP 도구, 요청 옵션, 예시 |
 | [아키텍처 및 신뢰성](../../architecture.md) | 구성 요소, 데이터 흐름, 저장소, 실패 동작 |
 | [로드맵](../../roadmap.md) | 현재 방향과 계획된 작업 |
-| [개발 및 테스트](../../development.md) | 로컬 설정, 검증, 릴리스 워크플로 |
-| [벤치마크 방법론](../../../benchmarks/README.md) | 토큰 효율 측정 및 해석 |
-| [측정 도구](../../measurement.md) | 실험, 전송 비용, 프로파일링 도구 |
+| [개발 및 테스트](https://github.com/morluto/leantoken/blob/main/docs/development.md) | 로컬 설정, 검증, 릴리스 워크플로 |
+| [벤치마크 방법론](https://github.com/morluto/leantoken/blob/main/benchmarks/README.md) | 토큰 효율 측정 및 해석 |
+| [측정 도구](https://github.com/morluto/leantoken/blob/main/docs/measurement.md) | 실험, 전송 비용, 프로파일링 도구 |
 
 ## 라이선스
 
