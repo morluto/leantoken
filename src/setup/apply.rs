@@ -194,6 +194,7 @@ pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
             edit.updated.as_deref().unwrap_or_default(),
         ),
         ClientPlanAction::Remove => {
+            reject_symlink_target(&edit.public.path)?;
             if edit.public.path.exists() {
                 fs::remove_file(&edit.public.path)?;
                 sync_parent_directory(&edit.public.path)?;

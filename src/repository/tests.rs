@@ -85,25 +85,63 @@ fn checked_slash_path_rejects_non_utf8_paths_without_lossy_aliases() {
 }
 
 #[test]
-fn git_status_parser_stops_after_collecting_max_paths() {
+fn git_status_parser_probes_beyond_the_path_limit() {
     let first = b"M  first.rs\0";
-    let mut input = Cursor::new([first.as_slice(), b"M  second.rs\0"].concat());
+    let second = b"M  second.rs\0";
+    let mut input = Cursor::new([first.as_slice(), second.as_slice()].concat());
 
-    let changed = parse_git_status_observation(&mut input, 1, "").changed_paths;
+    let observation = parse_git_status_observation(&mut input, 1, "");
 
-    assert_eq!(changed, HashSet::from(["first.rs".to_string()]));
-    assert_eq!(input.position(), first.len() as u64);
+    assert_eq!(
+        observation.changed_paths,
+        HashSet::from(["first.rs".to_string()])
+    );
+    assert!(!observation.changed_paths_complete());
+    assert_eq!(observation.changed_paths_limit(), Some(1));
+    assert_eq!(input.position(), (first.len() + second.len()) as u64);
+    assert!(matches!(
+        observation.require_complete(),
+        Err(Error::RequestLimitExceeded {
+            field: "git changed paths",
+            requested: 2,
+            limit: 1,
+        })
+    ));
 }
 
 #[test]
-fn diff_name_parser_stops_after_collecting_max_paths() {
+fn git_status_parser_marks_an_exact_limit_complete() {
+    let observation = parse_git_status_observation(Cursor::new(b"M  first.rs\0"), 1, "");
+
+    assert_eq!(
+        observation.changed_paths,
+        HashSet::from(["first.rs".to_string()])
+    );
+    assert!(observation.changed_paths_complete());
+    assert_eq!(observation.changed_paths_limit(), None);
+}
+
+#[test]
+fn diff_name_parser_probes_beyond_the_path_limit() {
     let first = b"first.rs\0";
-    let mut input = Cursor::new([first.as_slice(), b"second.rs\0"].concat());
+    let second = b"second.rs\0";
+    let mut input = Cursor::new([first.as_slice(), second.as_slice()].concat());
 
     let changed = parse_diff_names(&mut input, 1, "").expect("valid paths");
 
-    assert_eq!(changed, vec!["first.rs".to_string()]);
-    assert_eq!(input.position(), first.len() as u64);
+    assert_eq!(changed.paths, vec!["first.rs".to_string()]);
+    assert!(!changed.complete);
+    assert_eq!(changed.limit, Some(1));
+    assert_eq!(input.position(), (first.len() + second.len()) as u64);
+}
+
+#[test]
+fn diff_name_parser_marks_an_exact_limit_complete() {
+    let changed = parse_diff_names(Cursor::new(b"first.rs\0"), 1, "").expect("valid paths");
+
+    assert_eq!(changed.paths, vec!["first.rs".to_string()]);
+    assert!(changed.complete);
+    assert_eq!(changed.limit, None);
 }
 
 #[test]
@@ -278,7 +316,7 @@ fn name_only_probe_propagates_failure_instead_of_swallowing_it() {
     permissions.set_mode(0o755);
     fs::set_permissions(&program, permissions).expect("executable");
 
-    let result = diff_name_only(
+    let error = diff_name_only(
         root.path(),
         &program,
         "base",
@@ -286,11 +324,48 @@ fn name_only_probe_propagates_failure_instead_of_swallowing_it() {
         1,
         Duration::from_secs(2),
         "",
-    );
+    )
+    .expect_err("git capture failure should propagate, not be swallowed");
 
     assert!(
-        result.is_err(),
-        "git capture failure should propagate, not be swallowed"
+        matches!(
+            error,
+            Error::RequestLimitExceeded {
+                field: "git output bytes",
+                requested: 8_193,
+                limit: 8_192,
+            }
+        ),
+        "unexpected name-only diagnostic: {error:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn status_probe_preserves_output_byte_overflow_as_a_distinct_diagnostic() {
+    let root = tempfile::tempdir().expect("root");
+    let program = root.path().join("large-git");
+    fs::write(&program, "#!/bin/sh\nhead -c 1048576 /dev/zero\n").expect("script");
+    let mut permissions = fs::metadata(&program).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&program, permissions).expect("executable");
+
+    let observation =
+        git_working_tree_status_with(root.path(), 1, &program, Duration::from_secs(2));
+    let error = observation
+        .require_complete()
+        .expect_err("oversized status output cannot define a strict scope");
+
+    assert!(
+        matches!(
+            error,
+            Error::RequestLimitExceeded {
+                field: "git output bytes",
+                requested: 8_193,
+                limit: 8_192,
+            }
+        ),
+        "unexpected status diagnostic: {error:?}"
     );
 }
 

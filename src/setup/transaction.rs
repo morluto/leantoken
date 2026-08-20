@@ -280,6 +280,7 @@ fn serialize_journal(journal: &SetupTransactionJournal) -> Result<String> {
 }
 
 fn replace_journal(path: &Path, journal: &SetupTransactionJournal) -> Result<()> {
+    reject_symlink_target(path)?;
     let parent = path.parent().ok_or_else(|| {
         Error::SetupFailure(format!(
             "setup transaction path has no parent: {}",
@@ -297,6 +298,7 @@ fn replace_journal(path: &Path, journal: &SetupTransactionJournal) -> Result<()>
 }
 
 fn remove_journal(path: &Path) -> Result<()> {
+    reject_symlink_target(path)?;
     match fs::remove_file(path) {
         Ok(()) => sync_parent_directory(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -313,6 +315,7 @@ pub(super) fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
             write_if_changed(path, current.as_deref(), original)
         }
         None => {
+            reject_symlink_target(path)?;
             if path.exists() {
                 fs::remove_file(path)?;
                 sync_parent_directory(path)?;

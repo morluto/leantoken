@@ -7,6 +7,36 @@ pub struct GitDiffResult {
     pub head_revision: String,
     /// Repository-relative changed paths in the resolved diff scope.
     pub changed_paths: Vec<String>,
+    /// Whether Git reached the end of the changed-path stream before the
+    /// configured path bound.
+    pub changed_paths_complete: bool,
+    /// Governing path bound when [`Self::changed_paths_complete`] is false.
+    pub changed_paths_limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitChangedPathSet {
+    pub(crate) paths: Vec<String>,
+    pub(crate) complete: bool,
+    pub(crate) limit: Option<usize>,
+}
+
+impl GitChangedPathSet {
+    pub(crate) fn complete(paths: Vec<String>) -> Self {
+        Self {
+            paths,
+            complete: true,
+            limit: None,
+        }
+    }
+
+    pub(crate) fn truncated(paths: Vec<String>, limit: usize) -> Self {
+        Self {
+            paths,
+            complete: false,
+            limit: Some(limit),
+        }
+    }
 }
 
 /// One target-side line range parsed from a zero-context Git diff.

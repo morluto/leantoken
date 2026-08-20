@@ -2740,40 +2740,225 @@ fn committed_setup_journal_never_restores_applied_edits() {
     assert!(!transaction_path(&runtime_root).exists());
 }
 
+#[cfg(unix)]
 #[test]
-fn write_if_changed_creates_an_absent_file_for_a_none_original() {
+fn write_if_changed_rejects_symlinked_config() {
+    use std::os::unix::fs::symlink;
     let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.json");
+    let real = temp.path().join("real.toml");
+    let link = temp.path().join("config.toml");
+    fs::write(&real, "original = true").unwrap();
+    symlink(&real, &link).unwrap();
 
-    write_if_changed(&path, None, "new content").expect("create must succeed");
-
-    assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
-}
-
-#[test]
-fn write_if_changed_rejects_a_create_when_the_file_appeared() {
-    let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.json");
-    fs::write(&path, "concurrent write").unwrap();
-
-    let error = write_if_changed(&path, None, "new content").unwrap_err();
+    let result = write_if_changed(&link, "original = true", "updated = true");
 
     assert!(
-        error
-            .to_string()
-            .contains("configuration changed before persist"),
-        "create CAS must fail when the file appeared: {error}"
+        result.is_err(),
+        "write_if_changed should reject symlinked config"
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("symbolic link"),
+        "error should mention symbolic link: {error}"
+    );
+    // The real file should be untouched
+    assert_eq!(fs::read_to_string(&real).unwrap(), "original = true");
+    // The symlink should still be intact
+    assert!(
+        fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let unchanged = write_if_changed(&link, "original = true", "original = true")
+        .expect_err("the no-op shortcut must use the same symlink policy");
+    assert!(unchanged.to_string().contains("symbolic link"));
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_and_remove_dry_runs_reject_relative_and_absolute_config_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    for relative in [false, true] {
+        for operation in [SetupOperation::Setup, SetupOperation::Remove] {
+            let temp = tempfile::tempdir().unwrap();
+            let environment = environment(&temp);
+            let target = temp.path().join("shared/mcp.json");
+            let link = environment.home.join(".cursor/mcp.json");
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            let original = r#"{"mcpServers":{"other":{}}}"#;
+            fs::write(&target, original).unwrap();
+            if relative {
+                symlink("../../shared/mcp.json", &link).unwrap();
+            } else {
+                symlink(&target, &link).unwrap();
+            }
+
+            let error = run_with(
+                operation,
+                SetupRequest {
+                    clients: vec![SetupClient::Cursor],
+                    all: false,
+                    refresh: false,
+                    private_runtime: false,
+                    yes: true,
+                    dry_run: true,
+                    allow_outdated: false,
+                    force_unmanaged: false,
+                },
+                &environment,
+                &FixedPrompt {
+                    selected: None,
+                    confirmed: true,
+                },
+            )
+            .expect_err("planning must disclose unsupported config symlinks");
+
+            assert!(error.to_string().contains("symbolic link"));
+            assert_eq!(fs::read_to_string(&target).unwrap(), original);
+            assert!(
+                fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn retargeting_config_after_preflight_fails_closed() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.toml");
+    let retargeted = temp.path().join("retargeted.toml");
+    fs::write(&path, "old").unwrap();
+    fs::write(&retargeted, "old").unwrap();
+    let edit = PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Codex,
+            path: path.clone(),
+            action: ClientPlanAction::Update,
+            detected: true,
+        },
+        resolution: ResolvedEdit::Updated {
+            original: Some("old".into()),
+            updated: "new".into(),
+        },
+    };
+    preflight_edits(std::slice::from_ref(&edit)).expect("regular-file preflight");
+    fs::remove_file(&path).unwrap();
+    symlink(&retargeted, &path).unwrap();
+
+    let error = apply_edit(&edit).expect_err("retargeted symlink must fail closed");
+
+    assert!(error.to_string().contains("symbolic link"));
+    assert_eq!(fs::read_to_string(&retargeted).unwrap(), "old");
+    assert!(
+        fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn write_if_changed_keeps_an_existing_file_when_content_is_unchanged() {
+fn rollback_rejects_a_config_replaced_by_a_symlink_after_apply() {
+    use std::os::unix::fs::symlink;
+
     let temp = tempfile::tempdir().unwrap();
-    let path = temp.path().join("config.json");
-    fs::write(&path, "original content").unwrap();
+    let runtime_root = temp.path().join("runtime");
+    let path = temp.path().join("config.toml");
+    let retargeted = temp.path().join("retargeted.toml");
+    fs::write(&path, "old").unwrap();
+    fs::write(&retargeted, "new").unwrap();
+    let plan = ResolvedSetupPlan {
+        operation: SetupOperation::Setup,
+        persistent_cli: true,
+        launcher: None,
+        runtime: None,
+        edits: vec![PlannedClientEdit {
+            public: ClientSetupPlan {
+                client: SetupClient::Codex,
+                path: path.clone(),
+                action: ClientPlanAction::Update,
+                detected: true,
+            },
+            resolution: ResolvedEdit::Updated {
+                original: Some("old".into()),
+                updated: "new".into(),
+            },
+        }],
+        discovery_edits: Vec::new(),
+        configuration_snapshots: Vec::new(),
+        ownership_override: false,
+        transaction_root: runtime_root.clone(),
+    };
+    let transaction = begin_setup_transaction(&plan)
+        .unwrap()
+        .expect("transaction");
+    fs::write(&path, "new").unwrap();
+    fs::remove_file(&path).unwrap();
+    symlink(&retargeted, &path).unwrap();
 
-    write_if_changed(&path, Some("original content"), "original content")
-        .expect("unchanged update must be a no-op");
+    let error = rollback_setup(None, &[&plan.edits[0]], &[], Some(transaction))
+        .expect_err("rollback must not replace a retargeted symlink");
 
-    assert_eq!(fs::read_to_string(&path).unwrap(), "original content");
+    assert!(error.to_string().contains("symbolic link"));
+    assert_eq!(fs::read_to_string(&retargeted).unwrap(), "new");
+    assert!(
+        fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(transaction_path(&runtime_root).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupted_recovery_rejects_symlinked_config_without_removing_the_journal() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let runtime_root = temp.path().join("runtime");
+    let path = temp.path().join("config.toml");
+    let target = temp.path().join("target.toml");
+    fs::create_dir_all(&runtime_root).unwrap();
+    fs::write(&target, "new").unwrap();
+    symlink(&target, &path).unwrap();
+    let journal = SetupTransactionJournal {
+        schema_version: 1,
+        state: SetupTransactionState::Pending,
+        entries: vec![SetupTransactionEntry {
+            path: path.clone(),
+            original: Some("old".into()),
+            updated: SetupTransactionUpdate::Present {
+                content_hash: content_hash("new"),
+            },
+        }],
+    };
+    fs::write(
+        transaction_path(&runtime_root),
+        serde_json::to_string(&journal).unwrap(),
+    )
+    .unwrap();
+
+    let error = recover_interrupted_transaction(&runtime_root)
+        .expect_err("recovery must not replace a symlinked config");
+
+    assert!(error.to_string().contains("symbolic link"));
+    assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    assert!(
+        fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(transaction_path(&runtime_root).exists());
 }
