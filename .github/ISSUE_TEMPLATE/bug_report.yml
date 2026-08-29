@@ -1,0 +1,144 @@
+name: Bug report
+description: Report a reproducible problem in LeanToken
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please report one primary behavior per issue. Distinguish observed
+        retrieval or protocol output from suspected causes, and remove secrets,
+        private paths, and source content that should not be public.
+
+  - type: checkboxes
+    id: before-submitting
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues for a related report.
+          required: true
+        - label: I removed credentials, tokens, private paths, and sensitive repository content.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Setup, runtime, or upgrade
+        - Repository admission or isolation
+        - Indexing or file inventory
+        - Search or ranking
+        - Context, outline, or read
+        - History or JSON query
+        - Cache, receipt, or token accounting
+        - CLI
+        - MCP or agent integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed-behavior
+    attributes:
+      label: Observed behavior
+      description: What happened? Include the command or MCP tool, repository state, request bounds, and returned coverage or diagnostic state.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give the smallest local command, repository layout, configuration, input, or event sequence that demonstrates the problem.
+      placeholder: |
+        1. Prepare ...
+        2. Run `leantoken ...`
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What result, token bound, coverage statement, hash/receipt relation, error, or recovery action should have occurred?
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact-scope
+    attributes:
+      label: Impact and scope
+      description: What repositories, languages, tools, clients, or workflows are affected? What remains unaffected? State any risk of omitted, stale, duplicated, mis-scoped, or over-budget evidence.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: LeanToken version or revision
+      description: Use `leantoken --version` or provide the source revision.
+      placeholder: 0.1.26 or git revision
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, architecture, Rust version, client, and relevant package/runtime details.
+      placeholder: Linux x86_64; Rust 1.95; Codex MCP stdio
+    validations:
+      required: true
+
+  - type: input
+    id: repository-context
+    attributes:
+      label: Repository and request context
+      description: Include approximate file count/size, revision or working-tree state, command flags, and token budget when relevant.
+      placeholder: 8,000 files; BASE..HEAD; context --budget 1200
+
+  - type: dropdown
+    id: failure-stage
+    attributes:
+      label: Earliest failure stage
+      description: Select where the incorrect behavior first becomes observable.
+      options:
+        - Request parsing or bounds
+        - Repository admission or isolation
+        - Indexing, inventory, or cache
+        - Search, ranking, or context selection
+        - Read, outline, history, or JSON projection
+        - Receipt, accounting, or coverage
+        - Setup, runtime, or upgrade
+        - CLI or MCP transport
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: typed-recovery
+    attributes:
+      label: Typed outcome or recovery expected
+      description: Optional. What result, coverage classification, retry action, next tool, or recovery step should the caller have received?
+
+  - type: textarea
+    id: relevant-evidence
+    attributes:
+      label: Relevant output or evidence
+      description: Paste the smallest useful CLI/MCP output, receipt, hash, timing, error, or coverage record. Redact sensitive values.
+      render: text
+
+  - type: textarea
+    id: analysis
+    attributes:
+      label: Analysis or suspected cause
+      description: Optional. Clearly mark source-derived reasoning or a hypothesis; do not present an unverified cause as fact.
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add links, reduced fixtures, schema details, screenshots, or a proposed regression test.

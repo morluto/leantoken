@@ -1,0 +1,88 @@
+name: Feature request
+description: Propose a focused improvement to LeanToken
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep one primary retrieval, evidence, or agent-workflow outcome per
+        request. Describe how the proposal preserves bounded, local, truthful
+        repository context.
+
+  - type: checkboxes
+    id: before-submitting
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues and pull requests for a related proposal.
+          required: true
+        - label: I removed credentials, tokens, private paths, and sensitive repository content.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Setup, runtime, or upgrade
+        - Repository admission or isolation
+        - Indexing or file inventory
+        - Search or ranking
+        - Context, outline, or read
+        - History or JSON query
+        - Cache, receipt, or token accounting
+        - CLI
+        - MCP or agent integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-limitation
+    attributes:
+      label: Current limitation
+      description: What can an agent or user not find, bound, verify, carry forward, or understand today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: Use cases
+      description: Give concrete repositories, agent tasks, request shapes, clients, or evidence handoffs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome and success criteria
+      description: Describe observable commands, MCP results, coverage semantics, token/resource bounds, correctness, and compatibility criteria.
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Invariants and constraints
+      description: Call out local/read-only behavior, repository containment, immutable revisions, hash/receipt semantics, token accounting, protocol compatibility, and migration concerns.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe existing tools, commands, agent-native retrieval, or workarounds considered and why they do not meet the need.
+
+  - type: textarea
+    id: possible-direction
+    attributes:
+      label: Possible direction
+      description: Optional implementation idea. Treat it as a proposal, not a requirement.
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link relevant architecture, usage, measurement, schema, source, issue, or discussion.

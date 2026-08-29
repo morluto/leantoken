@@ -1,0 +1,68 @@
+name: Design discussion
+description: Resolve a LeanToken retrieval, evidence, or protocol decision before implementation
+title: "[Design] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a retrieval architecture, public MCP/CLI contract, cache
+        identity, or repository-containment decision. Keep one decision per discussion.
+
+  - type: checkboxes
+    id: before-submitting
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the open and closed issues and pull requests for a related discussion.
+          required: true
+        - label: I removed credentials, tokens, private paths, and sensitive repository content.
+          required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision needed
+      description: State the exact question maintainers need to resolve.
+      placeholder: Should LeanToken ... or ...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context-evidence
+    attributes:
+      label: Context and evidence
+      description: Explain why the decision is needed now. Separate observed retrieval, derived accounting, and inference.
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundary-invariants
+    attributes:
+      label: Boundary and invariants
+      description: Identify the owner and rules for repository admission, indexing, token budgets, hashes/receipts, caches, revisions, clients, and MCP/CLI parity.
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options and tradeoffs
+      description: Compare viable approaches, including retrieval quality, token cost, completeness, latency, compatibility, safety, and maintenance costs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: success-criteria
+    attributes:
+      label: Success criteria and open questions
+      description: State what evidence would settle the decision and list only unresolved questions that could change the choice.
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link relevant architecture, usage, measurement, schemas, tests, or prior discussions.
