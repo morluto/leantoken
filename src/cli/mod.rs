@@ -321,8 +321,6 @@ impl Cli {
             Commands::Remove(_) => Some("remove"),
             Commands::Cache(_) => Some("cache"),
             Commands::Runtime(_) => Some("runtime"),
-            Commands::Episode(_) => Some("episode"),
-            Commands::Update(_) => Some("update"),
             Commands::Upgrade(_) => Some("upgrade"),
             _ => None,
         }) else {
@@ -546,7 +544,7 @@ impl Cli {
             Commands::Episode(args) => match &args.command {
                 EpisodeCommand::Audit(args) => AppRequest::EpisodeAudit(args.clone().into()),
             },
-            Commands::Update(args) | Commands::Upgrade(args) => AppRequest::Upgrade {
+            Commands::Upgrade(args) => AppRequest::Upgrade {
                 check: args.check,
                 yes: args.yes,
             },
@@ -695,9 +693,6 @@ pub enum Commands {
 
     /// Audit existing redacted model/tool episode artifacts.
     Episode(EpisodeArgs),
-
-    /// Update LeanToken to the latest release.
-    Update(UpgradeArgs),
 
     /// Update LeanToken to the latest release.
     Upgrade(UpgradeArgs),

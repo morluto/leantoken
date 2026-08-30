@@ -1023,9 +1023,9 @@ fn cli_doctor_selects_executable_readiness_diagnostic() {
 }
 
 #[test]
-fn cli_update_and_upgrade_are_aliases() {
+fn cli_upgrade_parses_flags() {
     assert!(matches!(
-        parse(&["update", "--check"]).app_request(),
+        parse(&["upgrade", "--check"]).app_request(),
         AppRequest::Upgrade {
             check: true,
             yes: false
