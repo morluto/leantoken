@@ -968,6 +968,9 @@ fn launcher_arguments(
     for pattern in config.index_scope().excludes() {
         global_args.extend(["--index-exclude".into(), OsString::from(pattern)]);
     }
+    if config.requires_broad_root_override() {
+        global_args.push("--allow-broad-root".into());
+    }
     if config.include_generated {
         global_args.push("--include-generated".into());
     }
@@ -1382,6 +1385,25 @@ mod tests {
         assert_eq!(
             explicit_arguments.get(database_index + 1),
             Some(&explicit.database_path.into_os_string())
+        );
+    }
+
+    #[test]
+    fn launcher_arguments_preserve_broad_root_approval() {
+        let root = directories::BaseDirs::new()
+            .expect("home directories")
+            .home_dir()
+            .canonicalize()
+            .expect("canonical home");
+        let config = Config::discover_with_broad_root(&root, Some(root.join("index.sqlite")), true)
+            .expect("broad-root config");
+
+        let arguments = launcher_arguments(&config, &["mcp".into()], DatabaseForwarding::Resolved)
+            .expect("launcher arguments");
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument == "--allow-broad-root")
         );
     }
 

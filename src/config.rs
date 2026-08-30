@@ -392,6 +392,12 @@ impl Config {
         }
     }
 
+    /// Return whether this root required the explicit broad-root override.
+    #[must_use]
+    pub(crate) fn requires_broad_root_override(&self) -> bool {
+        is_unsafe_repository_root(&self.root, home_directory().as_deref())
+    }
+
     /// Return one immutable repository visibility policy.
     #[must_use]
     pub fn discovery_policy(&self) -> DiscoveryPolicy {
