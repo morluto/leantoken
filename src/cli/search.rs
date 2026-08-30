@@ -7,6 +7,7 @@ pub enum SearchProjectionArg {
     #[default]
     Full,
     Compact,
+    Grouped,
     Occurrences,
     Coordinates,
 }

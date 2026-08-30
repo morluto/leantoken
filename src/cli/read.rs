@@ -114,6 +114,11 @@ pub struct ReadArgs {
     /// Expected content hash; returns not_modified when current.
     #[arg(long)]
     pub expected_hash: Option<String>,
+
+    /// Record this target and prefer a cheaper follow-up. Without `expected_hash`,
+    /// select the latest compatible base for this exact target.
+    #[arg(long)]
+    pub delta: bool,
 }
 
 impl From<ReadArgs> for ReadRequest {
@@ -133,7 +138,7 @@ impl From<ReadArgs> for ReadRequest {
             continuation_cursor: args.cursor,
             max_tokens: args.max_tokens,
             expected_hash: args.expected_hash,
-            delta: false,
+            delta: args.delta,
             receipt_id: None,
             policy: crate::model::ReadPolicy::default(),
         }

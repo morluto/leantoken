@@ -36,7 +36,7 @@ Options:
           Result shape; occurrences and coordinates require --all-occurrences
 
           [default: full]
-          [possible values: full, compact, occurrences, coordinates]
+          [possible values: full, compact, grouped, occurrences, coordinates]
 
       --include <INCLUDE_PATHS>
           Include only paths matching this pattern (repeatable)

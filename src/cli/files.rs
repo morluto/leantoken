@@ -1,5 +1,16 @@
 use super::*;
 
+/// Response projection for CLI files.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum FilesProjectionArg {
+    /// Preserve the complete files response.
+    #[default]
+    Full,
+    /// Return paths without per-entry kind, language, size, or score metadata.
+    Paths,
+}
+
 #[derive(Debug, Clone, Parser)]
 pub struct FilesArgs {
     /// Files operation to perform.
@@ -28,6 +39,10 @@ pub struct FilesArgs {
     /// Maximum tokens in the final serialized JSON service response.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_response_tokens: Option<usize>,
+
+    /// Response shape: `full` metadata or compact `paths`.
+    #[arg(long, value_enum, default_value_t = FilesProjectionArg::Full)]
+    pub projection: FilesProjectionArg,
 
     /// Pagination cursor.
     #[arg(long)]

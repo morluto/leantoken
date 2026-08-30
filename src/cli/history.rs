@@ -50,11 +50,23 @@ pub enum HistoryCommand {
         #[arg(long)]
         revision: Option<String>,
     },
+    /// Diff an ordered symbol set across two revisions.
+    DiffSymbols {
+        /// JSON array of targets; each object has path, symbol, and optional head_path and head_symbol.
+        targets: String,
+        /// Base Git revision.
+        base_revision: String,
+        /// Head Git revision.
+        head_revision: String,
+        /// Opaque cursor from a preceding page.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
 }
 
-impl From<HistoryArgs> for HistoryRequest {
-    fn from(args: HistoryArgs) -> Self {
-        let operation = match args.operation {
+impl HistoryArgs {
+    pub fn into_single(self) -> HistoryRequest {
+        let operation = match self.operation {
             HistoryCommand::ReadSymbol {
                 path,
                 symbol,
@@ -84,11 +96,38 @@ impl From<HistoryArgs> for HistoryRequest {
                 symbol,
                 revision,
             },
+            HistoryCommand::DiffSymbols { .. } => {
+                unreachable!("DiffSymbols is handled separately")
+            }
         };
-        Self {
+        HistoryRequest {
             operation,
-            max_results: args.max_results,
-            max_tokens: args.max_tokens,
+            max_results: self.max_results,
+            max_tokens: self.max_tokens,
+        }
+    }
+
+    pub fn into_diff_symbols(self) -> crate::model::DiffSymbolsRequest {
+        match self.operation {
+            HistoryCommand::DiffSymbols {
+                targets,
+                base_revision,
+                head_revision,
+                cursor,
+            } => {
+                let parsed: Vec<crate::model::DiffSymbolsTarget> =
+                    serde_json::from_str(&targets)
+                        .expect("targets must be a JSON array of {path, symbol, head_path?, head_symbol?}");
+                crate::model::DiffSymbolsRequest {
+                    targets: parsed,
+                    base_revision,
+                    head_revision,
+                    max_results: self.max_results,
+                    max_tokens: self.max_tokens,
+                    cursor,
+                }
+            }
+            _ => unreachable!("into_diff_symbols called on non-DiffSymbols"),
         }
     }
 }

@@ -70,20 +70,34 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             request,
             consistency,
             max_response_tokens,
+            projection,
         } => {
             let services = repository_services(&cli)?;
             let consistency = resolve_retrieval_consistency(&services, consistency).await?;
-            print(
-                &services
-                    .files_with_options_consistency_cancellable(
-                        request,
-                        consistency,
-                        service_call_options(max_response_tokens),
-                        CancellationToken::new(),
-                    )
-                    .await?,
-                json,
-            )
+            match projection {
+                FilesProjectionArg::Full => print(
+                    &services
+                        .files_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                FilesProjectionArg::Paths => print(
+                    &services
+                        .files_paths_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+            }
         }
         AppRequest::Search {
             request,
@@ -108,6 +122,17 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
                 SearchProjectionArg::Compact => print(
                     &services
                         .search_compact_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                SearchProjectionArg::Grouped => print(
+                    &services
+                        .search_grouped_with_options_consistency_cancellable(
                             request,
                             consistency,
                             service_call_options(max_response_tokens),
@@ -146,20 +171,34 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             request,
             consistency,
             max_response_tokens,
+            projection,
         } => {
             let services = repository_services(&cli)?;
             let consistency = resolve_retrieval_consistency(&services, consistency).await?;
-            print(
-                &services
-                    .outline_with_options_consistency_cancellable(
-                        request,
-                        consistency,
-                        service_call_options(max_response_tokens),
-                        CancellationToken::new(),
-                    )
-                    .await?,
-                json,
-            )
+            match projection {
+                OutlineProjectionArg::Full => print(
+                    &services
+                        .outline_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+                OutlineProjectionArg::Signatures => print(
+                    &services
+                        .outline_signatures_with_options_consistency_cancellable(
+                            request,
+                            consistency,
+                            service_call_options(max_response_tokens),
+                            CancellationToken::new(),
+                        )
+                        .await?,
+                    json,
+                ),
+            }
         }
         AppRequest::Read {
             request,
@@ -188,6 +227,22 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             print(
                 &services
                     .history_with_options(request, service_call_options(max_response_tokens))
+                    .await?,
+                json,
+            )
+        }
+        AppRequest::HistoryDiffSymbols {
+            request,
+            max_response_tokens,
+        } => {
+            let services = repository_services(&cli)?;
+            print(
+                &services
+                    .history_diff_symbols_cancellable_with_options(
+                        request,
+                        service_call_options(max_response_tokens),
+                        CancellationToken::new(),
+                    )
                     .await?,
                 json,
             )

@@ -452,11 +452,13 @@ impl Cli {
             Commands::Files(args) => {
                 let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
+                let projection = args.projection;
                 let request: FilesRequest = args.clone().into();
                 AppRequest::Files {
                     request,
                     consistency,
                     max_response_tokens,
+                    projection,
                 }
             }
             Commands::Search(args) => {
@@ -474,11 +476,13 @@ impl Cli {
             Commands::Outline(args) => {
                 let consistency = args.index_consistency.consistency.into();
                 let max_response_tokens = args.max_response_tokens;
+                let projection = args.projection;
                 let request: OutlineRequest = args.clone().into();
                 AppRequest::Outline {
                     request,
                     consistency,
                     max_response_tokens,
+                    projection,
                 }
             }
             Commands::Read(args) => {
@@ -493,10 +497,21 @@ impl Cli {
             }
             Commands::History(args) => {
                 let max_response_tokens = args.max_response_tokens;
-                let request: HistoryRequest = args.clone().into();
-                AppRequest::History {
-                    request,
-                    max_response_tokens,
+                match &args.operation {
+                    HistoryCommand::DiffSymbols { .. } => {
+                        let request = args.clone().into_diff_symbols();
+                        AppRequest::HistoryDiffSymbols {
+                            request,
+                            max_response_tokens,
+                        }
+                    }
+                    _ => {
+                        let request: HistoryRequest = args.clone().into_single();
+                        AppRequest::History {
+                            request,
+                            max_response_tokens,
+                        }
+                    }
                 }
             }
             Commands::Json(args) => {
@@ -569,6 +584,7 @@ pub enum AppRequest {
         request: FilesRequest,
         consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
+        projection: FilesProjectionArg,
     },
     Search {
         request: SearchRequest,
@@ -580,6 +596,7 @@ pub enum AppRequest {
         request: OutlineRequest,
         consistency: IndexConsistency,
         max_response_tokens: Option<usize>,
+        projection: OutlineProjectionArg,
     },
     Read {
         request: ReadRequest,
@@ -588,6 +605,10 @@ pub enum AppRequest {
     },
     History {
         request: HistoryRequest,
+        max_response_tokens: Option<usize>,
+    },
+    HistoryDiffSymbols {
+        request: crate::model::DiffSymbolsRequest,
         max_response_tokens: Option<usize>,
     },
     Json {
@@ -732,6 +753,8 @@ use retrieval::*;
 use runtime::*;
 use search::SearchArgs;
 pub use search::SearchProjectionArg;
+pub use outline::OutlineProjectionArg;
+pub use files::FilesProjectionArg;
 mod episode;
 mod files;
 mod history;

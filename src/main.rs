@@ -8,7 +8,7 @@ use std::{
 use clap::Parser;
 use leantoken::{
     Result, cache,
-    cli::{AppRequest, Cli, SearchProjectionArg},
+    cli::{AppRequest, Cli, FilesProjectionArg, OutlineProjectionArg, SearchProjectionArg},
     doctor, episode, mcp,
     model::{IndexConsistency, IndexState, IndexingMode, SearchOccurrenceOutput},
     services::{ServiceCallOptions, Services},

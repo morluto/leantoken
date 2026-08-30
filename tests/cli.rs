@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use leantoken::cache::{CacheCompatibility, CacheState, DEFAULT_CACHE_LIST_LIMIT};
-use leantoken::cli::{AppRequest, Cli, SearchProjectionArg};
+use leantoken::cli::{AppRequest, Cli, FilesProjectionArg, OutlineProjectionArg, SearchProjectionArg};
 use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
     JsonProjection, JsonSelector, SearchMode,
@@ -167,6 +167,42 @@ fn cli_files_glob_request() {
 }
 
 #[test]
+fn cli_files_projection_paths() {
+    let cli = parse(&["files", "glob", "--pattern", "*.rs", "--projection", "paths"]);
+    let AppRequest::Files { projection, .. } = cli.app_request() else {
+        panic!("expected files request");
+    };
+    assert!(matches!(projection, FilesProjectionArg::Paths));
+}
+
+#[test]
+fn cli_files_projection_defaults_to_full() {
+    let cli = parse(&["files", "tree"]);
+    let AppRequest::Files { projection, .. } = cli.app_request() else {
+        panic!("expected files request");
+    };
+    assert!(matches!(projection, FilesProjectionArg::Full));
+}
+
+#[test]
+fn cli_outline_projection_signatures() {
+    let cli = parse(&["outline", "src/lib.rs", "--projection", "signatures"]);
+    let AppRequest::Outline { projection, .. } = cli.app_request() else {
+        panic!("expected outline request");
+    };
+    assert!(matches!(projection, OutlineProjectionArg::Signatures));
+}
+
+#[test]
+fn cli_outline_projection_defaults_to_full() {
+    let cli = parse(&["outline", "src/lib.rs"]);
+    let AppRequest::Outline { projection, .. } = cli.app_request() else {
+        panic!("expected outline request");
+    };
+    assert!(matches!(projection, OutlineProjectionArg::Full));
+}
+
+#[test]
 fn cli_search_request() {
     let cli = parse(&[
         "search",
@@ -234,6 +270,12 @@ fn cli_search_projection_is_explicit_and_defaults_to_full() {
     };
     assert_eq!(projection, SearchProjectionArg::Compact);
 
+    let cli = parse(&["search", "bar", "--projection", "grouped"]);
+    let AppRequest::Search { projection, .. } = cli.app_request() else {
+        panic!("expected search request");
+    };
+    assert_eq!(projection, SearchProjectionArg::Grouped);
+
     let cli = parse(&["search", "bar"]);
     let AppRequest::Search { projection, .. } = cli.app_request() else {
         panic!("expected search request");
@@ -294,12 +336,13 @@ fn cli_read_request() {
 }
 
 #[test]
-fn cli_read_does_not_expose_process_local_delta_state() {
-    let error = Cli::try_parse_from(["leantoken", "read", "src/lib.rs", "--delta"])
-        .expect_err("one-shot CLI must not advertise process-local delta state");
-
-    assert_eq!(error.kind(), ErrorKind::UnknownArgument);
-    assert!(!help(&["read"]).contains("--delta"));
+fn cli_read_delta_flag_is_available() {
+    let cli = parse(&["read", "src/lib.rs", "--delta"]);
+    let AppRequest::Read { request, .. } = cli.app_request() else {
+        panic!("expected read request");
+    };
+    assert!(request.delta);
+    assert!(help(&["read"]).contains("--delta"));
 }
 
 #[test]
@@ -330,6 +373,28 @@ fn cli_history_request() {
             && base_revision == "main~1"
             && head_revision == "main"
     ));
+}
+
+#[test]
+fn cli_history_diff_symbols_request() {
+    let cli = parse(&[
+        "history",
+        "diff-symbols",
+        r#"[{"path":"src/lib.rs","symbol":"Services"}]"#,
+        "main~1",
+        "main",
+        "--cursor",
+        "abc",
+    ]);
+    let AppRequest::HistoryDiffSymbols { request, .. } = cli.app_request() else {
+        panic!("expected history diff-symbols request");
+    };
+    assert_eq!(request.base_revision, "main~1");
+    assert_eq!(request.head_revision, "main");
+    assert_eq!(request.targets.len(), 1);
+    assert_eq!(request.targets[0].path, "src/lib.rs");
+    assert_eq!(request.targets[0].symbol, "Services");
+    assert_eq!(request.cursor.as_deref(), Some("abc"));
 }
 
 #[test]

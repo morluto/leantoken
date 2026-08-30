@@ -1,5 +1,16 @@
 use super::*;
 
+/// Response projection for CLI outline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum OutlineProjectionArg {
+    /// Preserve symbols, imports, and byte offsets.
+    #[default]
+    Full,
+    /// Return symbol signatures and line ranges without imports or byte offsets.
+    Signatures,
+}
+
 #[derive(Debug, Clone, Parser)]
 pub struct OutlineArgs {
     /// Paths to outline.
@@ -28,6 +39,10 @@ pub struct OutlineArgs {
     /// Maximum tokens in the final serialized JSON service response.
     #[arg(long, value_parser = parse_positive_usize)]
     pub max_response_tokens: Option<usize>,
+
+    /// Response shape: `full` definitions (default) or compact `signatures`.
+    #[arg(long, value_enum, default_value_t = OutlineProjectionArg::Full)]
+    pub projection: OutlineProjectionArg,
 
     /// Continue a result-limited outline.
     #[arg(long)]
