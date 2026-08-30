@@ -1,6 +1,8 @@
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use leantoken::cache::{CacheCompatibility, CacheState, DEFAULT_CACHE_LIST_LIMIT};
-use leantoken::cli::{AppRequest, Cli, FilesProjectionArg, OutlineProjectionArg, SearchProjectionArg};
+use leantoken::cli::{
+    AppRequest, Cli, FilesProjectionArg, OutlineProjectionArg, SearchProjectionArg,
+};
 use leantoken::model::{
     ContextWorkflow, FileOperation, HistoryOperation, IndexConsistency, JsonOperation,
     JsonProjection, JsonSelector, SearchMode,
@@ -168,7 +170,14 @@ fn cli_files_glob_request() {
 
 #[test]
 fn cli_files_projection_paths() {
-    let cli = parse(&["files", "glob", "--pattern", "*.rs", "--projection", "paths"]);
+    let cli = parse(&[
+        "files",
+        "glob",
+        "--pattern",
+        "*.rs",
+        "--projection",
+        "paths",
+    ]);
     let AppRequest::Files { projection, .. } = cli.app_request() else {
         panic!("expected files request");
     };

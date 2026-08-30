@@ -115,9 +115,10 @@ impl HistoryArgs {
                 head_revision,
                 cursor,
             } => {
-                let parsed: Vec<crate::model::DiffSymbolsTarget> =
-                    serde_json::from_str(&targets)
-                        .expect("targets must be a JSON array of {path, symbol, head_path?, head_symbol?}");
+                let parsed: Vec<crate::model::DiffSymbolsTarget> = serde_json::from_str(&targets)
+                    .expect(
+                        "targets must be a JSON array of {path, symbol, head_path?, head_symbol?}",
+                    );
                 crate::model::DiffSymbolsRequest {
                     targets: parsed,
                     base_revision,

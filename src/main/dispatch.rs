@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
     match cli.app_request() {
