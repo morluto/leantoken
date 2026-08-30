@@ -1,5 +1,25 @@
 use super::*;
 
+/// Verification policy for reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum ReadPolicyArg {
+    /// Stop after the requested page; no full-file hash or index staleness.
+    #[default]
+    Bounded,
+    /// Hash the complete live file and report index verification metadata.
+    Full,
+}
+
+impl From<ReadPolicyArg> for crate::model::ReadPolicy {
+    fn from(value: ReadPolicyArg) -> Self {
+        match value {
+            ReadPolicyArg::Bounded => Self::Bounded,
+            ReadPolicyArg::Full => Self::Full,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LineRange {
     pub start: Option<usize>,
@@ -119,6 +139,10 @@ pub struct ReadArgs {
     /// select the latest compatible base for this exact target.
     #[arg(long)]
     pub delta: bool,
+
+    /// I/O and verification policy; `full` is required for `--delta`.
+    #[arg(long, value_enum, default_value_t = ReadPolicyArg::Bounded)]
+    pub policy: ReadPolicyArg,
 }
 
 impl From<ReadArgs> for ReadRequest {
@@ -140,7 +164,7 @@ impl From<ReadArgs> for ReadRequest {
             expected_hash: args.expected_hash,
             delta: args.delta,
             receipt_id: None,
-            policy: crate::model::ReadPolicy::default(),
+            policy: args.policy.into(),
         }
     }
 }

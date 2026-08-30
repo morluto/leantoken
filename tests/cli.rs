@@ -346,12 +346,14 @@ fn cli_read_request() {
 
 #[test]
 fn cli_read_delta_flag_is_available() {
-    let cli = parse(&["read", "src/lib.rs", "--delta"]);
+    let cli = parse(&["read", "src/lib.rs", "--delta", "--policy", "full"]);
     let AppRequest::Read { request, .. } = cli.app_request() else {
         panic!("expected read request");
     };
     assert!(request.delta);
+    assert!(matches!(request.policy, leantoken::model::ReadPolicy::Full));
     assert!(help(&["read"]).contains("--delta"));
+    assert!(help(&["read"]).contains("--policy"));
 }
 
 #[test]

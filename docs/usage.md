@@ -33,11 +33,11 @@ leantoken status
 leantoken coverage
 leantoken savings
 leantoken doctor [--client CLIENT] [--ready-timeout-seconds SECONDS]
-leantoken files <tree|find|glob> [options] [--consistency <mode>]
-leantoken search <query> [options] [--consistency <mode>]
-leantoken outline <path>... [--consistency <mode>]
-leantoken read <path> [--lines START:END] [--symbol NAME] [--consistency <mode>]
-leantoken history <operation> ... [options]
+leantoken files <tree|find|glob> [--projection full|paths] [options] [--consistency <mode>]
+leantoken search <query> [--mode MODE] [--projection full|compact|grouped|occurrences|coordinates] [options] [--consistency <mode>]
+leantoken outline <path>... [--projection full|signatures] [--consistency <mode>]
+leantoken read <path> [--lines START:END] [--symbol NAME] [--heading NAME] [--delta] [--policy bounded|full] [--consistency <mode>]
+leantoken history <read-symbol|diff-symbol|diff-symbols|symbol-log> ... [options]
 leantoken json <path> [options]
 leantoken context --task <text> --budget <tokens> [--consistency <mode>]
 leantoken upgrade [--check] [--yes]
