@@ -968,6 +968,28 @@ fn launcher_arguments(
     for pattern in config.index_scope().excludes() {
         global_args.extend(["--index-exclude".into(), OsString::from(pattern)]);
     }
+    if config.include_generated {
+        global_args.push("--include-generated".into());
+    }
+    let limits = config.discovery_limits();
+    global_args.extend([
+        "--max-walk-entries".into(),
+        limits.max_walk_entries.to_string().into(),
+        "--max-files".into(),
+        limits.max_files.to_string().into(),
+        "--max-total-source-bytes".into(),
+        limits.max_total_source_bytes.to_string().into(),
+        "--max-depth".into(),
+        limits.max_depth.to_string().into(),
+        "--max-file-bytes".into(),
+        limits.max_file_bytes.to_string().into(),
+        "--max-prepare-batch-files".into(),
+        limits.max_prepare_batch_files.to_string().into(),
+        "--max-prepare-batch-bytes".into(),
+        limits.max_prepare_batch_bytes.to_string().into(),
+        "--max-index-workers".into(),
+        config.max_index_workers.to_string().into(),
+    ]);
     launch_args.splice(mcp_index..mcp_index, global_args);
     if !launch_args.iter().any(|argument| {
         argument == "--result-mode" || argument.to_string_lossy().starts_with("--result-mode=")

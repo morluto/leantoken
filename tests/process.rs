@@ -72,6 +72,11 @@ fn doctor_preserves_an_explicit_index_scope() {
 }
 
 #[test]
+fn doctor_preserves_index_limits() {
+    doctor::doctor_preserves_index_limits();
+}
+
+#[test]
 fn doctor_can_exercise_the_exact_codex_registration() {
     doctor::doctor_can_exercise_the_exact_codex_registration();
 }

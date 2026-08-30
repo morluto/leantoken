@@ -75,6 +75,47 @@ pub(super) fn doctor_preserves_an_explicit_index_scope() {
     assert_eq!(report["first_call"]["status"], "ready");
 }
 
+pub(super) fn doctor_preserves_index_limits() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("create source directory");
+    std::fs::write(root.path().join("src/small.rs"), "pub fn small() {}\n")
+        .expect("write small fixture");
+    std::fs::write(
+        root.path().join("src/large.rs"),
+        "pub fn large() {}\n".repeat(20),
+    )
+    .expect("write large fixture");
+    let database = root.path().join("index.sqlite");
+
+    let report = run(
+        root.path(),
+        &database,
+        &[
+            "--index-include",
+            "src/**",
+            "--max-file-bytes",
+            "100",
+            "doctor",
+            "--ready-timeout-seconds",
+            "30",
+        ],
+    );
+    assert_eq!(report["status"], "ready");
+
+    let status = run(
+        root.path(),
+        &database,
+        &[
+            "--index-include",
+            "src/**",
+            "--max-file-bytes",
+            "100",
+            "status",
+        ],
+    );
+    assert_eq!(status["file_count"], 1);
+}
+
 pub(super) fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");

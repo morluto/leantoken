@@ -413,8 +413,10 @@ index is still building and tells you to rerun after it completes. Use `--json`
 for a machine-readable readiness report, including the current executable,
 configured host registrations and their inferred versions, and the executable's
 `index_content_version`. This doctor launches the current executable and
-compares it with configured host entries; it does not claim to identify other
-unregistered processes that share an explicit database.
+forwards the active indexing scope, discovery limits, and generated-file policy
+to the child MCP process, so a readiness check cannot silently index a different
+repository boundary. It does not claim to identify other unregistered processes
+that share an explicit database.
 Pass `--client codex` (or another supported client) to read that host's stored
 registration and launch its exact command and arguments instead. This verifies
 the configuration users actually restart into, including pinned npx and private
