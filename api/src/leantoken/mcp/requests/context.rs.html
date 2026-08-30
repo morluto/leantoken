@@ -57,12 +57,12 @@
 <a href=#57 id=57 data-nosnippet>57</a>    /// and `handoff`.
 <a href=#58 id=58 data-nosnippet>58</a>    </span><span class="attr">#[serde(default)]
 <a href=#59 id=59 data-nosnippet>59</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) plan_only: bool,
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Boost matching paths without filtering other candidates.
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Softly boost matching paths; this does not filter other candidates.
 <a href=#61 id=61 data-nosnippet>61</a>    </span><span class="attr">#[serde(default)]
 <a href=#62 id=62 data-nosnippet>62</a>    #[schemars(length(max = <span class="number">32</span>), inner(length(max = <span class="number">4096</span>)))]
 <a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) focus_paths: Vec&lt;String&gt;,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Require every returned fragment to match at least one focus path; requires
-<a href=#65 id=65 data-nosnippet>65</a>    /// non-empty `focus_paths`.
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Hard-filter returned fragments to focus paths; requires non-empty
+<a href=#65 id=65 data-nosnippet>65</a>    /// `focus_paths`.
 <a href=#66 id=66 data-nosnippet>66</a>    </span><span class="attr">#[serde(default)]
 <a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::mcp) strict_focus_paths: bool,
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Minimum returned fragments required per focus path (maximum 8); requires
