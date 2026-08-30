@@ -322,6 +322,7 @@ impl Cli {
             Commands::Cache(_) => Some("cache"),
             Commands::Runtime(_) => Some("runtime"),
             Commands::Upgrade(_) => Some("upgrade"),
+            Commands::Episode(_) => Some("episode"),
             _ => None,
         }) else {
             return Ok(());
