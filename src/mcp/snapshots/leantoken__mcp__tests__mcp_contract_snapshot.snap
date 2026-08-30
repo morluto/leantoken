@@ -329,7 +329,7 @@ expression: mcp_contract()
           },
           "focus_paths": {
             "default": [],
-            "description": "Boost matching paths without filtering other candidates.",
+            "description": "Softly boost matching paths; this does not filter other candidates.",
             "items": {
               "maxLength": 4096,
               "type": "string"
@@ -491,7 +491,7 @@ expression: mcp_contract()
           },
           "strict_focus_paths": {
             "default": false,
-            "description": "Require every returned fragment to match at least one focus path; requires\nnon-empty `focus_paths`.",
+            "description": "Hard-filter returned fragments to focus paths; requires non-empty\n`focus_paths`.",
             "type": "boolean"
           },
           "task": {

@@ -83,13 +83,15 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
             candidate_bytes,
             limit,
         } => ErrorData::invalid_params(
-            format!(
-                "regex search stopped after exhausting its bounded candidate-work budget; {}",
-                dimension.guidance()
-            ),
+            "exhaustive search stopped before complete coverage at its bounded candidate-work budget; narrow the search scope or make the query more selective",
             Some(serde_json::json!({
                 "category": cause.public_category(),
                 "complete": false,
+                "recovery": {
+                    "action": "partition_scope",
+                    "message": "Narrow include_paths or make the query more selective; increasing max_tokens or max_results cannot make one request unbounded.",
+                    "required_fields": ["include_paths"]
+                },
                 "limiting_dimension": dimension,
                 "candidate_files": candidate_files,
                 "candidate_chunks": candidate_chunks,

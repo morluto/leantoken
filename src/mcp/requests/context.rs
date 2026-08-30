@@ -57,12 +57,12 @@ pub(in crate::mcp) struct ContextMcpRequest {
     /// and `handoff`.
     #[serde(default)]
     pub(in crate::mcp) plan_only: bool,
-    /// Boost matching paths without filtering other candidates.
+    /// Softly boost matching paths; this does not filter other candidates.
     #[serde(default)]
     #[schemars(length(max = 32), inner(length(max = 4096)))]
     pub(in crate::mcp) focus_paths: Vec<String>,
-    /// Require every returned fragment to match at least one focus path; requires
-    /// non-empty `focus_paths`.
+    /// Hard-filter returned fragments to focus paths; requires non-empty
+    /// `focus_paths`.
     #[serde(default)]
     pub(in crate::mcp) strict_focus_paths: bool,
     /// Minimum returned fragments required per focus path (maximum 8); requires

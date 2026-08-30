@@ -1349,10 +1349,19 @@ fn assert_search_option_error_mapping() {
     });
     assert_eq!(exhausted.code, rmcp::model::ErrorCode::INVALID_PARAMS);
     assert_eq!(
+        exhausted.message,
+        "exhaustive search stopped before complete coverage at its bounded candidate-work budget; narrow the search scope or make the query more selective"
+    );
+    assert_eq!(
         exhausted.data,
         Some(serde_json::json!({
             "category": "incomplete_work",
             "complete": false,
+            "recovery": {
+                "action": "partition_scope",
+                "message": "Narrow include_paths or make the query more selective; increasing max_tokens or max_results cannot make one request unbounded.",
+                "required_fields": ["include_paths"]
+            },
             "limiting_dimension": "candidate_chunks",
             "candidate_files": 10,
             "candidate_chunks": 20_511,
@@ -2128,6 +2137,18 @@ fn context_focus_candidate_schema_exposes_generation_bounds() {
     assert_eq!(
         schema.pointer("/properties/focus_paths/maxItems"),
         Some(&serde_json::json!(32))
+    );
+    assert_eq!(
+        schema.pointer("/properties/focus_paths/description"),
+        Some(&serde_json::json!(
+            "Softly boost matching paths; this does not filter other candidates."
+        ))
+    );
+    assert_eq!(
+        schema.pointer("/properties/strict_focus_paths/description"),
+        Some(&serde_json::json!(
+            "Hard-filter returned fragments to focus paths; requires non-empty\n`focus_paths`."
+        ))
     );
     assert_eq!(
         schema.pointer("/properties/minimum_fragments_per_focus_path/maximum"),

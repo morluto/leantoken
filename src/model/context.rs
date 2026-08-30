@@ -62,10 +62,10 @@ pub struct ContextRequest {
     /// Return a bounded ranked query plan without source fragments.
     #[serde(default)]
     pub plan_only: bool,
-    /// Boost matching paths without filtering other candidates.
+    /// Softly boost matching paths; this does not filter other candidates.
     #[serde(default)]
     pub focus_paths: Vec<String>,
-    /// Require every returned fragment to match at least one focus path.
+    /// Hard-filter returned fragments to focus paths.
     #[serde(default)]
     pub strict_focus_paths: bool,
     /// Minimum returned fragments required for each focus path pattern.

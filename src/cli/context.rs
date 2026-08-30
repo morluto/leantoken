@@ -68,11 +68,11 @@ pub struct ContextArgs {
     #[arg(long)]
     pub plan_only: bool,
 
-    /// Focus on these paths (repeatable).
+    /// Softly boost these paths without filtering other candidates (repeatable).
     #[arg(long = "focus")]
     pub focus_paths: Vec<String>,
 
-    /// Restrict returned fragments to focus paths; requires --focus.
+    /// Hard-filter returned fragments to focus paths; requires --focus.
     #[arg(long)]
     pub strict_focus_paths: bool,
 

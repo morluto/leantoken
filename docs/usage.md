@@ -1203,8 +1203,9 @@ records the four-task, 60-run evidence and its limits.
 Optional inputs focus or exclude paths and symbols, provide hashes already held
 by the caller, and identify a prior repository generation. `include_paths` is a
 hard boundary: every returned source fragment must match at least one supplied
-pattern, while `focus_paths` remains a ranking boost unless
-`strict_focus_paths=true`. `minimum_fragments_per_focus_path` reserves the
+pattern, while `focus_paths` is a soft ranking boost and does not filter
+unrelated candidates; use `strict_focus_paths=true` for a hard path filter.
+`minimum_fragments_per_focus_path` reserves the
 requested number of fragments for every focus pattern before ordinary ranking.
 Context accepts at most 32 focus patterns and a minimum of at most eight
 fragments per pattern. Required focus coverage receives bounded file-local
