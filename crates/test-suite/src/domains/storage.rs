@@ -74,7 +74,7 @@ fn storage_public_lifecycle_preserves_projections_search_and_atomic_generations(
     let db = dir.root().join("index.sqlite");
     let storage = Storage::open(&db).expect("open");
     let meta = storage.meta().expect("meta");
-    assert_eq!(meta.schema_version, 11);
+    assert_eq!(meta.schema_version, 12);
     assert_eq!(meta.repository_generation, 0);
     assert!(db.exists());
 
@@ -256,6 +256,8 @@ fn storage_applies_lookup_index_migration_to_existing_databases() {
              ALTER TABLE files DROP COLUMN source_tokenizer;
              ALTER TABLE files DROP COLUMN source_token_count;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              ALTER TABLE meta DROP COLUMN repository_identity;
              ALTER TABLE meta DROP COLUMN repository_root;
@@ -297,6 +299,8 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
              ALTER TABLE files DROP COLUMN source_tokenizer;
              ALTER TABLE files DROP COLUMN source_token_count;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              ALTER TABLE meta DROP COLUMN last_access_unix_seconds;
              UPDATE meta SET schema_version = 4 WHERE id = 1;
              PRAGMA user_version = 5;",
@@ -305,7 +309,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     drop(connection);
 
     let storage = Storage::open(&db).expect("migrate");
-    assert_eq!(storage.meta().expect("metadata").schema_version, 11);
+    assert_eq!(storage.meta().expect("metadata").schema_version, 12);
     let connection = rusqlite::Connection::open(&db).expect("inspect");
     let last_access: i64 = connection
         .query_row(
@@ -342,7 +346,7 @@ fn storage_migrates_schema_four_with_cache_access_metadata() {
     let migration_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("migration version");
-    assert_eq!(migration_version, 12);
+    assert_eq!(migration_version, 13);
 }
 
 #[test]
@@ -580,6 +584,8 @@ fn structural_search_migration_rebuilds_existing_rows() {
              DROP TABLE symbols_fts_trigram;
              DROP TABLE symbol_refs_fts_trigram;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              UPDATE meta SET schema_version = 5 WHERE id = 1;
              PRAGMA user_version = 6;",
         )

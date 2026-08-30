@@ -327,6 +327,12 @@ impl Services {
         response::append_coverage_warnings(&mut response);
         response.workflow = resolved_workflow;
         response.workflow_receipt = workflow_receipt;
+        response.meta.index_scope = if self.config.index_scope().is_full() {
+            crate::model::IndexScopeMode::Full
+        } else {
+            crate::model::IndexScopeMode::Scoped
+        };
+        response.meta.index_scope_digest = self.config.index_scope().digest().map(str::to_owned);
         response.meta.freshness = self.freshness();
         response.meta.repository_id = self.repository_id();
         let provenance = RepositoryProvenance {

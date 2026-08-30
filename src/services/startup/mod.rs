@@ -145,6 +145,7 @@ impl Services {
             }
             Err(error) => return Err(error),
         };
+        storage.persist_index_scope(config.index_scope())?;
         Self::from_parts(
             Arc::new(config.clone()),
             storage,

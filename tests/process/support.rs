@@ -12,7 +12,7 @@ use command_group::{CommandGroup, GroupChild};
 pub(crate) use assert_cmd::Command;
 pub(crate) use std::time::{Duration, Instant};
 
-pub(crate) const EXPECTED_INDEX_CONTENT_VERSION: u64 = 14;
+pub(crate) const EXPECTED_INDEX_CONTENT_VERSION: u64 = 15;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 fn process_environment(root: &Path) -> (Vec<(String, OsString)>, Option<tempfile::TempDir>) {

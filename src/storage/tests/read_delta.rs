@@ -390,6 +390,8 @@ fn downgrade_read_delta_schema(database: &Path, conflicting_table: bool) {
              DROP TABLE IF EXISTS query_coverage_receipts;
              DROP TABLE IF EXISTS query_coverage_receipt_usage;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
              UPDATE retrieval_receipt_evidence
              SET logical_bytes = logical_bytes - 8;

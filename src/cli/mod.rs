@@ -369,8 +369,10 @@ impl Cli {
         root: impl AsRef<Path>,
         database_path: Option<PathBuf>,
     ) -> Result<Config> {
-        let index_scope =
+        let requested_scope =
             crate::IndexScope::new(self.index_include.clone(), self.index_exclude.clone())?;
+        let index_scope =
+            self.scope_for_existing_database(database_path.as_deref(), requested_scope)?;
         let mut config = Config::discover_scoped_with_broad_root(
             root,
             database_path,
@@ -405,6 +407,33 @@ impl Cli {
         config.tokenizer = self.tokenizer;
         config.discovery_limits().validate()?;
         Ok(config)
+    }
+
+    fn scope_for_existing_database(
+        &self,
+        database_path: Option<&Path>,
+        requested_scope: crate::IndexScope,
+    ) -> Result<crate::IndexScope> {
+        if !self.index_include.is_empty()
+            || !self.index_exclude.is_empty()
+            || matches!(self.command, Commands::Index { .. })
+        {
+            return Ok(requested_scope);
+        }
+        let Some(database_path) = database_path else {
+            return Ok(requested_scope);
+        };
+        if !database_path.exists() {
+            return Ok(requested_scope);
+        }
+        // An existing empty SQLite file is an uninitialized database. Only a
+        // populated database without scope metadata is rejected by storage.
+        match crate::storage::Storage::read_persisted_index_scope(database_path) {
+            Ok(Some(scope)) => Ok(scope),
+            Ok(None) => Ok(requested_scope),
+            Err(error) if crate::services::is_database_contention(&error) => Ok(requested_scope),
+            Err(error) => Err(error),
+        }
     }
 
     /// Convert the parsed CLI into an application request.

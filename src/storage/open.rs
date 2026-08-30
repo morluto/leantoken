@@ -122,6 +122,54 @@ impl Storage {
         Self::open_with_startup_timeout(path, DEFAULT_BUSY_TIMEOUT)
     }
 
+    /// Read the canonical scope stored by an existing index without opening
+    /// writable services. An empty result means the database requires a
+    /// rebuild before it can be reused by the current scope contract.
+    pub(crate) fn read_persisted_index_scope(path: &Path) -> Result<Option<crate::IndexScope>> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let has_indexed_content = table_exists(&conn, StorageTable::Files)?
+            && conn.query_row("SELECT EXISTS(SELECT 1 FROM files LIMIT 1)", [], |row| {
+                row.get(0)
+            })?;
+        if !table_exists(&conn, StorageTable::Meta)?
+            || !column_exists(&conn, StorageColumn::MetaIndexScopeIncludes)?
+            || !column_exists(&conn, StorageColumn::MetaIndexScopeExcludes)?
+        {
+            if has_indexed_content {
+                return Err(Error::InvalidConfiguration(format!(
+                    "database {} has indexed content but no persisted index scope; rebuild it before reuse",
+                    path.display()
+                )));
+            }
+            return Ok(None);
+        }
+        let includes: String = conn.query_row(
+            "SELECT index_scope_includes FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let excludes: String = conn.query_row(
+            "SELECT index_scope_excludes FROM meta WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        if includes.is_empty() || excludes.is_empty() {
+            if has_indexed_content {
+                return Err(Error::InvalidConfiguration(format!(
+                    "database {} has indexed content but no persisted index scope; rebuild it before reuse",
+                    path.display()
+                )));
+            }
+            return Ok(None);
+        }
+        let includes = serde_json::from_str::<Vec<String>>(&includes)?;
+        let excludes = serde_json::from_str::<Vec<String>>(&excludes)?;
+        crate::IndexScope::new(includes, excludes).map(Some)
+    }
+
     /// Read status from an existing cache without running migrations, changing
     /// SQLite pragmas, or binding the cache to a repository.
     pub(crate) fn read_only_status_scoped(

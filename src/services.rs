@@ -635,7 +635,7 @@ impl Services {
     }
 }
 
-fn is_database_contention(error: &Error) -> bool {
+pub(crate) fn is_database_contention(error: &Error) -> bool {
     matches!(
         sqlite_error_code(error),
         Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)

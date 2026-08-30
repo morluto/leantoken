@@ -449,6 +449,15 @@ ADD COLUMN derivation_fingerprint TEXT NOT NULL DEFAULT '';
 UPDATE meta SET schema_version = 11 WHERE id = 1;
 "#;
 
+pub(crate) const INDEX_SCOPE_METADATA_SQL: &str = r#"
+ALTER TABLE meta
+ADD COLUMN index_scope_includes TEXT NOT NULL DEFAULT '';
+ALTER TABLE meta
+ADD COLUMN index_scope_excludes TEXT NOT NULL DEFAULT '';
+
+UPDATE meta SET schema_version = 12 WHERE id = 1;
+"#;
+
 pub(crate) const TOKEN_SAVINGS_TABLE_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS token_savings (
     tokenizer TEXT NOT NULL,
@@ -499,8 +508,9 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
     M::up(RECEIPT_EXACT_ONLY_SQL),
     M::up(QUERY_COVERAGE_RECEIPTS_SQL),
     M::up(INDEX_DERIVATION_IDENTITY_SQL),
+    M::up(INDEX_SCOPE_METADATA_SQL),
 ];
-pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 12;
+pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 13;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
 use super::*;

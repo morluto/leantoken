@@ -455,6 +455,8 @@ fn downgrade_query_receipt_schema(database: &Path, conflicting_table: bool) {
             "DROP TABLE query_coverage_receipts;
              DROP TABLE query_coverage_receipt_usage;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              UPDATE meta SET schema_version = 9;
              PRAGMA user_version = 10;",
         )

@@ -166,11 +166,16 @@ scoped cache therefore proves absence only inside that configured scope.
 
 Normalized scope participates in the automatically managed cache identity, so
 full and scoped indexes for one repository can coexist. The JSON result from
-`index` reports the canonical scope arguments and digest, making them
-available for the next command. Reuse the same scope arguments on every
-command that must address that cache. An explicit
-`--database` is bound to both repository and full scope identity and fails
-with `index_scope_mismatch` if reused with another scope.
+`index` reports the canonical scope arguments and digest. When an explicit
+`--database` is reused without scope flags, status and retrieval commands adopt
+the scope persisted in that database; agents do not need to replay those
+arguments. The `index` command remains strict and requires the original scope
+flags, preventing an omitted scope from silently rebuilding a scoped database
+as full. Explicit conflicting scope flags fail with `index_scope_mismatch`.
+Populated databases without persisted scope metadata are rejected and must be
+rebuilt; LeanToken never guesses whether their existing rows represent a full
+or scoped index. Managed caches from an older index-content version are not
+reused.
 
 For a dependency-heavy TileLang checkout, for example, first-party work can
 exclude the recorded dependency submodules:

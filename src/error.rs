@@ -572,13 +572,13 @@ impl Error {
             Self::PathOutsideRoot(_) => "path_outside_root",
             Self::UnsupportedPathEncoding(_) => "unsupported_path_encoding",
             Self::UnsupportedLanguage(_) => "unsupported_language",
+            Self::IndexScopeMismatch { .. } => "index_scope_mismatch",
             Self::InvalidRequest(_) => "invalid_request",
             Self::Regex(_) => "invalid_regex",
             Self::Glob(_) => "invalid_glob",
             Self::RootNotFound(_)
             | Self::UnsafeRepositoryRoot(_)
             | Self::RepositoryMismatch { .. }
-            | Self::IndexScopeMismatch { .. }
             | Self::InvalidConfiguration(_) => "repository_configuration",
             Self::IndexLimitExceeded { .. } => "repository_index_limit",
             Self::RepositoryTraversal(_) => "repository_traversal",

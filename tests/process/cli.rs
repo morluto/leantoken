@@ -209,6 +209,39 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     );
     assert_eq!(status["file_count"], 1);
 
+    let adopted_status = run(root.path(), &database, &["status"]);
+    assert_eq!(adopted_status["index_scope"], "scoped");
+    assert_eq!(
+        adopted_status["index_include_paths"],
+        serde_json::json!(["src/**"])
+    );
+    assert_eq!(adopted_status["file_count"], 1);
+
+    let adopted_search = run(
+        root.path(),
+        &database,
+        &["search", "selected_scope_target", "--mode", "identifier"],
+    );
+    assert_eq!(adopted_search["hits"][0]["path"], "src/lib.rs");
+    assert_eq!(adopted_search["meta"]["index_scope"], "scoped");
+
+    let adopted_context = run(
+        root.path(),
+        &database,
+        &[
+            "context",
+            "--task",
+            "Find the selected scope target",
+            "--budget",
+            "200",
+        ],
+    );
+    assert_eq!(adopted_context["meta"]["index_scope"], "scoped");
+    assert_eq!(
+        adopted_context["meta"]["index_scope_digest"],
+        adopted_status["index_scope_digest"]
+    );
+
     let absent = run(
         root.path(),
         &database,
@@ -228,6 +261,36 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     assert_eq!(
         absent["meta"]["index_scope_digest"],
         status["index_scope_digest"]
+    );
+
+    let mismatch = run_error(
+        root.path(),
+        &database,
+        &[
+            "--index-include",
+            "third_party/**",
+            "search",
+            "dependency_scope_target",
+            "--mode",
+            "identifier",
+        ],
+    );
+    assert_eq!(mismatch["category"], "index_scope_mismatch");
+
+    let connection = rusqlite::Connection::open(&database).expect("open indexed database");
+    connection
+        .execute(
+            "UPDATE meta SET index_scope_includes = '', index_scope_excludes = ''",
+            [],
+        )
+        .expect("remove persisted scope metadata");
+    drop(connection);
+    let missing_scope = run_error(root.path(), &database, &["status"]);
+    assert_eq!(missing_scope["category"], "repository_configuration");
+    assert!(
+        missing_scope["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("no persisted index scope"))
     );
 }
 

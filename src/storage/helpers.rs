@@ -42,6 +42,8 @@ pub(crate) enum StorageColumn {
     MetaRepositoryIdentity,
     MetaRepositoryGeneration,
     MetaDerivationFingerprint,
+    MetaIndexScopeIncludes,
+    MetaIndexScopeExcludes,
     FilesSizeBytes,
     FilesLanguage,
     FilesStructurallyComplete,
@@ -54,7 +56,9 @@ impl StorageColumn {
             Self::MetaRepositoryRoot
             | Self::MetaRepositoryIdentity
             | Self::MetaRepositoryGeneration
-            | Self::MetaDerivationFingerprint => StorageTable::Meta,
+            | Self::MetaDerivationFingerprint
+            | Self::MetaIndexScopeIncludes
+            | Self::MetaIndexScopeExcludes => StorageTable::Meta,
             Self::FilesSizeBytes
             | Self::FilesLanguage
             | Self::FilesStructurallyComplete
@@ -68,6 +72,8 @@ impl StorageColumn {
             Self::MetaRepositoryIdentity => "repository_identity",
             Self::MetaRepositoryGeneration => "repository_generation",
             Self::MetaDerivationFingerprint => "derivation_fingerprint",
+            Self::MetaIndexScopeIncludes => "index_scope_includes",
+            Self::MetaIndexScopeExcludes => "index_scope_excludes",
             Self::FilesSizeBytes => "size_bytes",
             Self::FilesLanguage => "language",
             Self::FilesStructurallyComplete => "structurally_complete",

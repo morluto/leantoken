@@ -1167,6 +1167,8 @@ fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
             "DROP TABLE query_coverage_receipts;
              DROP TABLE query_coverage_receipt_usage;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
              UPDATE retrieval_receipt_evidence
              SET logical_bytes = logical_bytes - 8;
@@ -1207,6 +1209,8 @@ fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
              DROP TABLE IF EXISTS retrieval_receipts;
              DROP TABLE IF EXISTS retrieval_receipt_usage;
              ALTER TABLE meta DROP COLUMN derivation_fingerprint;
+             ALTER TABLE meta DROP COLUMN index_scope_includes;
+             ALTER TABLE meta DROP COLUMN index_scope_excludes;
              UPDATE meta SET schema_version = 6 WHERE id = 1;
              PRAGMA user_version = 7;",
         )

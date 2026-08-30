@@ -1,4 +1,52 @@
 impl Storage {
+    /// Persist the normalized scope used to bind this index.
+    pub(crate) fn persist_index_scope(&self, scope: &crate::IndexScope) -> Result<()> {
+        let includes = serde_json::to_string(scope.includes())?;
+        let excludes = serde_json::to_string(scope.excludes())?;
+        let mut conn = self
+            .writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored = tx.query_row(
+            "SELECT index_scope_includes, index_scope_excludes
+             FROM meta WHERE id = 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?;
+        if stored.0.is_empty() || stored.1.is_empty() {
+            let has_indexed_files: bool =
+                tx.query_row("SELECT EXISTS(SELECT 1 FROM files LIMIT 1)", [], |row| {
+                    row.get(0)
+                })?;
+            if has_indexed_files {
+                return Err(crate::Error::InvalidConfiguration(
+                    "database has indexed content but no persisted index scope; rebuild it before reuse"
+                        .into(),
+                ));
+            }
+        } else {
+            let stored_scope = crate::IndexScope::new(
+                serde_json::from_str::<Vec<String>>(&stored.0)?,
+                serde_json::from_str::<Vec<String>>(&stored.1)?,
+            )?;
+            if stored_scope.digest() != scope.digest() {
+                return Err(crate::Error::IndexScopeMismatch {
+                    database: self.path.clone(),
+                });
+            }
+        }
+        tx.execute(
+            "UPDATE meta
+             SET index_scope_includes = ?1,
+                 index_scope_excludes = ?2
+             WHERE id = 1",
+            params![includes, excludes],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Read the currently committed schema, configuration, and generation metadata.
     pub fn meta(&self) -> Result<MetaRecord> {
         self.begin_read()?.meta()
