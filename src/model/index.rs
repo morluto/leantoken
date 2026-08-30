@@ -48,6 +48,18 @@ impl IndexSkipReasonCounts {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct IndexResponse {
     pub repository_generation: u64,
+    /// Whether this index covers the full repository or an explicit scope.
+    #[serde(default)]
+    pub index_scope: IndexScopeMode,
+    /// Compact identity for a scoped index, omitted for full indexes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_scope_digest: Option<String>,
+    /// Canonical include patterns used to define a scoped index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_include_paths: Vec<String>,
+    /// Canonical exclude patterns used to define a scoped index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_exclude_paths: Vec<String>,
     pub files_seen: usize,
     pub files_indexed: usize,
     pub files_unchanged: usize,

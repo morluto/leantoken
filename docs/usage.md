@@ -165,8 +165,10 @@ scope digest. Every retrieval response reports `meta.index_scope` as `full` or
 scoped cache therefore proves absence only inside that configured scope.
 
 Normalized scope participates in the automatically managed cache identity, so
-full and scoped indexes for one repository can coexist. Reuse the same scope
-arguments on every command that must address that cache. An explicit
+full and scoped indexes for one repository can coexist. The JSON result from
+`index` reports the canonical scope arguments and digest, making them
+available for the next command. Reuse the same scope arguments on every
+command that must address that cache. An explicit
 `--database` is bound to both repository and full scope identity and fails
 with `index_scope_mismatch` if reused with another scope.
 

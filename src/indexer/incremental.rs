@@ -1,4 +1,5 @@
 use super::*;
+use crate::IndexScopeMode;
 
 enum VisibilityObservation {
     Stable,
@@ -502,6 +503,14 @@ impl Indexer {
 
         let response = IndexResponse {
             repository_generation: generation,
+            index_scope: if self.config.index_scope().is_full() {
+                IndexScopeMode::Full
+            } else {
+                IndexScopeMode::Scoped
+            },
+            index_scope_digest: self.config.index_scope().digest().map(str::to_owned),
+            index_include_paths: self.config.index_scope().includes().to_vec(),
+            index_exclude_paths: self.config.index_scope().excludes().to_vec(),
             files_seen,
             files_indexed,
             files_unchanged: unchanged,

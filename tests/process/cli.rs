@@ -182,6 +182,13 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     );
     assert_eq!(index["files_seen"], 1);
     assert_eq!(index["files_indexed"], 1);
+    assert_eq!(index["index_scope"], "scoped");
+    assert_eq!(index["index_include_paths"], serde_json::json!(["src/**"]));
+    assert_eq!(
+        index["index_exclude_paths"],
+        serde_json::json!(["third_party/**"])
+    );
+    assert_eq!(index["index_scope_digest"].as_str().map(str::len), Some(16));
 
     let status = run(
         root.path(),

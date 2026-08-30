@@ -142,6 +142,10 @@ mod tests {
         };
         let response = IndexResponse {
             repository_generation: 2,
+            index_scope: IndexScopeMode::Full,
+            index_scope_digest: None,
+            index_include_paths: Vec::new(),
+            index_exclude_paths: Vec::new(),
             files_seen: 7,
             files_indexed: 1,
             files_unchanged: 0,
