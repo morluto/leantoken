@@ -67,6 +67,11 @@ fn doctor_verifies_identity_catalog_and_first_retrieval() {
 }
 
 #[test]
+fn doctor_preserves_an_explicit_index_scope() {
+    doctor::doctor_preserves_an_explicit_index_scope();
+}
+
+#[test]
 fn doctor_can_exercise_the_exact_codex_registration() {
     doctor::doctor_can_exercise_the_exact_codex_registration();
 }

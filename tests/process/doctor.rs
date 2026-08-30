@@ -50,6 +50,31 @@ pub(super) fn doctor_verifies_identity_catalog_and_first_retrieval() {
     );
 }
 
+pub(super) fn doctor_preserves_an_explicit_index_scope() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir(root.path().join("src")).expect("create source directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn scoped_context_distillery_ready() -> bool { true }\n",
+    )
+    .expect("write fixture");
+    std::fs::create_dir(root.path().join("excluded")).expect("create excluded directory");
+    std::fs::write(
+        root.path().join("excluded/lib.rs"),
+        "pub fn excluded_from_scope() {}\n",
+    )
+    .expect("write excluded fixture");
+    let database = root.path().join("index.sqlite");
+
+    let report = run(
+        root.path(),
+        &database,
+        &["--index-include", "src/**", "doctor"],
+    );
+    assert_eq!(report["status"], "ready");
+    assert_eq!(report["first_call"]["status"], "ready");
+}
+
 pub(super) fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");

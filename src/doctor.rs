@@ -962,6 +962,12 @@ fn launcher_arguments(
         ]);
     }
     global_args.extend(["--tokenizer".into(), config.tokenizer.name().into()]);
+    for pattern in config.index_scope().includes() {
+        global_args.extend(["--index-include".into(), OsString::from(pattern)]);
+    }
+    for pattern in config.index_scope().excludes() {
+        global_args.extend(["--index-exclude".into(), OsString::from(pattern)]);
+    }
     launch_args.splice(mcp_index..mcp_index, global_args);
     if !launch_args.iter().any(|argument| {
         argument == "--result-mode" || argument.to_string_lossy().starts_with("--result-mode=")
