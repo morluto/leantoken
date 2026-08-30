@@ -1,5 +1,4 @@
 use super::*;
-use crate::IndexScopeMode;
 
 impl Indexer {
     /// Construct an indexer whose dedicated worker pool is created on demand.
@@ -428,17 +427,15 @@ impl Indexer {
         let files_seen = unchanged + candidates.len();
         let files_removed = removed_paths.len();
         let files_skipped = skip_reasons.total();
+        let (index_scope, index_scope_digest, index_include_paths, index_exclude_paths) =
+            index_scope_metadata(self.config.index_scope());
 
         let response = IndexResponse {
             repository_generation: generation,
-            index_scope: if self.config.index_scope().is_full() {
-                IndexScopeMode::Full
-            } else {
-                IndexScopeMode::Scoped
-            },
-            index_scope_digest: self.config.index_scope().digest().map(str::to_owned),
-            index_include_paths: self.config.index_scope().includes().to_vec(),
-            index_exclude_paths: self.config.index_scope().excludes().to_vec(),
+            index_scope,
+            index_scope_digest,
+            index_include_paths,
+            index_exclude_paths,
             files_seen,
             files_indexed,
             files_unchanged: unchanged,

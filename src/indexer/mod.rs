@@ -17,12 +17,12 @@ use tokio_util::sync::CancellationToken;
 use crate::config::INDEX_CONTENT_VERSION;
 use crate::error::RetryableOperation;
 use crate::model::{
-    IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexSkipReasonCounts,
-    IndexingMode,
+    IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexScopeMode,
+    IndexSkipReasonCounts, IndexingMode,
 };
 use crate::parser::{self, ParseOutput};
 use crate::repository::{
-    DiscoveredFile, discover_files_with_limits_policy_and_filter,
+    DiscoveredFile, IndexScope, discover_files_with_limits_policy_and_filter,
     discover_files_with_limits_policy_filter_and_progress, enforce_limit, slash_path,
     validate_relative,
 };
@@ -55,6 +55,21 @@ mod prepare;
 mod progress;
 mod publish;
 mod types;
+
+fn index_scope_metadata(
+    scope: &IndexScope,
+) -> (IndexScopeMode, Option<String>, Vec<String>, Vec<String>) {
+    (
+        if scope.is_full() {
+            IndexScopeMode::Full
+        } else {
+            IndexScopeMode::Scoped
+        },
+        scope.digest().map(str::to_owned),
+        scope.includes().to_vec(),
+        scope.excludes().to_vec(),
+    )
+}
 
 #[cfg(test)]
 mod tests;
