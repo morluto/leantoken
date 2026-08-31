@@ -1179,155 +1179,159 @@
 <a href=#1179 id=1179 data-nosnippet>1179</a>            || {
 <a href=#1180 id=1180 data-nosnippet>1180</a>                <span class="prelude-val">Ok</span>(IndexResponse {
 <a href=#1181 id=1181 data-nosnippet>1181</a>                    repository_generation: <span class="number">1</span>,
-<a href=#1182 id=1182 data-nosnippet>1182</a>                    files_seen: <span class="number">3</span>,
-<a href=#1183 id=1183 data-nosnippet>1183</a>                    files_indexed: <span class="number">2</span>,
-<a href=#1184 id=1184 data-nosnippet>1184</a>                    files_unchanged: <span class="number">1</span>,
-<a href=#1185 id=1185 data-nosnippet>1185</a>                    files_removed: <span class="number">0</span>,
-<a href=#1186 id=1186 data-nosnippet>1186</a>                    files_skipped: <span class="number">0</span>,
-<a href=#1187 id=1187 data-nosnippet>1187</a>                    warnings: Vec::new(),
-<a href=#1188 id=1188 data-nosnippet>1188</a>                })
-<a href=#1189 id=1189 data-nosnippet>1189</a>            },
-<a href=#1190 id=1190 data-nosnippet>1190</a>            || <span class="prelude-val">Ok</span>(()),
-<a href=#1191 id=1191 data-nosnippet>1191</a>            MinimumIndexCounts {
-<a href=#1192 id=1192 data-nosnippet>1192</a>                seen: <span class="number">1</span>,
-<a href=#1193 id=1193 data-nosnippet>1193</a>                indexed: <span class="number">1</span>,
-<a href=#1194 id=1194 data-nosnippet>1194</a>                removed: <span class="number">0</span>,
-<a href=#1195 id=1195 data-nosnippet>1195</a>            },
-<a href=#1196 id=1196 data-nosnippet>1196</a>            <span class="string">"create with affected importers"</span>,
-<a href=#1197 id=1197 data-nosnippet>1197</a>        )
-<a href=#1198 id=1198 data-nosnippet>1198</a>        .expect(<span class="string">"measurement"</span>);
-<a href=#1199 id=1199 data-nosnippet>1199</a>
-<a href=#1200 id=1200 data-nosnippet>1200</a>        <span class="macro">assert_eq!</span>(measurement.files_seen_per_sample, <span class="number">3</span>);
-<a href=#1201 id=1201 data-nosnippet>1201</a>        <span class="macro">assert_eq!</span>(measurement.files_indexed_per_sample, <span class="number">2</span>);
-<a href=#1202 id=1202 data-nosnippet>1202</a>    }
+<a href=#1182 id=1182 data-nosnippet>1182</a>                    index_scope: leantoken::model::IndexScopeMode::Full,
+<a href=#1183 id=1183 data-nosnippet>1183</a>                    index_scope_digest: <span class="prelude-val">None</span>,
+<a href=#1184 id=1184 data-nosnippet>1184</a>                    index_include_paths: Vec::new(),
+<a href=#1185 id=1185 data-nosnippet>1185</a>                    index_exclude_paths: Vec::new(),
+<a href=#1186 id=1186 data-nosnippet>1186</a>                    files_seen: <span class="number">3</span>,
+<a href=#1187 id=1187 data-nosnippet>1187</a>                    files_indexed: <span class="number">2</span>,
+<a href=#1188 id=1188 data-nosnippet>1188</a>                    files_unchanged: <span class="number">1</span>,
+<a href=#1189 id=1189 data-nosnippet>1189</a>                    files_removed: <span class="number">0</span>,
+<a href=#1190 id=1190 data-nosnippet>1190</a>                    files_skipped: <span class="number">0</span>,
+<a href=#1191 id=1191 data-nosnippet>1191</a>                    warnings: Vec::new(),
+<a href=#1192 id=1192 data-nosnippet>1192</a>                })
+<a href=#1193 id=1193 data-nosnippet>1193</a>            },
+<a href=#1194 id=1194 data-nosnippet>1194</a>            || <span class="prelude-val">Ok</span>(()),
+<a href=#1195 id=1195 data-nosnippet>1195</a>            MinimumIndexCounts {
+<a href=#1196 id=1196 data-nosnippet>1196</a>                seen: <span class="number">1</span>,
+<a href=#1197 id=1197 data-nosnippet>1197</a>                indexed: <span class="number">1</span>,
+<a href=#1198 id=1198 data-nosnippet>1198</a>                removed: <span class="number">0</span>,
+<a href=#1199 id=1199 data-nosnippet>1199</a>            },
+<a href=#1200 id=1200 data-nosnippet>1200</a>            <span class="string">"create with affected importers"</span>,
+<a href=#1201 id=1201 data-nosnippet>1201</a>        )
+<a href=#1202 id=1202 data-nosnippet>1202</a>        .expect(<span class="string">"measurement"</span>);
 <a href=#1203 id=1203 data-nosnippet>1203</a>
-<a href=#1204 id=1204 data-nosnippet>1204</a>    <span class="attr">#[test]
-<a href=#1205 id=1205 data-nosnippet>1205</a>    </span><span class="kw">fn </span>small_profile_exercises_each_measurement() {
-<a href=#1206 id=1206 data-nosnippet>1206</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
-<a href=#1207 id=1207 data-nosnippet>1207</a>        <span class="kw">let </span>args = Args {
-<a href=#1208 id=1208 data-nosnippet>1208</a>            command: <span class="prelude-val">None</span>,
-<a href=#1209 id=1209 data-nosnippet>1209</a>            repository: <span class="prelude-val">None</span>,
-<a href=#1210 id=1210 data-nosnippet>1210</a>            repository_label: <span class="prelude-val">None</span>,
-<a href=#1211 id=1211 data-nosnippet>1211</a>            files: <span class="number">6</span>,
-<a href=#1212 id=1212 data-nosnippet>1212</a>            file_bytes: <span class="number">256</span>,
-<a href=#1213 id=1213 data-nosnippet>1213</a>            iterations: <span class="number">2</span>,
-<a href=#1214 id=1214 data-nosnippet>1214</a>            read_samples: <span class="number">12</span>,
-<a href=#1215 id=1215 data-nosnippet>1215</a>            hot_set: <span class="number">2</span>,
-<a href=#1216 id=1216 data-nosnippet>1216</a>            watcher_debounce_ms: <span class="number">50</span>,
-<a href=#1217 id=1217 data-nosnippet>1217</a>            output: output.path().join(<span class="string">"report.json"</span>),
-<a href=#1218 id=1218 data-nosnippet>1218</a>        };
-<a href=#1219 id=1219 data-nosnippet>1219</a>
-<a href=#1220 id=1220 data-nosnippet>1220</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile"</span>);
-<a href=#1221 id=1221 data-nosnippet>1221</a>
-<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="macro">assert_eq!</span>(report.schema_version, <span class="number">10</span>);
-<a href=#1223 id=1223 data-nosnippet>1223</a>        <span class="macro">assert_eq!</span>(report.initial_index.response.files_indexed, <span class="number">7</span>);
-<a href=#1224 id=1224 data-nosnippet>1224</a>        <span class="macro">assert!</span>(report.initial_index.storage_footprint.database_bytes &gt; <span class="number">0</span>);
-<a href=#1225 id=1225 data-nosnippet>1225</a>        <span class="macro">assert_eq!</span>(
-<a href=#1226 id=1226 data-nosnippet>1226</a>            report.initial_index.storage_footprint.total_bytes,
-<a href=#1227 id=1227 data-nosnippet>1227</a>            report.initial_index.storage_footprint.database_bytes
-<a href=#1228 id=1228 data-nosnippet>1228</a>                + report.initial_index.storage_footprint.wal_bytes
-<a href=#1229 id=1229 data-nosnippet>1229</a>                + report.initial_index.storage_footprint.shm_bytes
-<a href=#1230 id=1230 data-nosnippet>1230</a>        );
-<a href=#1231 id=1231 data-nosnippet>1231</a>        <span class="macro">assert_eq!</span>(report.full_noop.timing.samples, <span class="number">2</span>);
-<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="macro">assert_eq!</span>(report.full_noop_phases.discovery.samples, <span class="number">2</span>);
-<a href=#1233 id=1233 data-nosnippet>1233</a>        <span class="macro">assert_eq!</span>(report.full_noop_write_attribution.len(), <span class="number">2</span>);
-<a href=#1234 id=1234 data-nosnippet>1234</a>        <span class="macro">assert!</span>(
-<a href=#1235 id=1235 data-nosnippet>1235</a>            report
-<a href=#1236 id=1236 data-nosnippet>1236</a>                .full_noop_write_attribution
-<a href=#1237 id=1237 data-nosnippet>1237</a>                .iter()
-<a href=#1238 id=1238 data-nosnippet>1238</a>                .all(|sample| !sample.generation_published
-<a href=#1239 id=1239 data-nosnippet>1239</a>                    &amp;&amp; sample.generation_before == sample.generation_after)
-<a href=#1240 id=1240 data-nosnippet>1240</a>        );
-<a href=#1241 id=1241 data-nosnippet>1241</a>        <span class="macro">assert_eq!</span>(report.full_changed.files_indexed_per_sample, <span class="number">1</span>);
-<a href=#1242 id=1242 data-nosnippet>1242</a>        <span class="macro">assert_eq!</span>(report.targeted_changed.files_seen_per_sample, <span class="number">1</span>);
-<a href=#1243 id=1243 data-nosnippet>1243</a>        <span class="macro">assert_eq!</span>(report.create_delta.files_seen_per_sample, <span class="number">1</span>);
-<a href=#1244 id=1244 data-nosnippet>1244</a>        <span class="macro">assert_eq!</span>(report.delete_targeted.files_removed_per_sample, <span class="number">1</span>);
-<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="macro">assert_eq!</span>(report.rename_delta.files_removed_per_sample, <span class="number">1</span>);
-<a href=#1246 id=1246 data-nosnippet>1246</a>        <span class="macro">assert_eq!</span>(report.ignore_change_delta.files_seen_per_sample, <span class="number">1</span>);
-<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="macro">assert_eq!</span>(
-<a href=#1248 id=1248 data-nosnippet>1248</a>            report
-<a href=#1249 id=1249 data-nosnippet>1249</a>                .directory_rename_delta
-<a href=#1250 id=1250 data-nosnippet>1250</a>                .as_ref()
-<a href=#1251 id=1251 data-nosnippet>1251</a>                .map(|measurement| measurement.affected_files),
-<a href=#1252 id=1252 data-nosnippet>1252</a>            <span class="prelude-val">Some</span>(<span class="number">6</span>)
-<a href=#1253 id=1253 data-nosnippet>1253</a>        );
-<a href=#1254 id=1254 data-nosnippet>1254</a>        <span class="macro">assert_eq!</span>(report.ignore_visibility_delta.files_removed_per_sample, <span class="number">1</span>);
-<a href=#1255 id=1255 data-nosnippet>1255</a>        <span class="macro">assert_eq!</span>(report.watcher_modify_delivery.timing.samples, <span class="number">2</span>);
-<a href=#1256 id=1256 data-nosnippet>1256</a>        <span class="macro">assert_eq!</span>(
-<a href=#1257 id=1257 data-nosnippet>1257</a>            report.watcher_modify_delivery.changed_messages
-<a href=#1258 id=1258 data-nosnippet>1258</a>                + report.watcher_modify_delivery.full_reconciliation_messages,
-<a href=#1259 id=1259 data-nosnippet>1259</a>            <span class="number">2
-<a href=#1260 id=1260 data-nosnippet>1260</a>        </span>);
-<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="macro">assert!</span>(report.final_storage_footprint.database_bytes &gt; <span class="number">0</span>);
-<a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="macro">assert_eq!</span>(report.warm_hot_file_reads.timing.samples, <span class="number">12</span>);
-<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="macro">assert_eq!</span>(report.memory_hot_file_copies.timing.samples, <span class="number">12</span>);
-<a href=#1264 id=1264 data-nosnippet>1264</a>    }
-<a href=#1265 id=1265 data-nosnippet>1265</a>
-<a href=#1266 id=1266 data-nosnippet>1266</a>    <span class="attr">#[test]
-<a href=#1267 id=1267 data-nosnippet>1267</a>    </span><span class="kw">fn </span>repository_profile_mutates_only_a_disposable_snapshot() {
-<a href=#1268 id=1268 data-nosnippet>1268</a>        <span class="kw">let </span>git = Command::new(<span class="string">"git"</span>)
-<a href=#1269 id=1269 data-nosnippet>1269</a>            .arg(<span class="string">"--version"</span>)
-<a href=#1270 id=1270 data-nosnippet>1270</a>            .status()
-<a href=#1271 id=1271 data-nosnippet>1271</a>            .expect(<span class="string">"Git is required for the repository profile test"</span>);
-<a href=#1272 id=1272 data-nosnippet>1272</a>        <span class="macro">assert!</span>(
-<a href=#1273 id=1273 data-nosnippet>1273</a>            git.success(),
-<a href=#1274 id=1274 data-nosnippet>1274</a>            <span class="string">"Git is required for the repository profile test"
-<a href=#1275 id=1275 data-nosnippet>1275</a>        </span>);
-<a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
-<a href=#1277 id=1277 data-nosnippet>1277</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"init"</span>, <span class="string">"--quiet"</span>]);
-<a href=#1278 id=1278 data-nosnippet>1278</a>        run_git(
-<a href=#1279 id=1279 data-nosnippet>1279</a>            repository.path(),
-<a href=#1280 id=1280 data-nosnippet>1280</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.email"</span>, <span class="string">"test@example.com"</span>],
-<a href=#1281 id=1281 data-nosnippet>1281</a>        );
+<a href=#1204 id=1204 data-nosnippet>1204</a>        <span class="macro">assert_eq!</span>(measurement.files_seen_per_sample, <span class="number">3</span>);
+<a href=#1205 id=1205 data-nosnippet>1205</a>        <span class="macro">assert_eq!</span>(measurement.files_indexed_per_sample, <span class="number">2</span>);
+<a href=#1206 id=1206 data-nosnippet>1206</a>    }
+<a href=#1207 id=1207 data-nosnippet>1207</a>
+<a href=#1208 id=1208 data-nosnippet>1208</a>    <span class="attr">#[test]
+<a href=#1209 id=1209 data-nosnippet>1209</a>    </span><span class="kw">fn </span>small_profile_exercises_each_measurement() {
+<a href=#1210 id=1210 data-nosnippet>1210</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
+<a href=#1211 id=1211 data-nosnippet>1211</a>        <span class="kw">let </span>args = Args {
+<a href=#1212 id=1212 data-nosnippet>1212</a>            command: <span class="prelude-val">None</span>,
+<a href=#1213 id=1213 data-nosnippet>1213</a>            repository: <span class="prelude-val">None</span>,
+<a href=#1214 id=1214 data-nosnippet>1214</a>            repository_label: <span class="prelude-val">None</span>,
+<a href=#1215 id=1215 data-nosnippet>1215</a>            files: <span class="number">6</span>,
+<a href=#1216 id=1216 data-nosnippet>1216</a>            file_bytes: <span class="number">256</span>,
+<a href=#1217 id=1217 data-nosnippet>1217</a>            iterations: <span class="number">2</span>,
+<a href=#1218 id=1218 data-nosnippet>1218</a>            read_samples: <span class="number">12</span>,
+<a href=#1219 id=1219 data-nosnippet>1219</a>            hot_set: <span class="number">2</span>,
+<a href=#1220 id=1220 data-nosnippet>1220</a>            watcher_debounce_ms: <span class="number">50</span>,
+<a href=#1221 id=1221 data-nosnippet>1221</a>            output: output.path().join(<span class="string">"report.json"</span>),
+<a href=#1222 id=1222 data-nosnippet>1222</a>        };
+<a href=#1223 id=1223 data-nosnippet>1223</a>
+<a href=#1224 id=1224 data-nosnippet>1224</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile"</span>);
+<a href=#1225 id=1225 data-nosnippet>1225</a>
+<a href=#1226 id=1226 data-nosnippet>1226</a>        <span class="macro">assert_eq!</span>(report.schema_version, <span class="number">10</span>);
+<a href=#1227 id=1227 data-nosnippet>1227</a>        <span class="macro">assert_eq!</span>(report.initial_index.response.files_indexed, <span class="number">7</span>);
+<a href=#1228 id=1228 data-nosnippet>1228</a>        <span class="macro">assert!</span>(report.initial_index.storage_footprint.database_bytes &gt; <span class="number">0</span>);
+<a href=#1229 id=1229 data-nosnippet>1229</a>        <span class="macro">assert_eq!</span>(
+<a href=#1230 id=1230 data-nosnippet>1230</a>            report.initial_index.storage_footprint.total_bytes,
+<a href=#1231 id=1231 data-nosnippet>1231</a>            report.initial_index.storage_footprint.database_bytes
+<a href=#1232 id=1232 data-nosnippet>1232</a>                + report.initial_index.storage_footprint.wal_bytes
+<a href=#1233 id=1233 data-nosnippet>1233</a>                + report.initial_index.storage_footprint.shm_bytes
+<a href=#1234 id=1234 data-nosnippet>1234</a>        );
+<a href=#1235 id=1235 data-nosnippet>1235</a>        <span class="macro">assert_eq!</span>(report.full_noop.timing.samples, <span class="number">2</span>);
+<a href=#1236 id=1236 data-nosnippet>1236</a>        <span class="macro">assert_eq!</span>(report.full_noop_phases.discovery.samples, <span class="number">2</span>);
+<a href=#1237 id=1237 data-nosnippet>1237</a>        <span class="macro">assert_eq!</span>(report.full_noop_write_attribution.len(), <span class="number">2</span>);
+<a href=#1238 id=1238 data-nosnippet>1238</a>        <span class="macro">assert!</span>(
+<a href=#1239 id=1239 data-nosnippet>1239</a>            report
+<a href=#1240 id=1240 data-nosnippet>1240</a>                .full_noop_write_attribution
+<a href=#1241 id=1241 data-nosnippet>1241</a>                .iter()
+<a href=#1242 id=1242 data-nosnippet>1242</a>                .all(|sample| !sample.generation_published
+<a href=#1243 id=1243 data-nosnippet>1243</a>                    &amp;&amp; sample.generation_before == sample.generation_after)
+<a href=#1244 id=1244 data-nosnippet>1244</a>        );
+<a href=#1245 id=1245 data-nosnippet>1245</a>        <span class="macro">assert_eq!</span>(report.full_changed.files_indexed_per_sample, <span class="number">1</span>);
+<a href=#1246 id=1246 data-nosnippet>1246</a>        <span class="macro">assert_eq!</span>(report.targeted_changed.files_seen_per_sample, <span class="number">1</span>);
+<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="macro">assert_eq!</span>(report.create_delta.files_seen_per_sample, <span class="number">1</span>);
+<a href=#1248 id=1248 data-nosnippet>1248</a>        <span class="macro">assert_eq!</span>(report.delete_targeted.files_removed_per_sample, <span class="number">1</span>);
+<a href=#1249 id=1249 data-nosnippet>1249</a>        <span class="macro">assert_eq!</span>(report.rename_delta.files_removed_per_sample, <span class="number">1</span>);
+<a href=#1250 id=1250 data-nosnippet>1250</a>        <span class="macro">assert_eq!</span>(report.ignore_change_delta.files_seen_per_sample, <span class="number">1</span>);
+<a href=#1251 id=1251 data-nosnippet>1251</a>        <span class="macro">assert_eq!</span>(
+<a href=#1252 id=1252 data-nosnippet>1252</a>            report
+<a href=#1253 id=1253 data-nosnippet>1253</a>                .directory_rename_delta
+<a href=#1254 id=1254 data-nosnippet>1254</a>                .as_ref()
+<a href=#1255 id=1255 data-nosnippet>1255</a>                .map(|measurement| measurement.affected_files),
+<a href=#1256 id=1256 data-nosnippet>1256</a>            <span class="prelude-val">Some</span>(<span class="number">6</span>)
+<a href=#1257 id=1257 data-nosnippet>1257</a>        );
+<a href=#1258 id=1258 data-nosnippet>1258</a>        <span class="macro">assert_eq!</span>(report.ignore_visibility_delta.files_removed_per_sample, <span class="number">1</span>);
+<a href=#1259 id=1259 data-nosnippet>1259</a>        <span class="macro">assert_eq!</span>(report.watcher_modify_delivery.timing.samples, <span class="number">2</span>);
+<a href=#1260 id=1260 data-nosnippet>1260</a>        <span class="macro">assert_eq!</span>(
+<a href=#1261 id=1261 data-nosnippet>1261</a>            report.watcher_modify_delivery.changed_messages
+<a href=#1262 id=1262 data-nosnippet>1262</a>                + report.watcher_modify_delivery.full_reconciliation_messages,
+<a href=#1263 id=1263 data-nosnippet>1263</a>            <span class="number">2
+<a href=#1264 id=1264 data-nosnippet>1264</a>        </span>);
+<a href=#1265 id=1265 data-nosnippet>1265</a>        <span class="macro">assert!</span>(report.final_storage_footprint.database_bytes &gt; <span class="number">0</span>);
+<a href=#1266 id=1266 data-nosnippet>1266</a>        <span class="macro">assert_eq!</span>(report.warm_hot_file_reads.timing.samples, <span class="number">12</span>);
+<a href=#1267 id=1267 data-nosnippet>1267</a>        <span class="macro">assert_eq!</span>(report.memory_hot_file_copies.timing.samples, <span class="number">12</span>);
+<a href=#1268 id=1268 data-nosnippet>1268</a>    }
+<a href=#1269 id=1269 data-nosnippet>1269</a>
+<a href=#1270 id=1270 data-nosnippet>1270</a>    <span class="attr">#[test]
+<a href=#1271 id=1271 data-nosnippet>1271</a>    </span><span class="kw">fn </span>repository_profile_mutates_only_a_disposable_snapshot() {
+<a href=#1272 id=1272 data-nosnippet>1272</a>        <span class="kw">let </span>git = Command::new(<span class="string">"git"</span>)
+<a href=#1273 id=1273 data-nosnippet>1273</a>            .arg(<span class="string">"--version"</span>)
+<a href=#1274 id=1274 data-nosnippet>1274</a>            .status()
+<a href=#1275 id=1275 data-nosnippet>1275</a>            .expect(<span class="string">"Git is required for the repository profile test"</span>);
+<a href=#1276 id=1276 data-nosnippet>1276</a>        <span class="macro">assert!</span>(
+<a href=#1277 id=1277 data-nosnippet>1277</a>            git.success(),
+<a href=#1278 id=1278 data-nosnippet>1278</a>            <span class="string">"Git is required for the repository profile test"
+<a href=#1279 id=1279 data-nosnippet>1279</a>        </span>);
+<a href=#1280 id=1280 data-nosnippet>1280</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
+<a href=#1281 id=1281 data-nosnippet>1281</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"init"</span>, <span class="string">"--quiet"</span>]);
 <a href=#1282 id=1282 data-nosnippet>1282</a>        run_git(
 <a href=#1283 id=1283 data-nosnippet>1283</a>            repository.path(),
-<a href=#1284 id=1284 data-nosnippet>1284</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.name"</span>, <span class="string">"LeanToken Test"</span>],
+<a href=#1284 id=1284 data-nosnippet>1284</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.email"</span>, <span class="string">"test@example.com"</span>],
 <a href=#1285 id=1285 data-nosnippet>1285</a>        );
-<a href=#1286 id=1286 data-nosnippet>1286</a>        <span class="kw">let </span>first = repository.path().join(<span class="string">"first.rs"</span>);
-<a href=#1287 id=1287 data-nosnippet>1287</a>        <span class="kw">let </span>second = repository.path().join(<span class="string">"second.py"</span>);
-<a href=#1288 id=1288 data-nosnippet>1288</a>        fs::write(<span class="kw-2">&amp;</span>first, <span class="string">"fn first() {}\n"</span>).expect(<span class="string">"first source"</span>);
-<a href=#1289 id=1289 data-nosnippet>1289</a>        fs::write(<span class="kw-2">&amp;</span>second, <span class="string">"def second():\n    return 2\n"</span>).expect(<span class="string">"second source"</span>);
-<a href=#1290 id=1290 data-nosnippet>1290</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"add"</span>, <span class="string">"-A"</span>]);
-<a href=#1291 id=1291 data-nosnippet>1291</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"commit"</span>, <span class="string">"--quiet"</span>, <span class="string">"-m"</span>, <span class="string">"fixture"</span>]);
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>revision = git_output(repository.path(), [<span class="string">"rev-parse"</span>, <span class="string">"HEAD"</span>]).expect(<span class="string">"revision"</span>);
-<a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="kw">let </span>original = fs::read_to_string(<span class="kw-2">&amp;</span>first).expect(<span class="string">"original source"</span>);
-<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
-<a href=#1295 id=1295 data-nosnippet>1295</a>        <span class="kw">let </span>args = Args {
-<a href=#1296 id=1296 data-nosnippet>1296</a>            command: <span class="prelude-val">None</span>,
-<a href=#1297 id=1297 data-nosnippet>1297</a>            repository: <span class="prelude-val">Some</span>(repository.path().to_path_buf()),
-<a href=#1298 id=1298 data-nosnippet>1298</a>            repository_label: <span class="prelude-val">None</span>,
-<a href=#1299 id=1299 data-nosnippet>1299</a>            files: <span class="number">2</span>,
-<a href=#1300 id=1300 data-nosnippet>1300</a>            file_bytes: <span class="number">128</span>,
-<a href=#1301 id=1301 data-nosnippet>1301</a>            iterations: <span class="number">1</span>,
-<a href=#1302 id=1302 data-nosnippet>1302</a>            read_samples: <span class="number">2</span>,
-<a href=#1303 id=1303 data-nosnippet>1303</a>            hot_set: <span class="number">1</span>,
-<a href=#1304 id=1304 data-nosnippet>1304</a>            watcher_debounce_ms: <span class="number">50</span>,
-<a href=#1305 id=1305 data-nosnippet>1305</a>            output: output.path().join(<span class="string">"report.json"</span>),
-<a href=#1306 id=1306 data-nosnippet>1306</a>        };
-<a href=#1307 id=1307 data-nosnippet>1307</a>
-<a href=#1308 id=1308 data-nosnippet>1308</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile repository"</span>);
-<a href=#1309 id=1309 data-nosnippet>1309</a>
-<a href=#1310 id=1310 data-nosnippet>1310</a>        <span class="macro">assert_eq!</span>(report.corpus.source_kind, <span class="string">"git_worktree_snapshot"</span>);
-<a href=#1311 id=1311 data-nosnippet>1311</a>        <span class="macro">assert_eq!</span>(report.corpus.revision.as_deref(), <span class="prelude-val">Some</span>(revision.as_str()));
-<a href=#1312 id=1312 data-nosnippet>1312</a>        <span class="macro">assert_eq!</span>(report.corpus.files, <span class="number">3</span>);
-<a href=#1313 id=1313 data-nosnippet>1313</a>        <span class="macro">assert_eq!</span>(report.full_noop.files_seen_per_sample, <span class="number">3</span>);
-<a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="macro">assert!</span>(report.directory_rename_delta.is_none());
-<a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"rs"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
-<a href=#1316 id=1316 data-nosnippet>1316</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"py"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
-<a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="macro">assert_eq!</span>(
-<a href=#1318 id=1318 data-nosnippet>1318</a>            fs::read_to_string(first).expect(<span class="string">"source after profile"</span>),
-<a href=#1319 id=1319 data-nosnippet>1319</a>            original
-<a href=#1320 id=1320 data-nosnippet>1320</a>        );
-<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="macro">assert!</span>(
-<a href=#1322 id=1322 data-nosnippet>1322</a>            Command::new(<span class="string">"git"</span>)
-<a href=#1323 id=1323 data-nosnippet>1323</a>                .arg(<span class="string">"-C"</span>)
-<a href=#1324 id=1324 data-nosnippet>1324</a>                .arg(repository.path())
-<a href=#1325 id=1325 data-nosnippet>1325</a>                .args([<span class="string">"status"</span>, <span class="string">"--porcelain"</span>])
-<a href=#1326 id=1326 data-nosnippet>1326</a>                .output()
-<a href=#1327 id=1327 data-nosnippet>1327</a>                .expect(<span class="string">"git status"</span>)
-<a href=#1328 id=1328 data-nosnippet>1328</a>                .stdout
-<a href=#1329 id=1329 data-nosnippet>1329</a>                .is_empty()
-<a href=#1330 id=1330 data-nosnippet>1330</a>        );
-<a href=#1331 id=1331 data-nosnippet>1331</a>    }
-<a href=#1332 id=1332 data-nosnippet>1332</a>}
+<a href=#1286 id=1286 data-nosnippet>1286</a>        run_git(
+<a href=#1287 id=1287 data-nosnippet>1287</a>            repository.path(),
+<a href=#1288 id=1288 data-nosnippet>1288</a>            <span class="kw-2">&amp;</span>[<span class="string">"config"</span>, <span class="string">"user.name"</span>, <span class="string">"LeanToken Test"</span>],
+<a href=#1289 id=1289 data-nosnippet>1289</a>        );
+<a href=#1290 id=1290 data-nosnippet>1290</a>        <span class="kw">let </span>first = repository.path().join(<span class="string">"first.rs"</span>);
+<a href=#1291 id=1291 data-nosnippet>1291</a>        <span class="kw">let </span>second = repository.path().join(<span class="string">"second.py"</span>);
+<a href=#1292 id=1292 data-nosnippet>1292</a>        fs::write(<span class="kw-2">&amp;</span>first, <span class="string">"fn first() {}\n"</span>).expect(<span class="string">"first source"</span>);
+<a href=#1293 id=1293 data-nosnippet>1293</a>        fs::write(<span class="kw-2">&amp;</span>second, <span class="string">"def second():\n    return 2\n"</span>).expect(<span class="string">"second source"</span>);
+<a href=#1294 id=1294 data-nosnippet>1294</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"add"</span>, <span class="string">"-A"</span>]);
+<a href=#1295 id=1295 data-nosnippet>1295</a>        run_git(repository.path(), <span class="kw-2">&amp;</span>[<span class="string">"commit"</span>, <span class="string">"--quiet"</span>, <span class="string">"-m"</span>, <span class="string">"fixture"</span>]);
+<a href=#1296 id=1296 data-nosnippet>1296</a>        <span class="kw">let </span>revision = git_output(repository.path(), [<span class="string">"rev-parse"</span>, <span class="string">"HEAD"</span>]).expect(<span class="string">"revision"</span>);
+<a href=#1297 id=1297 data-nosnippet>1297</a>        <span class="kw">let </span>original = fs::read_to_string(<span class="kw-2">&amp;</span>first).expect(<span class="string">"original source"</span>);
+<a href=#1298 id=1298 data-nosnippet>1298</a>        <span class="kw">let </span>output = tempfile::tempdir().expect(<span class="string">"output"</span>);
+<a href=#1299 id=1299 data-nosnippet>1299</a>        <span class="kw">let </span>args = Args {
+<a href=#1300 id=1300 data-nosnippet>1300</a>            command: <span class="prelude-val">None</span>,
+<a href=#1301 id=1301 data-nosnippet>1301</a>            repository: <span class="prelude-val">Some</span>(repository.path().to_path_buf()),
+<a href=#1302 id=1302 data-nosnippet>1302</a>            repository_label: <span class="prelude-val">None</span>,
+<a href=#1303 id=1303 data-nosnippet>1303</a>            files: <span class="number">2</span>,
+<a href=#1304 id=1304 data-nosnippet>1304</a>            file_bytes: <span class="number">128</span>,
+<a href=#1305 id=1305 data-nosnippet>1305</a>            iterations: <span class="number">1</span>,
+<a href=#1306 id=1306 data-nosnippet>1306</a>            read_samples: <span class="number">2</span>,
+<a href=#1307 id=1307 data-nosnippet>1307</a>            hot_set: <span class="number">1</span>,
+<a href=#1308 id=1308 data-nosnippet>1308</a>            watcher_debounce_ms: <span class="number">50</span>,
+<a href=#1309 id=1309 data-nosnippet>1309</a>            output: output.path().join(<span class="string">"report.json"</span>),
+<a href=#1310 id=1310 data-nosnippet>1310</a>        };
+<a href=#1311 id=1311 data-nosnippet>1311</a>
+<a href=#1312 id=1312 data-nosnippet>1312</a>        <span class="kw">let </span>report = run_profile(<span class="kw-2">&amp;</span>args).expect(<span class="string">"profile repository"</span>);
+<a href=#1313 id=1313 data-nosnippet>1313</a>
+<a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="macro">assert_eq!</span>(report.corpus.source_kind, <span class="string">"git_worktree_snapshot"</span>);
+<a href=#1315 id=1315 data-nosnippet>1315</a>        <span class="macro">assert_eq!</span>(report.corpus.revision.as_deref(), <span class="prelude-val">Some</span>(revision.as_str()));
+<a href=#1316 id=1316 data-nosnippet>1316</a>        <span class="macro">assert_eq!</span>(report.corpus.files, <span class="number">3</span>);
+<a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="macro">assert_eq!</span>(report.full_noop.files_seen_per_sample, <span class="number">3</span>);
+<a href=#1318 id=1318 data-nosnippet>1318</a>        <span class="macro">assert!</span>(report.directory_rename_delta.is_none());
+<a href=#1319 id=1319 data-nosnippet>1319</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"rs"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
+<a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="macro">assert_eq!</span>(report.corpus.extensions.get(<span class="string">"py"</span>), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="number">1</span>));
+<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="macro">assert_eq!</span>(
+<a href=#1322 id=1322 data-nosnippet>1322</a>            fs::read_to_string(first).expect(<span class="string">"source after profile"</span>),
+<a href=#1323 id=1323 data-nosnippet>1323</a>            original
+<a href=#1324 id=1324 data-nosnippet>1324</a>        );
+<a href=#1325 id=1325 data-nosnippet>1325</a>        <span class="macro">assert!</span>(
+<a href=#1326 id=1326 data-nosnippet>1326</a>            Command::new(<span class="string">"git"</span>)
+<a href=#1327 id=1327 data-nosnippet>1327</a>                .arg(<span class="string">"-C"</span>)
+<a href=#1328 id=1328 data-nosnippet>1328</a>                .arg(repository.path())
+<a href=#1329 id=1329 data-nosnippet>1329</a>                .args([<span class="string">"status"</span>, <span class="string">"--porcelain"</span>])
+<a href=#1330 id=1330 data-nosnippet>1330</a>                .output()
+<a href=#1331 id=1331 data-nosnippet>1331</a>                .expect(<span class="string">"git status"</span>)
+<a href=#1332 id=1332 data-nosnippet>1332</a>                .stdout
+<a href=#1333 id=1333 data-nosnippet>1333</a>                .is_empty()
+<a href=#1334 id=1334 data-nosnippet>1334</a>        );
+<a href=#1335 id=1335 data-nosnippet>1335</a>    }
+<a href=#1336 id=1336 data-nosnippet>1336</a>}
 </code></pre></div></section></main></body></html>

@@ -499,17 +499,23 @@
 <a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>files_removed = deletions.len();
 <a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>files_indexed = updated_paths.len();
 <a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>files_skipped = skip_reasons.total();
-<a href=#502 id=502 data-nosnippet>502</a>
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>response = IndexResponse {
-<a href=#504 id=504 data-nosnippet>504</a>            repository_generation: generation,
-<a href=#505 id=505 data-nosnippet>505</a>            files_seen,
-<a href=#506 id=506 data-nosnippet>506</a>            files_indexed,
-<a href=#507 id=507 data-nosnippet>507</a>            files_unchanged: unchanged,
-<a href=#508 id=508 data-nosnippet>508</a>            files_removed,
-<a href=#509 id=509 data-nosnippet>509</a>            files_skipped,
-<a href=#510 id=510 data-nosnippet>510</a>            warnings,
-<a href=#511 id=511 data-nosnippet>511</a>        };
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="prelude-val">Ok</span>(IndexReport::with_skip_reasons(response, skip_reasons))
-<a href=#513 id=513 data-nosnippet>513</a>    }
-<a href=#514 id=514 data-nosnippet>514</a>}
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>(index_scope, index_scope_digest, index_include_paths, index_exclude_paths) =
+<a href=#503 id=503 data-nosnippet>503</a>            index_scope_metadata(<span class="self">self</span>.config.index_scope());
+<a href=#504 id=504 data-nosnippet>504</a>
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">let </span>response = IndexResponse {
+<a href=#506 id=506 data-nosnippet>506</a>            repository_generation: generation,
+<a href=#507 id=507 data-nosnippet>507</a>            index_scope,
+<a href=#508 id=508 data-nosnippet>508</a>            index_scope_digest,
+<a href=#509 id=509 data-nosnippet>509</a>            index_include_paths,
+<a href=#510 id=510 data-nosnippet>510</a>            index_exclude_paths,
+<a href=#511 id=511 data-nosnippet>511</a>            files_seen,
+<a href=#512 id=512 data-nosnippet>512</a>            files_indexed,
+<a href=#513 id=513 data-nosnippet>513</a>            files_unchanged: unchanged,
+<a href=#514 id=514 data-nosnippet>514</a>            files_removed,
+<a href=#515 id=515 data-nosnippet>515</a>            files_skipped,
+<a href=#516 id=516 data-nosnippet>516</a>            warnings,
+<a href=#517 id=517 data-nosnippet>517</a>        };
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="prelude-val">Ok</span>(IndexReport::with_skip_reasons(response, skip_reasons))
+<a href=#519 id=519 data-nosnippet>519</a>    }
+<a href=#520 id=520 data-nosnippet>520</a>}
 </code></pre></div></section></main></body></html>

@@ -572,13 +572,13 @@
 <a href=#572 id=572 data-nosnippet>572</a>            <span class="self">Self</span>::PathOutsideRoot(<span class="kw">_</span>) =&gt; <span class="string">"path_outside_root"</span>,
 <a href=#573 id=573 data-nosnippet>573</a>            <span class="self">Self</span>::UnsupportedPathEncoding(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_path_encoding"</span>,
 <a href=#574 id=574 data-nosnippet>574</a>            <span class="self">Self</span>::UnsupportedLanguage(<span class="kw">_</span>) =&gt; <span class="string">"unsupported_language"</span>,
-<a href=#575 id=575 data-nosnippet>575</a>            <span class="self">Self</span>::InvalidRequest(<span class="kw">_</span>) =&gt; <span class="string">"invalid_request"</span>,
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="self">Self</span>::Regex(<span class="kw">_</span>) =&gt; <span class="string">"invalid_regex"</span>,
-<a href=#577 id=577 data-nosnippet>577</a>            <span class="self">Self</span>::Glob(<span class="kw">_</span>) =&gt; <span class="string">"invalid_glob"</span>,
-<a href=#578 id=578 data-nosnippet>578</a>            <span class="self">Self</span>::RootNotFound(<span class="kw">_</span>)
-<a href=#579 id=579 data-nosnippet>579</a>            | <span class="self">Self</span>::UnsafeRepositoryRoot(<span class="kw">_</span>)
-<a href=#580 id=580 data-nosnippet>580</a>            | <span class="self">Self</span>::RepositoryMismatch { .. }
-<a href=#581 id=581 data-nosnippet>581</a>            | <span class="self">Self</span>::IndexScopeMismatch { .. }
+<a href=#575 id=575 data-nosnippet>575</a>            <span class="self">Self</span>::IndexScopeMismatch { .. } =&gt; <span class="string">"index_scope_mismatch"</span>,
+<a href=#576 id=576 data-nosnippet>576</a>            <span class="self">Self</span>::InvalidRequest(<span class="kw">_</span>) =&gt; <span class="string">"invalid_request"</span>,
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="self">Self</span>::Regex(<span class="kw">_</span>) =&gt; <span class="string">"invalid_regex"</span>,
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="self">Self</span>::Glob(<span class="kw">_</span>) =&gt; <span class="string">"invalid_glob"</span>,
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="self">Self</span>::RootNotFound(<span class="kw">_</span>)
+<a href=#580 id=580 data-nosnippet>580</a>            | <span class="self">Self</span>::UnsafeRepositoryRoot(<span class="kw">_</span>)
+<a href=#581 id=581 data-nosnippet>581</a>            | <span class="self">Self</span>::RepositoryMismatch { .. }
 <a href=#582 id=582 data-nosnippet>582</a>            | <span class="self">Self</span>::InvalidConfiguration(<span class="kw">_</span>) =&gt; <span class="string">"repository_configuration"</span>,
 <a href=#583 id=583 data-nosnippet>583</a>            <span class="self">Self</span>::IndexLimitExceeded { .. } =&gt; <span class="string">"repository_index_limit"</span>,
 <a href=#584 id=584 data-nosnippet>584</a>            <span class="self">Self</span>::RepositoryTraversal(<span class="kw">_</span>) =&gt; <span class="string">"repository_traversal"</span>,

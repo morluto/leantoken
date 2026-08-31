@@ -17,12 +17,12 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">crate</span>::config::INDEX_CONTENT_VERSION;
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span><span class="kw">crate</span>::error::RetryableOperation;
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span><span class="kw">crate</span>::model::{
-<a href=#20 id=20 data-nosnippet>20</a>    IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexSkipReasonCounts,
-<a href=#21 id=21 data-nosnippet>21</a>    IndexingMode,
+<a href=#20 id=20 data-nosnippet>20</a>    IndexProgressPhase, IndexProgressSnapshot, IndexReport, IndexResponse, IndexScopeMode,
+<a href=#21 id=21 data-nosnippet>21</a>    IndexSkipReasonCounts, IndexingMode,
 <a href=#22 id=22 data-nosnippet>22</a>};
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">crate</span>::parser::{<span class="self">self</span>, ParseOutput};
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span><span class="kw">crate</span>::repository::{
-<a href=#25 id=25 data-nosnippet>25</a>    DiscoveredFile, discover_files_with_limits_policy_and_filter,
+<a href=#25 id=25 data-nosnippet>25</a>    DiscoveredFile, IndexScope, discover_files_with_limits_policy_and_filter,
 <a href=#26 id=26 data-nosnippet>26</a>    discover_files_with_limits_policy_filter_and_progress, enforce_limit, slash_path,
 <a href=#27 id=27 data-nosnippet>27</a>    validate_relative,
 <a href=#28 id=28 data-nosnippet>28</a>};
@@ -56,6 +56,21 @@
 <a href=#56 id=56 data-nosnippet>56</a><span class="kw">mod </span>publish;
 <a href=#57 id=57 data-nosnippet>57</a><span class="kw">mod </span>types;
 <a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a><span class="attr">#[cfg(test)]
-<a href=#60 id=60 data-nosnippet>60</a></span><span class="kw">mod </span>tests;
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">fn </span>index_scope_metadata(
+<a href=#60 id=60 data-nosnippet>60</a>    scope: <span class="kw-2">&amp;</span>IndexScope,
+<a href=#61 id=61 data-nosnippet>61</a>) -&gt; (IndexScopeMode, <span class="prelude-ty">Option</span>&lt;String&gt;, Vec&lt;String&gt;, Vec&lt;String&gt;) {
+<a href=#62 id=62 data-nosnippet>62</a>    (
+<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">if </span>scope.is_full() {
+<a href=#64 id=64 data-nosnippet>64</a>            IndexScopeMode::Full
+<a href=#65 id=65 data-nosnippet>65</a>        } <span class="kw">else </span>{
+<a href=#66 id=66 data-nosnippet>66</a>            IndexScopeMode::Scoped
+<a href=#67 id=67 data-nosnippet>67</a>        },
+<a href=#68 id=68 data-nosnippet>68</a>        scope.digest().map(str::to_owned),
+<a href=#69 id=69 data-nosnippet>69</a>        scope.includes().to_vec(),
+<a href=#70 id=70 data-nosnippet>70</a>        scope.excludes().to_vec(),
+<a href=#71 id=71 data-nosnippet>71</a>    )
+<a href=#72 id=72 data-nosnippet>72</a>}
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a><span class="attr">#[cfg(test)]
+<a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
