@@ -187,7 +187,7 @@ pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
     // cancellation always lands on a checkpoint.
     wait_until_lock_held(
         &std::path::PathBuf::from(format!("{}.init.lock", database.display())),
-        Duration::from_secs(10),
+        INDEX_READY_TIMEOUT,
         &mut process,
     );
     process.stdin.take();
@@ -224,6 +224,14 @@ fn wait_until_lock_held(path: &std::path::Path, timeout: Duration, process: &mut
                 }
             },
             Err(error) => panic!("opening initialization lock {path:?} failed: {error}"),
+        }
+        if let Some(status) = process.child.try_wait().expect("poll MCP process") {
+            let stderr_bytes = process.take_stderr();
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            panic!(
+                "MCP runtime exited before acquiring the cancellable startup lock with {status}: \
+                 {stderr}"
+            );
         }
         let mut stderr_diagnostics = || {
             // take_stderr joins a reader blocked on EOF, so stop the child

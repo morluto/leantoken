@@ -5,6 +5,8 @@
 # Regex planner trial records the public LeanToken base Git revision.
 # Re-added as a new file in #576, so the fingerprint commit shifted from
 # cac7e7c90 to 59eefae8.
+# The original addition remains reachable from the complete-history scan.
+cac7e7c9087bde23f24e9b86b9947789b8cba41e:benchmarks/reports/regex-literal-extractor-trial-2026-07-29.md:generic-api-key:12
 59eefae8cc983ec77798c0d3674d27441e082f86:benchmarks/reports/regex-literal-extractor-trial-2026-07-29.md:generic-api-key:12
 # The following findings are historical generated output or deterministic test
 # data. Keep the fingerprints exact so new secrets still fail the scan.

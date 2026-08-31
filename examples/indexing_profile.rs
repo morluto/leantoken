@@ -1179,6 +1179,10 @@ mod tests {
             || {
                 Ok(IndexResponse {
                     repository_generation: 1,
+                    index_scope: leantoken::model::IndexScopeMode::Full,
+                    index_scope_digest: None,
+                    index_include_paths: Vec::new(),
+                    index_exclude_paths: Vec::new(),
                     files_seen: 3,
                     files_indexed: 2,
                     files_unchanged: 1,
