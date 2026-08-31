@@ -103,71 +103,72 @@
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a><span class="kw">mod </span>admission;
 <a href=#105 id=105 data-nosnippet>105</a><span class="kw">mod </span>resources;
-<a href=#106 id=106 data-nosnippet>106</a><span class="kw">mod </span>result;
-<a href=#107 id=107 data-nosnippet>107</a><span class="kw">mod </span>runtime;
-<a href=#108 id=108 data-nosnippet>108</a><span class="kw">mod </span>server;
-<a href=#109 id=109 data-nosnippet>109</a><span class="kw">mod </span>state;
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a><span class="kw">use </span>admission::RequestAdmission;
-<a href=#112 id=112 data-nosnippet>112</a><span class="kw">pub use </span>result::{McpResultMode, tool_result};
-<a href=#113 id=113 data-nosnippet>113</a><span class="kw">use </span>result::{RetryableToolResponse, retryable_tool_result, tool_result_with_limit};
-<a href=#114 id=114 data-nosnippet>114</a><span class="kw">use </span>runtime::RetrievalPreparation;
-<a href=#115 id=115 data-nosnippet>115</a><span class="attr">#[cfg(test)]
-<a href=#116 id=116 data-nosnippet>116</a></span><span class="kw">use </span>runtime::retry_after_initial_index_with_policy;
-<a href=#117 id=117 data-nosnippet>117</a><span class="kw">pub use </span>server::LeanTokenMcp;
-<a href=#118 id=118 data-nosnippet>118</a><span class="attr">#[cfg(test)]
-<a href=#119 id=119 data-nosnippet>119</a></span><span class="kw">use </span>state::StartupFailure;
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">pub use </span>state::{McpContextRegistry, McpServices};
-<a href=#121 id=121 data-nosnippet>121</a><span class="kw">use </span>state::{McpLimitPolicy, McpServiceState};
-<a href=#122 id=122 data-nosnippet>122</a>
-<a href=#123 id=123 data-nosnippet>123</a><span class="kw">mod </span>tools;
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="doccomment">/// Return the complete JSON-serialized tool catalog for telemetry and snapshots.
-<a href=#126 id=126 data-nosnippet>126</a>///
-<a href=#127 id=127 data-nosnippet>127</a>/// Catalog size is measured rather than capped: descriptions are part of the
-<a href=#128 id=128 data-nosnippet>128</a>/// model-facing capability contract and require model-use evidence before removal.
-<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub fn </span>tool_catalog_json() -&gt; String {
-<a href=#130 id=130 data-nosnippet>130</a>    serde_json::to_string(<span class="kw-2">&amp;</span>LeanTokenMcp::tool_router().list_all())
-<a href=#131 id=131 data-nosnippet>131</a>        .expect(<span class="string">"tool catalog is serializable"</span>)
-<a href=#132 id=132 data-nosnippet>132</a>}
-<a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Run the MCP server over stdio until the transport closes or SIGINT is received.
-<a href=#135 id=135 data-nosnippet>135</a></span><span class="kw">pub async fn </span>serve_stdio(services: Arc&lt;Services&gt;, result_mode: McpResultMode) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span>server = LeanTokenMcp::new(services).with_result_mode(result_mode);
-<a href=#137 id=137 data-nosnippet>137</a>    serve_stdio_server(server).<span class="kw">await
-<a href=#138 id=138 data-nosnippet>138</a></span>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// Run a prepared MCP server over stdio.
-<a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">pub async fn </span>serve_stdio_server(server: LeanTokenMcp) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>token = CancellationToken::new();
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
-<a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>signal_task = tokio::spawn({
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>token = token.clone();
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">async move </span>{
-<a href=#148 id=148 data-nosnippet>148</a>            <span class="kw">let _ </span>= tokio::signal::ctrl_c().<span class="kw">await</span>;
-<a href=#149 id=149 data-nosnippet>149</a>            token.cancel();
-<a href=#150 id=150 data-nosnippet>150</a>        }
-<a href=#151 id=151 data-nosnippet>151</a>    });
-<a href=#152 id=152 data-nosnippet>152</a>
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>result = <span class="kw">async </span>{
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>service = <span class="kw">match </span>server.serve_with_ct(transport, token.child_token()).<span class="kw">await </span>{
-<a href=#155 id=155 data-nosnippet>155</a>            <span class="prelude-val">Ok</span>(service) =&gt; service,
-<a href=#156 id=156 data-nosnippet>156</a>            <span class="prelude-val">Err</span>(
-<a href=#157 id=157 data-nosnippet>157</a>                rmcp::service::ServerInitializeError::ConnectionClosed(<span class="kw">_</span>)
-<a href=#158 id=158 data-nosnippet>158</a>                | rmcp::service::ServerInitializeError::ExpectedInitializeRequest(<span class="prelude-val">None</span>),
-<a href=#159 id=159 data-nosnippet>159</a>            ) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-<a href=#160 id=160 data-nosnippet>160</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">crate</span>::Error::Io(std::io::Error::other(error))),
-<a href=#161 id=161 data-nosnippet>161</a>        };
-<a href=#162 id=162 data-nosnippet>162</a>        service.waiting().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#163 id=163 data-nosnippet>163</a>        <span class="prelude-val">Ok</span>(())
-<a href=#164 id=164 data-nosnippet>164</a>    }
-<a href=#165 id=165 data-nosnippet>165</a>    .<span class="kw">await</span>;
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a>    signal_task.abort();
-<a href=#168 id=168 data-nosnippet>168</a>    result
-<a href=#169 id=169 data-nosnippet>169</a>}
-<a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a><span class="attr">#[cfg(test)]
-<a href=#172 id=172 data-nosnippet>172</a></span><span class="kw">mod </span>tests;
+<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>resources::receipt_uri;
+<a href=#107 id=107 data-nosnippet>107</a><span class="kw">mod </span>result;
+<a href=#108 id=108 data-nosnippet>108</a><span class="kw">mod </span>runtime;
+<a href=#109 id=109 data-nosnippet>109</a><span class="kw">mod </span>server;
+<a href=#110 id=110 data-nosnippet>110</a><span class="kw">mod </span>state;
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="kw">use </span>admission::RequestAdmission;
+<a href=#113 id=113 data-nosnippet>113</a><span class="kw">pub use </span>result::{McpResultMode, tool_result};
+<a href=#114 id=114 data-nosnippet>114</a><span class="kw">use </span>result::{RetryableToolResponse, retryable_tool_result, tool_result_with_limit};
+<a href=#115 id=115 data-nosnippet>115</a><span class="kw">use </span>runtime::RetrievalPreparation;
+<a href=#116 id=116 data-nosnippet>116</a><span class="attr">#[cfg(test)]
+<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">use </span>runtime::retry_after_initial_index_with_policy;
+<a href=#118 id=118 data-nosnippet>118</a><span class="kw">pub use </span>server::LeanTokenMcp;
+<a href=#119 id=119 data-nosnippet>119</a><span class="attr">#[cfg(test)]
+<a href=#120 id=120 data-nosnippet>120</a></span><span class="kw">use </span>state::StartupFailure;
+<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub use </span>state::{McpContextRegistry, McpServices};
+<a href=#122 id=122 data-nosnippet>122</a><span class="kw">use </span>state::{McpLimitPolicy, McpServiceState};
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a><span class="kw">mod </span>tools;
+<a href=#125 id=125 data-nosnippet>125</a>
+<a href=#126 id=126 data-nosnippet>126</a><span class="doccomment">/// Return the complete JSON-serialized tool catalog for telemetry and snapshots.
+<a href=#127 id=127 data-nosnippet>127</a>///
+<a href=#128 id=128 data-nosnippet>128</a>/// Catalog size is measured rather than capped: descriptions are part of the
+<a href=#129 id=129 data-nosnippet>129</a>/// model-facing capability contract and require model-use evidence before removal.
+<a href=#130 id=130 data-nosnippet>130</a></span><span class="kw">pub fn </span>tool_catalog_json() -&gt; String {
+<a href=#131 id=131 data-nosnippet>131</a>    serde_json::to_string(<span class="kw-2">&amp;</span>LeanTokenMcp::tool_router().list_all())
+<a href=#132 id=132 data-nosnippet>132</a>        .expect(<span class="string">"tool catalog is serializable"</span>)
+<a href=#133 id=133 data-nosnippet>133</a>}
+<a href=#134 id=134 data-nosnippet>134</a>
+<a href=#135 id=135 data-nosnippet>135</a><span class="doccomment">/// Run the MCP server over stdio until the transport closes or SIGINT is received.
+<a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub async fn </span>serve_stdio(services: Arc&lt;Services&gt;, result_mode: McpResultMode) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span>server = LeanTokenMcp::new(services).with_result_mode(result_mode);
+<a href=#138 id=138 data-nosnippet>138</a>    serve_stdio_server(server).<span class="kw">await
+<a href=#139 id=139 data-nosnippet>139</a></span>}
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a><span class="doccomment">/// Run a prepared MCP server over stdio.
+<a href=#142 id=142 data-nosnippet>142</a></span><span class="kw">pub async fn </span>serve_stdio_server(server: LeanTokenMcp) -&gt; <span class="kw">crate</span>::Result&lt;()&gt; {
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>token = CancellationToken::new();
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>signal_task = tokio::spawn({
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>token = token.clone();
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">async move </span>{
+<a href=#149 id=149 data-nosnippet>149</a>            <span class="kw">let _ </span>= tokio::signal::ctrl_c().<span class="kw">await</span>;
+<a href=#150 id=150 data-nosnippet>150</a>            token.cancel();
+<a href=#151 id=151 data-nosnippet>151</a>        }
+<a href=#152 id=152 data-nosnippet>152</a>    });
+<a href=#153 id=153 data-nosnippet>153</a>
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>result = <span class="kw">async </span>{
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>service = <span class="kw">match </span>server.serve_with_ct(transport, token.child_token()).<span class="kw">await </span>{
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="prelude-val">Ok</span>(service) =&gt; service,
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="prelude-val">Err</span>(
+<a href=#158 id=158 data-nosnippet>158</a>                rmcp::service::ServerInitializeError::ConnectionClosed(<span class="kw">_</span>)
+<a href=#159 id=159 data-nosnippet>159</a>                | rmcp::service::ServerInitializeError::ExpectedInitializeRequest(<span class="prelude-val">None</span>),
+<a href=#160 id=160 data-nosnippet>160</a>            ) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="kw">crate</span>::Error::Io(std::io::Error::other(error))),
+<a href=#162 id=162 data-nosnippet>162</a>        };
+<a href=#163 id=163 data-nosnippet>163</a>        service.waiting().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="prelude-val">Ok</span>(())
+<a href=#165 id=165 data-nosnippet>165</a>    }
+<a href=#166 id=166 data-nosnippet>166</a>    .<span class="kw">await</span>;
+<a href=#167 id=167 data-nosnippet>167</a>
+<a href=#168 id=168 data-nosnippet>168</a>    signal_task.abort();
+<a href=#169 id=169 data-nosnippet>169</a>    result
+<a href=#170 id=170 data-nosnippet>170</a>}
+<a href=#171 id=171 data-nosnippet>171</a>
+<a href=#172 id=172 data-nosnippet>172</a><span class="attr">#[cfg(test)]
+<a href=#173 id=173 data-nosnippet>173</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
