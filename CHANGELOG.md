@@ -1,6 +1,34 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.28] - 2026-08-31
+### Bug Fixes
+
+- **mcp:** Expose receipt links as native resources
+- **ci:** Restore main branch CI lanes
+- Format tree and suppress cognitive_complexity on dispatch
+- **cli:** Reject repository-scoped options on episode audit
+- **storage:** Harden persisted index scope reuse
+- **doctor:** Preserve broad root approval
+- **doctor:** Forward repository indexing limits
+- **doctor:** Preserve scoped index configuration
+- **cli:** Disclose index scope for follow-up commands
+- **mcp:** Clarify bounded search recovery
+### Documentation
+
+- Improve GitHub issue and pull request templates
+### Features
+
+- **cli:** Add --policy flag to read command
+- **cli:** Close MCP/CLI parity gaps
+### Refactoring
+
+- **cli:** Remove duplicate update command, keep upgrade only
+- **indexer:** Centralize scope response metadata
+### Testing
+
+- **mcp:** Follow native receipt resource links
+
 ## [0.1.27] - 2026-08-20
 ### Bug Fixes
 
