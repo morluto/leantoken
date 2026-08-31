@@ -4,8 +4,9 @@ use leantoken::{Config, ContextRequest, mcp::LeanTokenMcp, services::Services};
 use rmcp::{
     ClientHandler, RoleClient,
     model::{
-        CacheScope, CallToolRequestParams, CallToolResult, ClientInfo, ClientRequest, ErrorCode,
-        ProtocolVersion, ReadResourceRequestParams, Request, ResourceContents, ResultType,
+        CacheScope, CallToolRequestParams, CallToolResult, ClientInfo, ClientRequest, ContentBlock,
+        ErrorCode, ProtocolVersion, ReadResourceRequestParams, Request, ResourceContents,
+        ResultType,
     },
     serve_client, serve_server,
     service::{Peer, PeerRequestOptions, ServiceError},
@@ -749,15 +750,18 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
     assert_eq!(structured["occurrences_total"], 1);
     assert_eq!(structured["groups"][0]["occurrences"][0]["line"], 1);
     assert_eq!(structured["groups"][0]["occurrences"][0]["start_column"], 7);
-    let receipt_uri = structured["receipt_resource"]["uri"]
+    let receipt_id = structured["meta"]["receipt_id"]
         .as_str()
-        .expect("receipt resource URI")
-        .to_owned();
-    assert_eq!(
-        structured["receipt_resource"]["id"],
-        structured["meta"]["receipt_id"]
-    );
-    assert!(response.content.is_empty());
+        .expect("receipt id");
+    let receipt_uri = response
+        .content
+        .iter()
+        .find_map(|content| match content {
+            ContentBlock::ResourceLink(resource) => Some(resource.uri.clone()),
+            _ => None,
+        })
+        .expect("receipt resource link");
+    assert_eq!(receipt_uri, format!("leantoken://receipt/v1/{receipt_id}"));
     let receipt = client
         .peer()
         .read_resource(ReadResourceRequestParams::new(receipt_uri.clone()))
