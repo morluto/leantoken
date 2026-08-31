@@ -34,7 +34,7 @@ struct ReceiptResourceEvidence<'a> {
     exact_only: bool,
 }
 
-pub(in crate::mcp) fn receipt_uri(receipt_id: &str) -> String {
+pub(crate) fn receipt_uri(receipt_id: &str) -> String {
     format!("{RECEIPT_RESOURCE_PREFIX}{receipt_id}")
 }
 

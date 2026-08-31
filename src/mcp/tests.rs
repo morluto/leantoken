@@ -609,12 +609,15 @@ fn structured_receipt_results_preserve_evidence_without_repeated_visible_handoff
         .structured_content
         .expect("structured receipt result");
     let uri = format!("leantoken://receipt/v1/{receipt_id}");
-    assert_eq!(structured["receipt_resource"]["kind"], "retrieval_receipt");
-    assert_eq!(structured["receipt_resource"]["id"], receipt_id);
-    assert_eq!(structured["receipt_resource"]["uri"], uri);
+    assert!(structured.get("receipt_resource").is_none());
+    assert_eq!(structured["meta"]["receipt_id"], receipt_id);
     assert_eq!(structured["fragments"][0]["path"], "lib.rs");
     assert_eq!(structured["fragments"][0]["content"], "fn ready() {}");
-    assert!(result.content.is_empty());
+    assert_eq!(result.content.len(), 1);
+    let resource_link = serde_json::to_value(&result.content[0]).expect("resource link");
+    assert_eq!(resource_link["type"], "resource_link");
+    assert_eq!(resource_link["uri"], uri);
+    assert_eq!(resource_link["name"], "retrieval_receipt");
     assert!(
         structured["meta"]["total_response_tokens"]
             .as_u64()

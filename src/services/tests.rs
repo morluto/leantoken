@@ -368,11 +368,10 @@ async fn mcp_wrapper_budget_rejects_before_receipt_and_savings_side_effects() {
         .response_accountant
         .finalized_tokens_with_receipt_reserve(&prototype, 1, shaped_options)
         .expect("MCP receipt reserve");
-    let plain_options = ServiceCallOptions::new();
     let plain_required = services
         .response_accountant
-        .finalized_tokens_with_receipt_reserve(&prototype, 1, plain_options)
-        .expect("service receipt reserve");
+        .finalized_tokens_for(&prototype, None)
+        .expect("service response accounting");
     let limit = shaped_required - 1;
     assert!(
         plain_required <= limit,

@@ -103,6 +103,7 @@ use requests::*;
 
 mod admission;
 mod resources;
+pub(crate) use resources::receipt_uri;
 mod result;
 mod runtime;
 mod server;

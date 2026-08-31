@@ -1,7 +1,7 @@
 use std::fmt;
 
 use clap::ValueEnum;
-use rmcp::model::{CallToolResult, ContentBlock, ServerResult};
+use rmcp::model::{CallToolResult, ContentBlock, Resource, ServerResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -41,9 +41,33 @@ pub(crate) fn build_mcp_tool_result(value: Value, mode: McpResponseMode) -> Call
 }
 
 pub(crate) fn model_visible_mcp_result(value: Value, shape: McpResponseShape) -> ServerResult {
-    let mut result = ServerResult::CallToolResult(build_mcp_tool_result(value, shape.mode));
+    let mut result = ServerResult::CallToolResult(model_visible_mcp_tool_result(value, shape.mode));
     if matches!(shape.protocol, McpProtocolShape::Legacy) {
         result.strip_result_type_for_legacy_peer();
+    }
+    result
+}
+
+pub(crate) fn model_visible_mcp_tool_result(
+    mut value: Value,
+    mode: McpResponseMode,
+) -> CallToolResult {
+    let receipt_id = value
+        .pointer("/meta/receipt_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if let Some(object) = value.as_object_mut() {
+        object.remove("receipt_resource");
+    }
+
+    let mut result = build_mcp_tool_result(value, mode);
+    if let Some(receipt_id) = receipt_id {
+        result
+            .content
+            .push(ContentBlock::ResourceLink(Resource::new(
+                crate::mcp::receipt_uri(&receipt_id),
+                "retrieval_receipt",
+            )));
     }
     result
 }

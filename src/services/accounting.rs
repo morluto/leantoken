@@ -298,7 +298,9 @@ impl ResponseAccountant {
             return response_token_accounting(response, source_tokens, &self.tokenizer);
         }
         let mut value = serde_json::to_value(response)?;
-        if matches!(receipt_resource, ReceiptResourceDecoration::Include) {
+        if matches!(receipt_resource, ReceiptResourceDecoration::Include)
+            && mcp_response_shape.is_none()
+        {
             let receipt_id = value
                 .pointer("/meta/receipt_id")
                 .and_then(serde_json::Value::as_str)
