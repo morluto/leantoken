@@ -726,10 +726,18 @@ fn response_accounting_matches_the_selected_model_visible_result() {
             })
             .sum::<usize>();
             assert_eq!(accounted, reported);
-            let mut visible = rmcp::model::ServerResult::CallToolResult(result);
-            if protocol < ProtocolVersion::V_2026_07_28 {
-                visible.strip_result_type_for_legacy_peer();
-            }
+            let shape = crate::tokens::McpProtocolShape::negotiated(Some(&protocol));
+            let visible = crate::tokens::model_visible_mcp_result(
+                serde_json::to_value(&structured).expect("structured JSON"),
+                crate::tokens::McpResponseShape {
+                    mode: match mode {
+                        McpResultMode::Dual => crate::tokens::McpResponseMode::Dual,
+                        McpResultMode::Text => crate::tokens::McpResponseMode::Text,
+                        McpResultMode::Structured => crate::tokens::McpResponseMode::Structured,
+                    },
+                    protocol: shape,
+                },
+            );
             let tokenizer = crate::tokens::Tokenizer::Cl100kBase;
             assert_eq!(
                 reported,
