@@ -208,13 +208,13 @@ impl BoundedStdioTransport {
             self.result_mode,
         );
         let mut result = ServerResult::CallToolResult(result);
-        let modern_protocol = self
-            .negotiated_protocol
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .as_ref()
-            .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28);
-        if !modern_protocol {
+        let protocol = crate::tokens::McpProtocolShape::negotiated(
+            self.negotiated_protocol
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref(),
+        );
+        if protocol == crate::tokens::McpProtocolShape::Legacy {
             result.strip_result_type_for_legacy_peer();
         }
         TxJsonRpcMessage::<RoleServer>::response(result, id)

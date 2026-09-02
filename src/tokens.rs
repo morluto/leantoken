@@ -1,7 +1,7 @@
 use std::fmt;
 
 use clap::ValueEnum;
-use rmcp::model::{CallToolResult, ContentBlock, Resource, ServerResult};
+use rmcp::model::{CallToolResult, ContentBlock, ProtocolVersion, Resource, ServerResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -18,6 +18,16 @@ pub(crate) enum McpResponseMode {
 pub(crate) enum McpProtocolShape {
     Legacy,
     Modern,
+}
+
+impl McpProtocolShape {
+    pub(crate) fn negotiated(protocol: Option<&ProtocolVersion>) -> Self {
+        if protocol.is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28) {
+            Self::Modern
+        } else {
+            Self::Legacy
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +52,7 @@ pub(crate) fn build_mcp_tool_result(value: Value, mode: McpResponseMode) -> Call
 
 pub(crate) fn model_visible_mcp_result(value: Value, shape: McpResponseShape) -> ServerResult {
     let mut result = ServerResult::CallToolResult(model_visible_mcp_tool_result(value, shape.mode));
-    if matches!(shape.protocol, McpProtocolShape::Legacy) {
+    if shape.protocol == McpProtocolShape::Legacy {
         result.strip_result_type_for_legacy_peer();
     }
     result
