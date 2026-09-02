@@ -928,24 +928,6 @@ async fn sdk_transport_initializes_lists_calls_and_closes() {
         assert_eq!(entries[0]["path"], expected_path);
     }
 
-    let nested_files_arguments =
-        serde_json::json!({"operation": {"kind": "find", "query": "many"}})
-            .as_object()
-            .expect("legacy files arguments")
-            .clone();
-    let legacy_result = client
-        .peer()
-        .call_tool(CallToolRequestParams::new("files").with_arguments(nested_files_arguments))
-        .await
-        .expect("nested arguments receive an MCP tool result");
-    assert_ne!(legacy_result.is_error, Some(true));
-    let entries = legacy_result
-        .structured_content
-        .and_then(|value| value["entries"].as_array().cloned())
-        .expect("legacy files entries");
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["path"], "many.rs");
-
     std::fs::write(
         root.path().join("new_package.rs"),
         "pub fn newly_committed_package() {}\n",

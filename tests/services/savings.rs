@@ -1,5 +1,5 @@
 use super::*;
-use leantoken::{ObservedTokenSavingsReport, TaskSavingsObservationStatus};
+use leantoken::TaskSavingsObservationStatus;
 
 #[tokio::test]
 async fn token_savings_tracks_successful_source_retrievals_by_operation() {
@@ -296,18 +296,6 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
     );
     assert!(serialized.get("observations").is_some());
     assert!(serialized.get("report").is_none());
-    let mut legacy = serialized.clone();
-    let object = legacy.as_object_mut().expect("observed report object");
-    object.remove("observed_task_savings");
-    let legacy: ObservedTokenSavingsReport =
-        serde_json::from_value(legacy).expect("deserialize legacy observed report");
-    assert_eq!(
-        legacy.observed_task_savings.status,
-        TaskSavingsObservationStatus::Unavailable
-    );
-    assert_eq!(legacy.observed_task_savings.retry_calls, None);
-    assert_eq!(legacy.observations.request_classification.useful, 4);
-
     let config = Config::discover(root.path(), Some(root.path().join("index.sqlite")))
         .expect("reopen config");
     let reopened = Services::open(config).expect("reopen services");

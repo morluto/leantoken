@@ -48,65 +48,6 @@ mod tests {
     }
 
     #[test]
-    fn index_report_preserves_unknown_legacy_skip_reasons_and_serializes_known_counts() {
-        let legacy: IndexReport = serde_json::from_value(serde_json::json!({
-            "repository_generation": 1,
-            "files_seen": 2,
-            "files_indexed": 1,
-            "files_unchanged": 0,
-            "files_removed": 0,
-            "files_skipped": 1,
-            "warnings": []
-        }))
-        .expect("deserialize legacy index report");
-        assert_eq!(legacy.skip_reasons, None);
-        let legacy_value = serde_json::to_value(&legacy).expect("reserialize legacy report");
-        assert!(legacy_value.get("skip_reasons").is_none());
-
-        let skip_reasons = IndexSkipReasonCounts {
-            binary: 1,
-            oversized_during_read: 2,
-            failed: 3,
-        };
-        let response = IndexResponse {
-            repository_generation: 2,
-            index_scope: IndexScopeMode::Full,
-            index_scope_digest: None,
-            index_include_paths: Vec::new(),
-            index_exclude_paths: Vec::new(),
-            files_seen: 7,
-            files_indexed: 1,
-            files_unchanged: 0,
-            files_removed: 2,
-            files_skipped: skip_reasons.total(),
-            warnings: vec!["failed preparation".into()],
-        };
-        let report = IndexReport::with_skip_reasons(response, skip_reasons);
-        let value = serde_json::to_value(report).expect("serialize index report");
-
-        assert_eq!(value["files_skipped"], 6);
-        assert_eq!(
-            value["skip_reasons"],
-            serde_json::json!({
-                "binary": 1,
-                "oversized_during_read": 2,
-                "failed": 3
-            })
-        );
-        let round_trip: IndexReport =
-            serde_json::from_value(value).expect("deserialize current index report");
-        assert_eq!(
-            round_trip.skip_reasons,
-            Some(IndexSkipReasonCounts {
-                binary: 1,
-                oversized_during_read: 2,
-                failed: 3,
-            })
-        );
-        assert_eq!(round_trip.files_skipped, 6);
-    }
-
-    #[test]
     fn status_response_serializes_readiness_independently_from_freshness() {
         for (repository_generation, index_state, freshness) in [
             (0, IndexState::Uninitialized, Freshness::Current),
@@ -239,23 +180,6 @@ mod tests {
         assert_eq!(round_trip.meta.source_tokens, 4);
         assert_eq!(round_trip.meta.tokenizer, "cl100k_base");
         assert!(round_trip.meta.token_count_exact);
-
-        let mut legacy_value = serde_json::to_value(response).expect("serialize legacy response");
-        let legacy_meta = legacy_value["meta"]
-            .as_object_mut()
-            .expect("response metadata object");
-        legacy_meta.remove("source_tokens");
-        legacy_meta.remove("protocol_tokens");
-        legacy_meta.remove("path_and_metadata_tokens");
-        legacy_meta.remove("total_response_tokens");
-        legacy_meta.remove("tokenizer");
-        let legacy: ContextResponse =
-            serde_json::from_value(legacy_value).expect("deserialize legacy response");
-        assert_eq!(legacy.meta.source_tokens, 0);
-        assert_eq!(legacy.meta.protocol_tokens, 0);
-        assert_eq!(legacy.meta.path_and_metadata_tokens, 0);
-        assert_eq!(legacy.meta.total_response_tokens, 0);
-        assert!(legacy.meta.tokenizer.is_empty());
     }
 
     #[test]

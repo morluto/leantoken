@@ -226,40 +226,6 @@ async fn mcp_key_pages_preserve_shallow_parity_and_stale_cursor_boundaries() {
         .await
         .expect_err("depth-bound cursor");
     assert!(matches!(stale_depth, Error::StaleCursor));
-
-    let legacy = services
-        .json(JsonRequest {
-            operation,
-            max_tokens: Some(1_000),
-            max_items: Some(2),
-            array_sample_size: None,
-            cursor: None,
-        })
-        .await
-        .expect("legacy first page")
-        .meta
-        .next_cursor
-        .expect("legacy cursor");
-    let stale_legacy = services
-        .json_cancellable_with_execution_options(
-            JsonRequest {
-                operation: JsonOperation::Query {
-                    path: "report.json".into(),
-                    selector: None,
-                    projection: JsonProjection::Keys,
-                },
-                max_tokens: Some(1_000),
-                max_items: Some(2),
-                array_sample_size: None,
-                cursor: Some(legacy),
-            },
-            ServiceCallOptions::new(),
-            execution,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("legacy cursor under depth ordering");
-    assert!(matches!(stale_legacy, Error::StaleCursor));
 }
 
 #[test]

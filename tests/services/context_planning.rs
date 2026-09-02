@@ -674,7 +674,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
             .is_some()
     );
     assert_eq!(
-        serde_json::to_value(&default_explain.omitted).expect("legacy omission details"),
+        serde_json::to_value(&default_explain.omitted).expect("default omission details"),
         serde_json::to_value(&explain.omitted).expect("explicit omission details")
     );
     assert_eq!(default_explain.omission_summary, explain.omission_summary);
