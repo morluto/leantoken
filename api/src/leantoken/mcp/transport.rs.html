@@ -208,13 +208,13 @@
 <a href=#208 id=208 data-nosnippet>208</a>            <span class="self">self</span>.result_mode,
 <a href=#209 id=209 data-nosnippet>209</a>        );
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span><span class="kw-2">mut </span>result = ServerResult::CallToolResult(result);
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>modern_protocol = <span class="self">self
-<a href=#212 id=212 data-nosnippet>212</a>            </span>.negotiated_protocol
-<a href=#213 id=213 data-nosnippet>213</a>            .read()
-<a href=#214 id=214 data-nosnippet>214</a>            .unwrap_or_else(|poisoned| poisoned.into_inner())
-<a href=#215 id=215 data-nosnippet>215</a>            .as_ref()
-<a href=#216 id=216 data-nosnippet>216</a>            .is_some_and(|version| version &gt;= <span class="kw-2">&amp;</span>ProtocolVersion::V_2026_07_28);
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if </span>!modern_protocol {
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>protocol = <span class="kw">crate</span>::tokens::McpProtocolShape::negotiated(
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="self">self</span>.negotiated_protocol
+<a href=#213 id=213 data-nosnippet>213</a>                .read()
+<a href=#214 id=214 data-nosnippet>214</a>                .unwrap_or_else(|poisoned| poisoned.into_inner())
+<a href=#215 id=215 data-nosnippet>215</a>                .as_ref(),
+<a href=#216 id=216 data-nosnippet>216</a>        );
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if </span>protocol == <span class="kw">crate</span>::tokens::McpProtocolShape::Legacy {
 <a href=#218 id=218 data-nosnippet>218</a>            result.strip_result_type_for_legacy_peer();
 <a href=#219 id=219 data-nosnippet>219</a>        }
 <a href=#220 id=220 data-nosnippet>220</a>        TxJsonRpcMessage::&lt;RoleServer&gt;::response(result, id)

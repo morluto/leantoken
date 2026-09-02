@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>serde_json::json;
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><span class="kw">super</span>::execution::{JsonCursorVersion, JsonExecutionOptions};
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><span class="kw">super</span>::execution::JsonExecutionOptions;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span><span class="kw">crate</span>::model::JsonOperation;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::services::Services;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::services::cursor::{CursorEnvelope, CursorKind, StreamId, StreamIdentityBuilder};
@@ -49,48 +49,44 @@
 <a href=#49 id=49 data-nosnippet>49</a>    operation: <span class="kw-2">&amp;</span>JsonOperation,
 <a href=#50 id=50 data-nosnippet>50</a>    execution: JsonExecutionOptions,
 <a href=#51 id=51 data-nosnippet>51</a>) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">let </span>serialized = <span class="kw">if </span>execution.cursor_version() == JsonCursorVersion::V1 {
-<a href=#53 id=53 data-nosnippet>53</a>        serde_json::to_string(operation)
-<a href=#54 id=54 data-nosnippet>54</a>    } <span class="kw">else </span>{
-<a href=#55 id=55 data-nosnippet>55</a>        serde_json::to_string(<span class="kw-2">&amp;</span><span class="macro">json!</span>({
-<a href=#56 id=56 data-nosnippet>56</a>            <span class="string">"operation"</span>: operation,
-<a href=#57 id=57 data-nosnippet>57</a>            <span class="string">"depth"</span>: execution.depth(),
-<a href=#58 id=58 data-nosnippet>58</a>            <span class="string">"order"</span>: <span class="string">"depth_then_pointer"</span>,
-<a href=#59 id=59 data-nosnippet>59</a>        }))
-<a href=#60 id=60 data-nosnippet>60</a>    }
-<a href=#61 id=61 data-nosnippet>61</a>    .map_err(|error| Error::SerializationFailure(error.to_string()))<span class="question-mark">?</span>;
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::text::hash(<span class="kw-2">&amp;</span>serialized))
-<a href=#63 id=63 data-nosnippet>63</a>}
-<a href=#64 id=64 data-nosnippet>64</a>
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>json_stream_id(services: <span class="kw-2">&amp;</span>Services, query_hash: <span class="kw-2">&amp;</span>str) -&gt; StreamId {
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>stream = StreamIdentityBuilder::for_service(services, CursorKind::JsonKeys);
-<a href=#67 id=67 data-nosnippet>67</a>    stream.field_str(<span class="string">"query_hash"</span>, query_hash);
-<a href=#68 id=68 data-nosnippet>68</a>    stream.finish()
-<a href=#69 id=69 data-nosnippet>69</a>}
-<a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>make_json_cursor(
-<a href=#72 id=72 data-nosnippet>72</a>    stream_id: StreamId,
-<a href=#73 id=73 data-nosnippet>73</a>    source_hash: <span class="kw-2">&amp;</span>str,
-<a href=#74 id=74 data-nosnippet>74</a>    offset: usize,
-<a href=#75 id=75 data-nosnippet>75</a>) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">if </span>!is_fingerprint(source_hash) || offset == <span class="number">0 </span>{
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
-<a href=#78 id=78 data-nosnippet>78</a>            <span class="string">"invalid JSON continuation state"</span>.into(),
-<a href=#79 id=79 data-nosnippet>79</a>        ));
-<a href=#80 id=80 data-nosnippet>80</a>    }
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span><span class="kw-2">mut </span>payload = Vec::with_capacity(CONTENT_FINGERPRINT_HEX_LEN + size_of::&lt;u64&gt;());
-<a href=#82 id=82 data-nosnippet>82</a>    payload.extend_from_slice(source_hash.as_bytes());
-<a href=#83 id=83 data-nosnippet>83</a>    payload.extend_from_slice(
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw-2">&amp;</span>u64::try_from(offset)
-<a href=#85 id=85 data-nosnippet>85</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"JSON cursor offset overflow"</span>.into()))<span class="question-mark">?
-<a href=#86 id=86 data-nosnippet>86</a>            </span>.to_le_bytes(),
-<a href=#87 id=87 data-nosnippet>87</a>    );
-<a href=#88 id=88 data-nosnippet>88</a>    CursorEnvelope::new(
-<a href=#89 id=89 data-nosnippet>89</a>        CursorKind::JsonKeys,
-<a href=#90 id=90 data-nosnippet>90</a>        JSON_CURSOR_GENERATION,
-<a href=#91 id=91 data-nosnippet>91</a>        stream_id,
-<a href=#92 id=92 data-nosnippet>92</a>        payload,
-<a href=#93 id=93 data-nosnippet>93</a>    )
-<a href=#94 id=94 data-nosnippet>94</a>    .map(CursorEnvelope::encode)
-<a href=#95 id=95 data-nosnippet>95</a>}
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">let </span>serialized = serde_json::to_string(<span class="kw-2">&amp;</span><span class="macro">json!</span>({
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="string">"operation"</span>: operation,
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="string">"depth"</span>: execution.depth(),
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="string">"order"</span>: <span class="string">"depth_then_pointer"</span>,
+<a href=#56 id=56 data-nosnippet>56</a>    }))
+<a href=#57 id=57 data-nosnippet>57</a>    .map_err(|error| Error::SerializationFailure(error.to_string()))<span class="question-mark">?</span>;
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="prelude-val">Ok</span>(<span class="kw">crate</span>::text::hash(<span class="kw-2">&amp;</span>serialized))
+<a href=#59 id=59 data-nosnippet>59</a>}
+<a href=#60 id=60 data-nosnippet>60</a>
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>json_stream_id(services: <span class="kw-2">&amp;</span>Services, query_hash: <span class="kw-2">&amp;</span>str) -&gt; StreamId {
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span><span class="kw-2">mut </span>stream = StreamIdentityBuilder::for_service(services, CursorKind::JsonKeys);
+<a href=#63 id=63 data-nosnippet>63</a>    stream.field_str(<span class="string">"query_hash"</span>, query_hash);
+<a href=#64 id=64 data-nosnippet>64</a>    stream.finish()
+<a href=#65 id=65 data-nosnippet>65</a>}
+<a href=#66 id=66 data-nosnippet>66</a>
+<a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>make_json_cursor(
+<a href=#68 id=68 data-nosnippet>68</a>    stream_id: StreamId,
+<a href=#69 id=69 data-nosnippet>69</a>    source_hash: <span class="kw-2">&amp;</span>str,
+<a href=#70 id=70 data-nosnippet>70</a>    offset: usize,
+<a href=#71 id=71 data-nosnippet>71</a>) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">if </span>!is_fingerprint(source_hash) || offset == <span class="number">0 </span>{
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::OperationFailure(
+<a href=#74 id=74 data-nosnippet>74</a>            <span class="string">"invalid JSON continuation state"</span>.into(),
+<a href=#75 id=75 data-nosnippet>75</a>        ));
+<a href=#76 id=76 data-nosnippet>76</a>    }
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span><span class="kw-2">mut </span>payload = Vec::with_capacity(CONTENT_FINGERPRINT_HEX_LEN + size_of::&lt;u64&gt;());
+<a href=#78 id=78 data-nosnippet>78</a>    payload.extend_from_slice(source_hash.as_bytes());
+<a href=#79 id=79 data-nosnippet>79</a>    payload.extend_from_slice(
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw-2">&amp;</span>u64::try_from(offset)
+<a href=#81 id=81 data-nosnippet>81</a>            .map_err(|<span class="kw">_</span>| Error::OperationFailure(<span class="string">"JSON cursor offset overflow"</span>.into()))<span class="question-mark">?
+<a href=#82 id=82 data-nosnippet>82</a>            </span>.to_le_bytes(),
+<a href=#83 id=83 data-nosnippet>83</a>    );
+<a href=#84 id=84 data-nosnippet>84</a>    CursorEnvelope::new(
+<a href=#85 id=85 data-nosnippet>85</a>        CursorKind::JsonKeys,
+<a href=#86 id=86 data-nosnippet>86</a>        JSON_CURSOR_GENERATION,
+<a href=#87 id=87 data-nosnippet>87</a>        stream_id,
+<a href=#88 id=88 data-nosnippet>88</a>        payload,
+<a href=#89 id=89 data-nosnippet>89</a>    )
+<a href=#90 id=90 data-nosnippet>90</a>    .map(CursorEnvelope::encode)
+<a href=#91 id=91 data-nosnippet>91</a>}
 </code></pre></div></section></main></body></html>
