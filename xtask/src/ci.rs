@@ -916,22 +916,10 @@ fn read_changed_paths(root: &Path, path: &str) -> Result<Vec<String>, String> {
     if contents.len() as u64 > MAX_CHANGED_PATHS_FILE_BYTES {
         return Err("changed-path input exceeded its byte bound".to_owned());
     }
-    Ok(parse_changed_paths(&contents))
-}
-
-fn parse_changed_paths(contents: &[u8]) -> Vec<String> {
-    if contents.contains(&0) {
-        contents
-            .split(|byte| *byte == 0)
-            .filter(|path| !path.is_empty())
-            .map(|path| String::from_utf8_lossy(path).into_owned())
-            .collect()
-    } else {
-        String::from_utf8_lossy(contents)
-            .lines()
-            .map(str::to_owned)
-            .collect()
-    }
+    Ok(String::from_utf8_lossy(&contents)
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
 
 fn validate_schedule(topology: &Topology, input: &PlannerInput) -> Result<(), String> {
@@ -1016,8 +1004,8 @@ fn usage() -> String {
 mod tests {
     use super::{
         CommandClass, Event, LaneReceipt, MatrixEntry, PlannerInput, ReceiptStatus, build_plan,
-        classify_receipt, normalize_paths, parse_changed_paths, run, valid_matrix_entry,
-        validate_plan, validate_receipts,
+        classify_receipt, normalize_paths, run, valid_matrix_entry, validate_plan,
+        validate_receipts,
     };
     use crate::workspace_root;
     use std::fs;
@@ -1290,18 +1278,6 @@ mod tests {
         let mut value = input(Event::Schedule, &[]);
         value.schedule = Some("0 5 * * *".to_owned());
         assert!(build_plan(&workspace_root(), value).is_err());
-    }
-
-    #[test]
-    fn changed_path_files_support_nul_delimited_and_legacy_lines() {
-        assert_eq!(
-            parse_changed_paths(b"src/caf\xc3\xa9.rs\0docs/a\tb.md\0"),
-            vec!["src/café.rs", "docs/a\tb.md"]
-        );
-        assert_eq!(
-            parse_changed_paths(b"src/lib.rs\ndocs/testing.md\n"),
-            vec!["src/lib.rs", "docs/testing.md"]
-        );
     }
 
     #[test]

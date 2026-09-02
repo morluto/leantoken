@@ -163,6 +163,10 @@ fn list_separates_metadata_state_from_content_compatibility() {
         project(corrupt_id),
         (CacheState::Corrupt, CacheCompatibility::Unknown)
     );
+    assert_eq!(
+        project(&legacy_id),
+        (CacheState::Current, CacheCompatibility::Unversioned)
+    );
     let serialized = serde_json::to_value(&report).expect("serialize cache report");
     assert_eq!(serialized["returned_entries"], report.entries().len());
     assert_eq!(serialized["summary_only"], false);
@@ -177,6 +181,19 @@ fn list_separates_metadata_state_from_content_compatibility() {
                     && entry["state"] == "current"
                     && entry["compatibility"] == "legacy_unversioned"
             })
+    );
+
+    let mut prune = request();
+    prune.max_total_bytes = Some(0);
+    let pruned = manager.prune(&prune).expect("prune plan");
+    let legacy_result = pruned
+        .results
+        .iter()
+        .find(|result| result.id == legacy_id)
+        .expect("legacy cache result");
+    assert_eq!(
+        legacy_result.outcome.action(),
+        CachePruneAction::WouldDelete
     );
 }
 
@@ -490,40 +507,4 @@ fn list_rejects_invalid_response_bounds_and_cursors() {
             reason: "must be positive"
         })
     ));
-}
-
-#[test]
-fn legacy_repository_only_identity_remains_visible_and_prunable() {
-    let temp = tempfile::tempdir().expect("temporary directory");
-    let root = temp.path().join("managed");
-    let repository = temp.path().join("repository");
-    fs::create_dir(&repository).expect("repository");
-    let repository = fs::canonicalize(repository).expect("canonical repository");
-    let current_id = managed_cache_id(&repository);
-    let legacy_id = current_id.split_once('-').expect("versioned identity").1;
-    let directory = root.join(legacy_id);
-    fs::create_dir_all(&directory).expect("legacy cache directory");
-    let database = directory.join(DATABASE_NAME);
-    drop(
-        Storage::open_for_repository_scoped(&database, &repository, None)
-            .expect("legacy cache database"),
-    );
-    let manager = CacheManager::new(root, 10_000);
-
-    let listed = manager
-        .list_with(&CacheListRequest::default())
-        .expect("cache list");
-
-    assert_eq!(listed.entries().len(), 1);
-    assert_eq!(listed.entries()[0].entry.index_content_version, None);
-    assert_eq!(listed.entries()[0].entry.state, CacheState::Current);
-
-    let mut request = request();
-    request.max_total_bytes = Some(0);
-    let pruned = manager.prune(&request).expect("legacy prune plan");
-    assert_eq!(
-        pruned.results[0].outcome.action(),
-        CachePruneAction::WouldDelete
-    );
-    assert!(database.exists());
 }
