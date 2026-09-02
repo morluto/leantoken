@@ -30,6 +30,11 @@ impl McpProtocolShape {
     }
 }
 
+#[must_use]
+pub(crate) fn supports_mcp_private_resource_metadata(protocol: Option<&ProtocolVersion>) -> bool {
+    McpProtocolShape::negotiated(protocol) == McpProtocolShape::Modern
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct McpResponseShape {
     pub(crate) mode: McpResponseMode,

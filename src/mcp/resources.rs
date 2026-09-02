@@ -105,10 +105,7 @@ impl LeanTokenMcp {
         protocol: Option<ProtocolVersion>,
     ) -> ListResourcesResult {
         let result = ListResourcesResult::default();
-        if protocol
-            .as_ref()
-            .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28)
-        {
+        if crate::tokens::supports_mcp_private_resource_metadata(protocol.as_ref()) {
             result.with_ttl_ms(0).with_cache_scope(CacheScope::Private)
         } else {
             result
@@ -124,10 +121,7 @@ impl LeanTokenMcp {
             .with_description("Read a receipt URI returned by a LeanToken retrieval tool")
             .with_mime_type(RECEIPT_RESOURCE_MEDIA_TYPE);
         let result = ListResourceTemplatesResult::with_all_items(vec![template]);
-        if protocol
-            .as_ref()
-            .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28)
-        {
+        if crate::tokens::supports_mcp_private_resource_metadata(protocol.as_ref()) {
             result.with_ttl_ms(0).with_cache_scope(CacheScope::Private)
         } else {
             result
@@ -212,10 +206,7 @@ impl LeanTokenMcp {
         )?;
         let content = ResourceContents::text(text, uri).with_mime_type(RECEIPT_RESOURCE_MEDIA_TYPE);
         let mut result = ReadResourceResult::new(vec![content]);
-        if protocol
-            .as_ref()
-            .is_some_and(|version| version >= &ProtocolVersion::V_2026_07_28)
-        {
+        if crate::tokens::supports_mcp_private_resource_metadata(protocol.as_ref()) {
             result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
         }
         Ok(ReadResourceResponse::Complete(result))
