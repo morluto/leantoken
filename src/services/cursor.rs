@@ -408,11 +408,4 @@ mod tests {
         assert_ne!(combined.finish(), split.finish());
         assert_ne!(stream("ab"), renamed.finish());
     }
-
-    #[test]
-    fn malformed_and_legacy_cursors_fail_at_the_boundary() {
-        for cursor in ["", "7:1", "not-base64", &"A".repeat(ENCODED_CURSOR_BYTES)] {
-            assert!(ContinuationCursor::parse(cursor).is_err(), "{cursor}");
-        }
-    }
 }

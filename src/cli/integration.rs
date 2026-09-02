@@ -1,6 +1,6 @@
 use super::*;
 
-/// Options shared by `update` and `upgrade`.
+/// Options for `upgrade`.
 #[derive(Debug, Clone, Args)]
 pub struct UpgradeArgs {
     /// Check for a newer release without installing it.

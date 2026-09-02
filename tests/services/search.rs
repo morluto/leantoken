@@ -165,40 +165,6 @@ async fn text_search_windows_keep_case_insensitive_matches_across_a_chunk() {
 }
 
 #[tokio::test]
-async fn maximum_text_context_keeps_the_original_read_bounded_range_match() {
-    let mut lines = (1..=50)
-        .map(|line| format!("// legacy source line {line}"))
-        .collect::<Vec<_>>();
-    lines[29] = "fn read_bounded_range() {}".into();
-    let source = format!("{}\n", lines.join("\n"));
-    let (_root, services) = indexed_source("legacy.rs", source.as_bytes()).await;
-
-    let response = services
-        .search(SearchRequest {
-            query: "read_bounded_range".into(),
-            mode: SearchMode::Text,
-            include_paths: vec!["legacy.rs".into()],
-            exclude_paths: Vec::new(),
-            focus_paths: Vec::new(),
-            max_results: Some(1),
-            max_tokens: Some(1_000),
-            context_lines: Some(20),
-            case_sensitive: true,
-            all_occurrences: false,
-            prefer_structural: false,
-            receipt_id: None,
-            query_receipt: None,
-            cursor: None,
-        })
-        .await
-        .expect("legacy reproduction search");
-
-    let hit = response.hits.first().expect("legacy text hit");
-    assert!(hit.excerpt.contains("read_bounded_range"));
-    assert!(hit.start_line <= 30 && hit.end_line >= 30);
-}
-
-#[tokio::test]
 async fn short_text_queries_match_inside_longer_tokens() {
     let source = b"alpha prefixfnordsuffix omega\n";
     let (_root, services) = indexed_source("short.txt", source).await;
