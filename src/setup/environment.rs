@@ -444,10 +444,7 @@ fn is_exact_legacy_package(argument: &str, prefix: &str) -> bool {
 fn is_legacy_node_npx_registration(command: &str, args: &[String]) -> bool {
     command_has_stem(command, "node")
         && args.len() == 7
-        && Path::new(&args[0])
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.eq_ignore_ascii_case("npx-cli.js"))
+        && argument_has_file_name(&args[0], "npx-cli.js")
         && args[1] == "--yes"
         && args[2] == "--prefer-offline"
         && is_exact_legacy_package(&args[3], "--package=leantoken@")
