@@ -217,6 +217,11 @@ impl CursorEnvelope {
         })
     }
 
+    /// Return the kind and generation before validating the payload.
+    pub(crate) fn identity(&self) -> (CursorKind, u64, StreamId) {
+        (self.kind, self.generation, self.stream_id)
+    }
+
     pub(crate) fn encode(self) -> String {
         let mut bytes =
             Vec::with_capacity(CURSOR_HEADER_BYTES + self.payload.len() + CHECKSUM_BYTES);
@@ -243,13 +248,6 @@ impl CursorEnvelope {
             return Err(Error::StaleCursor);
         }
         Ok(&self.payload)
-    }
-
-    /// Return the bounded operation payload after envelope syntax, version,
-    /// kind, and checksum validation. Resume paths must still call
-    /// [`Self::payload_for`] against their expected snapshot and stream.
-    pub(super) fn payload(&self) -> &[u8] {
-        &self.payload
     }
 }
 

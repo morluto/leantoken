@@ -42,7 +42,9 @@ pub(super) fn encode_read_cursor(
 
 pub(super) fn decode_read_cursor(cursor: &str) -> Result<ReadCursor> {
     let envelope = CursorEnvelope::parse(cursor, MAX_READ_CURSOR_BYTES)?;
-    let mut payload = PayloadReader::new(envelope.payload());
+    let (kind, generation, stream_id) = envelope.identity();
+    let payload = envelope.payload_for(kind, generation, stream_id)?;
+    let mut payload = PayloadReader::new(payload);
     let policy = match payload.byte()? {
         1 => ReadPolicy::Bounded,
         2 => ReadPolicy::Full,

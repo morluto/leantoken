@@ -4,12 +4,6 @@
 pub(crate) const MAX_JSON_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum JsonCursorVersion {
-    V1,
-    V2,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum JsonKeyOrder {
     Pointer,
     DepthThenPointer,
@@ -19,7 +13,6 @@ pub(super) enum JsonKeyOrder {
 pub(crate) struct JsonExecutionOptions {
     depth: Option<usize>,
     key_order: JsonKeyOrder,
-    cursor_version: JsonCursorVersion,
 }
 
 impl JsonExecutionOptions {
@@ -27,7 +20,6 @@ impl JsonExecutionOptions {
         Self {
             depth: None,
             key_order: JsonKeyOrder::Pointer,
-            cursor_version: JsonCursorVersion::V1,
         }
     }
 
@@ -35,7 +27,6 @@ impl JsonExecutionOptions {
         Self {
             depth,
             key_order: JsonKeyOrder::DepthThenPointer,
-            cursor_version: JsonCursorVersion::V2,
         }
     }
 
@@ -45,9 +36,5 @@ impl JsonExecutionOptions {
 
     pub(super) fn key_order(self) -> JsonKeyOrder {
         self.key_order
-    }
-
-    pub(super) fn cursor_version(self) -> JsonCursorVersion {
-        self.cursor_version
     }
 }
