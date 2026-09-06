@@ -89,7 +89,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
                 "complete": false,
                 "recovery": {
                     "action": "partition_scope",
-                    "message": "Narrow include_paths or make the query more selective; increasing max_tokens or max_results cannot make one request unbounded.",
+                    "message": dimension.guidance(),
                     "required_fields": ["include_paths"]
                 },
                 "limiting_dimension": dimension,

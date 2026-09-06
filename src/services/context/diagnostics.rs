@@ -248,3 +248,13 @@ pub(super) fn analyze_lexical_match(
     })
 }
 use super::*;
+pub(super) fn record_candidate_scan_limit(warnings: &mut Vec<String>, error: Error) -> Result<()> {
+    let Some((reason, guidance)) = error.retrieval_limit_details() else {
+        return Err(error);
+    };
+    let warning = format!("candidate generation incomplete: {reason}; {guidance}");
+    if !warnings.contains(&warning) {
+        warnings.push(warning);
+    }
+    Ok(())
+}

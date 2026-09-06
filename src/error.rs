@@ -72,7 +72,7 @@ impl RegexWorkDimension {
         match self {
             Self::CandidateFiles => "narrow include_paths or index a smaller repository scope",
             Self::CandidateChunks | Self::CandidateBytes => {
-                "increase max_results or max_tokens, narrow include_paths, or make the query more selective"
+                "narrow include_paths or make the query more selective; output budgets do not increase scan-work limits"
             }
         }
     }
@@ -104,7 +104,7 @@ impl RetrievalLimitKind {
     pub const fn guidance(self) -> &'static str {
         match self {
             Self::RegexFullScanFiles => {
-                "add a mandatory case-sensitive literal or use a smaller index scope"
+                "narrow include_paths, add a mandatory case-sensitive literal, or use a smaller index scope"
             }
             Self::RegexChunksPerFile => {
                 "exclude or narrow paths that include unusually large files"
@@ -690,19 +690,36 @@ impl Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+impl Error {
+    /// Safe diagnostics for bounded retrieval omissions. Cancellation, storage
+    /// failures, and invalid requests must never become partial success.
+    pub(crate) fn retrieval_limit_details(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::RetrievalLimitExceeded { kind, .. }
+            | Self::RetrievalPathLimitExceeded { kind, .. } => {
+                Some((kind.as_str(), kind.guidance()))
+            }
+            Self::RegexWorkBudgetExceeded { dimension, .. } => {
+                Some((dimension.as_str(), dimension.guidance()))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Error, RegexWorkDimension};
 
     #[test]
-    fn regex_work_guidance_names_controls_that_change_the_bound() {
+    fn regex_work_guidance_recommends_reducing_candidate_work() {
         for dimension in [
             RegexWorkDimension::CandidateChunks,
             RegexWorkDimension::CandidateBytes,
         ] {
             let guidance = dimension.guidance();
-            assert!(guidance.contains("max_tokens"));
             assert!(guidance.contains("include_paths"));
+            assert!(guidance.contains("output budgets do not increase"));
             assert!(!guidance.contains("case-sensitive"));
         }
     }

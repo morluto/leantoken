@@ -20,6 +20,7 @@ impl Services {
             candidates,
             path_excluded_candidates,
             query_fusion,
+            incomplete_scan_warnings: warnings,
             ..
         } = batch;
         let term = &query.value;
@@ -27,7 +28,14 @@ impl Services {
         let term_regex = compile_literal_regex(term, false)?;
         check_cancelled(cancellation)?;
         let symbol_results = phases.measure(ContextTimedPhase::SymbolSearch, || {
-            session.search_symbols(term, false, MAX_CONTEXT_HITS_PER_SOURCE)
+            context_ranked_hits(
+                expansion,
+                MAX_CONTEXT_HITS_PER_SOURCE,
+                |offset, limit| session.search_symbols_page(term, false, limit, offset),
+                |hit: &SymbolHit| &hit.path,
+                warnings,
+                path_excluded_candidates,
+            )
         })?;
         phases.record_primitive("symbol_search", || {
             format!("case_sensitive:false:limit:{MAX_CONTEXT_HITS_PER_SOURCE}:query:{term}")
@@ -36,19 +44,7 @@ impl Services {
             .counters
             .symbol_candidates
             .saturating_add(symbol_results.len());
-        let mut symbol_hits = Vec::new();
-        for (rank, hit) in symbol_results.into_iter().enumerate() {
-            check_cancelled(cancellation)?;
-            if path_filter.allows(&hit.path)
-                && strict_changed_paths
-                    .as_ref()
-                    .is_none_or(|paths| paths.contains(hit.path.as_str()))
-            {
-                symbol_hits.push((rank, hit));
-            } else {
-                path_excluded_candidates.push(hit.path);
-            }
-        }
+        let symbol_hits = symbol_results.into_iter().enumerate().collect::<Vec<_>>();
         let symbol_excerpt_requests = symbol_hits
             .iter()
             .map(|(_, hit)| AdaptiveExcerptRequest {
@@ -113,7 +109,14 @@ impl Services {
         }
         let reference_results = if signals.caller {
             phases.measure(ContextTimedPhase::ReferenceSearch, || {
-                session.search_references(term, false, MAX_CONTEXT_HITS_PER_SOURCE)
+                context_ranked_hits(
+                    expansion,
+                    MAX_CONTEXT_HITS_PER_SOURCE,
+                    |offset, limit| session.search_references_page(term, false, limit, offset),
+                    |hit: &ReferenceHit| &hit.path,
+                    warnings,
+                    path_excluded_candidates,
+                )
             })?
         } else {
             Vec::new()
@@ -127,19 +130,10 @@ impl Services {
             .counters
             .reference_candidates
             .saturating_add(reference_results.len());
-        let mut reference_hits = Vec::new();
-        for (rank, hit) in reference_results.into_iter().enumerate() {
-            check_cancelled(cancellation)?;
-            if path_filter.allows(&hit.path)
-                && strict_changed_paths
-                    .as_ref()
-                    .is_none_or(|paths| paths.contains(hit.path.as_str()))
-            {
-                reference_hits.push((rank, hit));
-            } else {
-                path_excluded_candidates.push(hit.path);
-            }
-        }
+        let reference_hits = reference_results
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<_>>();
         let reference_locations = reference_hits
             .iter()
             .map(|(_, hit)| (hit.reference.file_id, hit.reference.start_line))
@@ -250,13 +244,12 @@ impl Services {
         }
         let (lexical, lexical_kind) = phases.measure(ContextTimedPhase::LexicalSearch, || {
             self.context_lexical_hits(
-                session,
-                request,
-                term,
+                expansion,
                 term_regex
                     .as_ref()
                     .expect("case-insensitive context term compiles a matcher"),
-                cancellation,
+                warnings,
+                path_excluded_candidates,
             )
         })?;
         phases.record_primitive(lexical_kind, || {
@@ -371,36 +364,55 @@ impl Services {
 
     fn context_lexical_hits(
         &self,
-        session: &IndexReadSnapshot,
-        request: &ContextRequest,
-        term: &str,
+        expansion: QueryCandidateExpansion<'_>,
         term_regex: &regex::Regex,
-        cancellation: &CancellationToken,
+        warnings: &mut Vec<String>,
+        path_excluded_candidates: &mut Vec<String>,
     ) -> Result<(Vec<ChunkHit>, &'static str)> {
+        let QueryCandidateExpansion {
+            session,
+            request,
+            query,
+            cancellation,
+            ..
+        } = expansion;
+        let term = &query.value;
         let folded = crate::symbol_identity::case_fold_literal_variants(term);
         let folded_query = folded
             .as_ref()
             .filter(|variants| variants.expanded)
             .map(crate::symbol_identity::case_fold_fts_query);
         if folded.is_none() {
-            return Ok((
-                self.full_scan_literal_hits(LiteralFullScan {
-                    session,
-                    query: term,
-                    matcher: term_regex,
-                    include_paths: &request.include_paths,
-                    exclude_paths: &request.exclude_paths,
-                    max_candidates: MAX_CONTEXT_LEXICAL_HITS,
-                    max_tokens: request.token_budget,
-                    cancellation,
-                })?,
-                "unicode_case_fold_full_scan",
-            ));
+            let scan = self.full_scan_literal_hits(LiteralFullScan {
+                session,
+                query: term,
+                matcher: term_regex,
+                include_paths: &request.include_paths,
+                exclude_paths: &request.exclude_paths,
+                max_candidates: MAX_CONTEXT_LEXICAL_HITS,
+                allows_path: &|path| {
+                    expansion
+                        .strict_changed_paths
+                        .is_none_or(|paths| paths.contains(path))
+                },
+                cancellation,
+            })?;
+            if let Some(error) = scan.limitation {
+                record_candidate_scan_limit(warnings, error)?;
+            }
+            return Ok((scan.hits, "unicode_case_fold_full_scan"));
         }
         if term.chars().count() < 3 {
             let query = folded_query.unwrap_or_else(|| fts_quote(term));
             return Ok((
-                session.search_word(&query, MAX_CONTEXT_LEXICAL_HITS)?,
+                context_ranked_hits(
+                    expansion,
+                    MAX_CONTEXT_LEXICAL_HITS,
+                    |offset, limit| session.search_word_page(&query, limit, offset),
+                    |hit: &ChunkHit| &hit.path,
+                    warnings,
+                    path_excluded_candidates,
+                )?,
                 if folded.is_some_and(|variants| variants.expanded) {
                     "unicode_case_fold_word"
                 } else {
@@ -410,14 +422,87 @@ impl Services {
         }
         if let Some(expression) = folded_query {
             return Ok((
-                session.search_trigram_expression(&expression, MAX_CONTEXT_LEXICAL_HITS)?,
+                context_ranked_hits(
+                    expansion,
+                    MAX_CONTEXT_LEXICAL_HITS,
+                    |offset, limit| {
+                        session.search_trigram_expression_page(&expression, limit, offset)
+                    },
+                    |hit: &ChunkHit| &hit.path,
+                    warnings,
+                    path_excluded_candidates,
+                )?,
                 "unicode_case_fold_trigram",
             ));
         }
         Ok((
-            session.search_trigram(term, MAX_CONTEXT_LEXICAL_HITS)?,
+            context_ranked_hits(
+                expansion,
+                MAX_CONTEXT_LEXICAL_HITS,
+                |offset, limit| session.search_trigram_page(term, limit, offset),
+                |hit: &ChunkHit| &hit.path,
+                warnings,
+                path_excluded_candidates,
+            )?,
             "trigram",
         ))
     }
 }
 use super::*;
+
+fn context_ranked_hits<T>(
+    expansion: QueryCandidateExpansion<'_>,
+    limit: usize,
+    mut fetch: impl FnMut(usize, usize) -> Result<Vec<T>>,
+    path: impl Fn(&T) -> &str,
+    warnings: &mut Vec<String>,
+    path_excluded_candidates: &mut Vec<String>,
+) -> Result<Vec<T>> {
+    // Structural Unicode fallbacks verify a bounded materialized set. Do not
+    // repeat that whole scan for each page discarded by the scope filter.
+    let mut materialized =
+        if crate::symbol_identity::case_fold_literal_variants(&expansion.query.value).is_none() {
+            match fetch(0, crate::services::candidate_scan::MAX_FILTER_SCAN_ROWS) {
+                Ok(hits) => Some(hits.into_iter()),
+                Err(error) => {
+                    record_candidate_scan_limit(warnings, error)?;
+                    return Ok(Vec::new());
+                }
+            }
+        } else {
+            None
+        };
+    let mut recorded_exclusions = 0usize;
+    let result = crate::services::candidate_scan::collect_ranked_candidates(
+        limit,
+        expansion.cancellation,
+        |offset, page_limit| match &mut materialized {
+            Some(hits) => Ok(hits.by_ref().take(page_limit).collect()),
+            None => fetch(offset, page_limit),
+        },
+        |hit| {
+            let path = path(hit);
+            let allowed = expansion.path_filter.allows(path)
+                && expansion
+                    .strict_changed_paths
+                    .is_none_or(|paths| paths.contains(path));
+            // Omission diagnostics retain the old per-source bound even when
+            // scope filtering scans further to fill the candidate slots.
+            if !allowed && recorded_exclusions < limit {
+                path_excluded_candidates.push(path.to_owned());
+                recorded_exclusions += 1;
+            }
+            allowed
+        },
+    )?;
+    if result.scan_limited {
+        let warning = format!(
+            "candidate generation incomplete: ranked scan reached {} rows; narrow include_paths",
+            crate::services::candidate_scan::MAX_FILTER_SCAN_ROWS
+        );
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
+    }
+    Ok(result.hits)
+}

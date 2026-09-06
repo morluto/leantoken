@@ -8,6 +8,7 @@ use regex_syntax::hir::{
 };
 use tokio_util::sync::CancellationToken;
 
+use super::candidate_scan::{MAX_FILTER_SCAN_ROWS, collect_ranked_candidates};
 use super::cursor::{ContinuationCursor, CursorKind, StreamId, StreamIdentityBuilder};
 use super::execution_options::RetrievalExecution;
 use super::index_read::{ChunkHit, IndexReadSnapshot, ReferenceHit, SymbolHit};

@@ -1,6 +1,172 @@
 use super::*;
 
 #[tokio::test]
+async fn context_structural_scan_limit_does_not_prevent_scoped_lexical_recovery() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let source = (0..10_001)
+        .map(|index| format!("fn f{index}() {{}}\n"))
+        .collect::<String>();
+    std::fs::write(root.path().join("unrelated.rs"), source).expect("write structural distractors");
+    std::fs::write(root.path().join("target.txt"), "ssssss\n").expect("write lexical evidence");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    let mut request = context_limit_request(2_000);
+    request.task = "ssssss".into();
+    request.include_paths = vec!["target.txt".into()];
+    let response = services
+        .context(request)
+        .await
+        .expect("lexical source remains available");
+    assert_eq!(response.fragments.len(), 1);
+    assert_eq!(response.fragments[0].path, "target.txt");
+    assert!(response.fragments[0].content.contains("ssssss"));
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unicode_case_fold_rows"))
+    );
+}
+
+#[tokio::test]
+async fn context_scope_is_applied_before_each_ranked_candidate_limit() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for index in 0..45 {
+        std::fs::write(
+            root.path().join(format!("a{index:02}.rs")),
+            "pub fn unique_primary_needle() { unique_primary_needle(); }\n",
+        )
+        .expect("write distractor");
+    }
+    std::fs::write(
+        root.path().join("z_owner.rs"),
+        "pub fn unique_primary_needle() { unique_primary_needle(); }\n",
+    )
+    .expect("write owner");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    for scope in 0..3 {
+        let mut request = context_limit_request(2_000);
+        request.task = "unique_primary_needle".into();
+        match scope {
+            0 => request.include_paths = vec!["z_owner.rs".into()],
+            1 => request.exclude_paths = vec!["a*.rs".into()],
+            _ => {
+                request.changed_paths = vec!["z_owner.rs".into()];
+                request.strict_changed_paths = true;
+            }
+        }
+        let response = services.context(request).await.expect("scoped context");
+        assert!(
+            !response.fragments.is_empty(),
+            "scope {scope} must recover the owner"
+        );
+        assert!(
+            response
+                .fragments
+                .iter()
+                .all(|fragment| fragment.path == "z_owner.rs")
+        );
+        assert!(response.meta.source_tokens <= 2_000);
+    }
+}
+
+#[tokio::test]
+async fn context_retains_other_evidence_when_a_unicode_fallback_exceeds_its_limit() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("owner.rs"),
+        "pub fn unique_primary_needle() {}\n",
+    )
+    .expect("write owner");
+    for index in 0..35 {
+        std::fs::write(root.path().join(format!("text{index:02}.txt")), "ssssss\n")
+            .expect("write Unicode-fold fallback match");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    for plan_only in [false, true] {
+        let mut request = context_limit_request(2_000);
+        request.task = "unique_primary_needle ssssss".into();
+        request.plan_only = plan_only;
+        let response = services
+            .context(request)
+            .await
+            .expect("bounded partial context");
+        assert!(
+            response
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("candidate generation incomplete"))
+        );
+        if let Some(plan) = response.plan {
+            assert!(!plan.result_complete);
+            assert!(
+                plan.candidates
+                    .iter()
+                    .any(|candidate| candidate.path == "owner.rs")
+            );
+        } else {
+            assert!(
+                response
+                    .fragments
+                    .iter()
+                    .any(|fragment| fragment.path == "owner.rs")
+            );
+        }
+    }
+
+    let mut request = context_limit_request(2_000);
+    request.task = "ssssss".into();
+    let response = services
+        .context(request.clone())
+        .await
+        .expect("partial lexical evidence");
+    assert!(
+        response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.content.contains("ssssss"))
+    );
+    assert!(
+        response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("candidate generation incomplete"))
+    );
+
+    request.changed_paths = vec!["text34.txt".into()];
+    request.strict_changed_paths = true;
+    let response = services
+        .context(request)
+        .await
+        .expect("late scoped literal match");
+    assert_eq!(response.fragments.len(), 1);
+    assert_eq!(response.fragments[0].path, "text34.txt");
+    assert!(
+        !response
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("candidate generation incomplete"))
+    );
+}
+
+#[tokio::test]
 async fn required_evidence_does_not_transfer_to_overlapping_content() {
     let root = tempfile::tempdir().expect("temporary repository");
     let evidence_path = root.path().join("paper/evidence.txt");

@@ -264,6 +264,7 @@ impl Services {
             path_excluded_candidates,
             coverage,
             warnings: focus_generation_warnings,
+            incomplete_scan_warnings,
             workflow_receipt,
             ..
         } = batch;
@@ -324,6 +325,12 @@ impl Services {
         )?;
         response.coverage = coverage;
         response.warnings.extend(focus_generation_warnings);
+        if !incomplete_scan_warnings.is_empty() {
+            if let Some(plan) = &mut response.plan {
+                plan.result_complete = false;
+            }
+            response.warnings.extend(incomplete_scan_warnings);
+        }
         response::append_coverage_warnings(&mut response);
         response.workflow = resolved_workflow;
         response.workflow_receipt = workflow_receipt;

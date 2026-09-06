@@ -580,3 +580,14 @@ fn fusion_requires_two_independent_query_concepts() {
             .any(|kind| kind == "multi-query")
     );
 }
+#[test]
+fn partial_candidate_recovery_does_not_swallow_cancellation_or_storage_failures() {
+    let mut warnings = Vec::new();
+    for error in [
+        Error::Cancelled,
+        Error::OperationFailure("storage unavailable".into()),
+    ] {
+        assert!(record_candidate_scan_limit(&mut warnings, error).is_err());
+        assert!(warnings.is_empty());
+    }
+}

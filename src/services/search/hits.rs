@@ -140,32 +140,16 @@ pub(super) fn collect_filtered_hits<T>(
     request: &SearchInput,
     max_candidates: usize,
     cancellation: &CancellationToken,
-    mut fetch_page: impl FnMut(usize, usize) -> Result<Vec<T>>,
+    fetch_page: impl FnMut(usize, usize) -> Result<Vec<T>>,
     path: impl Fn(&T) -> &str,
 ) -> Result<Vec<T>> {
     let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
-    let mut selected = Vec::new();
-    let mut offset = 0usize;
-    while selected.len() < max_candidates && offset < MAX_FILTER_SCAN_ROWS {
-        check_cancelled(cancellation)?;
-        let page_limit = FILTER_SCAN_PAGE_SIZE.min(MAX_FILTER_SCAN_ROWS - offset);
-        let page = fetch_page(offset, page_limit)?;
-        let page_len = page.len();
-        for hit in page {
-            check_cancelled(cancellation)?;
-            if path_filter.allows(path(&hit)) {
-                selected.push(hit);
-                if selected.len() == max_candidates {
-                    break;
-                }
-            }
-        }
-        offset = offset.saturating_add(page_len);
-        if page_len < page_limit {
-            break;
-        }
-    }
-    Ok(selected)
+    Ok(
+        collect_ranked_candidates(max_candidates, cancellation, fetch_page, |hit| {
+            path_filter.allows(path(hit))
+        })?
+        .hits,
+    )
 }
 
 pub(super) fn filter_materialized_hits<T>(

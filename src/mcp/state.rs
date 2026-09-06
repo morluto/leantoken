@@ -113,8 +113,9 @@ impl McpContextRegistry {
         }
     }
 
+    /// Register an approved context without replacing an existing runtime.
     pub fn register(&self, name: String, services: McpServices) -> crate::Result<()> {
-        if name.is_empty() || name == "default" || name.len() > 64 || name.contains(['/', '\\']) {
+        if name == "default" || !crate::config::valid_repository_context_name(&name) {
             return Err(crate::Error::InvalidInput {
                 field: "repository_context",
                 reason: "must be a non-empty approved context name",
@@ -125,7 +126,13 @@ impl McpContextRegistry {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let approved_contexts = contexts.len().saturating_sub(1);
-        if !contexts.contains_key(&name) && approved_contexts >= MAX_REPOSITORY_CONTEXTS {
+        if contexts.contains_key(&name) {
+            return Err(crate::Error::InvalidInput {
+                field: "repository_context",
+                reason: "must not replace an already registered repository context",
+            });
+        }
+        if approved_contexts >= MAX_REPOSITORY_CONTEXTS {
             return Err(crate::Error::RequestLimitExceeded {
                 field: "repository_contexts",
                 requested: approved_contexts.saturating_add(1),
@@ -147,7 +154,7 @@ impl McpContextRegistry {
                 });
             }
         };
-        if name.len() > 64 || name.contains(['/', '\\']) {
+        if !crate::config::valid_repository_context_name(name) {
             return Err(crate::Error::InvalidInput {
                 field: "repository_context",
                 reason: "must be a bounded approved context name",

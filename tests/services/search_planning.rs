@@ -1,5 +1,37 @@
 use super::*;
 
+#[tokio::test]
+async fn regex_scan_work_is_independent_of_output_budget_defaults() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for index in 0..40 {
+        let content = format!("{}\n", "ordinary background ".repeat(1_700));
+        std::fs::write(root.path().join(format!("a{index:02}.txt")), content)
+            .expect("write background");
+    }
+    std::fs::write(root.path().join("z.txt"), "needle\n").expect("write late match");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    for tokens in [None, Some(1), Some(7_999), Some(8_000), Some(8_001)] {
+        let mut request = search_limit_request(Some(1), tokens, Some(0));
+        request.query = "n[e]edle".into();
+        request.mode = SearchMode::Regex;
+        request.case_sensitive = false;
+        let response = services
+            .search(request)
+            .await
+            .expect("same bounded scan for every output budget");
+        if tokens != Some(1) {
+            assert_eq!(response.hits.len(), 1);
+            assert_eq!(response.hits[0].path, "z.txt");
+        }
+    }
+}
+
 async fn cursor_fixture() -> (tempfile::TempDir, Services, SearchRequest) {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("create source directory");

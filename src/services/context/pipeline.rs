@@ -158,6 +158,7 @@ pub(super) struct CandidateBatch {
     pub(super) query_fusion: HashMap<String, HashMap<String, f64>>,
     pub(super) coverage: ContextCoverageReceipt,
     pub(super) warnings: Vec<String>,
+    pub(super) incomplete_scan_warnings: Vec<String>,
     pub(super) workflow_receipt: Option<WorkflowReceipt>,
 }
 

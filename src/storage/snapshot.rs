@@ -230,14 +230,6 @@ impl StorageSnapshot {
         self.session.search_trigram_page(query, max_results, offset)
     }
 
-    pub(crate) fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.session.search_word(query, max_results)
-    }
-
-    pub(crate) fn search_trigram(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
-        self.session.search_trigram(query, max_results)
-    }
-
     pub(crate) fn search_trigram_expression_page(
         &self,
         expression: &str,
@@ -246,15 +238,6 @@ impl StorageSnapshot {
     ) -> Result<Vec<ChunkHit>> {
         self.session
             .search_trigram_expression_page(expression, max_results, offset)
-    }
-
-    pub(crate) fn search_trigram_expression(
-        &self,
-        expression: &str,
-        max_results: usize,
-    ) -> Result<Vec<ChunkHit>> {
-        self.session
-            .search_trigram_expression(expression, max_results)
     }
 
     pub(crate) fn search_symbols_page(
@@ -266,16 +249,6 @@ impl StorageSnapshot {
     ) -> Result<Vec<SymbolHit>> {
         self.session
             .search_symbols_page(query, case_sensitive, max_results, offset)
-    }
-
-    pub(crate) fn search_symbols(
-        &self,
-        query: &str,
-        case_sensitive: bool,
-        max_results: usize,
-    ) -> Result<Vec<SymbolHit>> {
-        self.session
-            .search_symbols(query, case_sensitive, max_results)
     }
 
     pub(crate) fn search_references_page(
@@ -308,8 +281,21 @@ impl StorageSnapshot {
             .find_symbols_exact_batch(names, max_results_per_name)
     }
 
-    pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
-        self.session.regex_scan_files(max_results)
+    pub(crate) fn regex_scan_files(
+        &self,
+        max_results: usize,
+        max_rows_scanned: usize,
+        include_paths: &[String],
+        exclude_paths: &[String],
+        allows_path: impl FnMut(&str) -> Result<bool>,
+    ) -> Result<Vec<(FileRecord, usize)>> {
+        self.session.regex_scan_files(
+            max_results,
+            max_rows_scanned,
+            include_paths,
+            exclude_paths,
+            allows_path,
+        )
     }
 
     pub(crate) fn search_regex_candidates_page(

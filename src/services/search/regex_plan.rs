@@ -395,7 +395,7 @@ pub(in crate::services) struct LiteralFullScan<'a> {
     pub(in crate::services) include_paths: &'a [String],
     pub(in crate::services) exclude_paths: &'a [String],
     pub(in crate::services) max_candidates: usize,
-    pub(in crate::services) max_tokens: usize,
+    pub(in crate::services) allows_path: &'a dyn Fn(&str) -> bool,
     pub(in crate::services) cancellation: &'a CancellationToken,
 }
 
@@ -403,7 +403,7 @@ impl Services {
     pub(in crate::services) fn full_scan_literal_hits(
         &self,
         scan: LiteralFullScan<'_>,
-    ) -> Result<Vec<ChunkHit>> {
+    ) -> Result<RegexScan> {
         let LiteralFullScan {
             session,
             query,
@@ -411,7 +411,7 @@ impl Services {
             include_paths,
             exclude_paths,
             max_candidates,
-            max_tokens,
+            allows_path,
             cancellation,
         } = scan;
         let request = SearchInput {
@@ -420,22 +420,21 @@ impl Services {
             include_paths: include_paths.to_vec(),
             exclude_paths: exclude_paths.to_vec(),
             focus_paths: Vec::new(),
-            max_results: Some(max_candidates),
-            max_tokens: Some(max_tokens),
             case_sensitive: false,
             receipt_id: None,
             cursor: None,
         };
-        Ok(self
-            .regex_hits(
-                session,
-                &request,
-                matcher,
-                Some(max_candidates),
-                cancellation,
-                RegexPlanning::Disabled,
-            )?
-            .hits)
+        self.regex_hits(
+            session,
+            &request,
+            matcher,
+            RegexScanLimit::Ranked {
+                max_candidates,
+                allows_path,
+            },
+            cancellation,
+            RegexPlanning::Disabled,
+        )
     }
 
     pub(super) fn regex_hits(
@@ -443,14 +442,18 @@ impl Services {
         session: &IndexReadSnapshot,
         request: &SearchInput,
         regex: &regex::Regex,
-        max_candidates: Option<usize>,
+        scan_limit: RegexScanLimit<'_>,
         cancellation: &CancellationToken,
         planning: RegexPlanning,
     ) -> Result<RegexScan> {
         // Hard caps prevent repository-wide lexical scans from running
         // unbounded. Exhaustive modes lift only the candidate-chunk cap and
         // fail explicitly if another cap would make the result incomplete.
-        let max_candidates = max_candidates.map(|limit| limit.min(MAX_REGEX_CANDIDATES));
+        let max_candidates = match scan_limit {
+            RegexScanLimit::Complete(limit) => limit,
+            RegexScanLimit::Ranked { max_candidates, .. } => Some(max_candidates),
+        }
+        .map(|limit| limit.min(MAX_REGEX_CANDIDATES));
         let path_filter = PathFilter::new(&request.include_paths, &request.exclude_paths)?;
         let has_path_filters =
             !request.include_paths.is_empty() || !request.exclude_paths.is_empty();
@@ -480,9 +483,6 @@ impl Services {
                     has_path_filters,
                     include_paths: &request.include_paths,
                     exclude_paths: &request.exclude_paths,
-                    max_results: request.max_results,
-                    max_tokens: request.max_tokens,
-                    minimum_chunk_bytes: self.config.chunk_bytes,
                     files_considered: file_count,
                     plan,
                 });
@@ -490,17 +490,19 @@ impl Services {
             RegexPlanDecision::Fallback(diagnostics) => diagnostics,
         };
 
-        if file_count > MAX_REGEX_FILES_SCANNED {
-            return Err(Error::RetrievalLimitExceeded {
-                kind: RetrievalLimitKind::RegexFullScanFiles,
-                observed: file_count,
-                limit: MAX_REGEX_FILES_SCANNED,
-            });
-        }
-        let files = session.regex_scan_files(MAX_REGEX_FILES_SCANNED)?;
+        let files = session.regex_scan_files(
+            MAX_REGEX_FILES_SCANNED,
+            MAX_SCOPED_REGEX_ROWS_SCANNED,
+            &request.include_paths,
+            &request.exclude_paths,
+            |path| {
+                check_cancelled(cancellation)?;
+                Ok(path_filter.allows(path) && scan_limit.allows_path(path))
+            },
+        )?;
         for (file, chunk_count) in &files {
             check_cancelled(cancellation)?;
-            if path_filter.allows(&file.path) && *chunk_count > MAX_REGEX_CHUNKS_PER_FILE {
+            if *chunk_count > MAX_REGEX_CHUNKS_PER_FILE {
                 return Err(Error::RetrievalPathLimitExceeded {
                     kind: RetrievalLimitKind::RegexChunksPerFile,
                     path: file.path.clone(),
@@ -510,11 +512,7 @@ impl Services {
             }
         }
         let mut hits = Vec::new();
-        let mut work = RegexWorkBudget::for_request(
-            request.max_results,
-            request.max_tokens,
-            self.config.chunk_bytes,
-        );
+        let mut work = RegexWorkBudget::default();
         let mut phases = SearchPhaseCounters {
             regex_planning: RegexPlanningOutcome::FullScan {
                 fallback_reason: Some(fallback.fallback_reason),
@@ -527,31 +525,24 @@ impl Services {
         };
         for (file, _) in files {
             check_cancelled(cancellation)?;
-            if !path_filter.allows(&file.path) {
-                continue;
+            if let Err(error) = work.charge_file(cancellation) {
+                return scan_limit.stop(hits, phases, error);
             }
-            work.charge_file(cancellation)?;
             let chunks = session.get_chunks_for_file(file.id, MAX_REGEX_CHUNKS_PER_FILE)?;
             for chunk in chunks {
-                if max_candidates.is_some_and(|limit| hits.len() == limit)
-                    && regex.is_match(&chunk.content)
-                {
-                    return Err(Error::RetrievalLimitExceeded {
-                        kind: RetrievalLimitKind::RegexRetainedChunks,
-                        observed: hits.len().saturating_add(1),
-                        limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
-                    });
+                if let Err(error) = work.charge_chunk(chunk.content.len(), cancellation) {
+                    return scan_limit.stop(hits, phases, error);
                 }
-                work.charge_chunk(chunk.content.len(), cancellation)?;
                 phases.regex_chunks_loaded = phases.regex_chunks_loaded.saturating_add(1);
                 phases.regex_chunks_verified = phases.regex_chunks_verified.saturating_add(1);
                 if regex.is_match(&chunk.content) {
                     if max_candidates.is_some_and(|limit| hits.len() == limit) {
-                        return Err(Error::RetrievalLimitExceeded {
+                        let error = Error::RetrievalLimitExceeded {
                             kind: RetrievalLimitKind::RegexRetainedChunks,
                             observed: hits.len().saturating_add(1),
                             limit: max_candidates.unwrap_or(MAX_REGEX_CANDIDATES),
-                        });
+                        };
+                        return scan_limit.stop(hits, phases, error);
                     }
                     phases.regex_retained_chunks = phases.regex_retained_chunks.saturating_add(1);
                     hits.push(ChunkHit {
@@ -570,7 +561,11 @@ impl Services {
                 }
             }
         }
-        Ok(RegexScan { hits, phases })
+        Ok(RegexScan {
+            hits,
+            phases,
+            limitation: None,
+        })
     }
 
     pub(super) fn regex_candidate_hits(
@@ -586,9 +581,6 @@ impl Services {
             has_path_filters,
             include_paths,
             exclude_paths,
-            max_results,
-            max_tokens,
-            minimum_chunk_bytes,
             files_considered,
             plan,
         } = params;
@@ -603,15 +595,7 @@ impl Services {
             ..SearchPhaseCounters::default()
         };
         let query = plan.expression.fts_query();
-        let mut work = if plan.source == RegexPlanSource::LiteralIdentifier {
-            RegexWorkBudget::for_literal_identifier_request(
-                max_results,
-                max_tokens,
-                minimum_chunk_bytes,
-            )
-        } else {
-            RegexWorkBudget::for_request(max_results, max_tokens, minimum_chunk_bytes)
-        };
+        let mut work = RegexWorkBudget::default();
         let mut charged_files = HashSet::new();
         if has_path_filters {
             let candidate_ids = session.select_scoped_regex_candidate_ids(
@@ -655,7 +639,11 @@ impl Services {
                     }
                 }
             }
-            return Ok(RegexScan { hits, phases });
+            return Ok(RegexScan {
+                hits,
+                phases,
+                limitation: None,
+            });
         }
         let candidate_count = session
             .regex_candidate_count_up_to(&query, MAX_REGEX_CANDIDATE_CHUNKS.saturating_add(1))?;
@@ -712,7 +700,11 @@ impl Services {
                 break;
             }
         }
-        Ok(RegexScan { hits, phases })
+        Ok(RegexScan {
+            hits,
+            phases,
+            limitation: None,
+        })
     }
 }
 use super::*;
@@ -725,9 +717,6 @@ pub(super) struct RegexCandidateParams<'a, 'b> {
     pub has_path_filters: bool,
     pub include_paths: &'b [String],
     pub exclude_paths: &'b [String],
-    pub max_results: Option<usize>,
-    pub max_tokens: Option<usize>,
-    pub minimum_chunk_bytes: usize,
     pub files_considered: usize,
     pub plan: RegexCandidatePlan,
 }

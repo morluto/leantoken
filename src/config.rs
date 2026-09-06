@@ -29,6 +29,7 @@ const MAX_CONTEXT_EXCLUDE_PATHS: usize = 256;
 const MAX_CONTEXT_PATH_PATTERN_BYTES: usize = 4 * 1024;
 pub(crate) const MAX_REPOSITORY_CONTEXTS: usize = 8;
 const MAX_REPOSITORY_CONTEXT_NAME_BYTES: usize = 64;
+
 const MANAGED_CACHE_HASH_BYTES: usize = 16;
 const FALLBACK_CACHE_DIRECTORY: &str = ".leantoken";
 pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
@@ -38,6 +39,13 @@ pub(crate) const DEFAULT_CONTEXT_EXCLUDE_PATHS: &[&str] = &[
     "notes/runs/**",
     "node_modules/**",
 ];
+
+pub(crate) fn valid_repository_context_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.trim() == name
+        && name.len() <= MAX_REPOSITORY_CONTEXT_NAME_BYTES
+        && !name.contains(['/', '\\'])
+}
 
 pub(crate) fn default_context_exclude_paths() -> Vec<String> {
     DEFAULT_CONTEXT_EXCLUDE_PATHS
@@ -481,12 +489,7 @@ impl Config {
         }
         let mut result = Vec::with_capacity(contexts.len());
         for (name, item) in contexts {
-            if name == "default"
-                || name.is_empty()
-                || name.trim() != name
-                || name.len() > MAX_REPOSITORY_CONTEXT_NAME_BYTES
-                || name.contains(['/', '\\'])
-            {
+            if name == "default" || !valid_repository_context_name(name) {
                 return Err(Error::InvalidConfiguration(format!(
                     "repository context name `{name}` is invalid"
                 )));
