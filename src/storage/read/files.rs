@@ -81,25 +81,58 @@ impl ReadSession {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
-    pub(crate) fn regex_scan_files(&self, max_results: usize) -> Result<Vec<(FileRecord, usize)>> {
-        let limit = bounded_limit(max_results);
-        let mut stmt = self.conn.prepare_cached(
+    pub(crate) fn regex_scan_files(
+        &self,
+        max_results: usize,
+        max_rows_scanned: usize,
+        include_paths: &[String],
+        exclude_paths: &[String],
+        mut allows_path: impl FnMut(&str) -> Result<bool>,
+    ) -> Result<Vec<(FileRecord, usize)>> {
+        let path_sql = scoped_regex_path_sql(include_paths, exclude_paths, 2);
+        let sql = format!(
             "SELECT f.id, f.path, f.language, f.size_bytes, f.modified_ns,
                     f.content_hash, f.generation, f.structurally_complete,
                     COUNT(c.id)
              FROM files f
              LEFT JOIN chunks c ON c.file_id = f.id
+             WHERE 1 = 1 {path_clause}
              GROUP BY f.id
              ORDER BY f.id
              LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit], |row| {
-            Ok((
-                Storage::map_file(row)?,
-                i64_to_usize(row.get::<_, i64>(8)?)?,
-            ))
-        })?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+            path_clause = path_sql.clause,
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut bind = vec![rusqlite::types::Value::from(
+            i64::try_from(max_rows_scanned.saturating_add(1)).unwrap_or(i64::MAX),
+        )];
+        bind.extend(path_sql.params.into_iter().map(Into::into));
+        let mut rows = stmt.query(rusqlite::params_from_iter(bind))?;
+        let mut files = Vec::new();
+        let mut scanned = 0usize;
+        while let Some(row) = rows.next()? {
+            scanned += 1;
+            if scanned > max_rows_scanned {
+                return Err(Error::RetrievalLimitExceeded {
+                    kind: RetrievalLimitKind::RegexScopedRows,
+                    observed: scanned,
+                    limit: max_rows_scanned,
+                });
+            }
+            let path: String = row.get(1)?;
+            if !allows_path(&path)? {
+                continue;
+            }
+            if files.len() == max_results {
+                return Err(Error::RetrievalLimitExceeded {
+                    kind: RetrievalLimitKind::RegexFullScanFiles,
+                    observed: files.len().saturating_add(1),
+                    limit: max_results,
+                });
+            }
+            files.push((Storage::map_file(row)?, i64_to_usize(row.get(8)?)?));
+        }
+        Ok(files)
     }
 
     /// Read a lexicographically ordered keyset page from the relational path projection.

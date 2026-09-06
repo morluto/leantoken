@@ -9,7 +9,7 @@ use super::numeric::numeric_summary;
 use super::projection::{ProjectionState, project_json, projection_item_count};
 use super::schema::project_schema_page;
 use super::selection::{ParsedJsonSelector, select_json};
-use super::source::{JsonMeasurementCache, JsonMeasurementKey, json_tokens};
+use super::source::{JsonMeasurementCache, json_tokens};
 use super::validation::{ParsedJsonOperation, ParsedJsonRequest};
 use super::{DEFAULT_ARRAY_SAMPLE_SIZE, DEFAULT_JSON_ITEMS};
 use crate::model::{
@@ -468,7 +468,6 @@ impl Services {
                     .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
-                    JsonMeasurementKey::KeysPrefix(keep),
                     candidate
                         .value
                         .as_ref()
@@ -494,7 +493,6 @@ impl Services {
                     .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
-                    JsonMeasurementKey::KeysPrefix(keep),
                     response
                         .value
                         .as_ref()
@@ -521,7 +519,6 @@ impl Services {
                     .transpose()?;
                 let source_tokens = measurements.measure(
                     self,
-                    JsonMeasurementKey::KeysPrefix(1),
                     minimum
                         .value
                         .as_ref()

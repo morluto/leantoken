@@ -38,14 +38,6 @@ impl ReadSession {
         self.search_fts(FtsTable::Trigram, expression, max_results, offset)
     }
 
-    pub(crate) fn search_trigram_expression(
-        &self,
-        expression: &str,
-        max_results: usize,
-    ) -> Result<Vec<ChunkHit>> {
-        self.search_trigram_expression_page(expression, max_results, 0)
-    }
-
     pub(crate) fn search_regex_candidates_page(
         &self,
         query: &str,
@@ -78,7 +70,7 @@ impl ReadSession {
         mut allows_path: impl FnMut(&str) -> bool,
     ) -> Result<Vec<i64>> {
         let limit = i64::try_from(max_rows_scanned.saturating_add(1)).unwrap_or(i64::MAX);
-        let path_sql = scoped_regex_path_sql(include_paths, exclude_paths);
+        let path_sql = scoped_regex_path_sql(include_paths, exclude_paths, 3);
         let sql = format!(
             "SELECT c.id, f.path
              FROM chunks_fts_trigram

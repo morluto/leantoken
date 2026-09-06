@@ -6,7 +6,7 @@ use super::execution::JsonExecutionOptions;
 use super::selection::ParsedJsonSelector;
 use super::{MAX_ARRAY_SAMPLE_SIZE, MAX_JSON_DEPTH, MAX_JSON_ITEMS, MAX_JSON_SELECTORS};
 use crate::model::{JsonOperation, JsonProjection, JsonRequest};
-use crate::repository::{normalize_relative, validate_relative};
+use crate::repository::normalize_relative;
 use crate::services::validation::{MAX_PATH_BYTES, validate_input};
 use crate::services::{validate_positive_request_limit, validate_request_limit};
 use crate::{Error, Result};
@@ -63,7 +63,6 @@ pub(super) fn parse_json_request(
             projection,
         } => {
             validate_input(&path, "path", MAX_PATH_BYTES)?;
-            validate_relative(&path)?;
             let path = normalize_relative(&path)?;
             if execution.depth().is_some() && projection != JsonProjection::Keys {
                 return Err(Error::InvalidInput {
@@ -100,7 +99,6 @@ pub(super) fn parse_json_request(
         }
         JsonOperation::NumericSummary { path, selector } => {
             validate_input(&path, "path", MAX_PATH_BYTES)?;
-            validate_relative(&path)?;
             let path = normalize_relative(&path)?;
             if execution.depth().is_some() {
                 return Err(Error::InvalidInput {
@@ -127,8 +125,6 @@ pub(super) fn parse_json_request(
         } => {
             validate_input(&base_path, "base path", MAX_PATH_BYTES)?;
             validate_input(&head_path, "head path", MAX_PATH_BYTES)?;
-            validate_relative(&base_path)?;
-            validate_relative(&head_path)?;
             let base_path = normalize_relative(&base_path)?;
             let head_path = normalize_relative(&head_path)?;
             validate_positive_request_limit("selectors", selectors.len(), MAX_JSON_SELECTORS)?;

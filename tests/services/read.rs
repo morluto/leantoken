@@ -624,6 +624,58 @@ async fn read_delta_falls_back_when_the_diff_is_not_smaller() {
 }
 
 #[tokio::test]
+async fn read_delta_cache_tracks_symbol_location_when_content_repeats() {
+    let body = (1..=80)
+        .map(|line| format!("    let value_{line} = compute_value({line});\n"))
+        .collect::<String>();
+    let source = format!("fn target() {{\n{body}}}\n");
+    let edited = source.replace("compute_value(40)", "updated_value(40)");
+    let (root, services) = indexed_source("symbol.rs", source.as_bytes()).await;
+    let request = || ReadRequest {
+        path: "symbol.rs".into(),
+        start_line: None,
+        end_line: None,
+        symbol: Some("target".into()),
+        heading: None,
+        heading_occurrence: None,
+        continuation_cursor: None,
+        max_tokens: Some(4_000),
+        expected_hash: None,
+        delta: true,
+        receipt_id: None,
+        policy: leantoken::ReadPolicy::Full,
+    };
+    services.read(request()).await.expect("capture base");
+    for (content, moved, expect_delta) in [
+        (edited.clone(), false, true),
+        (format!("\n\n{source}"), true, false),
+        (format!("\n\n{edited}"), true, true),
+    ] {
+        std::fs::write(root.path().join("symbol.rs"), content).expect("edit symbol");
+        services
+            .index(leantoken::IndexingMode::Reconcile)
+            .await
+            .expect("reindex symbol");
+        let response = services.read(request()).await.expect("read delta");
+        if expect_delta {
+            assert_eq!(response.status, ReadStatus::Delta);
+            let delta = response.delta.expect("compact change");
+            assert_eq!(response.returned_start_line, if moved { 3 } else { 1 });
+            assert!(
+                delta.starts_with(&format!(
+                    "--- base/symbol.rs:{}-{}\n+++ head/symbol.rs:{}-{}\n",
+                    response.returned_start_line,
+                    response.returned_end_line,
+                    response.returned_start_line,
+                    response.returned_end_line,
+                )),
+                "{delta}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn read_delta_falls_back_when_symbol_coordinates_change() {
     let source = b"fn target() {\n    old_behavior();\n}\n";
     let (root, services) = indexed_source("symbol.rs", source).await;

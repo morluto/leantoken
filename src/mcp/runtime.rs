@@ -70,11 +70,15 @@ impl LeanTokenMcp {
                     .map(RetrievalPreparation::Unavailable);
             }
         };
-        let _ = mcp_services.request_activation();
         let state = mcp_services.get();
         if let Err(error) = validate(state.limits()) {
             return into_tool_error(error, self.result_mode).map(RetrievalPreparation::Unavailable);
         }
+        if cancellation.is_cancelled() {
+            return into_tool_error(crate::Error::Cancelled, self.result_mode)
+                .map(RetrievalPreparation::Unavailable);
+        }
+        let _ = mcp_services.request_activation();
         let state = match mcp_services
             .wait_for_services(state, cancellation.clone(), deadline)
             .await

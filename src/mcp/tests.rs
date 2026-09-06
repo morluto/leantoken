@@ -47,6 +47,44 @@ fn repository_context_registry_defaults_and_fails_closed() {
 }
 
 #[test]
+fn repository_context_registration_rejects_unresolvable_names() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    for name in ["", " ", " docs", "docs ", "default", "a/b", "a\\b"] {
+        assert!(
+            matches!(
+                registry.register(name.into(), McpServices::starting_default()),
+                Err(crate::Error::InvalidInput {
+                    field: "repository_context",
+                    ..
+                })
+            ),
+            "invalid context name {name:?} must not be registered"
+        );
+    }
+}
+
+#[test]
+fn repository_context_registration_cannot_replace_an_existing_runtime() {
+    let registry = McpContextRegistry::primary(McpServices::starting_default());
+    let original = McpServices::starting_default();
+    registry
+        .register("docs".into(), original.clone())
+        .expect("first registration");
+    assert!(matches!(
+        registry.register("docs".into(), McpServices::starting_default()),
+        Err(crate::Error::InvalidInput {
+            field: "repository_context",
+            ..
+        })
+    ));
+    registry
+        .resolve(Some(" docs "))
+        .expect("lookup retains whitespace normalization")
+        .request_activation();
+    assert!(original.activation_requested());
+}
+
+#[test]
 fn repository_context_registry_allows_the_configured_approved_context_limit() {
     let registry = McpContextRegistry::primary(McpServices::starting_default());
     for index in 0..MAX_REPOSITORY_CONTEXTS {
@@ -63,6 +101,35 @@ fn repository_context_registry_allows_the_configured_approved_context_limit() {
             limit: MAX_REPOSITORY_CONTEXTS,
         }) if requested == MAX_REPOSITORY_CONTEXTS + 1
     ));
+}
+
+#[tokio::test]
+async fn rejected_requests_leave_approved_contexts_dormant() {
+    let (server, _) = LeanTokenMcp::pending();
+    let context = McpServices::starting_default();
+    server
+        .contexts
+        .register("docs".into(), context.clone())
+        .expect("context");
+    let result = server
+        .prepare_retrieval_call(CancellationToken::new(), Some("docs"), |_| {
+            Err(crate::Error::InvalidInput {
+                field: "max_tokens",
+                reason: "must be positive",
+            })
+        })
+        .await
+        .expect("bounded validation response");
+    assert!(matches!(result, RetrievalPreparation::Unavailable(_)));
+    assert!(!context.activation_requested());
+
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let result = server
+        .prepare_retrieval_call(cancellation, Some("docs"), |_| Ok(()))
+        .await;
+    assert!(matches!(result, Err(error) if error.message == "request cancelled"));
+    assert!(!context.activation_requested());
 }
 
 #[tokio::test]
@@ -1370,7 +1437,7 @@ fn assert_search_option_error_mapping() {
             "complete": false,
             "recovery": {
                 "action": "partition_scope",
-                "message": "Narrow include_paths or make the query more selective; increasing max_tokens or max_results cannot make one request unbounded.",
+                "message": "narrow include_paths or make the query more selective; output budgets do not increase scan-work limits",
                 "required_fields": ["include_paths"]
             },
             "limiting_dimension": "candidate_chunks",

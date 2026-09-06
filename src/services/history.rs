@@ -1147,7 +1147,7 @@ impl Services {
                 check_cancelled(cancellation)?;
                 let mut commits = git_line_history(
                     &self.config.root,
-                    revision,
+                    &resolved.symbol.revision,
                     &path,
                     resolved.symbol.target_start_line,
                     resolved.symbol.target_end_line,

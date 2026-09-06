@@ -268,7 +268,9 @@ the delta table. The content stays in the existing index database, so it has
 the same file ownership, permissions, cache lifecycle, repository binding, and
 whole-cache prune behavior as indexed chunks; no additional source-bearing
 sidecar is created. Content hashes are verified on load and duplicate insert,
-and clock rollback or corruption fails closed.
+and clock rollback or corruption fails closed. Live timestamps are sampled
+after acquiring the reader snapshot or serialized writer transaction; a wait
+for database access must not be mistaken for clock rollback.
 
 Persistent read-delta state retains at most 128 bases, 512 KiB per base, and
 8 MiB of logical base data in total, with a sliding 30-minute wall-clock TTL.
@@ -852,15 +854,17 @@ query-receipt, and read-delta usage counters from their authoritative rows, and
 repairs missing singleton namespaces without regressing access sequences. The
 indexer's first reconciliation likewise regenerates import candidate order and
 resolution through its one language-policy owner in pages of at most 32
-imports, never by consulting the possibly corrupt reverse candidate index or
-materializing the complete file-membership table. Storage resolves each
+imports, never by consulting the possibly corrupt reverse candidate index.
+Storage loads the bounded transaction membership once; the indexer builds its
+sorted path view and Go module metadata once per repair, not once per import.
+Storage resolves each
 at-most-64-path candidate vector through indexed equality lookups against the
-publication transaction's exact `files` rows. Any membership-changing
+publication transaction's exact `files` rows. Any membership- or Go-module-changing
 publication repeats that repair inside the same transaction. A non-null
 resolved import therefore always names a file in the same committed generation. Once this
 process has verified the projection, content-only publications replace their
 own importer rows but do not rescan every unrelated import; only repository
-membership changes can alter another file's candidate resolution.
+membership or `go.mod` identity changes invalidate unrelated import projections.
 Startup tracks both main-table
 row changes and the schema version while checkpointing is suspended; a real
 migration or startup projection repair explicitly requests `TRUNCATE` after
@@ -988,6 +992,10 @@ projection (`id`, `path`, `language`, `size_bytes`) because fuzzy nucleo scoring
 does not map to SQL. The numbers are safety limits, not monorepo performance
 claims.
 
+Git revision resolution uses the shared process-group capture owner with a
+128-byte stdout cap and the caller's timeout. Symbol history pins subsequent
+line-history lookup to the symbol's already resolved commit.
+
 Git changed-path discovery asks each name-only command for one record beyond
 the caller's path limit. That `max + 1` probe is what distinguishes an exactly
 full result from a truncated result without collecting the repository-sized
@@ -1014,10 +1022,11 @@ overflow fails closed rather than being reported as a complete path set.
 | Lightweight rows inspected for path-scoped trigram planning | 100000 |
 | Full-scan fallback files | 10000 |
 | Full-scan fallback chunks per file | 256 |
-| Regex request candidate chunks | `max_results × 20` when a result bound is supplied, capped at 20,510; omitted result bounds retain the global ceiling |
-| Regex request candidate files | `max_results × 200` when a result bound is supplied, capped at 10,000 |
-| Regex request candidate bytes | `max(max_tokens × 64, 1 KiB)` when a token bound is supplied, capped at 1 GiB; omitted token bounds retain the global ceiling |
-| Exhaustive long-identifier candidate bytes | At least 4 MiB after normal request-derived sizing, capped at the same 1 GiB ceiling |
+| Regex request candidate chunks | 20,510, independent of output pagination |
+| Regex request candidate files | 10,000 within the requested scope |
+| Regex request candidate bytes | 1 GiB, independent of output pagination and planning strategy |
+| Ranked search/context scope filtering | At most 10,000 rows per source/query; pages of at most 256 rows |
+| Full-scan fallback scope selection | At most 100,000 metadata rows plus one overflow sentinel; at most 10,000 included files |
 | Regex cancellation interval | At most 64 verified candidate chunks |
 | Regex candidate-plan HIR nodes | 256 |
 | Regex candidate-plan terms | 32 |
@@ -1050,6 +1059,38 @@ ranking it inspects bounded file-local chunks and symbols, prefers task-matching
 structural and lexical excerpts, and uses a deterministically task-scored chunk
 only when the focused files contain no semantic hit. At most eight candidates
 per pattern enter global deduplication and quota reservation.
+
+Search and context share one bounded ranked-candidate collector. Include,
+exclude, and (for context) strict changed-path filters apply before filling
+the per-source candidate slots. Context labels scan-row exhaustion explicitly;
+the candidate counters count admitted matches, not discarded out-of-scope
+rows. Unicode structural fallbacks are materialized once per source/query,
+then filtered without repeating the full scan for each page.
+Excluded-path diagnostics retain at most the per-source candidate limit of
+observed exclusions, so the longer filtered scan does not enlarge the retained
+path-metadata bound.
+
+Regex work budgets own candidate files, chunks, and bytes. Output token/result
+budgets own response pagination and never resize scan-work allowances. This
+keeps omitted defaults, explicit defaults, and larger output budgets from
+changing whether a scan can reach a late match. Reducing candidate work through
+scope or query selectivity is the recovery path for hard work limits.
+
+Fallback file selection uses the same conservative SQL include/exclude
+predicates as trigram candidate selection, followed by the authoritative Rust
+path filter. Unrelated files do not consume the included-file cap. Patterns
+that cannot be pushed into SQL still obey the metadata-row ceiling.
+
+Context's ranked literal fallback preserves admitted hits when a retained-hit
+or work limit is reached. Other bounded query failures preserve evidence from
+completed lanes. Every such response includes a `candidate generation
+incomplete` warning; plans additionally set `result_complete` to false. These
+warnings survive response fitting. Cancellation, storage failures, invalid
+requests, and mandatory-evidence preparation failures remain errors.
+Exhaustive search retains its fail-closed completeness contract. Context still
+plans at most 12 queries; the per-query hard scan ceilings above bound its
+worst-case aggregate work by 12 times the per-query allowance, with no new
+concurrency or persistent cache.
 
 Requests above 32 focus patterns or a per-pattern minimum above eight fail with
 a typed limit error. A broad pattern resolving beyond four eligible files emits
@@ -1428,7 +1469,9 @@ edits. Pass `expected_hash` on rereads to suppress unchanged ranges. Exact
 line, symbol, and heading reads can opt into a repository-local bounded delta
 registry. It retains only complete targets and returns a unified diff only when
 the target coordinates still match and the complete delta is strictly cheaper
-than current content. With `delta=true` and no `expected_hash`, the registry
+than current content. Cached rendered deltas include their returned line range
+in the cache identity, so repeated edits after moving a symbol cannot reuse
+headers from its old location. With `delta=true` and no `expected_hash`, the registry
 selects the newest compatible base for the same repository and exact target by
 reverse-scanning at most its existing 128 insertion-order keys. This adds no
 unbounded index, storage, fan-out, or concurrency. An unchanged target returns

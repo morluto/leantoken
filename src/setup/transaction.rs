@@ -182,21 +182,7 @@ pub(super) fn recover_interrupted_transaction(runtime_root: &Path) -> Result<()>
         return Ok(());
     }
     for entry in &journal.entries {
-        let current = read_optional(&entry.path)?;
-        let still_original = current == entry.original;
-        let matches_applied = match &entry.updated {
-            SetupTransactionUpdate::Present { content_hash: hash } => current
-                .as_ref()
-                .is_some_and(|value| content_hash(value) == *hash),
-            SetupTransactionUpdate::Absent => current.is_none(),
-        };
-        if !still_original && !matches_applied {
-            return Err(Error::SetupFailure(format!(
-                "cannot recover interrupted setup because {} changed afterward",
-                entry.path.display()
-            )));
-        }
-        restore_path(&entry.path, entry.original.as_deref())?;
+        restore_path(&entry.path, entry.original.as_deref(), &entry.updated)?;
     }
     remove_journal(&path)?;
     Ok(())
@@ -306,10 +292,29 @@ fn remove_journal(path: &Path) -> Result<()> {
     }
 }
 
-pub(super) fn restore_path(path: &Path, original: Option<&str>) -> Result<()> {
+pub(super) fn restore_path(
+    path: &Path,
+    original: Option<&str>,
+    updated: &SetupTransactionUpdate,
+) -> Result<()> {
+    let current = read_optional(path)?;
+    if current.as_deref() == original {
+        return Ok(());
+    }
+    let matches_applied = match updated {
+        SetupTransactionUpdate::Present { content_hash: hash } => current
+            .as_ref()
+            .is_some_and(|value| content_hash(value) == *hash),
+        SetupTransactionUpdate::Absent => current.is_none(),
+    };
+    if !matches_applied {
+        return Err(Error::SetupFailure(format!(
+            "cannot recover setup because {} changed afterward",
+            path.display()
+        )));
+    }
     match original {
         Some(original) => {
-            let current = read_optional(path)?;
             if current.is_none() {
                 // The file is missing but the original says it should exist
                 // (possibly as an empty file). Use write_if_changed with a

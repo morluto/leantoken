@@ -185,6 +185,76 @@ pub(crate) fn scoped_regex_row_limit_reports_the_governing_bound() {
 }
 
 #[test]
+fn fallback_file_limit_is_applied_after_scope_and_preserves_scan_bounds() {
+    let root = tempfile::tempdir().expect("root");
+    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
+    storage
+        .full_reconcile(
+            "config",
+            vec![
+                sample_file("a.rs", "fn a() {}\n"),
+                sample_file("b.rs", "fn b() {}\n"),
+                sample_file("z.rs", "fn z() {}\n"),
+            ],
+        )
+        .expect("index");
+    let session = storage.begin_read().expect("snapshot");
+    let path_sql = scoped_regex_path_sql(&["z.rs".into()], &[], 2);
+    let plan = session
+        .conn
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN
+         SELECT f.id, f.path, f.language, f.size_bytes, f.modified_ns,
+                f.content_hash, f.generation, f.structurally_complete, COUNT(c.id)
+         FROM files f LEFT JOIN chunks c ON c.file_id = f.id
+         WHERE 1 = 1 {} GROUP BY f.id ORDER BY f.id LIMIT ?1",
+            path_sql.clause
+        ))
+        .expect("scope selection query plan")
+        .query_map(params![11, "z.rs"], |row| row.get::<_, String>(3))
+        .expect("query plan rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("query plan");
+    eprintln!("scoped fallback file selection: {plan:?}");
+    assert!(
+        plan.iter()
+            .any(|step| step.contains("SEARCH c USING") && step.contains("file_id=?")),
+        "chunk counts must use the file index: {plan:?}"
+    );
+    let included = session
+        .regex_scan_files(1, 10, &["z.rs".into()], &[], |path| Ok(path == "z.rs"))
+        .expect("unrelated files do not consume the file cap");
+    assert_eq!(included.len(), 1);
+    assert_eq!(included[0].0.path, "z.rs");
+    let excluded = session
+        .regex_scan_files(1, 10, &[], &["a.rs".into(), "b.rs".into()], |path| {
+            Ok(path == "z.rs")
+        })
+        .expect("exclusions precede file cap");
+    assert_eq!(excluded[0].0.path, "z.rs");
+    assert!(matches!(
+        session.regex_scan_files(1, 10, &[], &[], |_| Ok(true)),
+        Err(Error::RetrievalLimitExceeded {
+            kind: RetrievalLimitKind::RegexFullScanFiles,
+            observed: 2,
+            limit: 1
+        })
+    ));
+    assert!(matches!(
+        session.regex_scan_files(1, 1, &["*.rs".into()], &[], |_| Ok(false)),
+        Err(Error::RetrievalLimitExceeded {
+            kind: RetrievalLimitKind::RegexScopedRows,
+            observed: 2,
+            limit: 1
+        })
+    ));
+    assert!(matches!(
+        session.regex_scan_files(1, 10, &[], &[], |_| Err(Error::Cancelled)),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
 pub(crate) fn parser_coverage_rows_remain_pinned_across_publication() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");

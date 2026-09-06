@@ -1305,6 +1305,49 @@ fn import_resolution_honors_cancellation() {
 }
 
 #[test]
+fn full_reconcile_refreshes_imports_after_go_module_identity_changes() {
+    let root = tempfile::tempdir().expect("root");
+    let database = root.path().join("index.sqlite");
+    fs::create_dir(root.path().join("pkg")).unwrap();
+    fs::write(root.path().join("go.mod"), "module example.com/old\n").unwrap();
+    fs::write(
+        root.path().join("main.go"),
+        "package main\nimport \"example.com/old/pkg\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pkg/pkg.go"),
+        "package pkg\nfunc Target() {}\n",
+    )
+    .unwrap();
+    let config = Arc::new(Config::discover(root.path(), Some(database.clone())).unwrap());
+    let storage = Storage::open(&database).unwrap();
+    let indexer = Indexer::new(config, storage).unwrap();
+    let resolved_path = || {
+        rusqlite::Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT resolved_path FROM imports WHERE raw_target = 'example.com/old/pkg'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .unwrap()
+    };
+    indexer.reconcile(IndexingMode::Reconcile).unwrap();
+    assert_eq!(resolved_path().as_deref(), Some("pkg/pkg.go"));
+    fs::write(root.path().join("go.mod"), "module example.com/new\n").unwrap();
+    indexer.reconcile(IndexingMode::Reconcile).unwrap();
+    assert_eq!(
+        resolved_path(),
+        None,
+        "unchanged importer must lose the obsolete module edge"
+    );
+    fs::write(root.path().join("go.mod"), "module example.com/old\n").unwrap();
+    indexer.reconcile(IndexingMode::Reconcile).unwrap();
+    assert_eq!(resolved_path().as_deref(), Some("pkg/pkg.go"));
+}
+
+#[test]
 fn startup_projection_repair_does_not_trust_the_corrupt_candidate_index() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");

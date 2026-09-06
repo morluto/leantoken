@@ -406,7 +406,10 @@ impl Services {
                         .regex
                         .as_ref()
                         .expect("regex mode compiles a pattern"),
-                    (!request.kind.is_exhaustive()).then_some(prepared.limit.saturating_mul(20)),
+                    RegexScanLimit::Complete(
+                        (!request.kind.is_exhaustive())
+                            .then_some(prepared.limit.saturating_mul(20)),
+                    ),
                     cancellation,
                     regex_planning,
                 )?;
@@ -438,7 +441,7 @@ impl Services {
                         .occurrence_literal_regex
                         .as_ref()
                         .expect("exhaustive text mode compiles a literal pattern"),
-                    None,
+                    RegexScanLimit::Complete(None),
                     cancellation,
                     regex_planning,
                 )?;
@@ -457,7 +460,7 @@ impl Services {
                     session,
                     request,
                     &short_literal_regex,
-                    Some(prepared.limit.saturating_mul(20)),
+                    RegexScanLimit::Complete(Some(prepared.limit.saturating_mul(20))),
                     cancellation,
                     RegexPlanning::Disabled,
                 )?;
@@ -476,7 +479,7 @@ impl Services {
                         .literal_regex
                         .as_ref()
                         .expect("case-insensitive literal search compiles a matcher"),
-                    Some(prepared.limit.saturating_mul(20)),
+                    RegexScanLimit::Complete(Some(prepared.limit.saturating_mul(20))),
                     cancellation,
                     RegexPlanning::Disabled,
                 )?;

@@ -218,7 +218,7 @@ impl Services {
                 .iter()
                 .filter(|query| !query.is_generic_test_path_prior())
             {
-                self.append_query_candidates(
+                let result = self.append_query_candidates(
                     QueryCandidateExpansion {
                         session,
                         request: &request,
@@ -232,7 +232,10 @@ impl Services {
                     },
                     &mut batch,
                     &mut phases,
-                )?;
+                );
+                if let Err(error) = result {
+                    record_candidate_scan_limit(&mut batch.incomplete_scan_warnings, error)?;
+                }
             }
 
             apply_query_fusion(&mut batch.candidates, &batch.query_fusion);

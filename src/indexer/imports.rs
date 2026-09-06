@@ -12,15 +12,23 @@ impl Indexer {
         {
             return Ok(0);
         }
+        let mut resolver = None;
         writer.repair_import_projections(|seed, membership| {
             check_cancelled(cancellation)?;
-            let go_modules = GoModuleIndex::load(membership, &self.repository_root, cancellation)?;
-            let sorted_paths = sorted_indexed_paths(membership);
+            if resolver.is_none() {
+                resolver = Some((
+                    GoModuleIndex::load(membership, &self.repository_root, cancellation)?,
+                    sorted_indexed_paths(membership),
+                ));
+            }
+            let (go_modules, sorted_paths) = resolver
+                .as_ref()
+                .expect("initialized for transaction membership");
             Ok(import_candidates(
                 &seed.source_path,
                 &seed.raw_target,
-                &sorted_paths,
-                &go_modules,
+                sorted_paths,
+                go_modules,
             ))
         })
     }

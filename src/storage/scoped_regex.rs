@@ -64,10 +64,11 @@ pub(crate) fn scoped_regex_path_atom_param(atom: ScopedRegexPathAtom) -> String 
 pub(crate) fn scoped_regex_path_sql(
     include_paths: &[String],
     exclude_paths: &[String],
+    first_param: usize,
 ) -> ScopedRegexPathSql {
     let mut clause = String::new();
     let mut params = Vec::new();
-    let mut next_index = 3usize;
+    let mut next_index = first_param;
 
     if !include_paths.is_empty() {
         let includes = include_paths
@@ -135,11 +136,11 @@ mod scoped_regex_path_sql_tests {
 
     #[test]
     fn include_sql_requires_every_pattern_to_be_expressible() {
-        let mixed = scoped_regex_path_sql(&["src".into(), "**/*.rs".into()], &[]);
+        let mixed = scoped_regex_path_sql(&["src".into(), "**/*.rs".into()], &[], 3);
         assert!(mixed.clause.is_empty());
         assert!(mixed.params.is_empty());
 
-        let ready = scoped_regex_path_sql(&["src".into(), "included/**".into()], &[]);
+        let ready = scoped_regex_path_sql(&["src".into(), "included/**".into()], &[], 3);
         assert!(ready.clause.contains("f.path = ?3"));
         assert!(
             ready
@@ -154,7 +155,7 @@ mod scoped_regex_path_sql_tests {
 
     #[test]
     fn exclude_sql_pushes_only_expressible_patterns() {
-        let sql = scoped_regex_path_sql(&[], &["tests".into(), "**/*.snap".into()]);
+        let sql = scoped_regex_path_sql(&[], &["tests".into(), "**/*.snap".into()], 3);
         assert!(sql.clause.starts_with(" AND NOT "));
         assert!(sql.clause.contains("f.path = ?3"));
         assert!(!sql.clause.contains("?4"));

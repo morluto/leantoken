@@ -13,9 +13,10 @@ retrieval through CLI and MCP adapters.
 
 ## Development
 
-Run focused tests while iterating. Before the first push, format the tree and
-run the smallest relevant check or behavioral test that proves the change. Do
-not block opening a pull request on the complete CI-equivalent suite.
+Local tests use disposable fixtures and have no production access. Run relevant
+checks, fix change-caused failures, and rerun affected tests without asking for
+approval. Before the first push, format the tree and run a behavioral check that
+proves the change; the complete CI suite need not block opening a pull request.
 Use `cargo test-focused <module-or-test>` to filter the library, binary, and
 integration targets, and use the ownership map in `docs/development.md` when
 choosing affected tests.
@@ -36,7 +37,9 @@ workflow.
 
 ## Change-specific validation
 
-- For performance or scalability work, use `$optimize-accuracy-first`.
+- For performance investigations, `$optimize-accuracy-first` points to the
+  repository's measurement tools. Ordinary retrieval fixes do not need a
+  performance study or paired agent evaluation.
 - For storage changes, include query-plan evidence and focused integration
   tests; a faster microbenchmark does not justify weaker atomicity, limits,
   freshness, or deterministic results.

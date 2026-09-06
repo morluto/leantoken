@@ -32,6 +32,8 @@ struct DeltaCacheKey {
     target_key: String,
     base_hash: String,
     head_hash: String,
+    returned_start_line: usize,
+    returned_end_line: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -170,9 +172,14 @@ impl ReadDeltaRegistry {
                 } else if target_coordinates_changed(&base, response) {
                     fallback_reason = Some(ReadDeltaFallback::TargetChanged);
                 } else {
-                    let full_delta = if let Some(cached) =
-                        self.lookup_delta(&target_key, &selected_hash, &response.content_hash)?
-                    {
+                    let delta_key = DeltaCacheKey {
+                        target_key: target_key.clone(),
+                        base_hash: selected_hash,
+                        head_hash: response.content_hash.clone(),
+                        returned_start_line: response.returned_start_line,
+                        returned_end_line: response.returned_end_line,
+                    };
+                    let full_delta = if let Some(cached) = self.lookup_delta(&delta_key)? {
                         cached
                     } else {
                         let computed = TextDiff::from_lines(base.content.as_str(), current_content)
@@ -193,14 +200,7 @@ impl ReadDeltaRegistry {
                                 ),
                             )
                             .to_string();
-                        self.insert_delta(
-                            DeltaCacheKey {
-                                target_key: target_key.clone(),
-                                base_hash: selected_hash,
-                                head_hash: response.content_hash.clone(),
-                            },
-                            computed.clone(),
-                        )?;
+                        self.insert_delta(delta_key, computed.clone())?;
                         computed
                     };
                     let candidate_tokens = tokenizer.count(&full_delta);
@@ -321,25 +321,13 @@ impl ReadDeltaRegistry {
         }))
     }
 
-    fn lookup_delta(
-        &self,
-        target_key: &str,
-        base_hash: &str,
-        head_hash: &str,
-    ) -> Result<Option<String>> {
+    fn lookup_delta(&self, key: &DeltaCacheKey) -> Result<Option<String>> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| Error::OperationFailure("read delta registry poisoned".into()))?;
         prune_expired(&mut state, Instant::now());
-        Ok(state
-            .deltas
-            .get(&DeltaCacheKey {
-                target_key: target_key.to_owned(),
-                base_hash: base_hash.to_owned(),
-                head_hash: head_hash.to_owned(),
-            })
-            .map(|entry| entry.delta.clone()))
+        Ok(state.deltas.get(key).map(|entry| entry.delta.clone()))
     }
 
     fn insert(&self, key: CacheKey, entry: CacheEntry) -> Result<()> {
@@ -697,6 +685,8 @@ mod tests {
             target_key: "target".into(),
             base_hash: "base".into(),
             head_hash: "head".into(),
+            returned_start_line: 1,
+            returned_end_line: 4,
         };
         let mut state = RegistryState {
             delta_bytes: 3,

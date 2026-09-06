@@ -367,51 +367,29 @@ pub(crate) fn resolve_revision_sha_for_field(
         });
     }
     let commit_revision = format!("{revision}^{{commit}}");
-    let mut child = match Command::new(program)
-        .env("GIT_LITERAL_PATHSPECS", "1")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--short=12",
-            "--end-of-options",
-            &commit_revision,
-        ])
-        .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => {
-            return Err(Error::InvalidInput {
-                field,
-                reason: "git is unavailable",
-            });
-        }
-    };
-    let status = match child.wait_timeout(timeout) {
-        Ok(Some(status)) => status,
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::InvalidInput {
-                field,
-                reason: "git rev-parse timed out",
-            });
-        }
-    };
-    if !status.success() {
-        return Err(Error::InvalidInput {
+    let args = [
+        "rev-parse",
+        "--verify",
+        "--short=12",
+        "--end-of-options",
+        &commit_revision,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    let output = run_git_capture(
+        root,
+        program,
+        &args,
+        GitCaptureOptions {
+            timeout,
             field,
-            reason: "could not resolve revision",
-        });
-    }
-    let output = child.stdout.take().map_or(Vec::new(), |mut s| {
-        use std::io::Read;
-        let mut buf = Vec::new();
-        let _ = s.read_to_end(&mut buf);
-        buf
-    });
+            timeout_reason: "git rev-parse timed out",
+            failure_reason: "could not resolve revision",
+            // Room for either Git object-id format plus its line ending.
+            max_output_bytes: 128,
+        },
+    )?;
     let sha = String::from_utf8_lossy(&output).trim().to_owned();
     if sha.is_empty() {
         return Err(Error::InvalidInput {

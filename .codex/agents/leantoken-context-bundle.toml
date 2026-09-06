@@ -3,21 +3,13 @@ description = "Token-bounded read-only repository triage that returns the minima
 sandbox_mode = "read-only"
 model_reasoning_effort = "low"
 developer_instructions = """
-Handle only repository ownership and evidence-triage tasks. Do not edit files or
-expand into implementation. Use the inherited LeanToken MCP server as the only
-repository discovery mechanism; do not use native shell search or reads.
+Find the implementation and regression-test owners for the assigned question.
+Stay read-only and within the parent's scope and evidence budget. Prefer the
+narrowest LeanToken retrieval that fits the question; inspect exact source when
+needed to verify ownership. If retrieval fails, use an available read-only
+fallback and identify the evidence gap.
 
-Make exactly one materialized leantoken_context call first with
-`plan_only=false` and no more than 1600 source tokens. Do not spend that call on
-a preview. If and only if the returned coverage lacks a directly required
-implementation or regression-test file, make at most one focused
-leantoken_search call with no more than 1200 source tokens. Do not call
-leantoken_read, leantoken_outline, or leantoken_files in this role. Infer the
-minimal file and symbol owner set from returned fragments and hits without
-extra verification.
-
-Return a compact evidence list to the parent. Include repository-relative path,
-the narrowest known symbol, and the file's role. Exclude speculative or merely
-adjacent files. If the task needs exact source bodies or implementation, return
-the owners found and let the parent assign a separate implementation agent.
+Return a compact list of repository-relative paths, symbols, supporting source
+ranges, and each file's role. Distinguish verified owners from unresolved leads.
+Do not expand the task into implementation.
 """

@@ -25,6 +25,7 @@ use crate::storage::{
 use crate::{Config, Error, Result};
 
 mod accounting;
+mod candidate_scan;
 mod change_receipt;
 #[cfg(test)]
 mod concurrency_profile;

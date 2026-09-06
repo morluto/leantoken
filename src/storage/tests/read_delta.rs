@@ -1,4 +1,4 @@
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, mpsc};
 
 use super::*;
 use crate::read_delta::{
@@ -34,6 +34,60 @@ fn usage(storage: &Storage) -> (usize, usize) {
             |row| Ok((i64_to_usize(row.get(0)?)?, i64_to_usize(row.get(1)?)?)),
         )
         .expect("read delta usage")
+}
+
+#[test]
+fn read_delta_persistence_samples_clock_after_writer_serialization() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let (hash, candidate) = base("base\n", 1);
+    let blocked = storage.clone();
+    let writer = storage.writer.lock().expect("hold writer");
+    let (sampled, observed) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        blocked.persist_read_delta_base_with_clock("target", &hash, &candidate, || {
+            sampled.send(()).expect("report clock sample");
+            1_000
+        })
+    });
+    let before_release = observed.recv_timeout(Duration::from_millis(250));
+    drop(writer);
+    assert!(thread.join().expect("join writer").expect("persist base"));
+    assert!(matches!(
+        before_release,
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    observed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("sample after serialization");
+}
+
+#[test]
+fn read_delta_touch_resamples_time_after_a_newer_write() {
+    let directory = tempfile::tempdir().expect("directory");
+    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
+    let (hash, candidate) = base("base\n", 1);
+    storage
+        .persist_read_delta_base_at("target", &hash, &candidate, 1_000)
+        .expect("base");
+    let mut samples = 0;
+    let result = storage
+        .read_delta_base_with_clock("target", Some(&hash), || {
+            samples += 1;
+            if samples == 1 {
+                // Another write lands after the reader snapshot, before its touch.
+                storage
+                    .persist_read_delta_base_at("target", &hash, &candidate, 70_001)
+                    .expect("newer write");
+                70_000
+            } else {
+                70_002
+            }
+        })
+        .expect("read surviving base");
+    assert_eq!(samples, 2);
+    assert_eq!(result, Some((hash, candidate)));
+    assert_eq!(usage(&storage).0, 1);
 }
 
 #[test]
