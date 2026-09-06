@@ -7,7 +7,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::Instant;
 use syn::visit::Visit;
 use toml_edit::{DocumentMut, Item, TableLike};
@@ -193,6 +193,7 @@ fn command_has_test(root: &Path, command: &[String]) -> Result<bool, XtaskError>
     let output = Command::new(program)
         .args(args)
         .current_dir(root)
+        .stderr(Stdio::inherit())
         .output()
         .map_err(XtaskError::Io)?;
     if !output.status.success() {
