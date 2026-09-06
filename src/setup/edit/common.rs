@@ -106,12 +106,22 @@ pub(super) fn read_optional(path: &Path) -> Result<Option<String>> {
 
 pub(super) fn read_optional_with_limit(path: &Path, max_bytes: u64) -> Result<Option<String>> {
     reject_symlink_target(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() => return Err(setup_file_type_error(path)),
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    }
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    if file.metadata()?.len() > max_bytes {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(setup_file_type_error(path));
+    }
+    if metadata.len() > max_bytes {
         return Err(setup_file_limit_error(path, max_bytes));
     }
     let mut bytes = Vec::new();
@@ -123,6 +133,13 @@ pub(super) fn read_optional_with_limit(path: &Path, max_bytes: u64) -> Result<Op
     String::from_utf8(bytes)
         .map(Some)
         .map_err(|error| invalid_config(path, error))
+}
+
+fn setup_file_type_error(path: &Path) -> Error {
+    Error::SetupFailure(format!(
+        "setup content must be a regular file: {}",
+        path.display()
+    ))
 }
 
 fn setup_file_limit_error(path: &Path, max_bytes: u64) -> Error {

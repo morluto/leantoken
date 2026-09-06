@@ -1925,6 +1925,129 @@ fn setup_transaction_rolls_back_earlier_client_edits() {
 }
 
 #[test]
+fn immediate_rollback_preserves_concurrent_config_changes_and_journal() {
+    for original in [None, Some("old")] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("client.json");
+        if let Some(original) = original {
+            fs::write(&path, original).unwrap();
+        }
+        let edit = PlannedClientEdit {
+            public: ClientSetupPlan {
+                client: SetupClient::Codex,
+                path: path.clone(),
+                action: ClientPlanAction::Update,
+                detected: true,
+            },
+            resolution: ResolvedEdit::Configured {
+                original: original.map(str::to_owned),
+                updated: "installed".into(),
+            },
+        };
+        let plan = ResolvedSetupPlan {
+            operation: SetupOperation::Setup,
+            persistent_cli: true,
+            launcher: None,
+            runtime: None,
+            edits: vec![edit],
+            discovery_edits: vec![],
+            configuration_snapshots: vec![],
+            ownership_override: false,
+            transaction_root: temp.path().join("runtime"),
+        };
+        let transaction = begin_setup_transaction(&plan).unwrap();
+        apply_edit(&plan.edits[0]).unwrap();
+        fs::write(&path, "concurrent user edit").unwrap();
+        assert!(rollback_setup(None, &[&plan.edits[0]], &[], transaction).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "concurrent user edit");
+        assert!(transaction_path(&plan.transaction_root).exists());
+    }
+}
+
+#[test]
+fn rollback_does_not_claim_unchanged_client_edits() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("client.json");
+    let edit = PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Codex,
+            path: path.clone(),
+            action: ClientPlanAction::AlreadyCurrent,
+            detected: true,
+        },
+        resolution: ResolvedEdit::AlreadyConfigured {
+            original: Some("old".into()),
+        },
+    };
+    fs::write(&path, "user change").unwrap();
+    restore_edit(&edit).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "user change");
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_file_reads_reject_fifos_without_waiting_for_a_writer() {
+    const CHILD_PATH: &str = "LEANTOKEN_SETUP_FIFO_TEST_PATH";
+    if let Some(path) = std::env::var_os(CHILD_PATH) {
+        assert!(matches!(
+            read_optional(Path::new(&path)),
+            Err(Error::SetupFailure(message)) if message.contains("regular file")
+        ));
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut reader = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "setup::tests::setup_file_reads_reject_fifos_without_waiting_for_a_writer",
+            "--nocapture",
+        ])
+        .env(CHILD_PATH, &path)
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Some(status) = reader.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = reader.kill();
+            reader.wait().unwrap();
+            panic!("setup read blocked on a FIFO");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn discovery_rollback_preserves_concurrent_replacements_after_remove() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("SKILL.md");
+    let edit = PlannedDiscoveryEdit {
+        public: DiscoverySetupPlan {
+            path: path.clone(),
+            action: ClientPlanAction::Remove,
+        },
+        original: Some("owned skill".into()),
+        updated: None,
+    };
+    fs::write(&path, "owned skill").unwrap();
+    apply_discovery_edit(&edit).unwrap();
+    fs::write(&path, "replacement skill").unwrap();
+    assert!(restore_discovery_edit(&edit).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "replacement skill");
+}
+
+#[test]
 fn failed_rollback_retains_recovery_journal() {
     let temp = tempfile::tempdir().unwrap();
     let runtime_root = temp.path().join("runtime");

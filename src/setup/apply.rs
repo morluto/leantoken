@@ -28,6 +28,11 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
     let mut applied: Vec<&PlannedClientEdit> = Vec::new();
     let mut applied_discovery: Vec<&PlannedDiscoveryEdit> = Vec::new();
     for edit in &plan.edits {
+        // A write can succeed before its directory sync fails. Recovery must
+        // cover attempted mutations as well as fully completed ones.
+        if edit.updated().is_some() {
+            applied.push(edit);
+        }
         if let Err(error) = apply_edit(edit) {
             let rollback = rollback_setup(
                 runtime_installation.take(),
@@ -37,9 +42,14 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
             );
             return failed_outcome(plan, rollback_message(error, rollback));
         }
-        applied.push(edit);
     }
     for edit in &plan.discovery_edits {
+        if !matches!(
+            edit.public.action,
+            ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured
+        ) {
+            applied_discovery.push(edit);
+        }
         if let Err(error) = apply_discovery_edit(edit) {
             let rollback = rollback_setup(
                 runtime_installation.take(),
@@ -49,7 +59,6 @@ pub(super) fn apply_plan(plan: &ResolvedSetupPlan) -> SetupApplyOutcome {
             );
             return failed_outcome(plan, rollback_message(error, rollback));
         }
-        applied_discovery.push(edit);
     }
     if let Some(transaction) = transaction
         && let Err(error) = transaction.commit()
@@ -101,11 +110,21 @@ pub(super) fn rollback_setup(
     applied_discovery: &[&PlannedDiscoveryEdit],
     transaction: Option<SetupTransaction>,
 ) -> Result<()> {
+    let mut failure = None;
     for edit in applied_discovery.iter().rev() {
-        restore_discovery_edit(edit)?;
+        if let Err(error) = restore_discovery_edit(edit) {
+            failure.get_or_insert(error);
+        }
     }
     for edit in applied.iter().rev() {
-        restore_edit(edit)?;
+        if let Err(error) = restore_edit(edit) {
+            failure.get_or_insert(error);
+        }
+    }
+    if let Some(error) = failure {
+        // Keep the journal and runtime while any configuration may still refer
+        // to the installation, but restore independent files where possible.
+        return Err(error);
     }
     if let Some(runtime_installation) = runtime_installation {
         rollback_installed_runtime(runtime_installation)?;
@@ -177,7 +196,16 @@ pub(super) fn failed_results(edits: &[PlannedClientEdit], error: String) -> Vec<
 }
 
 pub(super) fn restore_edit(edit: &PlannedClientEdit) -> Result<()> {
-    restore_path(&edit.public.path, edit.original())
+    let Some(updated) = edit.updated() else {
+        return Ok(());
+    };
+    restore_path(
+        &edit.public.path,
+        edit.original(),
+        &SetupTransactionUpdate::Present {
+            content_hash: content_hash(updated),
+        },
+    )
 }
 
 pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
@@ -206,7 +234,16 @@ pub(super) fn apply_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
 }
 
 pub(super) fn restore_discovery_edit(edit: &PlannedDiscoveryEdit) -> Result<()> {
-    restore_path(&edit.public.path, edit.original.as_deref())
+    let updated = match edit.public.action {
+        ClientPlanAction::Create | ClientPlanAction::Update => SetupTransactionUpdate::Present {
+            content_hash: content_hash(edit.updated.as_deref().ok_or_else(|| {
+                Error::SetupFailure("setup plan omitted updated discovery content".into())
+            })?),
+        },
+        ClientPlanAction::Remove => SetupTransactionUpdate::Absent,
+        ClientPlanAction::AlreadyCurrent | ClientPlanAction::NotConfigured => return Ok(()),
+    };
+    restore_path(&edit.public.path, edit.original.as_deref(), &updated)
 }
 
 pub(super) fn apply_edit(edit: &PlannedClientEdit) -> Result<()> {
