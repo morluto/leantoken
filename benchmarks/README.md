@@ -242,15 +242,22 @@ come from changing tasks or labels.
 
 ## Retrieval promotion gate
 
-Retrieval changes must produce reports from the same frozen manifest and a
-machine-readable promotion receipt. New schema-v5 manifests assign every task a
+This opt-in research comparator evaluates proposed retrieval-quality or cost
+improvements. It is not required for ordinary fixes, refactors, or merge
+readiness. Use paired agent evaluation when the claim concerns end-to-end task
+success or provider cost; use focused regression tests for correctness fixes.
+Missing research inputs limit the conclusions available, not permission to
+complete an otherwise validated fix.
+
+When using the comparator, produce reports from the same frozen manifest.
+New schema-v5 manifests assign every task a
 nonempty `task_family`; existing frozen manifests retain their bytes and derive
 the family deterministically from the first `task_shape`. Reports aggregate
 recall, response cost, and warm latency globally and by family so an aggregate
 win cannot hide a family regression. Index time, database footprint, and
 process RSS are reported globally because they are corpus/process measurements.
 
-Use the quality track when paired agent evaluation shows a task-success gain:
+Use the quality track to assess a measured task-success gain:
 
 ```bash
 cargo run --release -p leantoken-benchmarks --bin benchmark_ablation -- \

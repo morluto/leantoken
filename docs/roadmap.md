@@ -8,8 +8,7 @@ reads or improve relevant-range recall before it expands the MCP tool surface.
 Work proceeds in this order:
 
 1. reliability, storage integrity, and explicit-constraint correctness;
-2. retrieval changes that pass the frozen promotion gate globally and for every
-   declared task family;
+2. retrieval improvements supported by relevant correctness and quality evidence;
 3. productizing existing bounded workflows and diagnostics;
 4. persistent cross-process evidence reuse and repository/workspace
    orientation; and
@@ -23,12 +22,11 @@ regressions.
 
 ## Retrieval quality
 
-- Require candidate/returned-file and line-anchor recall, paired task success,
-  complete first-response and two-turn provider input, follow-up native reads,
-  tool calls, dead-end and repeated evidence, warm p50/p95 latency, index
-  footprint, and available process RSS in promotion scorecards. The
-  machine-readable gate rejects global or task-family recall regressions,
-  bounds resource regressions, and emits its receipt even on failure.
+- Use evidence appropriate to the claim: regression tests for correctness,
+  frozen retrieval comparisons for recall and evidence quality, and paired
+  agent evaluations for task success or provider cost. The optional promotion
+  comparator can combine those measurements; it is not required for every
+  retrieval change. See [development guidance](development.md#storage-and-retrieval-changes).
 - Keep the eight future-fix tasks and the four prospective open-issue tasks as
   visible development sets. Create a new unseen holdout before making
   generalization claims; once used for tuning, a dataset is no longer blind.
@@ -88,8 +86,8 @@ regressions.
   `not_modified` follow-up, provider-native cumulative usage, and two
   compactions. The matching local wire contains 4,483 tokens and 776 tokens of
   exact dual-result duplication, but no provider request frame was exported.
-  Treat Phase 3A as measured but provider-framing-inconclusive; do not start
-  Phase 3B or claim provider savings from the local duplication count.
+  These results remain provider-framing-inconclusive; the local duplication
+  count does not establish provider savings.
 - A separate Codex CLI 0.144.1 root-plus-child pilot consumed structured-only
   results successfully. On its visible owner-tracing task, dual results copied
   34,656 text bytes beside 34,564 structured bytes; structured mode removed the

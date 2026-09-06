@@ -197,9 +197,11 @@ results must not be generalized to the complete ARB distribution.
 
 External corpora answer whether a retrieval experiment transfers to another
 task distribution. They do not replace the prospective validation or sealed
-holdout lifecycle. A production retrieval change still needs a separately
-frozen promotion gate, and a result must be stratified by task family when one
-family measures a capability the current product does not claim to provide.
+holdout lifecycle when making generalization claims. Stratify research results
+by task family when a family measures a capability the current product does not
+claim to provide. Ordinary correctness fixes follow the
+[development checks](development.md#storage-and-retrieval-changes), without a
+separate promotion requirement.
 The exact preparation and execution commands are in `benchmarks/README.md`.
 
 The prospective-validation report for candidate `2c0388d` and its identical-
@@ -1349,9 +1351,9 @@ full current content with an explicit fallback reason. Unit tests separately
 enforce TTL, entry-count, and retained-byte bounds. Ranked context is outside
 this experiment.
 
-This is a protocol-efficiency gate, not model task-success evidence. The
-feature remains opt-in even when the gate passes; an agent-policy change would
-need a repeated edit-fix-test model evaluation. The first clean run and
+This measures protocol efficiency, not model task success. The feature is
+currently opt-in; evidence from repeated edit-fix-test workflows would help
+assess a change to that default. The first clean run and
 adoption decision are recorded in
 [`../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md`](../benchmarks/reports/read-receipt-delta-v1-2026-07-26.md).
 

@@ -435,23 +435,27 @@ on the matrix before merging portability changes.
 Treat the SQLite schema and retrieval ordering as behavioral contracts, not
 implementation details. When changing them:
 
-- use a versioned migration and test both a new database and an upgraded one;
+- for schema changes, use a versioned migration and test both a new database
+  and an upgraded one;
 - keep multi-query responses inside one storage-owned snapshot capability;
 - bind public pagination cursors to the committed generation and operation
   parameters, even when the underlying query uses a simpler keyset;
 - preserve deterministic ranking, overlap, and token-budget behavior when
   replacing per-item reads with batched joins;
 - record every new fan-out or scan bound in `docs/architecture.md`; and
-- collect timing evidence with a release build on a representative corpus.
+- for performance claims, collect timing evidence with a release build on a
+  representative corpus.
 
-Any change that alters candidate generation, ranking, context allocation, or
-default retrieval signals must also run the
-[retrieval promotion gate](../benchmarks/README.md#retrieval-promotion-gate).
-Attach its machine-readable receipt to the pull request. A development-set win
-is not sufficient: use one frozen manifest for both arms, use explicit task
-families for new manifests (legacy frozen inputs derive them from
-`task_shape`), supply paired task-success/provider-cost/tool-use metrics, and do
-not enable the feature by default when the gate exits nonzero.
+Match retrieval evidence to the change. Correctness fixes need regression
+coverage for the violated contract and affected behavior; they do not require
+a paired agent evaluation or a promotion waiver. Changes to ranking or context
+allocation benefit from a frozen retrieval comparison that checks relevant
+evidence, omissions, and budgets. Use a paired agent evaluation when assessing
+end-to-end task success, provider cost, or agent tool use, rather than treating
+retrieval fixtures as proxies for those outcomes. The optional
+[promotion comparator](../benchmarks/README.md#retrieval-promotion-gate) supports
+that research; it is not a merge or implementation gate. Report missing evidence
+as a limit on the claim it would support.
 
 Prefer query-plan evidence (`EXPLAIN QUERY PLAN`) and focused integration tests
 for storage changes. A faster microbenchmark is insufficient if it weakens
