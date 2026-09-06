@@ -11,23 +11,18 @@ impl Storage {
         target_key: &str,
         content_hash: &str,
     ) -> Result<Option<ReadDeltaBase>> {
-        self.read_delta_base_at(
-            target_key,
-            Some(content_hash),
-            unix_millis(SystemTime::now()),
-        )
+        Ok(self
+            .read_delta_base_with_clock(target_key, Some(content_hash), || {
+                unix_millis(SystemTime::now())
+            })?
+            .map(|(_, base)| base))
     }
 
     pub(crate) fn latest_read_delta_base(
         &self,
         target_key: &str,
     ) -> Result<Option<(String, ReadDeltaBase)>> {
-        let Some(base) =
-            self.read_delta_base_row_at(target_key, None, unix_millis(SystemTime::now()))?
-        else {
-            return Ok(None);
-        };
-        Ok(Some((base.0, base.1)))
+        self.read_delta_base_with_clock(target_key, None, || unix_millis(SystemTime::now()))
     }
 
     pub(crate) fn persist_read_delta_base(
@@ -36,14 +31,12 @@ impl Storage {
         content_hash: &str,
         base: &ReadDeltaBase,
     ) -> Result<bool> {
-        self.persist_read_delta_base_at(
-            target_key,
-            content_hash,
-            base,
-            unix_millis(SystemTime::now()),
-        )
+        self.persist_read_delta_base_with_clock(target_key, content_hash, base, || {
+            unix_millis(SystemTime::now())
+        })
     }
 
+    #[cfg(test)]
     pub(crate) fn read_delta_base_at(
         &self,
         target_key: &str,
@@ -51,28 +44,29 @@ impl Storage {
         now_unix_millis: i64,
     ) -> Result<Option<ReadDeltaBase>> {
         Ok(self
-            .read_delta_base_row_at(target_key, content_hash, now_unix_millis)?
+            .read_delta_base_with_clock(target_key, content_hash, || now_unix_millis)?
             .map(|(_, base)| base))
     }
 
-    pub(crate) fn read_delta_base_row_at(
+    pub(super) fn read_delta_base_with_clock(
         &self,
         target_key: &str,
         content_hash: Option<&str>,
-        now_unix_millis: i64,
+        mut clock: impl FnMut() -> i64,
     ) -> Result<Option<(String, ReadDeltaBase)>> {
         // Fast path: use a reader-pool connection without holding the writer
         // lock. Only fall back to the writer lock when a mutation is needed.
         let mut read_conn = self.readers.get()?;
         let read_tx = read_conn.transaction()?;
         let row = load_read_delta_base(&read_tx, target_key, content_hash)?;
+        let now_unix_millis = clock();
         let Some((hash, base, created, last_access)) = row else {
             return Ok(None);
         };
         let needs_stale_delete = created > now_unix_millis || last_access > now_unix_millis;
-        let needs_touch =
+        let recently_touched =
             now_unix_millis.saturating_sub(last_access) < READ_DELTA_TOUCH_INTERVAL_MILLIS;
-        if needs_touch && !needs_stale_delete {
+        if recently_touched && !needs_stale_delete {
             if crate::text::hash(&base.content) != hash {
                 return Err(Error::OperationFailure(
                     "persistent read delta base hash mismatch".into(),
@@ -89,6 +83,9 @@ impl Storage {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Resample after SQLite serializes writers, as receipt persistence does.
+        // A timestamp captured before waiting can falsely look like clock rollback.
+        let now_unix_millis = clock();
         prune_read_delta_bases(&transaction, now_unix_millis)?;
         let row = load_read_delta_base(&transaction, target_key, content_hash)?;
         let Some((hash, base, created, last_access)) = row else {
@@ -130,6 +127,7 @@ impl Storage {
         Ok(Some((hash, base)))
     }
 
+    #[cfg(test)]
     pub(crate) fn persist_read_delta_base_at(
         &self,
         target_key: &str,
@@ -137,11 +135,16 @@ impl Storage {
         base: &ReadDeltaBase,
         now_unix_millis: i64,
     ) -> Result<bool> {
-        if now_unix_millis < 0 {
-            return Err(Error::OperationFailure(
-                "read delta base timestamp must be non-negative".into(),
-            ));
-        }
+        self.persist_read_delta_base_with_clock(target_key, content_hash, base, || now_unix_millis)
+    }
+
+    pub(super) fn persist_read_delta_base_with_clock(
+        &self,
+        target_key: &str,
+        content_hash: &str,
+        base: &ReadDeltaBase,
+        clock: impl FnOnce() -> i64,
+    ) -> Result<bool> {
         if base.content.len() > MAX_READ_DELTA_BASE_BYTES {
             return Ok(false);
         }
@@ -154,14 +157,20 @@ impl Storage {
         if logical_bytes > MAX_TOTAL_READ_DELTA_BASE_BYTES {
             return Ok(false);
         }
-        let expires = now_unix_millis
-            .checked_add(READ_DELTA_BASE_TTL_MILLIS)
-            .ok_or_else(|| Error::OperationFailure("read delta base expiry overflow".into()))?;
         let mut connection = self
             .writer
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let now_unix_millis = clock();
+        if now_unix_millis < 0 {
+            return Err(Error::OperationFailure(
+                "read delta base timestamp must be non-negative".into(),
+            ));
+        }
+        let expires = now_unix_millis
+            .checked_add(READ_DELTA_BASE_TTL_MILLIS)
+            .ok_or_else(|| Error::OperationFailure("read delta base expiry overflow".into()))?;
         prune_read_delta_bases(&transaction, now_unix_millis)?;
         let existing = transaction
             .query_row(
