@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::execution::JsonExecutionOptions;
+use super::execution::{JsonExecutionOptions, JsonKeyOrder};
 use crate::model::JsonOperation;
 use crate::services::Services;
 use crate::services::cursor::{CursorEnvelope, CursorKind, StreamId, StreamIdentityBuilder};
@@ -52,7 +52,10 @@ pub(super) fn json_query_hash(
     let serialized = serde_json::to_string(&json!({
         "operation": operation,
         "depth": execution.depth(),
-        "order": "depth_then_pointer",
+        "order": match execution.key_order() {
+            JsonKeyOrder::Pointer => "pointer",
+            JsonKeyOrder::DepthThenPointer => "depth_then_pointer",
+        },
     }))
     .map_err(|error| Error::SerializationFailure(error.to_string()))?;
     Ok(crate::text::hash(&serialized))

@@ -9,7 +9,7 @@ use super::execution::JsonKeyOrder;
 use super::keys::key_entries;
 use super::projection::{ProjectionState, count_nodes, project_json};
 use super::schema::{build_schema_breadth_first, project_schema_page};
-use super::source::{JsonMeasurementCache, JsonMeasurementKey};
+use super::source::JsonMeasurementCache;
 use super::validation::parse_json_request;
 use super::{JsonExecutionOptions, MAX_JSON_DEPTH};
 use crate::Error;
@@ -94,6 +94,12 @@ fn key_cursors_bind_depth_and_reject_another_ordering() {
         json_query_hash(&operation, JsonExecutionOptions::mcp(Some(1))).expect("shallow hash");
     let deep = json_query_hash(&operation, JsonExecutionOptions::mcp(Some(2))).expect("deep hash");
     assert_ne!(shallow, deep);
+    let pointer_order = json_query_hash(&operation, JsonExecutionOptions::standard()).unwrap();
+    let depth_order = json_query_hash(&operation, JsonExecutionOptions::mcp(None)).unwrap();
+    assert_ne!(
+        pointer_order, depth_order,
+        "cursor must bind the actual ordering"
+    );
 
     let source = crate::text::hash("source");
     let stream = |query_hash: &str| {
@@ -226,6 +232,29 @@ async fn mcp_key_pages_preserve_shallow_parity_and_stale_cursor_boundaries() {
         .await
         .expect_err("depth-bound cursor");
     assert!(matches!(stale_depth, Error::StaleCursor));
+
+    let mut request = JsonRequest {
+        operation,
+        max_tokens: Some(1_000),
+        max_items: Some(2),
+        array_sample_size: None,
+        cursor: None,
+    };
+    let pointer_page = services
+        .json(request.clone())
+        .await
+        .expect("pointer ordered page");
+    request.cursor = Some(pointer_page.meta.next_cursor.expect("continuation"));
+    let changed_order = services
+        .json_cancellable_with_execution_options(
+            request,
+            ServiceCallOptions::new(),
+            JsonExecutionOptions::mcp(None),
+            CancellationToken::new(),
+        )
+        .await
+        .expect_err("cursor cannot switch ordering between adapters");
+    assert!(matches!(changed_order, Error::StaleCursor));
 }
 
 #[test]
@@ -354,11 +383,9 @@ fn json_measurement_cache_preserves_exact_tokens_for_distinct_values() {
     let services = Services::open(config).expect("services");
     let value = json!([{"pointer": "/src/lib.rs", "type": "file"}]);
     let mut cache = JsonMeasurementCache::default();
-    let first = cache
-        .measure(&services, JsonMeasurementKey::KeysPrefix(1), &value)
-        .expect("first measurement");
+    let first = cache.measure(&services, &value).expect("first measurement");
     let second = cache
-        .measure(&services, JsonMeasurementKey::KeysPrefix(1), &value)
+        .measure(&services, &value)
         .expect("cached measurement");
     assert_eq!(first, second);
     assert_eq!(
@@ -374,11 +401,7 @@ fn json_measurement_cache_preserves_exact_tokens_for_distinct_values() {
         "details": "bounded response accounting ".repeat(64),
     }]);
     let different_tokens = cache
-        .measure(
-            &services,
-            JsonMeasurementKey::KeysPrefix(1),
-            &different_value,
-        )
+        .measure(&services, &different_value)
         .expect("different measurement");
     assert_eq!(
         different_tokens,

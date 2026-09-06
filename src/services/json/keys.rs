@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::cursor::{JsonCursor, make_json_cursor};
 use super::execution::{JsonExecutionOptions, JsonKeyOrder};
 use super::projection::{ProjectionState, escape_pointer, json_type, take_item};
-use super::source::{JsonMeasurementCache, JsonMeasurementKey};
+use super::source::JsonMeasurementCache;
 use crate::services::Services;
 use crate::services::cursor::StreamId;
 use crate::{Error, Result};
@@ -132,11 +132,7 @@ fn key_prefix_tokens(
     length: usize,
     measurements: &mut JsonMeasurementCache,
 ) -> Result<usize> {
-    measurements.measure(
-        services,
-        JsonMeasurementKey::KeysPrefix(length),
-        &Value::Array(entries[..length].to_vec()),
-    )
+    measurements.measure(services, &Value::Array(entries[..length].to_vec()))
 }
 
 fn largest_key_prefix_within_tokens(
