@@ -2,13 +2,12 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     io::BufRead,
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     time::{Duration, UNIX_EPOCH},
 };
 
 use ignore::WalkBuilder;
 use tokio_util::sync::CancellationToken;
-use wait_timeout::ChildExt;
 
 use crate::config::DiscoveryLimits;
 use crate::error::IndexLimitKind;

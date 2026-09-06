@@ -412,6 +412,55 @@ fn git_capture_releases_an_oversized_reader_after_the_child_exits() {
 
 #[cfg(unix)]
 #[test]
+fn revision_resolution_bounds_output_and_terminates_inherited_stdout() {
+    let root = tempfile::tempdir().expect("root");
+    let program = root.path().join("forking-git");
+    fs::write(
+        &program,
+        "#!/bin/sh\nprintf '123456789abc\\n'\nsleep 3 &\nexit 0\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&program).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&program, permissions).unwrap();
+    let started = Instant::now();
+    let revision = resolve_revision_sha_for_field(
+        root.path(),
+        &program,
+        "HEAD",
+        Duration::from_secs(1),
+        "revision",
+    )
+    .unwrap();
+    assert_eq!(revision, "123456789abc");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "inherited stdout escaped the timeout"
+    );
+
+    fs::write(
+        &program,
+        format!("#!/bin/sh\nprintf '{}'\n", "a".repeat(129)),
+    )
+    .unwrap();
+    assert!(matches!(
+        resolve_revision_sha_for_field(
+            root.path(),
+            &program,
+            "HEAD",
+            Duration::from_secs(1),
+            "revision"
+        ),
+        Err(Error::RequestLimitExceeded {
+            field: "git output bytes",
+            limit: 128,
+            ..
+        })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
 fn git_capture_terminates_descendants_that_inherit_stdout() {
     let root = tempfile::tempdir().expect("root");
     let program = root.path().join("forking-git");
