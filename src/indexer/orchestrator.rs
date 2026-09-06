@@ -258,6 +258,9 @@ impl Indexer {
             candidates.push(file);
         }
         let planning_elapsed = planning_started.elapsed();
+        let go_module_changed = candidates
+            .iter()
+            .any(|file| is_go_mod_path(&file.relative_path));
 
         let mut removed_paths = deletions.into_iter().collect::<HashSet<_>>();
         let mut source_bytes = PublishedSourceBytes::new(
@@ -367,7 +370,7 @@ impl Indexer {
         let staging = staged.diagnostics();
         check_cancelled(cancellation)?;
         let publication_changed_import_semantics =
-            repository_membership_changed || !removed_paths.is_empty();
+            repository_membership_changed || !removed_paths.is_empty() || go_module_changed;
 
         // Phase 2: Publication inside BEGIN IMMEDIATE performs only fast
         // DELETE + INSERT operations via staged.apply.  The transaction
