@@ -223,11 +223,14 @@ async fn main() {
     let source_dirty = !command_output("git", &["status", "--porcelain"]).is_empty();
     let corpus_dirty =
         !command_output_in(&large_repository, "git", &["status", "--porcelain"]).is_empty();
+    let corpus_revision_unchanged =
+        pinned_revision_unchanged(&large_repository, &actual_large_revision);
     let source_unchanged = build_identity::product_sources(source_root)
         .expect("final source identity")
         == source_identity;
     let performance_eligible = !source_dirty
         && !corpus_dirty
+        && corpus_revision_unchanged
         && source_unchanged
         && checkout_revision == env!("LEANTOKEN_BUILD_REVISION")
         && small_report
@@ -930,6 +933,10 @@ fn duration_micros(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
 }
 
+fn pinned_revision_unchanged(repository: &Path, pinned_revision: &str) -> bool {
+    git_revision(repository) == pinned_revision
+}
+
 fn git_revision(repository: &Path) -> String {
     command_output_in(repository, "git", &["rev-parse", "HEAD"])
 }
@@ -968,6 +975,17 @@ fn command_output_in(directory: &Path, command: &str, arguments: &[&str]) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_corpus_check_rejects_a_different_revision() {
+        let repository = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
+        let current = git_revision(repository);
+        assert!(pinned_revision_unchanged(repository, &current));
+        assert!(!pinned_revision_unchanged(
+            repository,
+            &"0".repeat(current.len())
+        ));
+    }
 
     #[test]
     fn accounting_checks_original_payload_count_and_category_sum() {

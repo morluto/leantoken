@@ -337,7 +337,7 @@ fn command(filter: Option<&str>) -> Vec<String> {
     let plan = super::TestPlan::product(super::CI_NEXTEST_PROFILE);
     let mut command = vec!["cargo".into(), "llvm-cov".into(), "nextest".into()];
     command.extend(plan.commands[0].iter().skip(3).cloned());
-    command.push("--no-report".into());
+    command.extend(["--no-report", "--success-output", "immediate"].map(str::to_owned));
     if let Some(filter) = filter {
         command.extend(["--filterset".into(), filter.into()]);
     }
@@ -432,8 +432,8 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
     let clean = ["cargo", "llvm-cov", "clean", "--profraw-only"].map(str::to_owned);
-    logged(root, &clean, "clean", false)?;
-    let tests = logged(root, &command, "tests", false);
+    logged(root, &clean, "clean")?;
+    let tests = logged(root, &command, "tests");
     let report_path = output.join("coverage.json");
     let report = vec![
         "cargo".into(),
@@ -446,7 +446,7 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
         "--output-path".into(),
         report_path.to_string_lossy().into_owned(),
     ];
-    logged(root, &report, "report", true)?;
+    logged(root, &report, "report")?;
     tests?;
     if self::source_identity(root)? != source_identity {
         return Err("coverage source inputs changed during execution; evidence is invalid".into());
@@ -514,12 +514,7 @@ fn source_identity(root: &Path) -> Result<String, String> {
     Ok(hash.finalize().to_hex().to_string())
 }
 
-fn logged(
-    root: &Path,
-    command: &[String],
-    name: &str,
-    reject_warnings: bool,
-) -> Result<(), String> {
+fn logged(root: &Path, command: &[String], name: &str) -> Result<(), String> {
     let output = root.join("target/coverage");
     let stderr_path = output.join(format!("{name}.stderr.log"));
     let started = std::time::Instant::now();
@@ -546,22 +541,24 @@ fn logged(
             stderr_path.display()
         ));
     }
-    if reject_warnings {
-        let diagnostics = fs::read_to_string(&stderr_path).map_err(|e| e.to_string())?;
-        if invalid_report_diagnostics(&diagnostics) {
+    for path in [&stderr_path, &output.join(format!("{name}.stdout.log"))] {
+        let diagnostics = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        if invalid_profile_diagnostics(&diagnostics) {
             return Err(format!(
-                "coverage evidence is invalid: profile/report warning; see {}",
-                stderr_path.display()
+                "coverage evidence is invalid: {name} profile diagnostic; see {}",
+                path.display()
             ));
         }
     }
     Ok(())
 }
 
-fn invalid_report_diagnostics(diagnostics: &str) -> bool {
+fn invalid_profile_diagnostics(diagnostics: &str) -> bool {
     diagnostics.lines().any(|line| {
         let line = line.to_ascii_lowercase();
-        line.contains("warning:") || line.contains("mismatched data")
+        line.contains("warning:")
+            || line.contains("mismatched data")
+            || line.contains("llvm profile error:")
     })
 }
 
@@ -570,14 +567,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn profile_diagnostic_child() {
+        match std::env::var("LEANTOKEN_COVERAGE_DIAGNOSTIC_TEST").as_deref() {
+            Ok("stderr") => eprintln!("LLVM Profile Warning: profile write failed"),
+            Ok("stdout") => println!("LLVM Profile Error: profile write failed"),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn successful_test_process_with_profile_diagnostics_is_rejected() {
+        let root = fixture();
+        for stream in ["stderr", "stdout"] {
+            // A child process owns its environment without mutating the parallel
+            // test runner's environment.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "coverage::tests::logged_diagnostic_child",
+                    "--nocapture",
+                ])
+                .env("LEANTOKEN_COVERAGE_DIAGNOSTIC_TEST", stream)
+                .env("LEANTOKEN_COVERAGE_DIAGNOSTIC_ROOT", root.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+
+    #[test]
+    fn logged_diagnostic_child() {
+        let Some(root) = std::env::var_os("LEANTOKEN_COVERAGE_DIAGNOSTIC_ROOT") else {
+            return;
+        };
+        let command = vec![
+            std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "--exact".into(),
+            "coverage::tests::profile_diagnostic_child".into(),
+            "--nocapture".into(),
+        ];
+        let root = Path::new(&root);
+        let error = logged(root, &command, "tests").unwrap_err();
+        assert!(error.contains("tests profile diagnostic"), "{error}");
+        let phase: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join("target/coverage/tests.json")).unwrap())
+                .unwrap();
+        assert_eq!(phase["exit_code"], 0);
+    }
+
+    #[test]
     fn report_warnings_invalidate_evidence() {
-        assert!(invalid_report_diagnostics(
+        assert!(invalid_profile_diagnostics(
             "warning: 11 functions have mismatched data"
         ));
-        assert!(invalid_report_diagnostics(
+        assert!(invalid_profile_diagnostics(
             "Warning: unknown profile integrity issue"
         ));
-        assert!(!invalid_report_diagnostics(
+        assert!(!invalid_profile_diagnostics(
             "Finished report saved to coverage.json"
         ));
     }
@@ -586,8 +639,11 @@ mod tests {
     fn coverage_preserves_product_selection_and_resource_profile() {
         let plan = super::super::TestPlan::product(super::super::CI_NEXTEST_PROFILE);
         let coverage = command(None);
-        assert_eq!(&coverage[3..coverage.len() - 1], &plan.commands[0][3..]);
-        assert_eq!(coverage.last().unwrap(), "--no-report");
+        assert_eq!(&coverage[3..coverage.len() - 3], &plan.commands[0][3..]);
+        assert_eq!(
+            &coverage[coverage.len() - 3..],
+            &["--no-report", "--success-output", "immediate"]
+        );
         assert!(
             coverage
                 .windows(2)

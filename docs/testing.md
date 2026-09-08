@@ -43,9 +43,12 @@ Reports under `target/coverage` retain the exact command, tool and topology
 identities, before/after source fingerprints, per-owner metrics, raw JSON with
 functions and uncovered segments, verbose object/merge commands,
 phase timing/status and tool diagnostics. CI retains reports and raw profiles
-and the instrumented nextest JUnit inventory for 30 days. Any report warning, including mismatched functions, invalidates
-the run. Profile cleanup is limited to cargo-llvm-cov's raw profiles. Stable
-branch coverage is unavailable and carries no correctness claim. The process
+and the instrumented nextest JUnit inventory for 30 days. Warnings in any
+coverage phase, including the instrumented test phase, invalidate the run.
+Coverage enables nextest successful-test output so passing tests cannot hide
+profile diagnostics. Both captured streams are checked, including LLVM profile
+write errors and mismatched functions. Profile cleanup is limited to
+cargo-llvm-cov's raw profiles. Stable branch coverage is unavailable and carries no correctness claim. The process
 harness preserves `LLVM_PROFILE_FILE`; gracefully exiting children contribute
 coverage, while forced termination may lose profile buffers. Process assertions
 remain the authority for shutdown and failure composition.

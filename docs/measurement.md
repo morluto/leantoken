@@ -51,6 +51,8 @@ queries and observation configuration. Build-time source fingerprints include
 product sources and both manifests; a stale binary fails the runtime comparison.
 The normal profiler and product Tokio feature sets match, without `test-util`.
 Source identity traversal is bounded to 10,000 entries and 128 MiB.
+The corpus HEAD is read again after all arms; a revision change makes the
+report ineligible even when the checkout ends clean.
 Use a clean, pinned corpus and source checkout for comparative evidence; dirty
 development runs are mechanical checks. Scratch repositories and databases
 live beneath `target/concurrency-work` and are removed when their owner drops.
