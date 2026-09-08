@@ -1,6 +1,24 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.29] - 2026-09-08
+### Bug Fixes
+
+- **testing:** Align fixtures, validation, coverage and release profiling (#601) ([#601](https://github.com/morluto/leantoken/pull/601))
+- **core:** Preserve bounded evidence and runtime ownership (#600) ([#600](https://github.com/morluto/leantoken/pull/600))
+### Refactoring
+
+- **setup:** Reuse launcher path matcher
+- **mcp:** Share resource protocol policy
+- **mcp:** Centralize legacy protocol shape
+- **cursors:** Remove unused legacy version paths
+### Testing
+
+- **mcp:** Use shared protocol shape policy
+- Remove retired wire compatibility checks
+- Drop unused changed-path compatibility mode
+- Remove retired compatibility assertions
+
 ## [0.1.28] - 2026-08-31
 ### Bug Fixes
 
