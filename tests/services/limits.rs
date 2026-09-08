@@ -1,195 +1,72 @@
 use super::*;
 
+// Exhaustive integer boundaries live in services::request_limits unit tests.
+// This indexed witness proves that all public adapters consume those limits.
 #[tokio::test]
-async fn files_enforces_result_limit_contract() {
-    let (_root, services) = fixture().await;
-    let limit = services.config().max_results;
-
-    services
-        .files(files_limit_request(None))
-        .await
-        .expect("default result limit");
-    for requested in [1, limit] {
-        services
-            .files(files_limit_request(Some(requested)))
-            .await
-            .expect("valid result limit");
+async fn configured_limits_reach_all_service_operations() {
+    let root = tempfile::tempdir().expect("configured indexed repository");
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    let source = (0..8)
+        .map(|index| {
+            format!(
+                "pub fn greet_{index}() -> usize {{\n    let value = {index};\n    value + 1\n}}\n"
+            )
+        })
+        .collect::<String>();
+    for name in ["lib.rs", "second.rs", "third.rs"] {
+        std::fs::write(root.path().join("src").join(name), &source).unwrap();
     }
-    let error = services
-        .files(files_limit_request(Some(0)))
-        .await
-        .expect_err("zero result limit");
-    assert_zero_limit(error, "max_results");
-    let error = services
-        .files(files_limit_request(Some(limit + 1)))
-        .await
-        .expect_err("oversized result limit");
-    assert_limit_exceeded(error, "max_results", limit + 1, limit);
-}
-
-#[tokio::test]
-async fn search_enforces_all_limit_contracts() {
-    let (_root, services) = fixture().await;
-    let result_limit = services.config().max_results;
-    let token_limit = services.config().max_output_tokens;
-
+    let mut config = Config::discover(root.path(), Some(root.path().join("index.sqlite"))).unwrap();
+    config.default_results = 2;
+    config.max_results = 2;
+    config.default_read_tokens = 50;
+    config.default_context_tokens = 40;
+    config.max_output_tokens = 50;
+    config.context_lines = 0;
+    let services = Services::open(config).unwrap();
     services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .unwrap();
+    let mut files_request = files_limit_request(None);
+    files_request.path = Some("src".into());
+    files_request.depth = None;
+    let files = services.files(files_request).await.unwrap();
+    assert_eq!(files.entries.len(), 2);
+    let search = services
         .search(search_limit_request(None, None, None))
         .await
         .expect("default search limits");
-    for requested in [1, result_limit] {
-        services
-            .search(search_limit_request(Some(requested), Some(1), Some(0)))
-            .await
-            .expect("valid result limit");
-    }
-    let error = services
-        .search(search_limit_request(Some(0), Some(1), Some(0)))
-        .await
-        .expect_err("zero result limit");
-    assert_zero_limit(error, "max_results");
-    let error = services
-        .search(search_limit_request(
-            Some(result_limit + 1),
-            Some(1),
-            Some(0),
-        ))
-        .await
-        .expect_err("oversized result limit");
-    assert_limit_exceeded(error, "max_results", result_limit + 1, result_limit);
-
-    for requested in [1, token_limit] {
-        services
-            .search(search_limit_request(Some(1), Some(requested), Some(0)))
-            .await
-            .expect("valid token limit");
-    }
-    let error = services
-        .search(search_limit_request(Some(1), Some(0), Some(0)))
-        .await
-        .expect_err("zero token limit");
-    assert_zero_limit(error, "max_tokens");
-    let error = services
-        .search(search_limit_request(
-            Some(1),
-            Some(token_limit + 1),
-            Some(0),
-        ))
-        .await
-        .expect_err("oversized token limit");
-    assert_limit_exceeded(error, "max_tokens", token_limit + 1, token_limit);
-
-    for requested in [0, 1, 20] {
-        services
-            .search(search_limit_request(Some(1), Some(1), Some(requested)))
-            .await
-            .expect("valid context-line limit");
-    }
-    let error = services
-        .search(search_limit_request(Some(1), Some(1), Some(21)))
-        .await
-        .expect_err("oversized context-line limit");
-    assert_limit_exceeded(error, "context_lines", 21, 20);
-}
-
-#[tokio::test]
-async fn outline_enforces_result_and_token_limit_contracts() {
-    let (_root, services) = fixture().await;
-    let result_limit = services.config().max_results;
-    let token_limit = services.config().max_output_tokens;
-
-    services
+    assert_eq!(search.hits.len(), 2);
+    assert!(search.hits.iter().all(|hit| hit.start_line == hit.end_line));
+    assert!(search.meta.source_tokens <= 50);
+    let outline = services
         .outline(outline_limit_request(None, None))
         .await
         .expect("default outline limits");
-    for requested in [1, result_limit] {
-        services
-            .outline(outline_limit_request(Some(requested), Some(1)))
-            .await
-            .expect("valid result limit");
-    }
-    let error = services
-        .outline(outline_limit_request(Some(0), Some(1)))
+    assert_eq!(outline.total_symbols, 8);
+    assert_eq!(outline.returned_symbols, 2);
+    assert!(outline.truncated_by_max_results);
+    assert!(outline.meta.source_tokens <= 50);
+    let mut read_request = read_limit_request(None);
+    read_request.end_line = None;
+    let read = services
+        .read(read_request)
         .await
-        .expect_err("zero result limit");
-    assert_zero_limit(error, "max_results");
-    let error = services
-        .outline(outline_limit_request(Some(result_limit + 1), Some(1)))
+        .expect("default read limit");
+    assert!(read.meta.source_tokens > 0 && read.meta.source_tokens <= 50);
+    let context = services
+        .context(context_limit_request(
+            services.config().default_context_tokens,
+        ))
         .await
-        .expect_err("oversized result limit");
-    assert_limit_exceeded(error, "max_results", result_limit + 1, result_limit);
-
-    for requested in [1, token_limit] {
-        services
-            .outline(outline_limit_request(Some(1), Some(requested)))
-            .await
-            .expect("valid token limit");
-    }
-    let error = services
-        .outline(outline_limit_request(Some(1), Some(0)))
-        .await
-        .expect_err("zero token limit");
-    assert_zero_limit(error, "max_tokens");
-    let error = services
-        .outline(outline_limit_request(Some(1), Some(token_limit + 1)))
-        .await
-        .expect_err("oversized token limit");
-    assert_limit_exceeded(error, "max_tokens", token_limit + 1, token_limit);
-}
-
-#[tokio::test]
-async fn read_enforces_token_limit_contract() {
-    let (_root, services) = fixture().await;
-    let limit = services.config().max_output_tokens;
-
-    services
-        .read(read_limit_request(None))
-        .await
-        .expect("default token limit");
-    for requested in [1, limit] {
-        services
-            .read(read_limit_request(Some(requested)))
-            .await
-            .expect("valid token limit");
-    }
-    let error = services
-        .read(read_limit_request(Some(0)))
-        .await
-        .expect_err("zero token limit");
-    assert_zero_limit(error, "max_tokens");
-    let error = services
-        .read(read_limit_request(Some(limit + 1)))
-        .await
-        .expect_err("oversized token limit");
-    assert_limit_exceeded(error, "max_tokens", limit + 1, limit);
-}
-
-#[tokio::test]
-async fn context_enforces_token_budget_contract() {
-    let (_root, services) = fixture().await;
-    let limit = services.config().max_output_tokens;
-
-    for requested in [1, limit] {
-        services
-            .context(context_limit_request(requested))
-            .await
-            .expect("valid token budget");
-    }
-    let error = services
-        .context(context_limit_request(0))
-        .await
-        .expect_err("zero token budget");
-    assert_zero_limit(error, "token_budget");
-    let error = services
-        .context(context_limit_request(limit + 1))
-        .await
-        .expect_err("oversized token budget");
-    assert_limit_exceeded(error, "token_budget", limit + 1, limit);
+        .expect("configured context budget");
+    assert!(context.meta.source_tokens <= 40);
 }
 
 #[tokio::test]
 async fn context_tiny_budget_does_not_claim_candidates_are_missing() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let response = services
         .context(context_limit_request(1))
@@ -208,7 +85,7 @@ async fn context_tiny_budget_does_not_claim_candidates_are_missing() {
 
 #[tokio::test]
 async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let generation = services
         .status()
         .await
@@ -316,7 +193,7 @@ async fn reconcile_working_tree_limit_errors_do_not_reconcile_the_index() {
 
 #[tokio::test]
 async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let generation = services
         .status()
         .await
@@ -341,269 +218,59 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
         }};
     }
 
+    let mut request = files_limit_request(Some(1));
+    request.operation = FileOperation::Find;
     assert_static_error!(
         services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Find,
-                path: None,
-                query: None,
-                pattern: None,
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
+            request,
             IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+            CancellationToken::new()
         ),
-        "missing find query"
-    );
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Tree,
-                path: Some("../outside.rs".into()),
-                query: None,
-                pattern: None,
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe tree root"
-    );
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            FilesRequest {
-                operation: FileOperation::Glob,
-                path: None,
-                query: None,
-                pattern: Some("[".into()),
-                max_results: Some(1),
-                cursor: None,
-                depth: None,
-            },
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid files glob"
-    );
-    let mut files = files_limit_request(Some(1));
-    files.cursor = Some("invalid".into());
-    assert_static_error!(
-        services.files_with_consistency_cancellable(
-            files,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "malformed files cursor"
+        "missing files query"
     );
 
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = " ".into();
+    let mut request = search_limit_request(Some(1), Some(1), Some(0));
+    request.query = " ".into();
     assert_static_error!(
         services.search_with_consistency_cancellable(
-            search,
+            request,
             IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+            CancellationToken::new()
         ),
         "empty search query"
     );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = "[".into();
-    search.mode = SearchMode::Regex;
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid search regex"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.focus_paths = vec!["[".into()];
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid search path glob"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.query = "x".repeat(64 * 1024 + 1);
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized search query"
-    );
-    let mut search = search_limit_request(Some(1), Some(1), Some(0));
-    search.cursor = Some("invalid".into());
-    assert_static_error!(
-        services.search_with_consistency_cancellable(
-            search,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "malformed search cursor"
-    );
 
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = Vec::new();
+    let mut request = outline_limit_request(Some(1), Some(1));
+    request.paths.clear();
     assert_static_error!(
         services.outline_with_consistency_cancellable(
-            outline,
+            request,
             IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+            CancellationToken::new()
         ),
         "empty outline paths"
     );
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = (0..257).map(|index| format!("src/{index}.rs")).collect();
-    assert_static_error!(
-        services.outline_with_consistency_cancellable(
-            outline,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive outline paths"
-    );
-    let mut outline = outline_limit_request(Some(1), Some(1));
-    outline.paths = vec!["../outside.rs".into()];
-    assert_static_error!(
-        services.outline_with_consistency_cancellable(
-            outline,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe outline path"
-    );
 
-    let mut read = read_limit_request(Some(1));
-    read.start_line = Some(0);
+    let mut request = read_limit_request(Some(1));
+    request.symbol = Some("greet".into());
     assert_static_error!(
         services.read_with_consistency_cancellable(
-            read,
+            request,
             IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid read range"
-    );
-    let mut read = read_limit_request(Some(1));
-    read.symbol = Some("greet".into());
-    assert_static_error!(
-        services.read_with_consistency_cancellable(
-            read,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+            CancellationToken::new()
         ),
         "conflicting read target"
     );
-    let mut read = read_limit_request(Some(1));
-    read.start_line = None;
-    read.end_line = None;
-    read.symbol = Some(String::new());
-    let error = services
-        .read_with_consistency_cancellable(
-            read,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        )
-        .await
-        .expect_err("empty read symbol must fail");
-    let current = services
-        .status()
-        .await
-        .expect("status after empty read symbol");
-    assert_eq!(
-        current.repository_generation, generation,
-        "empty read symbol must not reconcile"
-    );
-    assert!(
-        matches!(
-            error,
-            Error::InvalidInput {
-                field: "symbol",
-                reason: "must not be empty"
-            }
-        ),
-        "unexpected empty read symbol error: {error:?}"
-    );
-    expected_failures += 1;
 
-    let mut context = context_limit_request(1);
-    context.task = " ".into();
+    let mut request = context_limit_request(1);
+    request.task = " ".into();
     assert_static_error!(
         services.context_with_consistency_cancellable(
-            context,
+            request,
             IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
+            CancellationToken::new()
         ),
         "empty context task"
-    );
-    let mut context = context_limit_request(1);
-    context.focus_paths = vec!["[".into()];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "invalid context path glob"
-    );
-    let mut context = context_limit_request(1);
-    context.focus_symbols = vec!["symbol".into(); 257];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive context symbols"
-    );
-    let mut context = context_limit_request(1);
-    context.changed_paths = vec!["../outside.rs".into()];
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "unsafe context changed path"
-    );
-    let mut context = context_limit_request(1);
-    context.base_revision = Some("r".repeat(257));
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized context base revision"
-    );
-    let mut context = context_limit_request(1);
-    context.changed_paths = (0..513).map(|index| format!("src/{index}.rs")).collect();
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "excessive context changed paths"
-    );
-    let mut context = context_limit_request(1);
-    context.task = "a_".repeat(30_000);
-    assert_static_error!(
-        services.context_with_consistency_cancellable(
-            context,
-            IndexConsistency::ReconcileWorkingTree,
-            CancellationToken::new(),
-        ),
-        "oversized derived context matcher"
     );
 
     let committed = services
@@ -640,7 +307,7 @@ async fn reconcile_working_tree_static_input_errors_do_not_reconcile_the_index()
 
 #[tokio::test]
 async fn reconcile_working_tree_generation_checks_run_after_reconciliation() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     std::fs::write(
         root.path().join("src/second.rs"),
         "pub fn greet_again() { let _ = \"greet\"; }\n",

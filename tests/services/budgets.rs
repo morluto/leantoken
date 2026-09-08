@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn retrieval_call_options_enforce_final_service_response_bounds() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     std::fs::write(
         root.path().join("data.json"),
         r#"{"alpha":{"escaped":"line\nvalue"},"βeta":[1,2,3]}"#,
@@ -177,7 +177,7 @@ async fn retrieval_call_options_enforce_final_service_response_bounds() {
 
 #[tokio::test]
 async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let search_request = SearchRequest {
         query: "greet".into(),
         mode: SearchMode::Identifier,
@@ -268,7 +268,7 @@ async fn receipt_reserved_response_minimum_is_an_exact_retry_hint() {
 
 #[tokio::test]
 async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     for index in 0..24 {
         std::fs::write(
             root.path()
@@ -372,7 +372,7 @@ async fn files_response_budget_uses_a_resumable_deterministic_prefix() {
 
 #[tokio::test]
 async fn json_keys_response_budget_preserves_cursor_completeness() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let object = (0..80)
         .map(|index| {
             (
@@ -442,7 +442,7 @@ async fn json_keys_response_budget_preserves_cursor_completeness() {
 
 #[tokio::test]
 async fn read_response_budget_reduces_source_without_skipping_continuation() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let source = (1..=120)
         .map(|line| format!("pub const 長い名前_{line:03}: &str = \"escaped-{line}\";\n"))
         .collect::<String>();

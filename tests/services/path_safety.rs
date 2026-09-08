@@ -120,12 +120,16 @@ async fn repository_identity_distinguishes_linked_worktrees_before_empty_search_
     std::fs::create_dir(&base).expect("base");
     std::fs::write(base.join("base.rs"), "pub fn base_only() {}\n").expect("base source");
     init_git_repo(&base);
-    let worktree = std::process::Command::new("git")
-        .args(["worktree", "add", "-b", "holdout-worktree"])
-        .arg(&linked)
-        .current_dir(&base)
-        .output()
-        .expect("git worktree add");
+    let worktree = leantoken_test_support::GitFixture::run(
+        &base,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "holdout-worktree",
+            linked.to_str().expect("fixture path"),
+        ],
+    );
     assert!(
         worktree.status.success(),
         "git worktree add failed: {}",

@@ -290,7 +290,7 @@ async fn file_tree_normalizes_equivalent_roots_before_query_and_pagination() {
 
 #[tokio::test]
 async fn invalid_focus_glob_is_a_typed_error() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let error = services
         .search(SearchRequest {
             query: "greet".into(),
@@ -315,7 +315,7 @@ async fn invalid_focus_glob_is_a_typed_error() {
 
 #[tokio::test]
 async fn file_tree_rejects_unsafe_roots() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     for path in ["/src", "../src", "src/../rust", "src\0rust"] {
         services
             .files(FilesRequest {

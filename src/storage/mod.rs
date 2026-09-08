@@ -1,14 +1,11 @@
+#[cfg(test)]
+use std::time::Instant;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
-};
-#[cfg(test)]
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Instant,
 };
 
 use r2d2_sqlite::SqliteConnectionManager;

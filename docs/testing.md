@@ -1,5 +1,106 @@
 # Testing architecture
 
+## Coverage evidence
+
+`cargo xtask coverage` instruments the same nextest product command, features,
+package exclusion, CI profile and resource groups as `cargo test-product`.
+`cargo xtask coverage --dry-run` prints it; append `--filterset 'test(pattern)'`
+for focused diagnostic coverage. A filtered run cannot satisfy the full budget.
+CI pins Rust 1.95 and cargo-llvm-cov 0.9.1 and runs coverage only on the events
+allowed by `ci/test-topology.json`.
+
+`ci/coverage-policy.json` assigns each measured production file to an owner and
+ratchets line, function and region coverage. Each initial floor is five
+percentage points below the observed integer percentage, with non-exception
+line floors kept above 30%. The two low-line
+coverage gaps have explicit review conditions; they remain in the report.
+There are no production ignore patterns. Architecture checks reject stale
+paths, invalid budgets and unexplained low-coverage entries. Reporting rejects
+new unbudgeted files, missing required files and any failed file budget.
+An independent module/source inventory also rejects files absent from both
+policy and report. Exact declaration-only dispositions are visible separately;
+syntax checks reject added functions, item macros and runtime closures there.
+Budget changes require review and must explain missing transitions; aggregate
+coverage cannot compensate for them.
+
+The initial Linux product run on 2026-09-08 built in 65 seconds and executed
+1,234 tests across six binaries in 77.124 seconds, all passing. The full JSON
+was 15 MiB and the coverage build/profile tree was 3.5 GiB. It emitted no LLVM
+profile warnings. Historical issue #511 records the prior workspace lane;
+its timings/cache size came from a different host/revision and are not a
+controlled speedup comparison. Benchmark binaries are now excluded by the
+shared product graph. The obsolete ignored profiler was removed after this
+initial measurement.
+
+The final local gate passed all 1,246 tests across six binaries in 79.233
+seconds, with no LLVM warnings or failed file budgets. Reported coverage was
+89.25% lines, 88.78% functions and 87.34% regions across 58 owners, with 19
+checked declaration-only files and two explicit reviewed gaps. The instrumented
+test phase, including compilation, took 116.772 seconds. These percentages
+describe execution evidence, not branch coverage or a correctness proof.
+
+Reports under `target/coverage` retain the exact command, tool and topology
+identities, before/after source fingerprints, per-owner metrics, raw JSON with
+functions and uncovered segments, verbose object/merge commands,
+phase timing/status and tool diagnostics. CI retains reports and raw profiles
+and the instrumented nextest JUnit inventory for 30 days. Any report warning, including mismatched functions, invalidates
+the run. Profile cleanup is limited to cargo-llvm-cov's raw profiles. Stable
+branch coverage is unavailable and carries no correctness claim. The process
+harness preserves `LLVM_PROFILE_FILE`; gracefully exiting children contribute
+coverage, while forced termination may lose profile buffers. Process assertions
+remain the authority for shutdown and failure composition.
+
+See the [cargo-llvm-cov documentation](https://github.com/taiki-e/cargo-llvm-cov)
+for nextest instrumentation and JSON export semantics.
+
+## Behavioral ownership
+
+Limit tables live in `services::request_limits`; static request tables live
+beside the files, search, outline, read and context production parsers. These
+tests construct scalar limits and DTOs, with no filesystem, database or runtime.
+The services consume their parsed limits, paths, patterns and policy values.
+The root fixture is named `indexed_fixture` at every call site to expose its
+cold-index cost. Validation-only tests must use the parser seam; an indexed
+validation owner must document its side-effect composition claim.
+
+| Owner | Resource seam and reason |
+| --- | --- |
+| Request limit and static-input matrices | Pure production parsers; exhaustive bounds and cross-field input |
+| `services::limits` | Five independent indexed fixtures: valid routing, tiny-budget evidence, limit/static-error side-effect ordering and generation ordering |
+| MCP limit error contract | Open empty storage and real in-memory transport; no indexing, only wire error classes |
+| MCP omitted limits | Indexed retrieval; configured-default propagation |
+
+The limit migration removes four indexed service setups and one indexed MCP
+setup. Five pure static-input matrices replace the exhaustive indexed replay;
+one invalid request per operation retains generation and failure-accounting
+composition evidence. The tiny-budget test remains indexed because candidate
+presence determines its claim. Future resource changes should update this
+inventory in review rather than add a source-name heuristic.
+
+Linux measurements on 2026-09-08 compared baseline `464bda6fd8f5` with this
+migration using the same product scheduler. The focused baseline contained nine
+indexed limit tests; the replacement contained five indexed composition tests,
+five pure limit tables and five pure static-input tables.
+
+| Focused run | Baseline test wall / summed test time | Replacement test wall / summed test time |
+| --- | --- | --- |
+| First run, including fresh fixture setup | 2.207s / 7.485s | 0.745s / 2.311s |
+| Warm build, fresh fixtures | 1.162s / 3.783s | 0.802s / 2.451s |
+
+Including compilation, first command wall time was 44.18s versus 11.99s; warm
+command wall time was 1.50s versus 1.19s. Dependency caches were shared, so the
+first run is not a fully cold build comparison. Full product execution was
+98.205s for 1,217 baseline tests and 98.024s for 1,244 replacement tests.
+These are single shared-host observations, and a release build overlapped the
+replacement full run; they do not establish a full-suite speedup. Each run
+created fresh indexed fixtures. The scoped service fixture count fell from nine
+to five, and the MCP limit-error fixture stopped indexing entirely.
+
+The product may depend on private `leantoken-test-support` only as a Cargo
+dev-dependency, so root integration tests can reuse hermetic Git setup.
+Production and build dependencies on private test packages remain forbidden,
+and test-support cannot depend back on product, suite or xtask packages.
+
 LeanToken's tests are organized by the invariant they prove and the resource
 boundary they exercise. The product crate owns private unit tests. The private
 `leantoken-test-suite` package owns cross-component domain tests, and the root
@@ -124,6 +225,23 @@ only workflow that intentionally changes `Cargo.lock`.
 
 ## Hermetic setup
 
+Git fixture setup in the service and repository domains uses
+`leantoken_test_support::GitFixture`. Initialization selects `main`, configures
+a local test identity, and keeps LF bytes unchanged. Every setup and observation
+command checks its exit status, retains at most 64 KiB from each output stream,
+and has a ten-second deadline. The runner terminates its process group (Windows
+job object), including descendants that retain output pipes. A separate temporary
+home beside the fixture isolates global/system configuration, templates, hooks,
+signing, pagers, prompts, and inherited Git repository routing. Tests may still
+write local Git configuration explicitly to exercise the production Git path;
+the setup runner does not replace that path.
+
+Run `cargo test --locked -p leantoken-test-support --lib git::tests` to verify the
+fixture runner. Test identities continue to select the existing `git-fixtures`
+nextest resource group. Failure diagnostics are captured by the owning test's
+normal output/JUnit reporting; collecting fixtures after a forced test-process
+termination remains outside this helper's contract.
+
 `Sandbox` creates one uniquely named tree under `target/test-sandboxes/` and a
 repository directory inside it. Tests create only the additional files and
 directories their scenario needs. On success the sandbox is removed. On panic,
@@ -158,6 +276,17 @@ current-thread paused clock and explicit advancement. Filesystem, SQLite,
 watcher, and process tests use observable readiness plus a final deadline;
 polling reports the last state and never uses sleep to establish ordering.
 
+The MCP task supervisor and post-index retry wait are tested under paused Tokio
+time, including terminal errors, cancellation, the retry boundary, and both
+transport-first and runtime-first shutdown. Synchronous SQLite startup uses a
+private retry owner whose wait operation can advance the test's recorded delay
+sequence without sleeping. The real-process startup witness holds a real SQLite
+lock until the existing contention warning confirms a failed open has entered
+retry. Process tests retain failed-state, catalog, and EOF checks without waiting
+through the production retry/shutdown intervals. Captured process stderr retains
+the first 64 KiB and can be inspected while the child is alive; deadline failures
+report the observed child state and captured diagnostics.
+
 Every concurrency test states its invariant, participant and queue bounds,
 start synchronization, cancellation owner, committed-state expectation, and
 failure diagnostics. Internal hooks remain typed and owner-local. At least one
@@ -178,10 +307,9 @@ Coverage and examples remain separate visible jobs and are not enabled merely
 because another Rust-owned lane changed. Extended tokenizer,
 long-contract, repeated concurrency, profiling, benchmark, and model-evidence
 work are explicit nightly, weekly, or manual lanes rather than permanently
-ignored tests. The existing private-diagnostics concurrency profiler remains a
-single migration exception because extracting it would require exposing
-production-internal `Services` state; its release-only command is documented
-in `docs/measurement.md` and it is not part of ordinary behavior evidence.
+ignored tests. The concurrency profiler is an explicit benchmark binary linking
+the ordinary library; capacity, cancellation and snapshot cleanup remain in
+deterministic tests. The compiled ignored-test inventory must be empty.
 Failed matrix jobs upload `target/test-failures` with the OS and commit SHA in
 the artifact name.
 

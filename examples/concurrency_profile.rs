@@ -1,4 +1,7 @@
-//! Opt-in release-mode concurrency profile for the process-local retrieval governor.
+//! Standalone concurrency profile linking the ordinary release library.
+
+#[path = "../crates/benchmarks/src/build_identity.rs"]
+mod build_identity;
 
 use std::collections::HashMap;
 use std::env;
@@ -15,11 +18,7 @@ use serde_json::Value;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use super::executor::{
-    DEFAULT_BLOCKING_QUEUE_TIMEOUT, default_blocking_active_capacity,
-    default_blocking_execution_capacity,
-};
-use super::*;
+use leantoken::{services::Services, *};
 
 const CONCURRENCY_LEVELS: [usize; 6] = [1, 2, 4, 8, 16, 32];
 const LARGE_REPOSITORY_ENV: &str = "LEANTOKEN_CONCURRENCY_PROFILE_LARGE_REPOSITORY";
@@ -54,18 +53,31 @@ enum Scenario {
     ConcurrentIndexing,
 }
 
+struct ProfileArm {
+    scenario: Scenario,
+    concurrency: usize,
+    resource_sampling: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct ProfileReport {
     schema_version: u32,
     generated_at_unix_seconds: u64,
     leantoken_revision: String,
+    checkout_revision: String,
+    product_source_blake3: String,
+    rustflags: &'static str,
     rustc: String,
-    execution_capacity: usize,
-    active_capacity: usize,
-    queue_timeout_ms: u128,
+    target: &'static str,
+    profile: &'static str,
+    source_dirty: bool,
+    performance_eligible: bool,
+    cfg_test: bool,
+    observation: &'static str,
+    cargo_lock_blake3: String,
+    harness_blake3: String,
     concurrency_levels: Vec<usize>,
     repositories: Vec<RepositoryReport>,
-    phase_five_decision: PhaseFiveDecision,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,50 +85,36 @@ struct RepositoryReport {
     name: String,
     path: String,
     revision: String,
+    read_path: String,
+    query: String,
     indexed_files: usize,
     index_milliseconds: u128,
     database_bytes: u64,
     scenarios: Vec<ScenarioReport>,
-    reconciliation_wave: ReconciliationWaveReport,
+    calibrations: Vec<Calibration>,
 }
 
 #[derive(Debug, Serialize)]
-struct ReconciliationWaveReport {
-    requests: usize,
-    elapsed_micros: u64,
-    errors: u64,
-    rejected_requests: u64,
-    waves_created: u64,
-    waves_started: u64,
-    waves_completed: u64,
-    waves_failed: u64,
-    coalesced_requests: u64,
-    peak_active_waves: usize,
-    peak_pending_waiters: usize,
+struct Calibration {
+    scenario: Scenario,
+    concurrency: usize,
+    sampled_p95_over_baseline: Option<f64>,
+    outcome_categories_equal: bool,
+    eligible_for_performance_conclusions: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct ScenarioReport {
     scenario: Scenario,
+    resource_sampling: bool,
     concurrency: usize,
     requests: usize,
     complete_request_micros: Percentiles,
-    queue_wait_micros: Percentiles,
-    reader_checkout_wait_micros: Percentiles,
-    accepted: u64,
     rejected: u64,
     timed_out: u64,
     cancelled: u64,
     errors: u64,
     succeeded: u64,
-    submitted_blocking_closures: u64,
-    started_blocking_closures: u64,
-    finished_blocking_closures: u64,
-    peak_active_blocking_requests: usize,
-    peak_running_blocking_closures: usize,
-    distinct_blocking_threads: usize,
-    peak_active_sqlite_snapshots: usize,
-    active_sqlite_snapshots_after: usize,
     cpu_milliseconds: Option<u64>,
     peak_rss_bytes: Option<u64>,
     wal_bytes_before: u64,
@@ -128,6 +126,8 @@ struct ScenarioReport {
     order_mismatches: u64,
     generation_mismatches: u64,
     token_accounting_mismatches: u64,
+    accounting_conservative_ceilings: u64,
+    mismatch_examples: Vec<Value>,
     indexing_milliseconds: Option<u128>,
     indexing_error: Option<String>,
 }
@@ -148,20 +148,23 @@ struct CheckpointReport {
     error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct PhaseFiveDecision {
-    split_execution_lanes: bool,
-    reconciliation_coalescing: bool,
-    dedicated_blocking_runtime: bool,
-    adaptive_limiter: bool,
-    shared_daemon: bool,
-    rationale: String,
-}
-
 struct RequestOutcome {
     workload: Workload,
     elapsed_micros: u64,
-    result: Result<Value>,
+    result: Result<ObservedResponse>,
+}
+
+struct ObservedResponse {
+    value: Value,
+    serialized: String,
+}
+
+fn observe<T: Serialize>(response: T) -> Result<ObservedResponse> {
+    let serialized = serde_json::to_string(&response)?;
+    Ok(ObservedResponse {
+        value: serde_json::to_value(response)?,
+        serialized,
+    })
 }
 
 #[derive(Default)]
@@ -170,9 +173,20 @@ struct ResourceSample {
     peak_wal_bytes: u64,
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[ignore = "run explicitly in release mode with a pinned large repository"]
-async fn release_concurrency_matrix() {
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+async fn main() {
+    if cfg!(debug_assertions) || cfg!(test) {
+        panic!("run the ordinary profiler binary built with --release");
+    }
+    let source_root = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT"));
+    let source_identity =
+        build_identity::product_sources(source_root).expect("runtime source identity");
+    assert_eq!(
+        source_identity,
+        env!("LEANTOKEN_BUILD_SOURCE_BLAKE3"),
+        "checkout source differs from the compiled product; rebuild the profiler"
+    );
+    let checkout_revision = git_revision(source_root);
     let large_repository = PathBuf::from(
         env::var(LARGE_REPOSITORY_ENV)
             .unwrap_or_else(|_| panic!("{LARGE_REPOSITORY_ENV} must name a large checkout")),
@@ -192,7 +206,7 @@ async fn release_concurrency_matrix() {
         fs::create_dir_all(parent).expect("create report directory");
     }
 
-    let small = tempfile::tempdir().expect("small repository");
+    let small = profile_directory();
     create_small_repository(small.path());
     let small_revision = "generated-concurrency-fixture-v1".to_owned();
 
@@ -206,27 +220,46 @@ async fn release_concurrency_matrix() {
     )
     .await;
 
+    let source_dirty = !command_output("git", &["status", "--porcelain"]).is_empty();
+    let corpus_dirty =
+        !command_output_in(&large_repository, "git", &["status", "--porcelain"]).is_empty();
+    let source_unchanged = build_identity::product_sources(source_root)
+        .expect("final source identity")
+        == source_identity;
+    let performance_eligible = !source_dirty
+        && !corpus_dirty
+        && source_unchanged
+        && checkout_revision == env!("LEANTOKEN_BUILD_REVISION")
+        && small_report
+            .calibrations
+            .iter()
+            .chain(&large_report.calibrations)
+            .all(|arm| arm.eligible_for_performance_conclusions);
     let report = ProfileReport {
-        schema_version: 2,
+        schema_version: 3,
         generated_at_unix_seconds: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock")
             .as_secs(),
-        leantoken_revision: git_revision(Path::new(env!("CARGO_MANIFEST_DIR"))),
-        rustc: command_output("rustc", &["--version"]),
-        execution_capacity: default_blocking_execution_capacity(),
-        active_capacity: default_blocking_active_capacity(),
-        queue_timeout_ms: DEFAULT_BLOCKING_QUEUE_TIMEOUT.as_millis(),
+        leantoken_revision: env!("LEANTOKEN_BUILD_REVISION").into(),
+        checkout_revision,
+        product_source_blake3: source_identity,
+        rustflags: env!("LEANTOKEN_BUILD_RUSTFLAGS"),
+        rustc: env!("LEANTOKEN_BUILD_RUSTC").into(),
+        target: env!("LEANTOKEN_BUILD_TARGET"),
+        profile: env!("LEANTOKEN_BUILD_PROFILE"),
+        source_dirty,
+        performance_eligible,
+        cfg_test: cfg!(test),
+        observation: "external request timers and 5ms process RSS/WAL polling; no test-only diagnostics",
+        cargo_lock_blake3: blake3::hash(include_bytes!("../Cargo.lock"))
+            .to_hex()
+            .to_string(),
+        harness_blake3: blake3::hash(include_bytes!("concurrency_profile.rs"))
+            .to_hex()
+            .to_string(),
         concurrency_levels: CONCURRENCY_LEVELS.to_vec(),
         repositories: vec![small_report, large_report],
-        phase_five_decision: PhaseFiveDecision {
-            split_execution_lanes: false,
-            reconciliation_coalescing: true,
-            dedicated_blocking_runtime: false,
-            adaptive_limiter: false,
-            shared_daemon: false,
-            rationale: "Deterministic wave admission demonstrates that concurrent reconcile_working_tree callers otherwise submit redundant serialized scans. Services now coalesces callers admitted before a scan starts and assigns later callers to one pending freshness wave. Other Phase 5 mechanisms remain disabled until a same-host comparison isolates their owner without parity, error, RSS, WAL, or determinism regressions.".into(),
-        },
     };
     fs::write(
         &output,
@@ -242,7 +275,7 @@ async fn profile_repository(
     revision: &str,
     query: &str,
 ) -> RepositoryReport {
-    let database_dir = tempfile::tempdir().expect("database directory");
+    let database_dir = profile_directory();
     let database = database_dir.path().join("index.sqlite");
     let config = Config::discover(repository, Some(database.clone())).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
@@ -255,6 +288,7 @@ async fn profile_repository(
     let source_path = first_source_path(repository);
     let baselines = baseline_responses(&services, &source_path, query).await;
     let mut scenarios = Vec::new();
+    let mut calibrations = Vec::new();
 
     for concurrency in CONCURRENCY_LEVELS {
         for scenario in [
@@ -262,96 +296,78 @@ async fn profile_repository(
             Scenario::CancellationStorm,
             Scenario::ConcurrentIndexing,
         ] {
-            scenarios.push(
-                run_scenario(
-                    Arc::clone(&services),
-                    &database,
-                    &source_path,
-                    query,
-                    &baselines,
-                    concurrency,
-                    scenario,
-                )
-                .await,
-            );
+            let first = scenarios.len();
+            // ABBA bounds order effects; both arms use the same production
+            // library and bounded request timers. Only process polling differs.
+            for resource_sampling in [false, true, true, false] {
+                scenarios.push(
+                    run_scenario(
+                        Arc::clone(&services),
+                        &database,
+                        &source_path,
+                        query,
+                        &baselines,
+                        ProfileArm {
+                            concurrency,
+                            scenario,
+                            resource_sampling,
+                        },
+                    )
+                    .await,
+                );
+            }
+            let arms = &scenarios[first..];
+            let baseline = arms[0].complete_request_micros.p95.unwrap_or(0)
+                + arms[3].complete_request_micros.p95.unwrap_or(0);
+            let sampled = arms[1].complete_request_micros.p95.unwrap_or(0)
+                + arms[2].complete_request_micros.p95.unwrap_or(0);
+            let ratio = (baseline > 0).then_some(sampled as f64 / baseline as f64);
+            let categories = |arm: &ScenarioReport| {
+                [
+                    arm.succeeded,
+                    arm.rejected,
+                    arm.timed_out,
+                    arm.cancelled,
+                    arm.errors,
+                ]
+            };
+            let equal = arms
+                .iter()
+                .all(|arm| categories(arm) == categories(&arms[0]));
+            let parity = arms.iter().all(|arm| {
+                arm.errors == 0
+                    && arm.parity_mismatches == 0
+                    && arm.order_mismatches == 0
+                    && arm.generation_mismatches == 0
+                    && arm.token_accounting_mismatches == 0
+                    && arm.accounting_conservative_ceilings == 0
+                    && arm.indexing_error.is_none()
+            });
+            calibrations.push(Calibration {
+                scenario,
+                concurrency,
+                sampled_p95_over_baseline: ratio,
+                outcome_categories_equal: equal,
+                eligible_for_performance_conclusions: equal
+                    && parity
+                    && ratio.is_some_and(|value| value <= 1.10),
+            });
         }
     }
-    let reconciliation_wave = profile_reconciliation_wave(
-        Arc::clone(&services),
-        super::reconciliation::default_reconciliation_active_capacity(),
-    )
-    .await;
 
     RepositoryReport {
         name: name.to_owned(),
         path: repository.display().to_string(),
         revision: revision.to_owned(),
+        read_path: source_path,
+        query: query.to_owned(),
         indexed_files: index.files_indexed,
         index_milliseconds,
         database_bytes: fs::metadata(&database)
             .map(|metadata| metadata.len())
             .unwrap_or(0),
         scenarios,
-        reconciliation_wave,
-    }
-}
-
-async fn profile_reconciliation_wave(
-    services: Arc<Services>,
-    requests: usize,
-) -> ReconciliationWaveReport {
-    services.reconciliation.reset_diagnostics();
-    let held_operation = services
-        .coordination
-        .acquire_operation(&CancellationToken::new())
-        .expect("hold operation lock for reconciliation wave");
-    let started = Instant::now();
-    let mut tasks = JoinSet::new();
-    for _ in 0..requests {
-        let services = Arc::clone(&services);
-        tasks.spawn(async move {
-            services
-                .apply_consistency(
-                    IndexConsistency::ReconcileWorkingTree,
-                    CancellationToken::new(),
-                )
-                .await
-        });
-    }
-    for _ in 0..10_000 {
-        if services.reconciliation.diagnostics().requests == requests as u64 {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(
-        services.reconciliation.diagnostics().requests,
-        requests as u64,
-        "all reconciliation requests must reach wave admission"
-    );
-    held_operation
-        .release()
-        .expect("release reconciliation wave operation lock");
-
-    let mut errors = 0_u64;
-    while let Some(result) = tasks.join_next().await {
-        if result.expect("reconciliation wave task").is_err() {
-            errors = errors.saturating_add(1);
-        }
-    }
-    let diagnostics = services.reconciliation.diagnostics();
-    ReconciliationWaveReport {
-        requests,
-        elapsed_micros: duration_micros(started.elapsed()),
-        errors,
-        rejected_requests: diagnostics.rejected_requests,
-        waves_created: diagnostics.waves_created,
-        waves_started: diagnostics.waves_started,
-        waves_completed: diagnostics.waves_completed,
-        waves_failed: diagnostics.waves_failed,
-        coalesced_requests: diagnostics.coalesced_requests,
-        peak_active_waves: diagnostics.peak_active_waves,
-        peak_pending_waiters: diagnostics.peak_pending_waiters,
+        calibrations,
     }
 }
 
@@ -371,7 +387,7 @@ async fn baseline_responses(
         )
         .await
         .expect("baseline response");
-        baselines.insert(workload, normalize_response(response));
+        baselines.insert(workload, normalize_response(response.value));
     }
     baselines
 }
@@ -382,18 +398,22 @@ async fn run_scenario(
     source_path: &str,
     query: &str,
     baselines: &HashMap<Workload, Value>,
-    concurrency: usize,
-    scenario: Scenario,
+    arm: ProfileArm,
 ) -> ScenarioReport {
-    services.runtime.blocking_executor.reset_diagnostics();
-    services.storage.reset_diagnostics();
+    let ProfileArm {
+        concurrency,
+        scenario,
+        resource_sampling,
+    } = arm;
     let cpu_before = process_cpu_ticks();
     let wal_before = wal_bytes(database);
     let sampler_cancellation = CancellationToken::new();
-    let sampler = tokio::spawn(sample_resources(
-        database.to_owned(),
-        sampler_cancellation.clone(),
-    ));
+    let sampler = resource_sampling.then(|| {
+        tokio::spawn(sample_resources(
+            database.to_owned(),
+            sampler_cancellation.clone(),
+        ))
+    });
     let request_count = concurrency.saturating_mul(2).max(8);
     let mut outcomes = Vec::with_capacity(request_count);
     let mut indexing_milliseconds = None;
@@ -468,10 +488,11 @@ async fn run_scenario(
     }
 
     sampler_cancellation.cancel();
-    let resources = sampler.await.expect("resource sampler");
+    let resources = match sampler {
+        Some(sampler) => sampler.await.expect("resource sampler"),
+        None => ResourceSample::default(),
+    };
     let cpu_after = process_cpu_ticks();
-    let executor = services.runtime.blocking_executor.diagnostics();
-    let storage = services.storage.diagnostics();
     let checkpoint = passive_checkpoint(database);
     let wal_after = wal_bytes(database);
     let mut complete = outcomes
@@ -488,6 +509,8 @@ async fn run_scenario(
     let mut order_mismatches = 0_u64;
     let mut generation_mismatches = 0_u64;
     let mut token_accounting_mismatches = 0_u64;
+    let mut accounting_conservative_ceilings = 0_u64;
+    let mut mismatch_examples = Vec::new();
 
     for outcome in outcomes {
         match outcome.result {
@@ -495,10 +518,33 @@ async fn run_scenario(
                 succeeded = succeeded.saturating_add(1);
                 if parity_workload(outcome.workload) {
                     parity_checked = parity_checked.saturating_add(1);
-                    let normalized = normalize_response(response);
+                    let meta = &response.value["meta"];
+                    let reported = meta["total_response_tokens"].as_u64();
+                    let source = meta["source_tokens"].as_u64();
+                    let protocol = meta["protocol_tokens"].as_u64().unwrap_or(0);
+                    let overhead = meta["path_and_metadata_tokens"].as_u64().unwrap_or(0);
+                    let count = services.config().tokenizer.count(&response.serialized) as u64;
+                    let valid = accounting_valid(meta, count, services.config().tokenizer);
+                    if !valid {
+                        token_accounting_mismatches += 1;
+                    }
+                    // Accounting permits conservative ceilings for BPE fixed-point
+                    // cycles. A positive ceiling is inconclusive for this observer:
+                    // do not silently accept arbitrary over-reporting as exact.
+                    let ceiling = reported.is_some_and(|reported| reported > count);
+                    if ceiling {
+                        accounting_conservative_ceilings += 1;
+                    }
+                    if (!valid || ceiling) && mismatch_examples.len() < 8 {
+                        mismatch_examples.push(serde_json::json!({"workload": outcome.workload, "kind": "accounting", "reported": reported, "counted": count, "source": source, "protocol": protocol, "metadata": overhead}));
+                    }
+                    let normalized = normalize_response(response.value);
                     let baseline = &baselines[&outcome.workload];
                     if normalized != *baseline {
                         parity_mismatches = parity_mismatches.saturating_add(1);
+                        if mismatch_examples.len() < 8 {
+                            mismatch_examples.push(serde_json::json!({"workload": outcome.workload, "kind": "semantic_parity", "changed_top_level_fields": normalized.as_object().map(|object| object.iter().filter(|(key, value)| baseline.get(*key) != Some(*value)).map(|(key, _)| key).take(16).collect::<Vec<_>>()), "baseline_provenance": baseline.get("provenance"), "actual_provenance": normalized.get("provenance")}));
+                        }
                     }
                     if ordered_arrays(&normalized) != ordered_arrays(baseline) {
                         order_mismatches = order_mismatches.saturating_add(1);
@@ -507,9 +553,6 @@ async fn run_scenario(
                         != baseline.pointer("/meta/repository_generation")
                     {
                         generation_mismatches = generation_mismatches.saturating_add(1);
-                    }
-                    if token_accounting(&normalized) != token_accounting(baseline) {
-                        token_accounting_mismatches = token_accounting_mismatches.saturating_add(1);
                     }
                 }
             }
@@ -522,25 +565,15 @@ async fn run_scenario(
 
     ScenarioReport {
         scenario,
+        resource_sampling,
         concurrency,
         requests: request_count,
         complete_request_micros: percentiles(&mut complete),
-        queue_wait_micros: percentiles(&mut executor.queue_wait_micros.clone()),
-        reader_checkout_wait_micros: percentiles(&mut storage.reader_checkout_wait_micros.clone()),
-        accepted: executor.accepted,
-        rejected: rejected.max(executor.rejected),
-        timed_out: timed_out.max(executor.queue_timed_out),
+        rejected,
+        timed_out,
         cancelled,
         errors,
         succeeded,
-        submitted_blocking_closures: executor.submitted,
-        started_blocking_closures: executor.started,
-        finished_blocking_closures: executor.finished,
-        peak_active_blocking_requests: executor.peak_active,
-        peak_running_blocking_closures: executor.peak_running,
-        distinct_blocking_threads: executor.blocking_threads.len(),
-        peak_active_sqlite_snapshots: storage.peak_active_snapshots,
-        active_sqlite_snapshots_after: storage.active_snapshots,
         cpu_milliseconds: cpu_milliseconds(cpu_before, cpu_after),
         peak_rss_bytes: resources.peak_rss_bytes,
         wal_bytes_before: wal_before,
@@ -552,6 +585,8 @@ async fn run_scenario(
         order_mismatches,
         generation_mismatches,
         token_accounting_mismatches,
+        accounting_conservative_ceilings,
+        mismatch_examples,
         indexing_milliseconds,
         indexing_error,
     }
@@ -563,9 +598,9 @@ async fn execute_workload(
     source_path: &str,
     query: &str,
     cancellation: CancellationToken,
-) -> Result<Value> {
+) -> Result<ObservedResponse> {
     let response = match workload {
-        Workload::Files => serde_json::to_value(
+        Workload::Files => observe(
             services
                 .files_cancellable(
                     FilesRequest {
@@ -581,23 +616,23 @@ async fn execute_workload(
                 )
                 .await?,
         )?,
-        Workload::Search => serde_json::to_value(
+        Workload::Search => observe(
             services
                 .search_cancellable(search_request(query), cancellation)
                 .await?,
         )?,
-        Workload::Read => serde_json::to_value(
+        Workload::Read => observe(
             services
                 .read_cancellable(read_request(source_path), cancellation)
                 .await?,
         )?,
-        Workload::Context => serde_json::to_value(
+        Workload::Context => observe(
             services
                 .context_cancellable(context_request(query), cancellation)
                 .await?,
         )?,
-        Workload::Status => serde_json::to_value(services.status().await?)?,
-        Workload::Savings => serde_json::to_value(services.token_savings().await?)?,
+        Workload::Status => observe(services.status().await?)?,
+        Workload::Savings => observe(services.token_savings().await?)?,
     };
     Ok(response)
 }
@@ -634,7 +669,7 @@ fn read_request(source_path: &str) -> ReadRequest {
         expected_hash: None,
         delta: false,
         receipt_id: None,
-        policy: crate::model::ReadPolicy::default(),
+        policy: ReadPolicy::default(),
     }
 }
 
@@ -670,8 +705,33 @@ fn parity_workload(workload: Workload) -> bool {
     )
 }
 
+fn accounting_valid(meta: &Value, count: u64, tokenizer: leantoken::tokens::Tokenizer) -> bool {
+    let reported = meta["total_response_tokens"].as_u64();
+    reported.is_some_and(|total| total >= count)
+        && meta["source_tokens"]
+            .as_u64()
+            .and_then(|source| source.checked_add(meta["protocol_tokens"].as_u64().unwrap_or(0)))
+            .and_then(|sum| sum.checked_add(meta["path_and_metadata_tokens"].as_u64().unwrap_or(0)))
+            == reported
+        && meta["tokenizer"].as_str() == Some(tokenizer.name())
+        && meta["token_count_exact"].as_bool() == Some(tokenizer.is_exact())
+}
+
 fn normalize_response(mut value: Value) -> Value {
     remove_key_recursively(&mut value, "receipt_id");
+    if let Some(provenance) = value.get_mut("provenance").and_then(Value::as_object_mut) {
+        provenance.remove("freshness");
+    }
+    if let Some(meta) = value.get_mut("meta").and_then(Value::as_object_mut) {
+        for key in [
+            "freshness",
+            "protocol_tokens",
+            "path_and_metadata_tokens",
+            "total_response_tokens",
+        ] {
+            meta.remove(key);
+        }
+    }
     value
 }
 
@@ -713,18 +773,6 @@ fn collect_arrays(value: &Value, arrays: &mut Vec<Value>) {
         }
         _ => {}
     }
-}
-
-fn token_accounting(value: &Value) -> Vec<Option<Value>> {
-    [
-        "/meta/source_tokens",
-        "/meta/total_response_tokens",
-        "/meta/token_count_exact",
-        "/meta/tokenizer",
-    ]
-    .into_iter()
-    .map(|pointer| value.pointer(pointer).cloned())
-    .collect()
 }
 
 fn percentiles(samples: &mut [u64]) -> Percentiles {
@@ -886,8 +934,18 @@ fn git_revision(repository: &Path) -> String {
     command_output_in(repository, "git", &["rev-parse", "HEAD"])
 }
 
+fn profile_directory() -> tempfile::TempDir {
+    let parent = Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")).join("target/concurrency-work");
+    fs::create_dir_all(&parent).expect("profile scratch directory");
+    tempfile::tempdir_in(parent).expect("bounded lifetime profile fixture")
+}
+
 fn command_output(command: &str, arguments: &[&str]) -> String {
-    command_output_in(Path::new(env!("CARGO_MANIFEST_DIR")), command, arguments)
+    command_output_in(
+        Path::new(env!("LEANTOKEN_REPOSITORY_ROOT")),
+        command,
+        arguments,
+    )
 }
 
 fn command_output_in(directory: &Path, command: &str, arguments: &[&str]) -> String {
@@ -905,4 +963,76 @@ fn command_output_in(directory: &Path, command: &str, arguments: &[&str]) -> Str
         .expect("command output is UTF-8")
         .trim()
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accounting_checks_original_payload_count_and_category_sum() {
+        let tokenizer = leantoken::tokens::Tokenizer::Cl100kBase;
+        let mut meta = serde_json::json!({"source_tokens": 2, "protocol_tokens": 3,
+            "path_and_metadata_tokens": 5, "total_response_tokens": 10,
+            "tokenizer": "cl100k_base", "token_count_exact": true});
+        assert!(accounting_valid(&meta, 10, tokenizer));
+        assert!(!accounting_valid(&meta, 11, tokenizer));
+        meta["total_response_tokens"] = 9.into();
+        assert!(!accounting_valid(&meta, 9, tokenizer));
+        meta["total_response_tokens"] = 10.into();
+        meta["tokenizer"] = "estimate".into();
+        assert!(!accounting_valid(&meta, 10, tokenizer));
+    }
+
+    #[test]
+    fn semantic_comparison_preserves_order_generation_and_source_accounting() {
+        let first = serde_json::json!({"entries": ["a", "b"], "provenance": {"freshness": "current", "repository_generation": 7, "commit_revision": "abc"}, "meta": {
+            "receipt_id": "first", "freshness": "current", "repository_generation": 7,
+            "source_tokens": 10, "total_response_tokens": 60}});
+        let mut other = first.clone();
+        other["meta"]["receipt_id"] = "second".into();
+        other["meta"]["total_response_tokens"] = 61.into();
+        other["provenance"]["freshness"] = "reconciling".into();
+        assert_eq!(
+            normalize_response(first.clone()),
+            normalize_response(other.clone())
+        );
+        for (pointer, value) in [
+            ("/entries", serde_json::json!(["b", "a"])),
+            ("/meta/repository_generation", 8.into()),
+            ("/meta/source_tokens", 11.into()),
+            ("/provenance/repository_generation", 8.into()),
+            ("/provenance/commit_revision", "def".into()),
+        ] {
+            let mut changed = other.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(changed)
+            );
+        }
+    }
+
+    #[test]
+    fn compiled_source_fingerprint_changes_with_product_input() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("src")).unwrap();
+        fs::create_dir(root.path().join(".cargo")).unwrap();
+        fs::create_dir_all(root.path().join("crates/benchmarks")).unwrap();
+        for name in [
+            "Cargo.toml",
+            "Cargo.lock",
+            ".cargo/config.toml",
+            "crates/benchmarks/Cargo.toml",
+        ] {
+            fs::write(root.path().join(name), "").unwrap();
+        }
+        fs::write(root.path().join("src/lib.rs"), "pub fn first() {}\n").unwrap();
+        let before = build_identity::product_sources(root.path()).unwrap();
+        fs::write(root.path().join("src/lib.rs"), "pub fn second() {}\n").unwrap();
+        assert_ne!(
+            before,
+            build_identity::product_sources(root.path()).unwrap()
+        );
+    }
 }

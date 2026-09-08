@@ -42,7 +42,7 @@ async fn context_required_evidence_reports_bounded_path_inspection() {
 
 #[tokio::test]
 async fn repository_path_inputs_normalize_before_index_lookup_and_matching() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let read = services
         .read(ReadRequest {

@@ -1124,6 +1124,13 @@ exact/overlap rereads, missing token attribution, and absence of an observable
 downstream signal as separate fields. None is relabeled as model reasoning or a
 causal utilization score.
 
+Git commands used to construct disposable test repositories have a separate
+test-support owner. Each command admits ten seconds of work and retains at most
+64 KiB per output stream, with two bounded reader tasks and process-group cleanup
+on success, failure, timeout, or output overflow. Configuration and temporary
+home state are isolated per invocation outside the indexed fixture. This helper
+does not mediate production Git operations.
+
 The benchmark-only Git-history lane first freezes at most 256 ancestors, then
 submits the complete commit set and one merged workflow-symbol regex to one
 pickaxe process. It ranks at most four current files by matching-commit count

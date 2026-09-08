@@ -243,12 +243,7 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
     init_git_repo(root.path());
     let revision = |name: &str| {
         String::from_utf8(
-            std::process::Command::new("git")
-                .args(["rev-parse", name])
-                .current_dir(root.path())
-                .output()
-                .expect("resolve revision")
-                .stdout,
+            leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", name]).stdout,
         )
         .expect("UTF-8 revision")
         .trim()
@@ -265,11 +260,7 @@ async fn csharp_qualified_symbols_support_historical_reads_and_diffs() {
         vec!["add", "Worker.cs"],
         vec!["commit", "-m", "update C# method"],
     ] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root.path())
-            .output()
-            .expect("git commit command");
+        let output = leantoken_test_support::GitFixture::run(root.path(), &args);
         assert!(output.status.success());
     }
     let head = revision("HEAD");
@@ -349,12 +340,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
     init_git_repo(root.path());
     let revision = |name: &str| {
         String::from_utf8(
-            std::process::Command::new("git")
-                .args(["rev-parse", name])
-                .current_dir(root.path())
-                .output()
-                .expect("resolve revision")
-                .stdout,
+            leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", name]).stdout,
         )
         .expect("UTF-8 revision")
         .trim()
@@ -362,11 +348,7 @@ async fn symbol_history_reads_diffs_and_traces_immutable_revisions() {
     };
     let commit = |message: &str| {
         for args in [vec!["add", "-A"], vec!["commit", "-m", message]] {
-            let output = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root.path())
-                .output()
-                .expect("git commit command");
+            let output = leantoken_test_support::GitFixture::run(root.path(), &args);
             assert!(output.status.success());
         }
     };
@@ -723,12 +705,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
     init_git_repo(root.path());
     let revision = |name: &str| {
         String::from_utf8(
-            std::process::Command::new("git")
-                .args(["rev-parse", name])
-                .current_dir(root.path())
-                .output()
-                .expect("resolve revision")
-                .stdout,
+            leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", name]).stdout,
         )
         .expect("UTF-8 revision")
         .trim()
@@ -749,11 +726,7 @@ async fn batched_symbol_history_classifies_endpoints_renames_and_request_bounds(
         &["add", "-A"][..],
         &["commit", "-m", "change batched symbols"][..],
     ] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root.path())
-            .output()
-            .expect("git commit command");
+        let output = leantoken_test_support::GitFixture::run(root.path(), args);
         assert!(output.status.success());
     }
     let head = revision("HEAD");
@@ -951,12 +924,7 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
     init_git_repo(root.path());
     let revision = |name: &str| {
         String::from_utf8(
-            std::process::Command::new("git")
-                .args(["rev-parse", name])
-                .current_dir(root.path())
-                .output()
-                .expect("resolve revision")
-                .stdout,
+            leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", name]).stdout,
         )
         .expect("UTF-8 revision")
         .trim()
@@ -979,11 +947,7 @@ async fn symbol_history_resolves_qualified_names_and_absent_diff_endpoints() {
         &["add", "-A"][..],
         &["commit", "-m", "change symbol endpoints"][..],
     ] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root.path())
-            .output()
-            .expect("git commit command");
+        let output = leantoken_test_support::GitFixture::run(root.path(), args);
         assert!(output.status.success());
     }
     let head = revision("HEAD");

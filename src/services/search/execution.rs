@@ -34,12 +34,12 @@ impl Services {
         request: SearchRequest,
         output_shape: SearchOutputShape,
     ) -> Result<ParsedSearchRequest> {
-        validate_search_input(&request)?;
-        let cursor = ContinuationCursor::parse_optional(request.cursor.as_deref())?;
-        let patterns = SearchPatterns::parse(&request)?;
-        let kind = parse_search_kind(&request, output_shape)?;
-        let prepared = self.prepare_search(&request, &kind)?;
-        let request = SearchInput::from_request(request, kind, patterns, cursor);
+        let (request, prepared) = parse_search_input(
+            &crate::services::request_limits::RequestLimits::from_config(&self.config),
+            self.config.default_read_tokens,
+            request,
+            output_shape,
+        )?;
         let stream_id = search_stream_id(self, &request, &prepared, output_shape);
         Ok(ParsedSearchRequest {
             request,
@@ -48,35 +48,46 @@ impl Services {
             stream_id,
         })
     }
+}
 
-    pub(super) fn prepare_search(
-        &self,
-        request: &SearchRequest,
-        kind: &SearchKind,
-    ) -> Result<PreparedSearch> {
-        let regex = kind
-            .is_regex()
-            .then(|| compile_regex(request))
-            .transpose()?;
-        let literal_regex = if kind.is_regex() {
-            None
-        } else {
-            compile_literal_regex(&request.query, request.case_sensitive)?
-        };
-        let occurrence_literal_regex = kind
-            .is_exhaustive_text()
-            .then(|| compile_occurrence_literal_regex(&request.query, request.case_sensitive))
-            .transpose()?;
-        Ok(PreparedSearch {
-            regex,
-            literal_regex,
-            occurrence_literal_regex,
-            limit: self.result_limit(request.max_results)?,
-            token_limit: self.token_limit(request.max_tokens, self.config.default_read_tokens)?,
-            context_lines: self.context_line_limit(request.context_lines)?,
-        })
-    }
+fn parse_search_input(
+    limits: &crate::services::request_limits::RequestLimits,
+    default_read_tokens: usize,
+    request: SearchRequest,
+    output_shape: SearchOutputShape,
+) -> Result<(SearchInput, PreparedSearch)> {
+    validate_search_input(&request)?;
+    let cursor = ContinuationCursor::parse_optional(request.cursor.as_deref())?;
+    let patterns = SearchPatterns::parse(&request)?;
+    let kind = parse_search_kind(&request, output_shape)?;
+    let regex = kind
+        .is_regex()
+        .then(|| compile_regex(&request))
+        .transpose()?;
+    let literal_regex = if kind.is_regex() {
+        None
+    } else {
+        compile_literal_regex(&request.query, request.case_sensitive)?
+    };
+    let occurrence_literal_regex = kind
+        .is_exhaustive_text()
+        .then(|| compile_occurrence_literal_regex(&request.query, request.case_sensitive))
+        .transpose()?;
+    let prepared = PreparedSearch {
+        regex,
+        literal_regex,
+        occurrence_literal_regex,
+        limit: limits.results(request.max_results)?,
+        token_limit: limits.tokens(request.max_tokens, default_read_tokens)?,
+        context_lines: limits.context_lines(request.context_lines)?,
+    };
+    Ok((
+        SearchInput::from_request(request, kind, patterns, cursor),
+        prepared,
+    ))
+}
 
+impl Services {
     pub(super) fn search_snapshot(
         &self,
         snapshot: SearchSnapshot<'_>,
@@ -839,4 +850,54 @@ pub(super) struct SearchScan {
 pub(super) struct OrderedSearchPage {
     pub hits: Vec<CandidateSearchHit>,
     pub offset: usize,
+}
+
+#[cfg(test)]
+mod static_input_tests {
+    use super::*;
+    #[test]
+    fn static_request_matrix_needs_no_repository() {
+        let limits = crate::services::request_limits::RequestLimits {
+            default_results: 3,
+            max_results: 7,
+            max_output_tokens: 91,
+            context_lines: 4,
+        };
+        let base = SearchRequest {
+            query: "greet".into(),
+            mode: SearchMode::Text,
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            focus_paths: Vec::new(),
+            max_results: None,
+            max_tokens: None,
+            context_lines: None,
+            case_sensitive: false,
+            all_occurrences: false,
+            prefer_structural: false,
+            receipt_id: None,
+            query_receipt: None,
+            cursor: None,
+        };
+        let parse = |request| parse_search_input(&limits, 17, request, SearchOutputShape::Full);
+        let (_, valid) = parse(base.clone()).unwrap();
+        assert_eq!(
+            (valid.limit, valid.token_limit, valid.context_lines),
+            (3, 17, 4)
+        );
+        for mutate in [
+            (|r: &mut SearchRequest| r.query = " ".into()) as fn(&mut SearchRequest),
+            |r| {
+                r.query = "[".into();
+                r.mode = SearchMode::Regex;
+            },
+            |r| r.focus_paths = vec!["[".into()],
+            |r| r.query = "x".repeat(64 * 1024 + 1),
+            |r| r.cursor = Some("invalid".into()),
+        ] {
+            let mut request = base.clone();
+            mutate(&mut request);
+            assert!(parse(request).is_err());
+        }
+    }
 }

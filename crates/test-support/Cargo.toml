@@ -9,4 +9,5 @@ description = "Hermetic support primitives for LeanToken's private test suite"
 workspace = true
 
 [dependencies]
+command-group = "5.0.1"
 tempfile = "3.23.0"

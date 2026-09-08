@@ -769,7 +769,7 @@ async fn exhaustive_occurrence_groups_preserve_probe_e_coordinates_without_repea
 
 #[tokio::test]
 async fn exhaustive_occurrence_search_requires_text_or_regex_mode() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = search_limit_request(Some(20), Some(1_000), Some(0));
     request.mode = SearchMode::Auto;
     request.all_occurrences = true;

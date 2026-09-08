@@ -3,7 +3,7 @@ use std::{
     io::{self, BufRead, BufReader, Read, Write},
     path::Path,
     process::{ChildStdin, ExitStatus, Stdio},
-    sync::mpsc,
+    sync::{Arc, Mutex, mpsc},
 };
 
 use clap::Parser;
@@ -196,7 +196,8 @@ pub(crate) struct McpProcess {
     _process_home: Option<tempfile::TempDir>,
     pub(crate) stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
-    stderr_task: Option<std::thread::JoinHandle<Vec<u8>>>,
+    stderr_task: Option<std::thread::JoinHandle<()>>,
+    stderr: Arc<Mutex<Vec<u8>>>,
 }
 
 impl McpProcess {
@@ -268,11 +269,20 @@ impl McpProcess {
             .expect("spawn MCP process");
         let stdin = child.inner().stdin.take().expect("MCP stdin");
         let stdout = child.inner().stdout.take().expect("MCP stdout");
+        let captured_stderr = Arc::new(Mutex::new(Vec::new()));
+        let stderr_output = Arc::clone(&captured_stderr);
         let stderr_task = child.inner().stderr.take().map(|mut stderr| {
             std::thread::spawn(move || {
-                let mut output = Vec::new();
-                stderr.read_to_end(&mut output).expect("read MCP stderr");
-                output
+                let mut buffer = [0; 4096];
+                loop {
+                    let count = stderr.read(&mut buffer).expect("read MCP stderr");
+                    if count == 0 {
+                        break;
+                    }
+                    let mut output = stderr_output.lock().expect("stderr buffer");
+                    let remaining = (64 * 1024usize).saturating_sub(output.len());
+                    output.extend_from_slice(&buffer[..count.min(remaining)]);
+                }
             })
         });
         let (tx, lines) = mpsc::channel();
@@ -290,6 +300,7 @@ impl McpProcess {
             stdin: Some(stdin),
             lines,
             stderr_task,
+            stderr: captured_stderr,
         }
     }
 
@@ -298,7 +309,25 @@ impl McpProcess {
             .take()
             .expect("captured MCP stderr")
             .join()
-            .expect("join MCP stderr reader")
+            .expect("join MCP stderr reader");
+        std::mem::take(&mut *self.stderr.lock().expect("stderr buffer"))
+    }
+
+    pub(crate) fn wait_for_stderr(&mut self, message: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let output = self.stderr.lock().expect("stderr buffer").clone();
+            if String::from_utf8_lossy(&output).contains(message) {
+                return;
+            }
+            let status = self.child.try_wait().expect("poll MCP process");
+            assert!(
+                status.is_none() && Instant::now() < deadline,
+                "MCP process did not report {message:?} within {timeout:?}; child={status:?}; stderr (first 64 KiB): {}",
+                String::from_utf8_lossy(&output)
+            );
+            std::thread::sleep(POLL_INTERVAL);
+        }
     }
 
     pub(crate) fn initialize(&mut self) -> serde_json::Value {

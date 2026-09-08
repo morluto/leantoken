@@ -107,8 +107,24 @@ fn make_outline_cursor(generation: u64, offset: usize, stream_id: StreamId) -> R
 
 fn parse_outline_input(
     services: &Services,
+    request: OutlineRequest,
+    output: OutlineOutput,
+) -> Result<ParsedOutlineRequest> {
+    parse_outline_request(
+        &super::request_limits::RequestLimits::from_config(&services.config),
+        services.config.default_read_tokens,
+        request,
+        output,
+        StreamIdentityBuilder::for_service(services, CursorKind::Outline),
+    )
+}
+
+fn parse_outline_request(
+    limits: &super::request_limits::RequestLimits,
+    default_read_tokens: usize,
     mut request: OutlineRequest,
     output: OutlineOutput,
+    mut stream: StreamIdentityBuilder,
 ) -> Result<ParsedOutlineRequest> {
     if request.paths.is_empty() {
         return Err(Error::InvalidInput {
@@ -139,10 +155,8 @@ fn parse_outline_input(
         .iter()
         .map(|path| normalize_relative(path))
         .collect::<Result<Vec<_>>>()?;
-    let limit = services.result_limit(request.max_results)?;
-    let token_limit =
-        services.token_limit(request.max_tokens, services.config.default_read_tokens)?;
-    let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::Outline);
+    let limit = limits.results(request.max_results)?;
+    let token_limit = limits.tokens(request.max_tokens, default_read_tokens)?;
     stream.field_strings("paths", &request.paths);
     stream.field_optional_str("symbol_name", request.symbol_name.as_deref());
     stream.field_optional_str("symbol_kind", request.symbol_kind.as_deref());
@@ -683,5 +697,49 @@ impl Services {
             );
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod static_input_tests {
+    use super::*;
+    #[test]
+    fn static_request_matrix_needs_no_repository() {
+        let limits = crate::services::request_limits::RequestLimits {
+            default_results: 3,
+            max_results: 7,
+            max_output_tokens: 91,
+            context_lines: 4,
+        };
+        let base = OutlineRequest {
+            paths: vec!["src/lib.rs".into()],
+            symbol_name: None,
+            symbol_kind: None,
+            max_results: None,
+            max_tokens: None,
+            receipt_id: None,
+            cursor: None,
+        };
+        let parse = |request| {
+            parse_outline_request(
+                &limits,
+                17,
+                request,
+                OutlineOutput::Full,
+                StreamIdentityBuilder::new(CursorKind::Outline),
+            )
+        };
+        let valid = parse(base.clone()).unwrap();
+        assert_eq!((valid.limit, valid.token_limit), (3, 17));
+        for mutate in [
+            (|r: &mut OutlineRequest| r.paths.clear()) as fn(&mut OutlineRequest),
+            |r| r.paths = (0..257).map(|i| format!("src/{i}.rs")).collect(),
+            |r| r.paths = vec!["../outside.rs".into()],
+            |r| r.cursor = Some("invalid".into()),
+        ] {
+            let mut request = base.clone();
+            mutate(&mut request);
+            assert!(parse(request).is_err());
+        }
     }
 }

@@ -393,8 +393,6 @@ impl Storage {
             writer: Arc::new(Mutex::new(conn)),
             readers,
             path,
-            #[cfg(test)]
-            diagnostics: Arc::new(StorageDiagnostics::default()),
         })
     }
 

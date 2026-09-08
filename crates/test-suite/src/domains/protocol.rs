@@ -60,12 +60,12 @@ async fn assert_mcp_limit_contract(
     limit: usize,
     zero_is_valid: bool,
 ) {
-    let default = call_tool(peer, tool, base_arguments.clone())
-        .await
-        .expect("omitted limit should use its default");
-    assert_ne!(default.is_error, Some(true));
-
-    for requested in [0, 1, limit, limit + 1] {
+    // Integer boundary acceptance is owned by pure request-limit tests. The
+    // transport witness owns only each field's public error representation.
+    for requested in [0, limit + 1] {
+        if requested == 0 && zero_is_valid {
+            continue;
+        }
         let mut arguments = base_arguments.clone();
         if let Some(operation) = arguments
             .get_mut("operation")
@@ -100,9 +100,6 @@ async fn assert_mcp_limit_contract(
                     "status": "error",
                 }))
             );
-        } else {
-            let response = result.expect("in-range limit should succeed");
-            assert_ne!(response.is_error, Some(true));
         }
     }
 }
@@ -197,18 +194,9 @@ async fn modern_rmcp_contract_uses_native_result_and_cache_fields() {
 #[tokio::test]
 async fn mcp_transport_enforces_request_limit_boundaries() {
     let root = tempfile::tempdir().expect("temporary repository");
-    std::fs::write(
-        root.path().join("lib.rs"),
-        "pub fn answer() -> u8 { 42 }\npub fn caller() -> u8 { answer() }\n",
-    )
-    .expect("write fixture");
     let config =
         Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
     let services = Arc::new(Services::open(config).expect("services"));
-    services
-        .index(leantoken::IndexingMode::Reconcile)
-        .await
-        .expect("index fixture");
 
     let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
     let server_start = tokio::spawn(async move {
