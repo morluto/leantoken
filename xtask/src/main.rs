@@ -1,4 +1,5 @@
 mod ci;
+mod coverage;
 
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -69,6 +70,7 @@ fn run() -> Result<(), XtaskError> {
     match args.next().as_deref() {
         Some("check-test-architecture") => check_architecture(&root),
         Some("ci") => ci::run(&root, args.collect()).map_err(XtaskError::Architecture),
+        Some("coverage") => coverage::run(&root, args.collect()).map_err(XtaskError::Architecture),
         Some("test") => run_test_command(&root, args.collect()),
         Some("test-focused") => focused_test_command(&root, args.collect()),
         Some(command) => Err(XtaskError::Usage(format!("unknown command `{command}`"))),
@@ -669,6 +671,12 @@ struct Package {
 #[derive(Debug, Deserialize)]
 struct Dependency {
     name: String,
+    kind: Option<String>,
+}
+
+fn forbidden_product_dependency(dependency: &Dependency) -> bool {
+    [SUPPORT, SUITE, XTASK].contains(&dependency.name.as_str())
+        && !(dependency.name == SUPPORT && dependency.kind.as_deref() == Some("dev"))
 }
 #[derive(Debug, Deserialize)]
 struct Target {
@@ -762,13 +770,13 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         }
         match package.name.as_str() {
             PRODUCT
-                if names
-                    .intersection(&BTreeSet::from([SUPPORT, SUITE, XTASK]))
-                    .next()
-                    .is_some() =>
+                if package
+                    .dependencies
+                    .iter()
+                    .any(forbidden_product_dependency) =>
             {
                 return Err(XtaskError::Architecture(
-                    "product depends on private test packages".to_owned(),
+                    "product may use only test-support as a dev-dependency; private runtime/build dependencies are forbidden".to_owned(),
                 ));
             }
             SUPPORT
@@ -823,6 +831,7 @@ fn check_architecture(root: &Path) -> Result<(), XtaskError> {
         })
         .ok_or_else(|| XtaskError::Architecture("root integration target is missing".to_owned()))?;
     check_nextest_policy(root)?;
+    coverage::check_policy(root).map_err(XtaskError::Architecture)?;
     check_test_inventory(root, &metadata, integration_target)?;
     check_ignored_test_policy(root)?;
     check_organizational_includes(root)?;
@@ -929,10 +938,7 @@ fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
             )
         })?;
     let expected_overrides: [(&str, &[&str]); 6] = [
-        (
-            "extended",
-            &["package(leantoken-benchmarks)", "concurrency_profile"],
-        ),
+        ("extended", &["package(leantoken-benchmarks)"]),
         ("process-mcp", &["process::", "mcp::", "domains::protocol"]),
         (
             "filesystem-watcher",
@@ -1336,15 +1342,13 @@ fn check_ignored_test_policy(root: &Path) -> Result<(), XtaskError> {
     }
     let mut ignored = parse_compiled_test_list(&String::from_utf8_lossy(&output.stdout));
     ignored.sort();
-    let allowed = vec!["services::concurrency_profile::release_concurrency_matrix".to_owned()];
+    let allowed: Vec<String> = Vec::new();
     if ignored != allowed {
         return Err(XtaskError::Architecture(format!(
             "compiled ignored-test inventory drifted: expected {allowed:?}, found {ignored:?}"
         )));
     }
-    println!(
-        "ignored-test policy: ok (compiled inventory contains only the manual release profiler)"
-    );
+    println!("ignored-test policy: ok (no permanently ignored test harnesses)");
     Ok(())
 }
 
@@ -1410,6 +1414,28 @@ impl std::error::Error for XtaskError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn product_allows_setup_support_only_as_a_dev_dependency() {
+        for (name, kind, forbidden) in [
+            (super::SUPPORT, None, true),
+            (super::SUPPORT, Some("build"), true),
+            (super::SUPPORT, Some("dev"), false),
+            (super::SUITE, None, true),
+            (super::SUITE, Some("build"), true),
+            (super::SUITE, Some("dev"), true),
+            (super::XTASK, None, true),
+            (super::XTASK, Some("build"), true),
+            (super::XTASK, Some("dev"), true),
+            ("serde", None, false),
+        ] {
+            let dependency = super::Dependency {
+                name: name.into(),
+                kind: kind.map(str::to_owned),
+            };
+            assert_eq!(super::forbidden_product_dependency(&dependency), forbidden);
+        }
+    }
+
     use super::{
         BENCHMARKS, CI_NEXTEST_PROFILE, LOCAL_NEXTEST_PROFILE, MAX_NEXTEST_JUNIT_BYTES,
         STRESS_NEXTEST_PROFILE, TIMING_NEXTEST_PROFILE, TestPlan, XtaskError,

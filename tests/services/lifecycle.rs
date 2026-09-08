@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn oversized_query_is_rejected_without_stopping_services() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let oversized = "x".repeat(64 * 1024 + 1);
     let error = services
         .search(SearchRequest {
@@ -31,7 +31,7 @@ async fn oversized_query_is_rejected_without_stopping_services() {
 
 #[tokio::test]
 async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_services() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let cancellation = CancellationToken::new();
     cancellation.cancel();
 
@@ -93,7 +93,7 @@ async fn cancelled_blocking_queries_stop_cooperatively_without_poisoning_service
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_queries_observe_one_committed_generation_during_reconciliation() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let services = std::sync::Arc::new(services);
     let before = services
         .status()

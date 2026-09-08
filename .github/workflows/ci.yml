@@ -187,11 +187,11 @@ jobs:
         with:
           toolchain: "1.95"
 
-      - name: Install stable coverage Rust
+      - name: Install product coverage Rust
         if: matrix.command == 'coverage'
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: "1.95"
           components: llvm-tools
 
       - name: Install stable audit Rust
@@ -214,7 +214,7 @@ jobs:
           cache-workspace-crates: true
 
       - name: Install nextest
-        if: matrix.command == 'rust-quality' || matrix.command == 'product' || matrix.command == 'stress' || matrix.command == 'profile'
+        if: matrix.command == 'rust-quality' || matrix.command == 'product' || matrix.command == 'stress' || matrix.command == 'profile' || matrix.command == 'coverage'
         uses: taiki-e/install-action@nextest
 
       - name: Install Gitleaks
@@ -250,7 +250,9 @@ jobs:
 
       - name: Install cargo-llvm-cov
         if: matrix.command == 'coverage'
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
 
       - name: Run repository static validation
         if: matrix.command == 'quality'
@@ -338,35 +340,25 @@ jobs:
           dist plan
           mkdir -p target && touch target/ci-command-completed
 
-      - name: Remove stale LLVM profiles
+      - name: Measure authoritative product coverage and enforce owner budgets
         if: matrix.command == 'coverage'
-        run: cargo llvm-cov clean --profraw-only
-
-      - name: Run instrumented tests
-        if: matrix.command == 'coverage'
-        run: >
-          cargo llvm-cov --locked --all-features --workspace --no-report
-          -- --test-threads=2
-
-      - name: Enforce line coverage and write LCOV
-        if: matrix.command == 'coverage' && (success() || failure())
-        env:
-          COVERAGE_IGNORE_REGEX: >-
-            concurrency_profile\.rs$|/src/(cache|cli|doctor|indexer|mcp|parser|ranking|repository|setup|storage|watcher)\.rs$|/src/main/dispatch\.rs$|/src/services/(context|coverage|indexing|json|read|savings|search|startup|status)\.rs$
         run: |
-          cargo llvm-cov report --lcov --output-path lcov.info --ignore-filename-regex "$COVERAGE_IGNORE_REGEX" --fail-under-lines 50
-          cargo llvm-cov report --ignore-filename-regex "$COVERAGE_IGNORE_REGEX"
+          cargo xtask coverage
           mkdir -p target && touch target/ci-command-completed
 
       - name: Upload coverage artifact
         if: matrix.command == 'coverage' && always()
         uses: actions/upload-artifact@v7
         with:
-          name: coverage-lcov-${{ matrix.receipt_identity }}
-          path: lcov.info
+          name: coverage-owners-${{ matrix.receipt_identity }}
+          path: |
+            target/coverage/
+            target/llvm-cov-target/nextest/
+            target/llvm-cov-target/**/*.profraw
+            target/llvm-cov-target/**/*.profdata
           if-no-files-found: ignore
           overwrite: true
-          retention-days: 7
+          retention-days: 30
 
       - name: Run repeated process lifecycle evidence
         if: matrix.command == 'stress'

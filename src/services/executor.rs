@@ -1,7 +1,5 @@
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(test)]
-use std::{collections::HashSet, sync::Mutex, time::Instant};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
@@ -31,85 +29,6 @@ struct BlockingExecutorInner {
     queue_timeout: Duration,
     active_capacity: usize,
     execution_capacity: usize,
-    #[cfg(test)]
-    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Default)]
-pub(super) struct BlockingExecutorDiagnostics {
-    pub submitted: u64,
-    pub accepted: u64,
-    pub rejected: u64,
-    pub queue_timed_out: u64,
-    pub cancelled_before_start: u64,
-    pub started: u64,
-    pub finished: u64,
-    pub active: usize,
-    pub peak_active: usize,
-    pub running: usize,
-    pub peak_running: usize,
-    pub queue_wait_micros: Vec<u64>,
-    pub blocking_threads: HashSet<String>,
-}
-
-struct ActivePermit {
-    _permit: OwnedSemaphorePermit,
-    #[cfg(test)]
-    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
-}
-
-impl ActivePermit {
-    fn new(
-        permit: OwnedSemaphorePermit,
-        #[cfg(test)] diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
-    ) -> Self {
-        Self {
-            _permit: permit,
-            #[cfg(test)]
-            diagnostics,
-        }
-    }
-}
-
-#[cfg(test)]
-impl Drop for ActivePermit {
-    fn drop(&mut self) {
-        let mut diagnostics = self.diagnostics.lock().expect("executor diagnostics");
-        diagnostics.active = diagnostics.active.saturating_sub(1);
-    }
-}
-
-#[cfg(test)]
-struct StartedWork {
-    diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>,
-}
-
-#[cfg(test)]
-impl StartedWork {
-    fn new(diagnostics: Arc<Mutex<BlockingExecutorDiagnostics>>) -> Self {
-        {
-            let mut diagnostics_guard = diagnostics.lock().expect("executor diagnostics");
-            diagnostics_guard.started = diagnostics_guard.started.saturating_add(1);
-            diagnostics_guard.running = diagnostics_guard.running.saturating_add(1);
-            diagnostics_guard.peak_running = diagnostics_guard
-                .peak_running
-                .max(diagnostics_guard.running);
-            diagnostics_guard
-                .blocking_threads
-                .insert(format!("{:?}", std::thread::current().id()));
-        }
-        Self { diagnostics }
-    }
-}
-
-#[cfg(test)]
-impl Drop for StartedWork {
-    fn drop(&mut self) {
-        let mut diagnostics = self.diagnostics.lock().expect("executor diagnostics");
-        diagnostics.finished = diagnostics.finished.saturating_add(1);
-        diagnostics.running = diagnostics.running.saturating_sub(1);
-    }
 }
 
 impl Default for BlockingExecutor {
@@ -137,8 +56,6 @@ impl BlockingExecutor {
                 queue_timeout,
                 active_capacity,
                 execution_capacity,
-                #[cfg(test)]
-                diagnostics: Arc::new(Mutex::new(BlockingExecutorDiagnostics::default())),
             }),
         }
     }
@@ -157,107 +74,22 @@ impl BlockingExecutor {
         T: Send + 'static,
         F: FnOnce(&CancellationToken) -> Result<T> + Send + 'static,
     {
-        #[cfg(test)]
-        {
-            let mut diagnostics = self.inner.diagnostics.lock().expect("executor diagnostics");
-            diagnostics.submitted = diagnostics.submitted.saturating_add(1);
-        }
         if cancellation.is_cancelled() {
-            #[cfg(test)]
-            {
-                let mut diagnostics = self.inner.diagnostics.lock().expect("executor diagnostics");
-                diagnostics.cancelled_before_start =
-                    diagnostics.cancelled_before_start.saturating_add(1);
-            }
             return Err(Error::Cancelled);
         }
-
-        let active = match Arc::clone(&self.inner.active).try_acquire_owned() {
-            Ok(permit) => {
-                #[cfg(test)]
-                {
-                    let mut diagnostics =
-                        self.inner.diagnostics.lock().expect("executor diagnostics");
-                    diagnostics.accepted = diagnostics.accepted.saturating_add(1);
-                    diagnostics.active = diagnostics.active.saturating_add(1);
-                    diagnostics.peak_active = diagnostics.peak_active.max(diagnostics.active);
-                }
-                ActivePermit::new(
-                    permit,
-                    #[cfg(test)]
-                    Arc::clone(&self.inner.diagnostics),
-                )
-            }
-            Err(_) => {
-                #[cfg(test)]
-                {
-                    let mut diagnostics =
-                        self.inner.diagnostics.lock().expect("executor diagnostics");
-                    diagnostics.rejected = diagnostics.rejected.saturating_add(1);
-                }
-                return Err(Error::RetrievalOverloaded);
-            }
-        };
-        #[cfg(test)]
-        let queue_started = Instant::now();
-        let execution = match self.wait_for_execution(cancellation.clone()).await {
-            Ok(permit) => {
-                #[cfg(test)]
-                {
-                    let wait = queue_started
-                        .elapsed()
-                        .as_micros()
-                        .min(u128::from(u64::MAX)) as u64;
-                    self.inner
-                        .diagnostics
-                        .lock()
-                        .expect("executor diagnostics")
-                        .queue_wait_micros
-                        .push(wait);
-                }
-                permit
-            }
-            Err(error) => {
-                #[cfg(test)]
-                {
-                    let mut diagnostics =
-                        self.inner.diagnostics.lock().expect("executor diagnostics");
-                    match &error {
-                        Error::RetrievalQueueTimeout => {
-                            diagnostics.queue_timed_out =
-                                diagnostics.queue_timed_out.saturating_add(1);
-                        }
-                        Error::Cancelled => {
-                            diagnostics.cancelled_before_start =
-                                diagnostics.cancelled_before_start.saturating_add(1);
-                        }
-                        _ => {}
-                    }
-                }
-                return Err(error);
-            }
-        };
-
+        let active = Arc::clone(&self.inner.active)
+            .try_acquire_owned()
+            .map_err(|_| Error::RetrievalOverloaded)?;
+        let execution = self.wait_for_execution(cancellation.clone()).await?;
         if cancellation.is_cancelled() {
-            #[cfg(test)]
-            {
-                let mut diagnostics = self.inner.diagnostics.lock().expect("executor diagnostics");
-                diagnostics.cancelled_before_start =
-                    diagnostics.cancelled_before_start.saturating_add(1);
-            }
             return Err(Error::Cancelled);
         }
-
-        #[cfg(test)]
-        let diagnostics = Arc::clone(&self.inner.diagnostics);
         tokio::task::spawn_blocking(move || {
             // These permits deliberately belong to the blocking closure. Dropping
             // or aborting the async caller must not make still-running work
             // invisible to either bound.
             let _active = active;
             let _execution = execution;
-            #[cfg(test)]
-            let _started = StartedWork::new(diagnostics);
             if cancellation.is_cancelled() {
                 return Err(Error::Cancelled);
             }
@@ -286,27 +118,13 @@ impl BlockingExecutor {
     fn active_available_permits(&self) -> usize {
         self.inner.active.available_permits()
     }
-
-    #[cfg(test)]
-    pub(super) fn reset_diagnostics(&self) {
-        *self.inner.diagnostics.lock().expect("executor diagnostics") =
-            BlockingExecutorDiagnostics::default();
-    }
-
-    #[cfg(test)]
-    pub(super) fn diagnostics(&self) -> BlockingExecutorDiagnostics {
-        self.inner
-            .diagnostics
-            .lock()
-            .expect("executor diagnostics")
-            .clone()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Instant;
 
     use super::*;
 

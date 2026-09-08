@@ -3,7 +3,7 @@ use leantoken::TaskSavingsObservationStatus;
 
 #[tokio::test]
 async fn token_savings_tracks_successful_source_retrievals_by_operation() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let initial = services.token_savings().await.expect("initial savings");
     assert_eq!(initial.tracked_requests, 0);
     assert_eq!(initial.estimated_source_tokens_saved, 0);
@@ -245,7 +245,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
             .total_response_tokens,
         0
     );
-    let (_other_root, other_services) = fixture().await;
+    let (_other_root, other_services) = indexed_fixture().await;
     assert!(matches!(
         other_services
             .observed_token_savings_snapshot(Some(delta.snapshot.clone()))
@@ -339,7 +339,7 @@ async fn token_savings_tracks_successful_source_retrievals_by_operation() {
 
 #[tokio::test]
 async fn receipt_rebase_records_success_and_failure_accounting() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let source = services
         .read(ReadRequest {
             path: "src/lib.rs".into(),
@@ -412,7 +412,7 @@ async fn receipt_rebase_records_success_and_failure_accounting() {
 
 #[tokio::test]
 async fn savings_excludes_incomplete_and_zero_symbol_latex_outlines_from_source_compression() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     std::fs::write(
         root.path().join("empty.tex"),
         "Plain prose without structural LaTeX commands.\n",

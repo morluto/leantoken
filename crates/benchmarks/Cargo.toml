@@ -6,6 +6,11 @@ build = "build.rs"
 publish = false
 
 [[bin]]
+name = "concurrency_profile"
+path = "../../examples/concurrency_profile.rs"
+test = false
+
+[[bin]]
 name = "artifact_blake3"
 path = "../../examples/artifact_blake3.rs"
 
@@ -185,7 +190,11 @@ path = "../../tests/benchmark_contract.rs"
 name = "typescript_parse_diagnostic"
 path = "../../examples/typescript_parse_diagnostic.rs"
 
+[build-dependencies]
+blake3 = "1.8.2"
+
 [dependencies]
+ignore = "0.4.25"
 blake3 = "1.8.2"
 clap = { version = "4.5.51", features = ["derive"] }
 leantoken = { path = "../.." }
@@ -197,7 +206,7 @@ serde_json = "1.0.145"
 shell-words = "1.1.1"
 statrs = "0.18.0"
 tempfile = "3.23.0"
-tokio = { version = "1.49.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync", "time", "test-util"] }
+tokio = { version = "1.49.0", features = ["fs", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7.17", features = ["rt"] }
 tree-sitter = "0.26.11"
 tree-sitter-python = "0.25.0"

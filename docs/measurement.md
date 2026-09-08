@@ -5,29 +5,57 @@ No single fixture is allowed to stand in for all three.
 
 ## Retrieval concurrency matrix
 
-The opt-in unit profile exercises the actual Services blocking executor and
-SQLite snapshots in release mode. It generates a 64-file fixture and requires a
-large checkout at an explicitly pinned revision:
+The opt-in `concurrency_profile` binary links the ordinary optimized library
+with `cfg(test) = false`. It generates a 64-file fixture and requires a large
+checkout at an explicitly pinned revision:
 
 ```bash
 LEANTOKEN_CONCURRENCY_PROFILE_LARGE_REPOSITORY=/path/to/large/repository \
 LEANTOKEN_CONCURRENCY_PROFILE_LARGE_REVISION="$(git -C /path/to/large/repository rev-parse HEAD)" \
 LEANTOKEN_CONCURRENCY_PROFILE_OUTPUT=target/concurrency-profile.json \
-cargo test --release --lib release_concurrency_matrix -- \
-  --ignored --nocapture --test-threads=1
+cargo run --release --locked --package leantoken-benchmarks --bin concurrency_profile
 ```
 
 The matrix runs mixed retrieval/status/savings traffic, cancellation storms,
 and retrieval concurrent with targeted indexing at concurrency 1, 2, 4, 8, 16,
-and 32. After those scenarios, it stages 16 simultaneous
-`reconcile_working_tree` requests behind the operation lock and records
-reconciliation requests, waves created and started, completed and failed waves,
-coalesced callers, active-wave high water, and pending-waiter high water. The
-remaining report records complete-request and executor-queue p50/p95, result
-counts, submitted and started blocking closures, SQLite reader checkout and
-active snapshot counts, CPU, sampled RSS, blocking threads, WAL size, passive
-checkpoint results, response parity, order, generation, and token-accounting
-differences.
+and 32. Each scenario runs sampling off/on/on/off on the same process and
+revision. Both arms retain at most 64 complete-request durations and outcomes;
+the sampled arm polls process RSS and WAL every 5ms and retains only maxima.
+The report records request p50/p95, outcome categories, CPU, RSS, WAL,
+checkpoint results, response parity, order, generation and token accounting.
+Unsupported process measurements are null. No executor or reader sample vector,
+diagnostic mutex or test-only lifecycle guard participates in this binary.
+
+The initial observer screen permits at most 10% additional p95 latency and
+requires identical outcome categories and zero parity/accounting errors across
+all four arms. Failing the screen invalidates performance eligibility. Passing
+it is necessary evidence, not statistical proof: repeat on a dedicated host
+before changing product defaults. Request timer overhead is shared by both
+arms and is not estimated by this comparison. The report makes no automatic
+architecture decision. Executor and reconciliation capacity checks and snapshot
+cleanup remain owned by deterministic concurrency tests.
+
+Accounting is checked against each original typed serialized response after
+timing and CPU collection, including the category sum and tokenizer identity.
+Positive conservative ceilings are reported separately and make the screen
+inconclusive; they cannot silently validate over-reporting. Semantic comparison
+removes receipt IDs, instantaneous freshness and their variable accounting
+fields, while retaining source accounting, generation and result order.
+At most eight mismatch examples per arm identify affected fields or counts.
+Both arms include the harness's response serialization; that shared observer
+cost is not estimated by the optional RSS/WAL sampling comparison.
+
+Reports include compiler/LLVM, target/profile, compile and checkout revisions,
+source dirty state, lockfile and harness digests, corpus revisions, read paths,
+queries and observation configuration. Build-time source fingerprints include
+product sources and both manifests; a stale binary fails the runtime comparison.
+The normal profiler and product Tokio feature sets match, without `test-util`.
+Source identity traversal is bounded to 10,000 entries and 128 MiB.
+The corpus HEAD is read again after all arms; a revision change makes the
+report ineligible even when the checkout ends clean.
+Use a clean, pinned corpus and source checkout for comparative evidence; dirty
+development runs are mechanical checks. Scratch repositories and databases
+live beneath `target/concurrency-work` and are removed when their owner drops.
 
 Run results are host-local. Keep the full JSON under ignored `target/` and
 publish a concise methodology and decision report when it informs a default.
@@ -35,6 +63,17 @@ An unchanged targeted reconciliation can legitimately change response
 `freshness` from `current` to `reconciling`; compare content order and
 generation separately and treat the corresponding serialized token-accounting
 difference as protocol state, not retrieval drift.
+
+The local Linux mechanical check on 2026-09-08 used the pending changes over
+`464bda6fd8f5`, Rust 1.95.0 / LLVM 22.1.2, and an ordinary release binary with
+`cfg(test) = false`. It ran 72 arms each against the 64-file generated fixture
+and a 619-file checkout corpus. Both reported zero request/indexing errors,
+timeouts, semantic/order/generation mismatches, accounting mismatches or
+inconclusive accounting ceilings. The report is retained locally at
+`target/concurrency-profile-validated.json`. Some cells exceeded the 10%
+observer-overhead screen, and the source/corpus checkout was dirty, so global
+performance eligibility is false. This validates harness mechanics and rejection
+behavior; it does not establish production latency or justify a default change.
 
 ## Stdio MCP multi-process CPU matrix
 

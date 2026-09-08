@@ -80,35 +80,19 @@ impl Services {
         let coordination = IndexCoordination::for_database(&config.database_path);
         let cache_lease = coordination.acquire_cache_lease(cancellation)?;
         let _initialization = coordination.acquire_initialization(cancellation)?;
-        let mut delay = STARTUP_RETRY_INITIAL_DELAY;
-        let mut attempt = 0u32;
-
-        loop {
-            validation::check_cancelled(cancellation)?;
-            match Self::open_once(
-                &config,
-                Some(STARTUP_BUSY_TIMEOUT),
-                cache_lease.clone(),
-                runtime.clone(),
-            ) {
-                Ok(services) => return Ok(services),
-                Err(error) if is_database_contention(&error) => {
-                    attempt = attempt.saturating_add(1);
-                    if attempt == 1 || attempt.is_multiple_of(20) {
-                        tracing::warn!(
-                            attempt,
-                            retry_delay_ms = delay.as_millis(),
-                            database = %config.database_path.display(),
-                            %error,
-                            "cache initialization is waiting for SQLite contention"
-                        );
-                    }
-                    wait_cancellable(cancellation, delay)?;
-                    delay = delay.saturating_mul(2).min(STARTUP_RETRY_MAX_DELAY);
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        retry_database_contention(
+            cancellation,
+            &config.database_path,
+            || {
+                Self::open_once(
+                    &config,
+                    Some(STARTUP_BUSY_TIMEOUT),
+                    cache_lease.clone(),
+                    runtime.clone(),
+                )
+            },
+            |delay| wait_cancellable(cancellation, delay),
+        )
     }
 
     fn open_once(
@@ -363,6 +347,32 @@ fn remove_database_artifacts(database: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+fn retry_database_contention<T>(
+    cancellation: &CancellationToken,
+    database: &std::path::Path,
+    mut open: impl FnMut() -> Result<T>,
+    mut wait: impl FnMut(Duration) -> Result<()>,
+) -> Result<T> {
+    let mut delay = STARTUP_RETRY_INITIAL_DELAY;
+    let mut attempt = 0u32;
+    loop {
+        validation::check_cancelled(cancellation)?;
+        match open() {
+            Ok(value) => return Ok(value),
+            Err(error) if is_database_contention(&error) => {
+                attempt = attempt.saturating_add(1);
+                if attempt == 1 || attempt.is_multiple_of(20) {
+                    tracing::warn!(attempt, retry_delay_ms = delay.as_millis(), database = %database.display(), %error,
+                        "cache initialization is waiting for SQLite contention");
+                }
+                wait(delay)?;
+                delay = delay.saturating_mul(2).min(STARTUP_RETRY_MAX_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Result<()> {
     let deadline = Instant::now() + duration;
     loop {
@@ -378,6 +388,75 @@ fn wait_cancellable(cancellation: &CancellationToken, duration: Duration) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn busy() -> Error {
+        Error::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            None,
+        ))
+    }
+
+    #[test]
+    fn startup_retries_contention_with_capped_delays_until_recovery() {
+        let mut attempts = 0;
+        let mut delays = Vec::new();
+        let value = retry_database_contention(
+            &CancellationToken::new(),
+            std::path::Path::new("fixture.sqlite"),
+            || {
+                attempts += 1;
+                if attempts <= 8 { Err(busy()) } else { Ok(42) }
+            },
+            |delay| {
+                delays.push(delay.as_millis());
+                Ok(())
+            },
+        )
+        .expect("contention cleared");
+        assert_eq!(value, 42);
+        assert_eq!(attempts, 9);
+        assert_eq!(delays, [25, 50, 100, 200, 400, 500, 500, 500]);
+    }
+
+    #[test]
+    fn startup_terminal_failure_never_schedules_another_attempt() {
+        let mut attempts = 0;
+        let result: Result<()> = retry_database_contention(
+            &CancellationToken::new(),
+            std::path::Path::new("fixture.sqlite"),
+            || {
+                attempts += 1;
+                Err(Error::InvalidConfiguration("terminal".into()))
+            },
+            |_| panic!("terminal failure must not wait or retry"),
+        );
+        assert!(matches!(result, Err(Error::InvalidConfiguration(_))));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn cancellation_during_retry_wait_prevents_another_open() {
+        let cancellation = CancellationToken::new();
+        let mut attempts = 0;
+        let result: Result<()> = retry_database_contention(
+            &cancellation,
+            std::path::Path::new("fixture.sqlite"),
+            || {
+                attempts += 1;
+                Err(busy())
+            },
+            |_| {
+                cancellation.cancel();
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert_eq!(attempts, 1);
+        assert!(matches!(
+            wait_cancellable(&cancellation, STARTUP_RETRY_MAX_DELAY),
+            Err(Error::Cancelled)
+        ));
+    }
 
     #[test]
     fn managed_permission_failure_selects_self_ignored_repository_cache() {

@@ -304,24 +304,6 @@ pub struct Storage {
     pub(crate) writer: Arc<Mutex<Connection>>,
     pub(crate) readers: r2d2::Pool<SqliteConnectionManager>,
     pub(crate) path: PathBuf,
-    #[cfg(test)]
-    pub(crate) diagnostics: Arc<StorageDiagnostics>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Default)]
-pub(crate) struct StorageDiagnostics {
-    pub(crate) active_snapshots: AtomicUsize,
-    pub(crate) peak_active_snapshots: AtomicUsize,
-    pub(crate) reader_checkout_wait_micros: Mutex<Vec<u64>>,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct StorageDiagnosticsSnapshot {
-    pub active_snapshots: usize,
-    pub peak_active_snapshots: usize,
-    pub reader_checkout_wait_micros: Vec<u64>,
 }
 
 /// Restricted writer for one uncommitted repository generation.

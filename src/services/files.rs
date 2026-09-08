@@ -136,6 +136,20 @@ impl FilesOutput {
 
 impl FilesInput {
     fn parse(services: &Services, request: FilesRequest, output: FilesOutput) -> Result<Self> {
+        Self::parse_request(
+            &super::request_limits::RequestLimits::from_config(&services.config),
+            request,
+            output,
+            StreamIdentityBuilder::for_service(services, CursorKind::Files),
+        )
+    }
+
+    fn parse_request(
+        limits: &super::request_limits::RequestLimits,
+        request: FilesRequest,
+        output: FilesOutput,
+        mut stream: StreamIdentityBuilder,
+    ) -> Result<Self> {
         let FilesRequest {
             operation,
             path,
@@ -178,8 +192,7 @@ impl FilesInput {
                 }
             }
         };
-        let limit = services.result_limit(max_results)?;
-        let mut stream = StreamIdentityBuilder::for_service(services, CursorKind::Files);
+        let limit = limits.results(max_results)?;
         match &query {
             FilesQuery::Tree { root, depth } => {
                 stream.field_str("operation", "tree");
@@ -964,6 +977,48 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn static_request_matrix_needs_no_repository() {
+        let limits = crate::services::request_limits::RequestLimits {
+            default_results: 3,
+            max_results: 7,
+            max_output_tokens: 91,
+            context_lines: 4,
+        };
+        let base = FilesRequest {
+            operation: FileOperation::Tree,
+            path: None,
+            query: None,
+            pattern: None,
+            max_results: None,
+            cursor: None,
+            depth: Some(0),
+        };
+        let parse = |request| {
+            FilesInput::parse_request(
+                &limits,
+                request,
+                FilesOutput::Entries,
+                StreamIdentityBuilder::new(CursorKind::Files),
+            )
+        };
+        assert_eq!(parse(base.clone()).unwrap().limit, 3);
+        for mutate in [
+            (|r: &mut FilesRequest| r.operation = FileOperation::Find) as fn(&mut FilesRequest),
+            |r| r.path = Some("../outside.rs".into()),
+            |r| {
+                r.operation = FileOperation::Glob;
+                r.pattern = Some("[".into());
+            },
+            |r| r.cursor = Some("invalid".into()),
+            |r| r.query = Some("x".repeat(MAX_QUERY_BYTES + 1)),
+        ] {
+            let mut request = base.clone();
+            mutate(&mut request);
+            assert!(parse(request).is_err());
+        }
+    }
     use super::*;
 
     #[test]

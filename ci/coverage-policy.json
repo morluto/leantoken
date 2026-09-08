@@ -1,0 +1,1355 @@
+{
+  "schema_version": 1,
+  "rationale": "Linux Rust 1.95 cargo-llvm-cov 0.9.1 product nextest baseline: 1234 passed, 2026-09-08; no profile warnings. Each metric ratchets at floor(observed percent) minus five percentage points; non-exception line floors remain above 30%. No production exclusions. New measured files require budgets; low line coverage requires an explicit gap. Baseline updates require review, never automatic acceptance.",
+  "files": {
+    "src/cache/api.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 78
+    },
+    "src/cache/artifacts.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 87
+    },
+    "src/cache/cursor.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 82,
+      "minimum_functions": 80,
+      "minimum_regions": 85
+    },
+    "src/cache/inspection.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/cache/list.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 90,
+      "minimum_functions": 89,
+      "minimum_regions": 91
+    },
+    "src/cache/models.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 83,
+      "minimum_functions": 83,
+      "minimum_regions": 75
+    },
+    "src/cache/output.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 79,
+      "minimum_functions": 48,
+      "minimum_regions": 73
+    },
+    "src/cache/prune.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 52,
+      "minimum_functions": 66,
+      "minimum_regions": 51
+    },
+    "src/cache/prune_policy.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 74,
+      "minimum_functions": 47,
+      "minimum_regions": 74
+    },
+    "src/cli/cache.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 76,
+      "minimum_functions": 95,
+      "minimum_regions": 78
+    },
+    "src/cli/context.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 85,
+      "minimum_functions": 95,
+      "minimum_regions": 86
+    },
+    "src/cli/episode.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 50,
+      "minimum_functions": 95,
+      "minimum_regions": 50
+    },
+    "src/cli/files.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/cli/history.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 76,
+      "minimum_functions": 95,
+      "minimum_regions": 78
+    },
+    "src/cli/integration.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 89,
+      "minimum_functions": 95,
+      "minimum_regions": 85
+    },
+    "src/cli/json.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 78,
+      "minimum_functions": 70,
+      "minimum_regions": 77
+    },
+    "src/cli/mod.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 92,
+      "minimum_functions": 85,
+      "minimum_regions": 92
+    },
+    "src/cli/outline.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/cli/read.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 72,
+      "minimum_functions": 37,
+      "minimum_regions": 73
+    },
+    "src/cli/retrieval.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 85,
+      "minimum_functions": 95,
+      "minimum_regions": 85
+    },
+    "src/cli/runtime.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 89,
+      "minimum_functions": 61,
+      "minimum_regions": 79
+    },
+    "src/cli/search.rs": {
+      "owner": "src/cli",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/concurrency.rs": {
+      "owner": "src/concurrency",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/config.rs": {
+      "owner": "src/config",
+      "minimum_lines": 82,
+      "minimum_functions": 76,
+      "minimum_regions": 87
+    },
+    "src/coordination.rs": {
+      "owner": "src/coordination",
+      "minimum_lines": 91,
+      "minimum_functions": 95,
+      "minimum_regions": 90
+    },
+    "src/doctor.rs": {
+      "owner": "src/doctor",
+      "minimum_lines": 80,
+      "minimum_functions": 73,
+      "minimum_regions": 81
+    },
+    "src/episode.rs": {
+      "owner": "src/episode",
+      "minimum_lines": 84,
+      "minimum_functions": 66,
+      "minimum_regions": 81
+    },
+    "src/error.rs": {
+      "owner": "src/error",
+      "minimum_lines": 58,
+      "minimum_functions": 79,
+      "minimum_regions": 56
+    },
+    "src/index_derivation.rs": {
+      "owner": "src/index_derivation",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 91
+    },
+    "src/indexer/import_resolution.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 85,
+      "minimum_functions": 86,
+      "minimum_regions": 85
+    },
+    "src/indexer/imports.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/indexer/incremental.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 85,
+      "minimum_functions": 89,
+      "minimum_regions": 83
+    },
+    "src/indexer/mod.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/indexer/orchestrator.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 86,
+      "minimum_functions": 86,
+      "minimum_regions": 85
+    },
+    "src/indexer/plan.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/indexer/preparation.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 90,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/indexer/prepare.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 87,
+      "minimum_functions": 86,
+      "minimum_regions": 90
+    },
+    "src/indexer/progress.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 93,
+      "minimum_functions": 81,
+      "minimum_regions": 92
+    },
+    "src/indexer/publish.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/indexer/types.rs": {
+      "owner": "src/indexer",
+      "minimum_lines": 81,
+      "minimum_functions": 72,
+      "minimum_regions": 80
+    },
+    "src/invocation.rs": {
+      "owner": "src/invocation",
+      "minimum_lines": 89,
+      "minimum_functions": 88,
+      "minimum_regions": 89
+    },
+    "src/main.rs": {
+      "owner": "src/main",
+      "minimum_lines": 90,
+      "minimum_functions": 85,
+      "minimum_regions": 89
+    },
+    "src/main/dispatch.rs": {
+      "owner": "src/main",
+      "minimum_lines": 58,
+      "minimum_functions": 95,
+      "minimum_regions": 58
+    },
+    "src/main/index_runtime.rs": {
+      "owner": "src/main",
+      "minimum_lines": 50,
+      "minimum_functions": 61,
+      "minimum_regions": 42
+    },
+    "src/main/mcp_runtime.rs": {
+      "owner": "src/main",
+      "minimum_lines": 70,
+      "minimum_functions": 86,
+      "minimum_regions": 64
+    },
+    "src/main/output.rs": {
+      "owner": "src/main",
+      "minimum_lines": 81,
+      "minimum_functions": 95,
+      "minimum_regions": 83
+    },
+    "src/mcp/admission.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/error.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 84,
+      "minimum_functions": 95,
+      "minimum_regions": 78
+    },
+    "src/mcp/mod.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 80,
+      "minimum_functions": 73,
+      "minimum_regions": 78
+    },
+    "src/mcp/requests/common.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/requests/context.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 90,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/mcp/requests/files.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/requests/history.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 75,
+      "minimum_functions": 83,
+      "minimum_regions": 78
+    },
+    "src/mcp/requests/json.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 67,
+      "minimum_functions": 70,
+      "minimum_regions": 67
+    },
+    "src/mcp/requests/outline.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/requests/read.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 82,
+      "minimum_functions": 95,
+      "minimum_regions": 86
+    },
+    "src/mcp/requests/receipt.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/requests/search.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 76,
+      "minimum_functions": 72,
+      "minimum_regions": 76
+    },
+    "src/mcp/resources.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 77,
+      "minimum_functions": 73,
+      "minimum_regions": 76
+    },
+    "src/mcp/result.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 78,
+      "minimum_functions": 71,
+      "minimum_regions": 77
+    },
+    "src/mcp/runtime.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 80,
+      "minimum_functions": 90,
+      "minimum_regions": 73
+    },
+    "src/mcp/server.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/mcp/state.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 81,
+      "minimum_functions": 72,
+      "minimum_regions": 82
+    },
+    "src/mcp/tools.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 66,
+      "minimum_functions": 75,
+      "minimum_regions": 67
+    },
+    "src/mcp/transport.rs": {
+      "owner": "src/mcp",
+      "minimum_lines": 73,
+      "minimum_functions": 67,
+      "minimum_regions": 69
+    },
+    "src/model.rs": {
+      "owner": "src/model",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/model/common.rs": {
+      "owner": "src/model",
+      "minimum_lines": 81,
+      "minimum_functions": 77,
+      "minimum_regions": 78
+    },
+    "src/model/context.rs": {
+      "owner": "src/model",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/model/index.rs": {
+      "owner": "src/model",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/model/read.rs": {
+      "owner": "src/model",
+      "minimum_lines": 22,
+      "minimum_functions": 28,
+      "minimum_regions": 23,
+      "exception": "Derived/default read policy adapters have three covered lines of eleven. Review when defaults change; service and wire behavior remain covered."
+    },
+    "src/model/receipt.rs": {
+      "owner": "src/model",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/model/savings.rs": {
+      "owner": "src/model",
+      "minimum_lines": 54,
+      "minimum_functions": 75,
+      "minimum_regions": 62
+    },
+    "src/model/search.rs": {
+      "owner": "src/model",
+      "minimum_lines": 66,
+      "minimum_functions": 83,
+      "minimum_regions": 41
+    },
+    "src/mutation.rs": {
+      "owner": "src/mutation",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/parser/api.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 89,
+      "minimum_functions": 75,
+      "minimum_regions": 86
+    },
+    "src/parser/hierarchy.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 89,
+      "minimum_functions": 81,
+      "minimum_regions": 88
+    },
+    "src/parser/imports.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 94
+    },
+    "src/parser/languages/csharp.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 89,
+      "minimum_functions": 80,
+      "minimum_regions": 87
+    },
+    "src/parser/languages/css.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 91,
+      "minimum_functions": 85,
+      "minimum_regions": 89
+    },
+    "src/parser/languages/html.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 94,
+      "minimum_functions": 95,
+      "minimum_regions": 91
+    },
+    "src/parser/languages/javascript.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 86,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/parser/latex.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 78,
+      "minimum_functions": 78,
+      "minimum_regions": 80
+    },
+    "src/parser/markdown.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 79,
+      "minimum_functions": 95,
+      "minimum_regions": 81
+    },
+    "src/parser/tree_sitter.rs": {
+      "owner": "src/parser",
+      "minimum_lines": 89,
+      "minimum_functions": 95,
+      "minimum_regions": 90
+    },
+    "src/query_receipt.rs": {
+      "owner": "src/query_receipt",
+      "minimum_lines": 89,
+      "minimum_functions": 89,
+      "minimum_regions": 89
+    },
+    "src/ranking/candidate.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 91,
+      "minimum_functions": 91,
+      "minimum_regions": 90
+    },
+    "src/ranking/coverage.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/ranking/dedup.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/ranking/focus_diagnostics.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 92
+    },
+    "src/ranking/greedy.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 86,
+      "minimum_functions": 86,
+      "minimum_regions": 86
+    },
+    "src/ranking/metadata.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 93,
+      "minimum_functions": 93,
+      "minimum_regions": 94
+    },
+    "src/ranking/mod.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/ranking/omissions.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 92,
+      "minimum_functions": 89,
+      "minimum_regions": 93
+    },
+    "src/ranking/requirements.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 94
+    },
+    "src/ranking/response.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/ranking/scored.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 88,
+      "minimum_functions": 78,
+      "minimum_regions": 86
+    },
+    "src/ranking/selection.rs": {
+      "owner": "src/ranking",
+      "minimum_lines": 88,
+      "minimum_functions": 71,
+      "minimum_regions": 91
+    },
+    "src/read_delta.rs": {
+      "owner": "src/read_delta",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/receipt.rs": {
+      "owner": "src/receipt",
+      "minimum_lines": 94,
+      "minimum_functions": 95,
+      "minimum_regions": 93
+    },
+    "src/repository/discovery.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 90,
+      "minimum_functions": 88,
+      "minimum_regions": 89
+    },
+    "src/repository/git/command.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 80,
+      "minimum_functions": 95,
+      "minimum_regions": 77
+    },
+    "src/repository/git/diff.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 77,
+      "minimum_functions": 70,
+      "minimum_regions": 75
+    },
+    "src/repository/git/models.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/repository/git/objects.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 79,
+      "minimum_functions": 65,
+      "minimum_regions": 83
+    },
+    "src/repository/git/status.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 81,
+      "minimum_functions": 95,
+      "minimum_regions": 80
+    },
+    "src/repository/path.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 87,
+      "minimum_functions": 89,
+      "minimum_regions": 89
+    },
+    "src/repository/scope.rs": {
+      "owner": "src/repository",
+      "minimum_lines": 91,
+      "minimum_functions": 95,
+      "minimum_regions": 92
+    },
+    "src/savings.rs": {
+      "owner": "src/savings",
+      "minimum_lines": 87,
+      "minimum_functions": 88,
+      "minimum_regions": 86
+    },
+    "src/services.rs": {
+      "owner": "src/services",
+      "minimum_lines": 91,
+      "minimum_functions": 95,
+      "minimum_regions": 85
+    },
+    "src/services/accounting.rs": {
+      "owner": "src/services/accounting",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 84
+    },
+    "src/services/candidate_scan.rs": {
+      "owner": "src/services/candidate_scan",
+      "minimum_lines": 93,
+      "minimum_functions": 80,
+      "minimum_regions": 88
+    },
+    "src/services/change_receipt.rs": {
+      "owner": "src/services/change_receipt",
+      "minimum_lines": 83,
+      "minimum_functions": 82,
+      "minimum_regions": 81
+    },
+    "src/services/context/api.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 79,
+      "minimum_functions": 83,
+      "minimum_regions": 84
+    },
+    "src/services/context/candidates/constraints.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 90,
+      "minimum_functions": 84,
+      "minimum_regions": 89
+    },
+    "src/services/context/candidates/focus.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 89,
+      "minimum_functions": 80,
+      "minimum_regions": 90
+    },
+    "src/services/context/candidates/graph.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 87,
+      "minimum_functions": 80,
+      "minimum_regions": 85
+    },
+    "src/services/context/candidates/lexical.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 90,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/services/context/candidates/workflow.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 88,
+      "minimum_functions": 78,
+      "minimum_regions": 83
+    },
+    "src/services/context/constraint_types.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 85,
+      "minimum_functions": 70,
+      "minimum_regions": 83
+    },
+    "src/services/context/diagnostics.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 94,
+      "minimum_functions": 95,
+      "minimum_regions": 93
+    },
+    "src/services/context/diff_evidence.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 82,
+      "minimum_functions": 65,
+      "minimum_regions": 80
+    },
+    "src/services/context/execution.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 91
+    },
+    "src/services/context/facets.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 92,
+      "minimum_functions": 92,
+      "minimum_regions": 93
+    },
+    "src/services/context/finalize.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 87,
+      "minimum_functions": 87,
+      "minimum_regions": 82
+    },
+    "src/services/context/pipeline.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 91
+    },
+    "src/services/context/response.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 90,
+      "minimum_functions": 95,
+      "minimum_regions": 91
+    },
+    "src/services/context/scope.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 89,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/services/context/scope_helpers.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 88,
+      "minimum_functions": 87,
+      "minimum_regions": 89
+    },
+    "src/services/context/validation.rs": {
+      "owner": "src/services/context",
+      "minimum_lines": 72,
+      "minimum_functions": 95,
+      "minimum_regions": 82
+    },
+    "src/services/coverage/mod.rs": {
+      "owner": "src/services/coverage",
+      "minimum_lines": 92,
+      "minimum_functions": 89,
+      "minimum_regions": 90
+    },
+    "src/services/cursor.rs": {
+      "owner": "src/services/cursor",
+      "minimum_lines": 92,
+      "minimum_functions": 91,
+      "minimum_regions": 91
+    },
+    "src/services/execution_options.rs": {
+      "owner": "src/services/execution_options",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/services/executor.rs": {
+      "owner": "src/services/executor",
+      "minimum_lines": 84,
+      "minimum_functions": 84,
+      "minimum_regions": 86
+    },
+    "src/services/files.rs": {
+      "owner": "src/services/files",
+      "minimum_lines": 77,
+      "minimum_functions": 79,
+      "minimum_regions": 74
+    },
+    "src/services/handoff.rs": {
+      "owner": "src/services/handoff",
+      "minimum_lines": 86,
+      "minimum_functions": 91,
+      "minimum_regions": 89
+    },
+    "src/services/history.rs": {
+      "owner": "src/services/history",
+      "minimum_lines": 82,
+      "minimum_functions": 79,
+      "minimum_regions": 79
+    },
+    "src/services/indexing/mod.rs": {
+      "owner": "src/services/indexing",
+      "minimum_lines": 84,
+      "minimum_functions": 87,
+      "minimum_regions": 81
+    },
+    "src/services/json/collapsed.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 84,
+      "minimum_functions": 95,
+      "minimum_regions": 86
+    },
+    "src/services/json/cursor.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 84,
+      "minimum_functions": 75,
+      "minimum_regions": 84
+    },
+    "src/services/json/dispatch.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 82,
+      "minimum_functions": 87,
+      "minimum_regions": 80
+    },
+    "src/services/json/execution.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/services/json/keys.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 87
+    },
+    "src/services/json/mod.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 80,
+      "minimum_functions": 76,
+      "minimum_regions": 81
+    },
+    "src/services/json/numeric.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 80,
+      "minimum_functions": 95,
+      "minimum_regions": 79
+    },
+    "src/services/json/projection.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 77,
+      "minimum_functions": 95,
+      "minimum_regions": 77
+    },
+    "src/services/json/schema.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 89,
+      "minimum_functions": 82,
+      "minimum_regions": 86
+    },
+    "src/services/json/selection.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 83,
+      "minimum_functions": 85,
+      "minimum_regions": 86
+    },
+    "src/services/json/source.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 73,
+      "minimum_functions": 70,
+      "minimum_regions": 79
+    },
+    "src/services/json/validation.rs": {
+      "owner": "src/services/json",
+      "minimum_lines": 72,
+      "minimum_functions": 95,
+      "minimum_regions": 75
+    },
+    "src/services/observer.rs": {
+      "owner": "src/services/observer",
+      "minimum_lines": 78,
+      "minimum_functions": 95,
+      "minimum_regions": 70
+    },
+    "src/services/outline.rs": {
+      "owner": "src/services/outline",
+      "minimum_lines": 86,
+      "minimum_functions": 83,
+      "minimum_regions": 87
+    },
+    "src/services/process_runtime.rs": {
+      "owner": "src/services/process_runtime",
+      "minimum_lines": 77,
+      "minimum_functions": 72,
+      "minimum_regions": 78
+    },
+    "src/services/read/cursor.rs": {
+      "owner": "src/services/read",
+      "minimum_lines": 87,
+      "minimum_functions": 90,
+      "minimum_regions": 81
+    },
+    "src/services/read/excerpts.rs": {
+      "owner": "src/services/read",
+      "minimum_lines": 94,
+      "minimum_functions": 95,
+      "minimum_regions": 92
+    },
+    "src/services/read/live.rs": {
+      "owner": "src/services/read",
+      "minimum_lines": 84,
+      "minimum_functions": 83,
+      "minimum_regions": 85
+    },
+    "src/services/read/mod.rs": {
+      "owner": "src/services/read",
+      "minimum_lines": 85,
+      "minimum_functions": 86,
+      "minimum_regions": 86
+    },
+    "src/services/read/types.rs": {
+      "owner": "src/services/read",
+      "minimum_lines": 82,
+      "minimum_functions": 45,
+      "minimum_regions": 80
+    },
+    "src/services/read_delta.rs": {
+      "owner": "src/services/read_delta",
+      "minimum_lines": 87,
+      "minimum_functions": 75,
+      "minimum_regions": 85
+    },
+    "src/services/receipt_rebase.rs": {
+      "owner": "src/services/receipt_rebase",
+      "minimum_lines": 90,
+      "minimum_functions": 90,
+      "minimum_regions": 89
+    },
+    "src/services/receipts.rs": {
+      "owner": "src/services/receipts",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/services/reconciliation.rs": {
+      "owner": "src/services/reconciliation",
+      "minimum_lines": 83,
+      "minimum_functions": 89,
+      "minimum_regions": 81
+    },
+    "src/services/request_limits.rs": {
+      "owner": "src/services/request_limits",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/services/savings/mod.rs": {
+      "owner": "src/services/savings",
+      "minimum_lines": 90,
+      "minimum_functions": 88,
+      "minimum_regions": 89
+    },
+    "src/services/search/execution.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 87,
+      "minimum_functions": 92,
+      "minimum_regions": 86
+    },
+    "src/services/search/hits.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 83,
+      "minimum_functions": 88,
+      "minimum_regions": 82
+    },
+    "src/services/search/mod.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 91,
+      "minimum_functions": 90,
+      "minimum_regions": 89
+    },
+    "src/services/search/projection.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 92,
+      "minimum_functions": 91,
+      "minimum_regions": 92
+    },
+    "src/services/search/regex_plan.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 86,
+      "minimum_functions": 92,
+      "minimum_regions": 84
+    },
+    "src/services/search/types.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 93
+    },
+    "src/services/search/validation.rs": {
+      "owner": "src/services/search",
+      "minimum_lines": 76,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/services/startup/mod.rs": {
+      "owner": "src/services/startup",
+      "minimum_lines": 80,
+      "minimum_functions": 81,
+      "minimum_regions": 78
+    },
+    "src/services/status/mod.rs": {
+      "owner": "src/services/status",
+      "minimum_lines": 85,
+      "minimum_functions": 83,
+      "minimum_regions": 84
+    },
+    "src/services/validation.rs": {
+      "owner": "src/services/validation",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 90
+    },
+    "src/setup/apply.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 68,
+      "minimum_functions": 83,
+      "minimum_regions": 60
+    },
+    "src/setup/client.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/setup/edit/common.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 79,
+      "minimum_functions": 73,
+      "minimum_regions": 73
+    },
+    "src/setup/edit/json.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 81,
+      "minimum_functions": 65,
+      "minimum_regions": 82
+    },
+    "src/setup/edit/toml.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 83,
+      "minimum_functions": 65,
+      "minimum_regions": 84
+    },
+    "src/setup/environment.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 88,
+      "minimum_functions": 79,
+      "minimum_regions": 87
+    },
+    "src/setup/execution.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 81,
+      "minimum_functions": 85,
+      "minimum_regions": 81
+    },
+    "src/setup/launcher.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 61,
+      "minimum_functions": 51,
+      "minimum_regions": 62
+    },
+    "src/setup/model.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 58,
+      "minimum_functions": 73,
+      "minimum_regions": 57
+    },
+    "src/setup/output.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 30.01,
+      "minimum_functions": 45,
+      "minimum_regions": 23
+    },
+    "src/setup/plan.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 90
+    },
+    "src/setup/prompt.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 0,
+      "minimum_functions": 0,
+      "minimum_regions": 0,
+      "exception": "Interactive terminal prompt remains manual composition evidence; pure prompt policy is tested separately. Review when terminal automation is added. This file remains visible in the report."
+    },
+    "src/setup/runtime.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 67,
+      "minimum_functions": 77,
+      "minimum_regions": 70
+    },
+    "src/setup/transaction.rs": {
+      "owner": "src/setup",
+      "minimum_lines": 73,
+      "minimum_functions": 73,
+      "minimum_regions": 71
+    },
+    "src/storage/accounting.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 85,
+      "minimum_functions": 95,
+      "minimum_regions": 68
+    },
+    "src/storage/api.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 82
+    },
+    "src/storage/diagnostics.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 85
+    },
+    "src/storage/helpers.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 90,
+      "minimum_functions": 79,
+      "minimum_regions": 85
+    },
+    "src/storage/mapping.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 60
+    },
+    "src/storage/open.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 85,
+      "minimum_functions": 91,
+      "minimum_regions": 79
+    },
+    "src/storage/projections.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 80
+    },
+    "src/storage/publication.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 89,
+      "minimum_functions": 91,
+      "minimum_regions": 80
+    },
+    "src/storage/query_receipts.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 82,
+      "minimum_functions": 70,
+      "minimum_regions": 72
+    },
+    "src/storage/read/counts.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 75
+    },
+    "src/storage/read/files.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 89,
+      "minimum_functions": 95,
+      "minimum_regions": 77
+    },
+    "src/storage/read/imports.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 72
+    },
+    "src/storage/read/meta.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 91,
+      "minimum_functions": 95,
+      "minimum_regions": 66
+    },
+    "src/storage/read/search.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 85,
+      "minimum_functions": 70,
+      "minimum_regions": 75
+    },
+    "src/storage/read/syntax.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 77
+    },
+    "src/storage/read_delta.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 84,
+      "minimum_functions": 78,
+      "minimum_regions": 72
+    },
+    "src/storage/receipts.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 79,
+      "minimum_functions": 77,
+      "minimum_regions": 73
+    },
+    "src/storage/runtime.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 80,
+      "minimum_functions": 80,
+      "minimum_regions": 78
+    },
+    "src/storage/scoped_regex.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 93
+    },
+    "src/storage/session.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 43,
+      "minimum_functions": 28,
+      "minimum_regions": 49
+    },
+    "src/storage/snapshot.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 94
+    },
+    "src/storage/staging.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 89,
+      "minimum_functions": 84,
+      "minimum_regions": 80
+    },
+    "src/storage/writer.rs": {
+      "owner": "src/storage",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 83
+    },
+    "src/subprocess.rs": {
+      "owner": "src/subprocess",
+      "minimum_lines": 71,
+      "minimum_functions": 75,
+      "minimum_regions": 72
+    },
+    "src/symbol_identity.rs": {
+      "owner": "src/symbol_identity",
+      "minimum_lines": 84,
+      "minimum_functions": 83,
+      "minimum_regions": 80
+    },
+    "src/text.rs": {
+      "owner": "src/text",
+      "minimum_lines": 91,
+      "minimum_functions": 92,
+      "minimum_regions": 92
+    },
+    "src/tokens.rs": {
+      "owner": "src/tokens",
+      "minimum_lines": 85,
+      "minimum_functions": 85,
+      "minimum_regions": 85
+    },
+    "src/upgrade.rs": {
+      "owner": "src/upgrade",
+      "minimum_lines": 49,
+      "minimum_functions": 60,
+      "minimum_regions": 50
+    },
+    "src/watcher/delivery.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 86,
+      "minimum_functions": 95,
+      "minimum_regions": 85
+    },
+    "src/watcher/discovery.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 87,
+      "minimum_functions": 95,
+      "minimum_regions": 88
+    },
+    "src/watcher/events.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 71,
+      "minimum_functions": 95,
+      "minimum_regions": 75
+    },
+    "src/watcher/runtime.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 85,
+      "minimum_functions": 89,
+      "minimum_regions": 84
+    },
+    "src/watcher/scheduler.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 93,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
+    "src/watcher/types.rs": {
+      "owner": "src/watcher",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    }
+  },
+  "declarations": {
+    "src/cache/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/lib.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/mcp/requests/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/mcp/requests/savings.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/model/files.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/model/history.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/model/json.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/model/outline.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/parser/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/parser/queries.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/repository/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/services/context/constants.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/services/context/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/services/index_read.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/setup/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/storage/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/storage/models.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/storage/schema.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/watcher/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added."
+  }
+}

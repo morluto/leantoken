@@ -4,8 +4,6 @@ impl Clone for Storage {
             writer: Arc::clone(&self.writer),
             readers: self.readers.clone(),
             path: self.path.clone(),
-            #[cfg(test)]
-            diagnostics: Arc::clone(&self.diagnostics),
         }
     }
 }
@@ -29,17 +27,11 @@ impl Storage {
 /// on this session observe a single SQLite WAL snapshot.
 pub(super) struct ReadSession {
     pub(crate) conn: r2d2::PooledConnection<SqliteConnectionManager>,
-    #[cfg(test)]
-    pub(crate) diagnostics: Arc<StorageDiagnostics>,
 }
 
 impl Drop for ReadSession {
     fn drop(&mut self) {
         let _ = self.conn.execute_batch("ROLLBACK");
-        #[cfg(test)]
-        self.diagnostics
-            .active_snapshots
-            .fetch_sub(1, Ordering::AcqRel);
     }
 }
 

@@ -26,7 +26,7 @@ fn exact_request(
 
 #[tokio::test]
 async fn complete_exact_query_receipt_skips_same_generation_rescan() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let recorded = services
         .search_occurrences(
             exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record),
@@ -75,7 +75,7 @@ async fn complete_exact_query_receipt_skips_same_generation_rescan() {
 
 #[tokio::test]
 async fn incomplete_response_and_pre_write_cancellation_never_persist_query_receipts() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let database = root.path().join("index.sqlite");
     let mut paged = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     paged.max_results = Some(1);
@@ -110,7 +110,7 @@ async fn incomplete_response_and_pre_write_cancellation_never_persist_query_rece
 
 #[tokio::test]
 async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let database = root.path().join("index.sqlite");
     let request = exact_request("greet", Vec::new(), Vec::new(), QueryReceiptAction::Record);
     let error = services
@@ -156,7 +156,7 @@ async fn response_budget_and_invalid_regex_fail_before_query_receipt_write() {
 
 #[tokio::test]
 async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut regex = exact_request(
         "gr(?:ee)t",
         Vec::new(),
@@ -220,7 +220,7 @@ async fn regex_receipts_are_exact_and_ranked_modes_are_rejected() {
 
 #[tokio::test]
 async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let absent = services
         .search_occurrences(
             exact_request(
@@ -290,7 +290,7 @@ async fn zero_match_superset_covers_subset_but_nonempty_results_do_not() {
 
 #[tokio::test]
 async fn cross_generation_reuse_requires_unchanged_relevant_partition() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let recorded = services
         .search_occurrences(
             exact_request(

@@ -327,7 +327,7 @@ async fn index_excludes_database_below_missing_symlinked_parent() {
 
 #[tokio::test]
 async fn database_artifact_notifications_do_not_publish_a_generation() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let before = services
         .status()
         .await

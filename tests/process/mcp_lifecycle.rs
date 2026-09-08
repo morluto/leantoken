@@ -151,13 +151,17 @@ pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
         )
         .expect("hold database lock");
 
-    let mut process = McpProcess::spawn(root.path(), &database);
+    let mut process = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     process.initialize();
     process.send_initialized();
 
-    // Cross more than one startup busy-timeout and retry interval. A one-shot
-    // startup would be permanently unavailable before the lock is released.
-    std::thread::sleep(Duration::from_millis(750));
+    // This existing warning is emitted only after a real SQLite open failed
+    // with contention. Release the lock once the runtime has entered retry;
+    // the policy tests own repeated attempts and backoff arithmetic.
+    process.wait_for_stderr(
+        "cache initialization is waiting for SQLite contention",
+        INDEX_READY_TIMEOUT,
+    );
     blocker.execute_batch("ROLLBACK").expect("release database");
     process.wait_until_ready(INDEX_READY_TIMEOUT);
 }
@@ -261,10 +265,9 @@ pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     process.send_initialized();
     process.wait_until_unavailable(PROCESS_FAILURE_TIMEOUT);
 
-    // Cross the former runtime-first shutdown timeout. A failed repository
-    // service remains an operational MCP connection until the client closes
-    // the stdio transport.
-    std::thread::sleep(Duration::from_secs(6));
+    // The paused-clock supervisor tests prove lifetime past the shutdown
+    // deadline. This process witness proves the failed runtime still exposes
+    // an operational catalog over the real stdio transport.
     assert!(process.child.try_wait().expect("poll process").is_none());
     process.send(serde_json::json!({
         "jsonrpc": "2.0",
@@ -399,7 +402,8 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     assert_eq!(database_state(&database).map(|state| state.1), Some(0));
 
     std::fs::remove_file(root.path().join("b.rs")).expect("shrink tree");
-    std::thread::sleep(Duration::from_millis(1_250));
+    // Paused-clock tests prove terminal failures never schedule a retry. Here
+    // verify the real failed service remains unavailable on the next request.
     process.send(serde_json::json!({
         "jsonrpc": "2.0",
         "id": id + 1,

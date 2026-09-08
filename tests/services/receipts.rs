@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn retrieval_receipt_identifies_bound_repository_and_rejects_mismatch() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let expected_repository = services.repository_id();
     let response = services
         .files(FilesRequest {
@@ -53,7 +53,7 @@ async fn retrieval_receipt_identifies_bound_repository_and_rejects_mismatch() {
 
 #[tokio::test]
 async fn server_managed_receipt_suppresses_repeated_search_and_context_evidence() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let first_search = services
         .search(search_limit_request(Some(100), Some(2_000), Some(1)))
@@ -151,7 +151,7 @@ async fn continuation_streams_accept_the_receipt_successor_from_the_previous_pag
         .expect("continue with acknowledged search receipt");
     assert!(second.meta.next_cursor.is_none());
 
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let outline_request = outline_limit_request(Some(1), Some(1_000));
     let first = services
         .outline(outline_request.clone())
@@ -171,7 +171,7 @@ async fn continuation_streams_accept_the_receipt_successor_from_the_previous_pag
 
 #[tokio::test]
 async fn server_managed_receipt_survives_service_restart() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let config = services.config().clone();
     let first = services
         .search(search_limit_request(Some(100), Some(2_000), Some(1)))
@@ -194,7 +194,7 @@ async fn server_managed_receipt_survives_service_restart() {
 
 #[tokio::test]
 async fn context_handoff_preserves_coordinates_provenance_and_host_state_without_source() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = context_limit_request(1_000);
     request.focus_paths = vec!["src".into()];
     request.focus_symbols = vec!["greet".into()];
@@ -290,7 +290,7 @@ async fn context_handoff_preserves_coordinates_provenance_and_host_state_without
 
 #[tokio::test]
 async fn context_handoff_retains_selected_coordinates_after_receipt_suppression() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let first = services
         .context_with_handoff(
             context_limit_request(1_000),
@@ -333,7 +333,7 @@ async fn context_handoff_retains_selected_coordinates_after_receipt_suppression(
 
 #[tokio::test]
 async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let generation = services
         .status()
         .await
@@ -419,15 +419,11 @@ async fn context_handoff_rejects_plan_previews_and_unbounded_host_state() {
 #[tokio::test]
 async fn context_handoff_reports_clean_git_head_identity() {
     require_git();
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     std::fs::write(root.path().join(".gitignore"), "index.sqlite*\n").expect("write ignore");
     init_git_repo(root.path());
     let expected_head = String::from_utf8(
-        std::process::Command::new("git")
-            .args(["rev-parse", "--short=12", "HEAD"])
-            .current_dir(root.path())
-            .output()
-            .expect("git head")
+        leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", "--short=12", "HEAD"])
             .stdout,
     )
     .expect("utf-8 head")
@@ -457,7 +453,7 @@ async fn context_handoff_reports_clean_git_head_identity() {
 
 #[tokio::test]
 async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut read_request = read_limit_request(Some(1_000));
     read_request.end_line = Some(3);
     let read = services.read(read_request).await.expect("read");
@@ -509,7 +505,7 @@ async fn server_managed_receipt_suppresses_overlapping_evidence_across_tools() {
 
 #[tokio::test]
 async fn server_managed_receipt_rejects_unknown_and_stale_generations() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let mut unknown_request = read_limit_request(Some(1_000));
     unknown_request.receipt_id = Some("missing-receipt".into());
     assert!(matches!(
@@ -776,11 +772,8 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     )
     .expect("write branch source");
     init_git_repo(root.path());
-    let original_branch = std::process::Command::new("git")
-        .args(["branch", "--show-current"])
-        .current_dir(root.path())
-        .output()
-        .expect("current branch");
+    let original_branch =
+        leantoken_test_support::GitFixture::run(root.path(), &["branch", "--show-current"]);
     let original_branch = String::from_utf8(original_branch.stdout)
         .expect("UTF-8 branch")
         .trim()
@@ -795,28 +788,22 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let source_receipt = append_line_receipt(&services, "branch.rs", None).await;
     drop(services);
 
-    let switched = std::process::Command::new("git")
-        .args(["switch", "-c", "receipt-rebase-alternate"])
-        .current_dir(root.path())
-        .status()
-        .expect("switch branch");
+    let switched = leantoken_test_support::GitFixture::run(
+        root.path(),
+        &["switch", "-c", "receipt-rebase-alternate"],
+    )
+    .status;
     assert!(switched.success());
     std::fs::write(
         root.path().join("branch.rs"),
         "fn branch_value() -> u8 { 2 }\n",
     )
     .expect("write alternate branch");
-    let committed = std::process::Command::new("git")
-        .args(["add", "branch.rs"])
-        .current_dir(root.path())
-        .status()
-        .expect("stage alternate branch");
+    let committed =
+        leantoken_test_support::GitFixture::run(root.path(), &["add", "branch.rs"]).status;
     assert!(committed.success());
-    let committed = std::process::Command::new("git")
-        .args(["commit", "-m", "alternate"])
-        .current_dir(root.path())
-        .status()
-        .expect("commit alternate branch");
+    let committed =
+        leantoken_test_support::GitFixture::run(root.path(), &["commit", "-m", "alternate"]).status;
     assert!(committed.success());
     let config = Config::discover(root.path(), Some(database.clone())).expect("reopen config");
     let services = Services::open(config).expect("reopened services");
@@ -836,11 +823,8 @@ async fn exact_receipt_rebase_survives_restart_and_branch_switches_fail_closed()
     let rebased = response.meta.receipt_id.expect("new receipt");
     drop(services);
 
-    let returned = std::process::Command::new("git")
-        .args(["switch", &original_branch])
-        .current_dir(root.path())
-        .status()
-        .expect("restore branch");
+    let returned =
+        leantoken_test_support::GitFixture::run(root.path(), &["switch", &original_branch]).status;
     assert!(returned.success());
     let config = Config::discover(root.path(), Some(database)).expect("third config");
     let services = Services::open(config).expect("third services");

@@ -44,184 +44,196 @@ impl Services {
         request: &ContextRequest,
         handoff: Option<HandoffManifestRequest>,
     ) -> Result<ContextPolicy> {
-        let policy = ContextPolicy::parse(request, handoff)?;
-        if request.task.trim().is_empty() {
+        validate_context_request(
+            &crate::services::request_limits::RequestLimits::from_config(&self.config),
+            request,
+            handoff,
+        )
+    }
+}
+
+fn validate_context_request(
+    limits: &crate::services::request_limits::RequestLimits,
+    request: &ContextRequest,
+    handoff: Option<HandoffManifestRequest>,
+) -> Result<ContextPolicy> {
+    let policy = ContextPolicy::parse(request, handoff)?;
+    if request.task.trim().is_empty() {
+        return Err(Error::InvalidInput {
+            field: "task",
+            reason: "must not be empty",
+        });
+    }
+    limits.token_budget(request.token_budget)?;
+    if let Some(max_fragments) = request.max_fragments {
+        limits.results(Some(max_fragments))?;
+    }
+    if let Some(minimum) = request.minimum_fragments_per_focus_path {
+        limits.results(Some(minimum))?;
+        if minimum > MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
+            return Err(Error::RequestLimitExceeded {
+                field: "minimum_fragments_per_focus_path",
+                requested: minimum,
+                limit: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
+            });
+        }
+    }
+    if request.focus_paths.len() > MAX_CONTEXT_FOCUS_PATTERNS {
+        return Err(Error::RequestLimitExceeded {
+            field: "focus_paths",
+            requested: request.focus_paths.len(),
+            limit: MAX_CONTEXT_FOCUS_PATTERNS,
+        });
+    }
+    validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
+    if request
+        .include_paths
+        .iter()
+        .any(|pattern| pattern.trim().is_empty())
+    {
+        return Err(Error::InvalidInput {
+            field: "include paths",
+            reason: "must not contain empty patterns",
+        });
+    }
+    validate_glob_patterns(&request.include_paths)?;
+    if request
+        .must_include_paths
+        .iter()
+        .any(|pattern| pattern.trim().is_empty())
+    {
+        return Err(Error::InvalidInput {
+            field: "must include paths",
+            reason: "must not contain empty patterns",
+        });
+    }
+    validate_glob_patterns(&request.must_include_paths)?;
+    if request
+        .focus_paths
+        .iter()
+        .any(|pattern| pattern.trim().is_empty())
+    {
+        return Err(Error::InvalidInput {
+            field: "focus paths",
+            reason: "must not contain empty patterns",
+        });
+    }
+    validate_glob_patterns(&request.focus_paths)?;
+    if request
+        .exclude_paths
+        .iter()
+        .any(|pattern| pattern.trim().is_empty())
+    {
+        return Err(Error::InvalidInput {
+            field: "exclude paths",
+            reason: "must not contain empty patterns",
+        });
+    }
+    validate_glob_patterns(&request.exclude_paths)?;
+    if request.focus_symbols.len() > MAX_INPUT_ITEMS {
+        return Err(Error::LimitExceeded);
+    }
+    for symbol in &request.focus_symbols {
+        validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
+        if symbol.trim().is_empty() {
             return Err(Error::InvalidInput {
-                field: "task",
+                field: "focus symbols",
+                reason: "must not contain empty symbols",
+            });
+        }
+    }
+    if request.must_include_symbols.len() > MAX_INPUT_ITEMS {
+        return Err(Error::LimitExceeded);
+    }
+    for symbol in &request.must_include_symbols {
+        validate_input(symbol, "must include symbol", MAX_PATTERN_BYTES)?;
+        if symbol.trim().is_empty() {
+            return Err(Error::InvalidInput {
+                field: "must include symbols",
+                reason: "must not contain empty symbols",
+            });
+        }
+    }
+    if request.required_evidence.len() > MAX_CONTEXT_REQUIRED_EVIDENCE {
+        return Err(Error::RequestLimitExceeded {
+            field: "required_evidence",
+            requested: request.required_evidence.len(),
+            limit: MAX_CONTEXT_REQUIRED_EVIDENCE,
+        });
+    }
+    let mut evidence_query_bytes = 0usize;
+    for requirement in &request.required_evidence {
+        validate_glob_patterns(std::slice::from_ref(&requirement.path))?;
+        if requirement.path.trim().is_empty() {
+            return Err(Error::InvalidInput {
+                field: "required_evidence path",
                 reason: "must not be empty",
             });
         }
-        self.token_budget_limit(request.token_budget)?;
-        if let Some(max_fragments) = request.max_fragments {
-            self.result_limit(Some(max_fragments))?;
+        if requirement.queries.is_empty() {
+            return Err(Error::InvalidInput {
+                field: "required_evidence queries",
+                reason: "must not be empty",
+            });
         }
-        if let Some(minimum) = request.minimum_fragments_per_focus_path {
-            self.result_limit(Some(minimum))?;
-            if minimum > MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
-                return Err(Error::RequestLimitExceeded {
-                    field: "minimum_fragments_per_focus_path",
-                    requested: minimum,
-                    limit: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
-                });
-            }
-        }
-        if request.focus_paths.len() > MAX_CONTEXT_FOCUS_PATTERNS {
+        if requirement.queries.len() > MAX_CONTEXT_EVIDENCE_QUERIES {
             return Err(Error::RequestLimitExceeded {
-                field: "focus_paths",
-                requested: request.focus_paths.len(),
-                limit: MAX_CONTEXT_FOCUS_PATTERNS,
+                field: "required_evidence queries",
+                requested: requirement.queries.len(),
+                limit: MAX_CONTEXT_EVIDENCE_QUERIES,
             });
         }
-        validate_input(&request.task, "task", MAX_QUERY_BYTES)?;
-        if request
-            .include_paths
-            .iter()
-            .any(|pattern| pattern.trim().is_empty())
+        let normalized_distinct = {
+            let mut seen = std::collections::HashSet::new();
+            requirement
+                .queries
+                .iter()
+                .filter(|q| seen.insert(q.to_lowercase()))
+                .count()
+        };
+        if requirement.minimum_query_matches == 0
+            || requirement.minimum_query_matches > normalized_distinct
         {
             return Err(Error::InvalidInput {
-                field: "include paths",
-                reason: "must not contain empty patterns",
+                field: "required_evidence minimum_query_matches",
+                reason: "must be between one and the number of normalized distinct queries",
             });
         }
-        validate_glob_patterns(&request.include_paths)?;
-        if request
-            .must_include_paths
-            .iter()
-            .any(|pattern| pattern.trim().is_empty())
-        {
-            return Err(Error::InvalidInput {
-                field: "must include paths",
-                reason: "must not contain empty patterns",
-            });
-        }
-        validate_glob_patterns(&request.must_include_paths)?;
-        if request
-            .focus_paths
-            .iter()
-            .any(|pattern| pattern.trim().is_empty())
-        {
-            return Err(Error::InvalidInput {
-                field: "focus paths",
-                reason: "must not contain empty patterns",
-            });
-        }
-        validate_glob_patterns(&request.focus_paths)?;
-        if request
-            .exclude_paths
-            .iter()
-            .any(|pattern| pattern.trim().is_empty())
-        {
-            return Err(Error::InvalidInput {
-                field: "exclude paths",
-                reason: "must not contain empty patterns",
-            });
-        }
-        validate_glob_patterns(&request.exclude_paths)?;
-        if request.focus_symbols.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for symbol in &request.focus_symbols {
-            validate_input(symbol, "focus symbol", MAX_PATTERN_BYTES)?;
-            if symbol.trim().is_empty() {
-                return Err(Error::InvalidInput {
-                    field: "focus symbols",
-                    reason: "must not contain empty symbols",
-                });
-            }
-        }
-        if request.must_include_symbols.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for symbol in &request.must_include_symbols {
-            validate_input(symbol, "must include symbol", MAX_PATTERN_BYTES)?;
-            if symbol.trim().is_empty() {
-                return Err(Error::InvalidInput {
-                    field: "must include symbols",
-                    reason: "must not contain empty symbols",
-                });
-            }
-        }
-        if request.required_evidence.len() > MAX_CONTEXT_REQUIRED_EVIDENCE {
-            return Err(Error::RequestLimitExceeded {
-                field: "required_evidence",
-                requested: request.required_evidence.len(),
-                limit: MAX_CONTEXT_REQUIRED_EVIDENCE,
-            });
-        }
-        let mut evidence_query_bytes = 0usize;
-        for requirement in &request.required_evidence {
-            validate_glob_patterns(std::slice::from_ref(&requirement.path))?;
-            if requirement.path.trim().is_empty() {
-                return Err(Error::InvalidInput {
-                    field: "required_evidence path",
-                    reason: "must not be empty",
-                });
-            }
-            if requirement.queries.is_empty() {
+        for query in &requirement.queries {
+            validate_input(query, "required_evidence query", MAX_PATTERN_BYTES)?;
+            if query.trim().is_empty() {
                 return Err(Error::InvalidInput {
                     field: "required_evidence queries",
-                    reason: "must not be empty",
+                    reason: "must not contain empty queries",
                 });
             }
-            if requirement.queries.len() > MAX_CONTEXT_EVIDENCE_QUERIES {
-                return Err(Error::RequestLimitExceeded {
-                    field: "required_evidence queries",
-                    requested: requirement.queries.len(),
-                    limit: MAX_CONTEXT_EVIDENCE_QUERIES,
-                });
-            }
-            let normalized_distinct = {
-                let mut seen = std::collections::HashSet::new();
-                requirement
-                    .queries
-                    .iter()
-                    .filter(|q| seen.insert(q.to_lowercase()))
-                    .count()
-            };
-            if requirement.minimum_query_matches == 0
-                || requirement.minimum_query_matches > normalized_distinct
-            {
-                return Err(Error::InvalidInput {
-                    field: "required_evidence minimum_query_matches",
-                    reason: "must be between one and the number of normalized distinct queries",
-                });
-            }
-            for query in &requirement.queries {
-                validate_input(query, "required_evidence query", MAX_PATTERN_BYTES)?;
-                if query.trim().is_empty() {
-                    return Err(Error::InvalidInput {
-                        field: "required_evidence queries",
-                        reason: "must not contain empty queries",
-                    });
-                }
-                evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
-            }
+            evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
         }
-        if evidence_query_bytes > MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
-            return Err(Error::RequestLimitExceeded {
-                field: "required_evidence query bytes",
-                requested: evidence_query_bytes,
-                limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
-            });
-        }
-        if request.known_hashes.len() > MAX_INPUT_ITEMS {
-            return Err(Error::LimitExceeded);
-        }
-        for hash in &request.known_hashes {
-            validate_input(hash, "known hash", 128)?;
-        }
-        if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
-            return Err(Error::LimitExceeded);
-        }
-        for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
-            .queries
-            .iter()
-            .filter(|query| !query.has_facet(FacetKind::TestIntent))
-        {
-            compile_literal_regex(&query.value, false)?;
-        }
-        Ok(policy)
     }
+    if evidence_query_bytes > MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
+        return Err(Error::RequestLimitExceeded {
+            field: "required_evidence query bytes",
+            requested: evidence_query_bytes,
+            limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
+        });
+    }
+    if request.known_hashes.len() > MAX_INPUT_ITEMS {
+        return Err(Error::LimitExceeded);
+    }
+    for hash in &request.known_hashes {
+        validate_input(hash, "known hash", 128)?;
+    }
+    if request.changed_paths.len() > MAX_DIFF_CHANGED_PATHS {
+        return Err(Error::LimitExceeded);
+    }
+    for query in facets::plan(&request.task, MAX_CONTEXT_QUERIES)
+        .queries
+        .iter()
+        .filter(|query| !query.has_facet(FacetKind::TestIntent))
+    {
+        compile_literal_regex(&query.value, false)?;
+    }
+    Ok(policy)
 }
 
 pub(super) fn context_accounting_operation(request: &ContextRequest) -> TokenAccountingOperation {
@@ -241,3 +253,53 @@ pub(super) fn set_routing_consistency(
     }
 }
 use super::*;
+
+#[cfg(test)]
+mod static_input_tests {
+    use super::*;
+    #[test]
+    fn static_request_matrix_needs_no_repository() {
+        let limits = crate::services::request_limits::RequestLimits {
+            default_results: 3,
+            max_results: 7,
+            max_output_tokens: 91,
+            context_lines: 4,
+        };
+        let base = ContextRequest {
+            task: "find greet".into(),
+            token_budget: 17,
+            include_paths: Vec::new(),
+            must_include_paths: Vec::new(),
+            must_include_symbols: Vec::new(),
+            required_evidence: Vec::new(),
+            max_fragments: None,
+            plan_only: false,
+            focus_paths: Vec::new(),
+            strict_focus_paths: false,
+            minimum_fragments_per_focus_path: None,
+            focus_symbols: Vec::new(),
+            exclude_paths: Vec::new(),
+            known_hashes: Vec::new(),
+            receipt_id: None,
+            prior_repository_generation: None,
+            base_revision: None,
+            changed_paths: Vec::new(),
+            strict_changed_paths: false,
+            explain_diagnostics: false,
+        };
+        assert!(validate_context_request(&limits, &base, None).is_ok());
+        for mutate in [
+            (|r: &mut ContextRequest| r.task = " ".into()) as fn(&mut ContextRequest),
+            |r| r.focus_paths = vec!["[".into()],
+            |r| r.focus_symbols = vec!["symbol".into(); 257],
+            |r| r.changed_paths = (0..513).map(|i| format!("src/{i}.rs")).collect(),
+            |r| r.task = "a_".repeat(30_000),
+        ] {
+            let mut request = base.clone();
+            mutate(&mut request);
+            assert!(validate_context_request(&limits, &request, None).is_err());
+        }
+        assert!(normalize_relative("../outside.rs").is_err());
+        assert!(parse_context_revision(Some(&"r".repeat(257))).is_err());
+    }
+}

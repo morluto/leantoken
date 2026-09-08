@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn search_range_covers_the_returned_context_lines() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let response = services
         .search(SearchRequest {
             query: "agent".into(),

@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn diff_scoped_context_with_explicit_changed_paths_reports_receipt() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let response = services
         .context(ContextRequest {
@@ -137,11 +137,7 @@ async fn strict_explicit_changed_paths_do_not_expand_to_working_tree_changes() {
         &["add", "src/selected.rs", "src/unrelated.rs"][..],
         &["commit", "-m", "change both tracked files"][..],
     ] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root.path())
-            .output()
-            .expect("git command");
+        let output = leantoken_test_support::GitFixture::run(root.path(), args);
         assert!(output.status.success());
     }
     let mut range_request = context_limit_request(500);
@@ -342,11 +338,7 @@ fn write_tracked_working_tree_fixture(root: &std::path::Path, changed: bool) {
 }
 
 fn git_revision(root: &std::path::Path, revision: &str) -> String {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", revision])
-        .current_dir(root)
-        .output()
-        .expect("git rev-parse");
+    let output = leantoken_test_support::GitFixture::run(root, &["rev-parse", revision]);
     assert!(output.status.success());
     String::from_utf8(output.stdout)
         .expect("UTF-8 revision")
@@ -356,11 +348,7 @@ fn git_revision(root: &std::path::Path, revision: &str) -> String {
 
 fn git_commit_all(root: &std::path::Path, message: &str) {
     for args in [&["add", "-A"][..], &["commit", "-m", message][..]] {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .expect("git command");
+        let output = leantoken_test_support::GitFixture::run(root, args);
         assert!(
             output.status.success(),
             "{}",
@@ -408,12 +396,7 @@ async fn diff_scoped_context_maps_base_hunks_cross_language_changes_and_untracke
     .expect("deleted source");
     init_git_repo(root.path());
     let base_revision = String::from_utf8(
-        std::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(root.path())
-            .output()
-            .expect("git rev-parse")
-            .stdout,
+        leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", "HEAD"]).stdout,
     )
     .expect("UTF-8 revision")
     .trim()
@@ -609,12 +592,7 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
     init_git_repo(root.path());
     let revision = |name: &str| {
         String::from_utf8(
-            std::process::Command::new("git")
-                .args(["rev-parse", name])
-                .current_dir(root.path())
-                .output()
-                .expect("resolve revision")
-                .stdout,
+            leantoken_test_support::GitFixture::run(root.path(), &["rev-parse", name]).stdout,
         )
         .expect("UTF-8 revision")
         .trim()
@@ -638,17 +616,10 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
         "pub fn created_file_symbol() -> bool {\n    true\n}\n",
     )
     .expect("created source");
-    let commit = std::process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(root.path())
-        .output()
-        .expect("git add");
+    let commit = leantoken_test_support::GitFixture::run(root.path(), &["add", "."]);
     assert!(commit.status.success());
-    let commit = std::process::Command::new("git")
-        .args(["commit", "-m", "semantic changes"])
-        .current_dir(root.path())
-        .output()
-        .expect("git commit");
+    let commit =
+        leantoken_test_support::GitFixture::run(root.path(), &["commit", "-m", "semantic changes"]);
     assert!(commit.status.success());
     let head = revision("HEAD");
 
@@ -799,7 +770,7 @@ async fn review_context_classifies_semantic_changes_without_exposing_configurati
 
 #[tokio::test]
 async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let response = services
         .context(ContextRequest {
@@ -836,7 +807,7 @@ async fn diff_scoped_context_preserves_task_only_behavior_without_scope() {
 
 #[tokio::test]
 async fn diff_scoped_context_rejects_path_outside_repository() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let error = services
         .context(ContextRequest {
@@ -872,7 +843,7 @@ async fn diff_scoped_context_rejects_path_outside_repository() {
 
 #[tokio::test]
 async fn diff_scoped_context_rejects_excessive_changed_path_count() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let too_many = (0..600)
         .map(|i| format!("src/file{i}.rs"))
@@ -908,7 +879,7 @@ async fn diff_scoped_context_rejects_excessive_changed_path_count() {
 
 #[tokio::test]
 async fn diff_scoped_context_counts_zero_for_nonexistent_changed_path() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
 
     let response = services
         .context(ContextRequest {

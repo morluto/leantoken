@@ -810,6 +810,40 @@ pub(super) fn finalized_serialized_read_tokens(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn static_request_matrix_needs_no_repository() {
+        let base = ReadRequest {
+            path: "src/lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(17),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: crate::ReadPolicy::default(),
+        };
+        assert!(parse_read_request(base.clone()).is_ok());
+        for mutate in [
+            (|r: &mut ReadRequest| r.start_line = Some(0)) as fn(&mut ReadRequest),
+            |r| r.symbol = Some("greet".into()),
+            |r| {
+                r.start_line = None;
+                r.end_line = None;
+                r.symbol = Some(String::new());
+            },
+            |r| r.path = "../outside.rs".into(),
+            |r| r.heading_occurrence = Some(1),
+        ] {
+            let mut request = base.clone();
+            mutate(&mut request);
+            assert!(parse_read_request(request).is_err());
+        }
+    }
     use super::*;
 
     #[test]

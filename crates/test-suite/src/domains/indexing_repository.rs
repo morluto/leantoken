@@ -537,29 +537,18 @@ fn resolve_existing_accepts_contained_file() {
 }
 
 fn require_git() {
-    let output = std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .expect("git is required to run git-dependent integration tests");
-    assert!(
-        output.status.success(),
-        "git is required to run git-dependent integration tests: {}",
-        String::from_utf8_lossy(&output.stderr)
+    leantoken_test_support::GitFixture::run(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        &["--version"],
     );
 }
 
 fn run_git(root: &std::path::Path, args: &[&str]) {
-    std::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .expect("git command");
+    leantoken_test_support::GitFixture::run(root, args);
 }
 
 fn init_git_repo(root: &std::path::Path) {
-    run_git(root, &["init"]);
-    run_git(root, &["config", "user.email", "test@example.com"]);
-    run_git(root, &["config", "user.name", "Test"]);
+    leantoken_test_support::GitFixture::init(root);
 }
 
 #[test]
@@ -682,12 +671,9 @@ fn git_diff_paths_detects_committed_changes_relative_to_base() {
     run_git(root.repo(), &["add", "."]);
     run_git(root.repo(), &["commit", "-m", "base commit"]);
 
-    let base_sha = std::process::Command::new("git")
-        .args(["rev-parse", "--short=12", "HEAD"])
-        .current_dir(root.repo())
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .expect("resolve base sha");
+    let output =
+        leantoken_test_support::GitFixture::run(root.repo(), &["rev-parse", "--short=12", "HEAD"]);
+    let base_sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
 
     fs::write(
         root.repo().join("changed.rs"),
@@ -719,12 +705,9 @@ fn git_diff_paths_includes_working_tree_changes() {
     run_git(root.repo(), &["add", "."]);
     run_git(root.repo(), &["commit", "-m", "initial"]);
 
-    let base_sha = std::process::Command::new("git")
-        .args(["rev-parse", "--short=12", "HEAD"])
-        .current_dir(root.repo())
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .expect("resolve base sha");
+    let output =
+        leantoken_test_support::GitFixture::run(root.repo(), &["rev-parse", "--short=12", "HEAD"]);
+    let base_sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
 
     fs::write(
         root.repo().join("uncommitted.rs"),

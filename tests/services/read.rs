@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn read_reports_live_content_that_differs_from_the_index() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let first = services
         .read(ReadRequest {
             path: "src/lib.rs".into(),

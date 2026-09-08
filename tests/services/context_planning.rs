@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let evidence = WorkflowEvidence::new()
         .with_failure_traces(["error: greet failed".into()])
         .with_symbols(["greet".into()])
@@ -48,7 +48,7 @@ async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
 
 #[tokio::test]
 async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     std::fs::create_dir_all(root.path().join("src/mcp")).expect("create MCP source directory");
     std::fs::create_dir_all(root.path().join("src/watcher/tests"))
         .expect("create watcher test directory");
@@ -94,7 +94,7 @@ async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
 
 #[tokio::test]
 async fn context_plan_previews_materialization_without_receipt_or_source() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = context_limit_request(100);
     let source_budget = request.token_budget;
     request.focus_paths = vec!["src/**".into()];
@@ -185,7 +185,7 @@ async fn context_plan_previews_materialization_without_receipt_or_source() {
 
 #[tokio::test]
 async fn context_options_enforce_the_final_serialized_service_response_budget() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     for index in 0..6 {
         let body = (0..80)
             .map(|line| format!("    let greet_value_{line} = \"hello {index} {line}\";\n"))
@@ -276,7 +276,7 @@ async fn context_options_enforce_the_final_serialized_service_response_budget() 
 
 #[tokio::test]
 async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot_fit() {
-    let (root, services) = fixture().await;
+    let (root, services) = indexed_fixture().await;
     let generation = services
         .status()
         .await
@@ -369,7 +369,7 @@ async fn context_response_budget_fails_loudly_when_the_mandatory_skeleton_cannot
 
 #[tokio::test]
 async fn context_response_budget_details_are_exact_for_plan_and_materialization() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     for plan_only in [true, false] {
         let mut request = context_limit_request(200);
         request.task = "inspect greet".into();
@@ -426,7 +426,7 @@ async fn context_response_budget_details_are_exact_for_plan_and_materialization(
 
 #[tokio::test]
 async fn context_plan_diff_evidence_is_opt_in_and_never_smaller_when_expanded() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = context_limit_request(200);
     request.plan_only = true;
     request.changed_paths = vec!["src/lib.rs".into()];
@@ -698,7 +698,7 @@ async fn context_response_profiles_only_change_bounded_presentation() {
 
 #[tokio::test]
 async fn context_plan_only_respects_the_serialized_response_budget() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = context_limit_request(200);
     request.plan_only = true;
     let unrestricted = services
@@ -724,7 +724,7 @@ async fn context_plan_only_respects_the_serialized_response_budget() {
 
 #[tokio::test]
 async fn context_rejects_empty_include_patterns() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let mut request = context_limit_request(100);
     request.include_paths = vec![String::new()];
 
@@ -2142,7 +2142,7 @@ async fn context_marks_partial_required_symbols_without_claiming_complete_covera
 
 #[tokio::test]
 async fn oversized_context_reports_bounded_routing_with_reconcile_working_tree_retries() {
-    let (_root, services) = fixture().await;
+    let (_root, services) = indexed_fixture().await;
     let changed_paths = (0..12)
         .flat_map(|index| {
             [

@@ -47,7 +47,7 @@ macro_rules! assert_response_token_accounting {
     }};
 }
 
-async fn fixture() -> (tempfile::TempDir, Services) {
+async fn indexed_fixture() -> (tempfile::TempDir, Services) {
     let root = tempfile::tempdir().expect("temporary repository");
     // Keep Git probes scoped to this fixture even when the host places its
     // temporary directory inside another checkout. Git-specific tests replace
@@ -296,14 +296,9 @@ async fn indexed_source(path: &str, content: &[u8]) -> (tempfile::TempDir, Servi
 }
 
 fn require_git() {
-    let output = std::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .expect("git is required to run git-dependent integration tests");
-    assert!(
-        output.status.success(),
-        "git is required to run git-dependent integration tests: {}",
-        String::from_utf8_lossy(&output.stderr)
+    leantoken_test_support::GitFixture::run(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        &["--version"],
     );
 }
 
@@ -312,20 +307,6 @@ fn init_git_repo(root: &std::path::Path) {
     if git_marker.is_file() {
         std::fs::remove_file(&git_marker).expect("remove non-repository Git boundary");
     }
-    let run = |args: &[&str]| {
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()
-            .expect("git command");
-    };
-    run(&["init"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "Test"]);
-    // Keep fixture bytes stable when the host has a global autocrlf setting.
-    // Otherwise Windows can report the fixture's LF files as modified before
-    // the test changes its intended file, corrupting working-tree signals.
-    run(&["config", "core.autocrlf", "false"]);
-    run(&["add", "-A"]);
-    run(&["commit", "-m", "init"]);
+    leantoken_test_support::GitFixture::init(root);
+    leantoken_test_support::GitFixture::commit_all(root, "init");
 }

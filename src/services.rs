@@ -27,8 +27,6 @@ use crate::{Config, Error, Result};
 mod accounting;
 mod candidate_scan;
 mod change_receipt;
-#[cfg(test)]
-mod concurrency_profile;
 mod context;
 mod coverage;
 pub(crate) mod cursor;
@@ -49,6 +47,7 @@ mod read_delta;
 mod receipt_rebase;
 mod receipts;
 mod reconciliation;
+mod request_limits;
 mod savings;
 mod search;
 mod startup;
@@ -483,32 +482,8 @@ impl Services {
         Err(Error::RetryableConflict(RetryableOperation::Retrieval))
     }
 
-    pub(super) fn result_limit(&self, requested: Option<usize>) -> Result<usize> {
-        validate_positive_request_limit(
-            "max_results",
-            requested.unwrap_or(self.config.default_results),
-            self.config.max_results,
-        )
-    }
-
     pub(super) fn token_limit(&self, requested: Option<usize>, default: usize) -> Result<usize> {
-        validate_positive_request_limit(
-            "max_tokens",
-            requested.unwrap_or(default),
-            self.config.max_output_tokens,
-        )
-    }
-
-    pub(super) fn token_budget_limit(&self, requested: usize) -> Result<usize> {
-        validate_positive_request_limit("token_budget", requested, self.config.max_output_tokens)
-    }
-
-    pub(super) fn context_line_limit(&self, requested: Option<usize>) -> Result<usize> {
-        validate_request_limit(
-            "context_lines",
-            requested.unwrap_or(self.config.context_lines),
-            crate::config::MAX_CONTEXT_LINES,
-        )
+        request_limits::RequestLimits::from_config(&self.config).tokens(requested, default)
     }
 
     #[cfg(test)]
