@@ -541,11 +541,36 @@ backoff. Terminal root, discovery-limit, configuration, and cache-binding
 errors stop the indexing runtime and require a corrected configuration or
 restart.
 
-Logs go to stderr. Stdout is reserved for MCP protocol messages. Semantic
-failures after a valid `tools/call` are native MCP tool-error results with
-`isError: true`; their structured content carries a fixed, allowlisted message,
-`status: "error"`, and stable `category` for model-visible recovery. Malformed
-or unroutable protocol requests and internal failures remain JSON-RPC errors.
+Logs go to stderr. Stdout is reserved for MCP protocol messages. After tool
+arguments deserialize successfully, argument-validation and service failures
+are native MCP tool-error results with `isError: true`. Their logical payload
+carries a fixed, allowlisted message, `status: "error"`, and stable `category`
+for model-visible recovery. Decode that payload according to the negotiated
+result mode: `structuredContent` in `structured`, both structured content and
+JSON text in `dual`, or JSON text in `text`.
+
+Argument-deserialization failures happen before that typed error mapping. An
+invalid repository-relative path such as `../outside.py`, an unknown target
+variant, or an unknown argument field produces an SDK tool-error result with
+`isError: true` and a plain-text diagnostic. These results do not guarantee a
+stable `category`, `status`, or `structuredContent`. Do not derive a category
+from SDK diagnostic prose or from the absence of `structuredContent`: typed
+errors also use text only in `text` mode. Consult the `tools/list` input schema
+and repair the arguments before retrying; if the diagnostic cannot be
+classified, keep it as an unclassified argument error instead of choosing a
+category-specific retry policy. Other result types, such as `unavailable`,
+have their own documented status and reason fields.
+
+For example, the valid tagged line target is
+`{"path":"src/main.rs","target":{"kind":"lines","start":1,"end":2}}`.
+Reversing an accepted line range yields typed `invalid_input`; an accepted
+regex operation with an invalid expression yields typed `invalid_regex`.
+The same outside-root path passed to CLI `--json read` instead yields a
+`path_outside_root` error on stderr and a nonzero exit code. This interface
+difference does not weaken repository containment.
+
+Malformed or unroutable protocol requests and internal failures remain
+JSON-RPC errors.
 Repository, database, and external canonical paths, plus underlying I/O and
 SQLite details, remain in stderr diagnostics rather than protocol responses.
 

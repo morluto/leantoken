@@ -50,9 +50,12 @@ ignore-aware discovery -> chunking -> tree-sitter extraction
   Codex registrations explicitly select text while its host adapter drops
   `structuredContent`; all other registrations retain the default. Successful and
   tool-error results start from RMCP constructors so `resultType`, `isError`,
-  and legacy-version adaptation remain SDK-owned. Semantic failures from a
-  valid tool call use structured tool-error results that hosts expose to the
-  model. Unroutable protocol and internal failures cross an explicit allowlist:
+  and legacy-version adaptation remain SDK-owned. After arguments deserialize,
+  argument-validation and service failures use typed tool-error payloads in the
+  selected result mode. SDK argument-deserialization errors remain textual
+  tool errors without a stable category; callers repair input against the
+  catalog schema rather than interpreting diagnostic prose as a typed outcome.
+  Unroutable protocol and internal failures cross an explicit allowlist:
   clients receive fixed safe messages while path-bearing and infrastructure
   details remain in stderr diagnostics.
 
