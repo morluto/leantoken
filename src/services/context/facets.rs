@@ -406,8 +406,13 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let words = clause
         .split(|character: char| !character.is_alphanumeric() && character != '_')
         .filter(|word| !word.is_empty())
-        .collect::<HashSet<_>>();
+        .collect::<Vec<_>>();
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
+    // An unchanged subject (for example, "unchanged files") is still primary
+    // task evidence. Reserve preservation roles for an instruction or predicate.
+    let unchanged_predicate = words
+        .windows(2)
+        .any(|pair| matches!(pair, ["remain" | "remains" | "stay" | "stays", "unchanged"]));
     let preserve = has_word(&[
         "preserve",
         "preserved",
@@ -418,13 +423,13 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         "retain",
         "retained",
         "retaining",
-        "unchanged",
-    ]) || has_any(&[
-        "without changing",
-        "must remain",
-        "do not change",
-        "while maintaining",
-    ]);
+    ]) || unchanged_predicate
+        || has_any(&[
+            "without changing",
+            "must remain",
+            "do not change",
+            "while maintaining",
+        ]);
     let test = has_word(&["test", "tests", "regression", "spec", "coverage", "assert"]);
     let primary = !preserve
         && !test
@@ -1305,6 +1310,48 @@ mod tests {
             plan(task, 12).queries,
             plan_with_workflow_evidence(task, &WorkflowEvidence::default(), 12).queries
         );
+    }
+
+    #[test]
+    fn unchanged_subjects_do_not_become_preservation_constraints() {
+        for task in [
+            "watcher periodic polling full reconciliation unchanged file hashing cooldown CPU",
+            "Find how unchanged records are refreshed hashed and published",
+            "Investigate unchanged entries that remain in the cache",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "an unchanged subject is not a preservation instruction: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_predicates_keep_preservation_constraints() {
+        for task in [
+            "The output must remain unchanged",
+            "The output remains unchanged",
+            "The output should stay unchanged",
+            "The output stays unchanged",
+            "Keep the output unchanged",
+            "Preserve unchanged source files",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "preservation predicate must remain a constraint: {task}"
+            );
+        }
     }
 
     #[test]
