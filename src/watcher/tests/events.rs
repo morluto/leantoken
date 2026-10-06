@@ -272,6 +272,23 @@ fn full_output_queue_degrades_changes_to_reconciliation() {
 }
 
 #[test]
+fn closed_output_queue_stops_full_reconciliation_delivery() {
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+    let mut pending = PendingReconciliation::empty();
+    pending.require_full();
+    let counters = WatcherCounters::default();
+    assert!(!flush(&mut pending, &tx, &counters));
+    assert!(pending.is_full());
+    assert_eq!(
+        counters
+            .full_reconciliation_deliveries
+            .load(Ordering::Relaxed),
+        0
+    );
+}
+
+#[test]
 fn retained_path_state_overflow_becomes_one_sticky_reconciliation() {
     let mut pending = PendingReconciliation::Paths(BTreeSet::from([
         "a.rs".to_string(),

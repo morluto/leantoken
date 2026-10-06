@@ -118,7 +118,7 @@ pub(super) fn mcp_survives_malformed_and_invalid_messages() {
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
     let database = root.path().join("index.sqlite");
-    let mut process = McpProcess::spawn(root.path(), &database);
+    let mut process = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     process.initialize();
     process.send_initialized();
 
@@ -373,7 +373,7 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
     .expect("write fixture");
     let database = root.path().join("index.sqlite");
 
-    let mut first = McpProcess::spawn(root.path(), &database);
+    let mut first = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     first.initialize();
     first.send_initialized();
     first.wait_until_ready(Duration::from_secs(30));
@@ -406,7 +406,7 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
 
     std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
         .expect("write unrelated source");
-    let mut second = McpProcess::spawn(root.path(), &database);
+    let mut second = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     second.initialize();
     second.send_initialized();
     second.wait_until_ready(Duration::from_secs(30));
@@ -439,7 +439,7 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
         .to_owned();
     second.stop();
 
-    let mut third = McpProcess::spawn(root.path(), &database);
+    let mut third = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     third.initialize();
     third.send_initialized();
     third.wait_until_ready(Duration::from_secs(30));

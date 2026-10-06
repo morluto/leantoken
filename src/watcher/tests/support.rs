@@ -5,6 +5,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 
+type WatcherFactory = fn(EventCallback, Config) -> notify::Result<NativeWatcher>;
+
 pub(super) fn creation_failure(
     _callback: EventCallback,
     _config: Config,
@@ -12,9 +14,11 @@ pub(super) fn creation_failure(
     Err(notify::Error::generic("creation unavailable"))
 }
 
-struct RegistrationFailure;
+struct TestWatcher {
+    registration_fails: bool,
+}
 
-impl Watcher for RegistrationFailure {
+impl Watcher for TestWatcher {
     fn kind() -> notify::WatcherKind
     where
         Self: Sized,
@@ -26,11 +30,17 @@ impl Watcher for RegistrationFailure {
     where
         Self: Sized,
     {
-        Ok(Self)
+        Ok(Self {
+            registration_fails: false,
+        })
     }
 
     fn watch(&mut self, _path: &Path, _recursive_mode: RecursiveMode) -> notify::Result<()> {
-        Err(notify::Error::generic("registration unavailable"))
+        if self.registration_fails {
+            Err(notify::Error::generic("registration unavailable"))
+        } else {
+            Ok(())
+        }
     }
 
     fn unwatch(&mut self, _path: &Path) -> notify::Result<()> {
@@ -42,7 +52,15 @@ pub(super) fn registration_failure(
     _callback: EventCallback,
     _config: Config,
 ) -> notify::Result<NativeWatcher> {
-    Ok(Box::new(RegistrationFailure))
+    Ok(Box::new(TestWatcher {
+        registration_fails: true,
+    }))
+}
+
+pub(super) fn registration_success() -> NativeWatcher {
+    Box::new(TestWatcher {
+        registration_fails: false,
+    })
 }
 
 async fn assert_backend_failure_uses_polling(

@@ -20,6 +20,19 @@ pub(crate) async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
     Ok(())
 }
 
+fn coalesce_queued_raw_events(raw_rx: &mut mpsc::Receiver<notify::Result<Event>>) {
+    // A full reconciliation covers this existing prefix. Snapshot its length
+    // so concurrent callbacks cannot extend the work or starve delivery.
+    let queued = raw_rx.len();
+    for _ in 0..queued {
+        match raw_rx.try_recv() {
+            Ok(Err(error)) => tracing::warn!(%error, "notify error"),
+            Ok(Ok(_)) => {}
+            Err(_) => break,
+        }
+    }
+}
+
 impl RepositoryWatcher {
     /// Start watching a canonical repository root.
     ///
@@ -62,7 +75,9 @@ impl RepositoryWatcher {
         debounce: Duration,
         policy: DiscoveryPolicy,
         cancellation: CancellationToken,
-        watcher_factory: WatcherFactory,
+        watcher_factory: impl FnOnce(EventCallback, Config) -> notify::Result<NativeWatcher>
+        + Send
+        + 'static,
         poll_interval: Duration,
     ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
         let root = root.as_ref().canonicalize().map_err(Error::Io)?;
@@ -174,6 +189,7 @@ impl RepositoryWatcher {
             });
 
             let native_reconciliation_interval = Duration::from_secs(60 * 5); // 5 minutes
+            let delivery_retry_delay = debounce.max(Duration::from_millis(10));
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
             let mut pending = PendingReconciliation::empty();
@@ -191,30 +207,22 @@ impl RepositoryWatcher {
             poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
-                if overflowed.swap(false, Ordering::Acquire) {
+                if overflowed.swap(false, Ordering::Acquire) && !pending.is_full() {
                     pending.require_full();
-                }
-                if pending.is_full() {
                     sleep.as_mut().reset(Instant::now());
                 }
 
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => break,
-                    Some(raw) = raw_rx.recv() => {
-                        if !pending.is_full() {
-                            process_raw_event(
-                                raw,
-                                &watched_root,
-                                &policy,
-                                &mut pending,
-                            );
-                            bound_pending_state(&mut pending, raw_capacity);
-                        } else {
-                            if let Err(err) = raw {
-                                tracing::warn!(%err, "notify error");
-                            }
-                        }
+                    Some(raw) = raw_rx.recv(), if !pending.is_full() => {
+                        process_raw_event(
+                            raw,
+                            &watched_root,
+                            &policy,
+                            &mut pending,
+                        );
+                        bound_pending_state(&mut pending, raw_capacity);
                         if pending.is_full() {
                             sleep.as_mut().reset(Instant::now());
                         } else if !pending.is_empty() {
@@ -225,9 +233,18 @@ impl RepositoryWatcher {
                     }
                     _ = poll_timer.tick() => {
                         task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
-                        pending.require_full();
+                        if !pending.is_full() {
+                            pending.require_full();
+                            sleep.as_mut().reset(Instant::now());
+                        }
                     }
                     _ = sleep.as_mut() => {
+                        if pending.is_full() {
+                            // The current full request also covers earlier overflow.
+                            // Overflow from later callbacks must remain observable.
+                            overflowed.swap(false, Ordering::Acquire);
+                            coalesce_queued_raw_events(&mut raw_rx);
+                        }
                         if !flush(
                             &mut pending,
                             &tx,
@@ -236,7 +253,9 @@ impl RepositoryWatcher {
                             return;
                         }
                         if pending.is_full() {
-                            sleep.as_mut().reset(Instant::now() + debounce);
+                            // Further events coalesce into this sticky request without
+                            // replacing the retry deadline while delivery is blocked.
+                            sleep.as_mut().reset(Instant::now() + delivery_retry_delay);
                         } else if pending.is_empty() {
                             sleep.as_mut().reset(Instant::now() + long_sleep);
                         } else {
