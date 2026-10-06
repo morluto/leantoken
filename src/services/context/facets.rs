@@ -416,7 +416,19 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
             "ensure" | "ensures" | "ensuring" | "leave" | "leaving"
         )
     });
+    let mut copular_predicate = false;
     let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
+        if matches!(
+            *word,
+            "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were"
+        ) {
+            copular_predicate = true;
+            return false;
+        }
+        if copular_predicate && (word.ends_with("ly") || matches!(*word, "still" | "otherwise")) {
+            return false;
+        }
+        let copular = std::mem::take(&mut copular_predicate);
         if *word != "unchanged"
             || words.get(index + 1).is_some_and(|next| {
                 !matches!(
@@ -438,12 +450,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         }
         // A predicate ends the clause or precedes a circumstance/reason phrase.
         // A following noun instead makes "unchanged" an attributive modifier.
-        let copular = index.checked_sub(1).is_some_and(|previous| {
-            matches!(
-                words[previous],
-                "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were"
-            )
-        });
+
         // Direct ensure/leave instructions require a subject before the predicate.
         let instruction = unchanged_instruction.is_some_and(|start| start + 1 < index);
         copular || instruction
@@ -1359,6 +1366,8 @@ mod tests {
             "Leave cached unchanged files out of the scan",
             "Find where there are unchanged records",
             "Investigate why these are unchanged files",
+            "Find where there are entirely unchanged records",
+            "Find which files are completely unchanged records",
         ] {
             let queries = plan(task, 16).queries;
             assert!(
@@ -1396,6 +1405,13 @@ mod tests {
             "The output is unchanged during the refactor",
             "Ensure the output unchanged throughout the refactor",
             "Leave the output unchanged for compatibility",
+            "Refactor the serializer while the wire format should remain completely unchanged",
+            "The output should remain entirely unchanged during the refactor",
+            "The serialized fields are fully unchanged",
+            "The output is still unchanged",
+            "The output remains otherwise unchanged",
+            "The output is exactly unchanged",
+            "Leave the wire format completely unchanged",
             "Refactor the serializer while ensuring the wire format is unchanged",
             "Keep the output unchanged",
             "Preserve unchanged source files",
