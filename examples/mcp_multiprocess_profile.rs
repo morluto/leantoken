@@ -1270,25 +1270,43 @@ fn normalize_response(mut response: Value) -> Value {
 }
 
 fn normalize_native_receipt_links(response: &mut Value) {
+    let mut expected_receipt_id = response
+        .pointer("/result/structuredContent/meta/receipt_id")
+        .and_then(Value::as_str)
+        .filter(|id| id.len() == 49)
+        .map(str::to_owned);
     let Some(content) = response
         .pointer_mut("/result/content")
         .and_then(Value::as_array_mut)
     else {
         return;
     };
-    let receipt_id = content.iter().find_map(|block| {
+    for block in content.iter() {
         if block.get("type").and_then(Value::as_str) != Some("text") {
-            return None;
+            continue;
         }
-        let text = block.get("text")?.as_str()?;
-        let payload = serde_json::from_str::<Value>(text).ok()?;
-        payload
-            .pointer("/meta/receipt_id")?
-            .as_str()
-            .filter(|id| id.len() == 49)
-            .map(str::to_owned)
-    });
-    let Some(expected_receipt_id) = receipt_id else {
+        let Some(payload) = block
+            .get("text")
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        else {
+            continue;
+        };
+        let Some(receipt_id) = payload.pointer("/meta/receipt_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if receipt_id.len() != 49
+            || expected_receipt_id
+                .as_deref()
+                .is_some_and(|expected| expected != receipt_id)
+        {
+            return;
+        }
+        if expected_receipt_id.is_none() {
+            expected_receipt_id = Some(receipt_id.to_owned());
+        }
+    }
+    let Some(expected_receipt_id) = expected_receipt_id else {
         return;
     };
     for block in content {
@@ -2330,6 +2348,55 @@ mod tests {
                 "isError": false
             }
         })
+    }
+
+    #[test]
+    fn parity_normalizes_structured_receipts_and_preserves_dual_identity_conflicts() {
+        let first_id = format!("r{}", "a".repeat(48));
+        let second_id = format!("r{}", "b".repeat(48));
+        for keep_text in [false, true] {
+            let mut first = parity_receipt_response(&first_id);
+            let mut second = parity_receipt_response(&second_id);
+            for response in [&mut first, &mut second] {
+                response["result"]["structuredContent"] = serde_json::from_str::<Value>(
+                    response["result"]["content"][1]["text"].as_str().unwrap(),
+                )
+                .unwrap();
+                if !keep_text {
+                    response["result"]["content"].as_array_mut().unwrap().pop();
+                }
+            }
+            assert_eq!(
+                normalize_response(first.clone()),
+                normalize_response(second.clone())
+            );
+            let mut drifted = second.clone();
+            drifted["result"]["structuredContent"]["source_free"] = true.into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(drifted)
+            );
+            let mut mismatched = second.clone();
+            mismatched["result"]["content"][0]["uri"] =
+                format!("leantoken://receipt/v1/r{}", "c".repeat(48)).into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(mismatched)
+            );
+            if keep_text {
+                let mut conflicting = second;
+                let mut text: Value = serde_json::from_str(
+                    conflicting["result"]["content"][1]["text"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                text["meta"]["receipt_id"] = format!("r{}", "c".repeat(48)).into();
+                conflicting["result"]["content"][1]["text"] =
+                    serde_json::to_string(&text).unwrap().into();
+                assert_ne!(normalize_response(first), normalize_response(conflicting));
+            }
+        }
     }
 
     #[test]
