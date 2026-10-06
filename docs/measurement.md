@@ -1489,6 +1489,16 @@ three hard gates before the MCP contention stage. Complete logical/retrieval
 parity and all seven cancellation/restart probes passed; production defaults
 remain unchanged.
 
+## Exact source/chunk token-count reuse
+
+The [October 2026 reuse study](../benchmarks/reports/exact-token-count-reuse-linux-x86_64-2026-10-06.md)
+rejects a byte-identical whole-source chunk prototype against its preregistered
+5% initial-index CPU screen. Eighteen serial fresh-process arms preserve exact
+index and bounded retrieval parity. The observed representative median CPU
+changes are +0.35% and -3.21%; the zero-opportunity control also varies by -4.66%.
+The report retains executable/corpus identities, raw samples, memory evidence
+and limits. Production preparation remains unchanged.
+
 ## Enclosing-symbol lookup
 
 The focused storage benchmark compares the current correlated lookup with a
