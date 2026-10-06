@@ -493,24 +493,41 @@ impl McpProcess {
         Ok(())
     }
 
-    fn stop(&mut self) {
+    fn stop(&mut self) -> Result<(), Box<dyn Error>> {
         if self.stopped {
-            return;
+            return Ok(());
         }
         self.stdin.take();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if self.child.try_wait().ok().flatten().is_some() {
-                self.stopped = true;
-                self.join_diagnostics();
-                return;
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.stopped = true;
+                    self.join_diagnostics();
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(format!("MCP process {} failed after EOF: {status}", self.pid()).into())
+                    };
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let cleanup = self.kill_now();
+                    return Err(format!(
+                        "MCP process {} wait failed after EOF: {error}; cleanup: {cleanup:?}",
+                        self.pid()
+                    )
+                    .into());
+                }
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        self.stopped = true;
-        self.join_diagnostics();
+        self.kill_now()?;
+        Err(format!(
+            "MCP process {} did not exit within two seconds after EOF; forced termination",
+            self.pid()
+        )
+        .into())
     }
 
     fn send(&mut self, message: &Value) -> Result<(), Box<dyn Error>> {
@@ -559,7 +576,7 @@ fn collect_diagnostics(
 
 impl Drop for McpProcess {
     fn drop(&mut self) {
-        self.stop();
+        let _ = self.stop();
     }
 }
 
@@ -753,7 +770,7 @@ fn run_periodic_poll_probe(
         1,
     );
     let resources = sample_process(process.pid(), &database, true)?;
-    process.stop();
+    process.stop()?;
     let lines = process.diagnostic_lines();
     let reconciliations_during_observation =
         count_full_reconciliations(&lines).saturating_sub(reconciliations_at_ready);
@@ -982,7 +999,7 @@ fn run_measurement(
         None
     };
     for process in &mut processes {
-        process.stop();
+        process.stop()?;
     }
     std::thread::sleep(Duration::from_millis(20));
     for (measurement, process) in process_measurements.iter_mut().zip(&processes) {
@@ -2209,6 +2226,70 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn shutdown_test_process(script: &str) -> McpProcess {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take();
+        let (_, lines) = mpsc::channel();
+        McpProcess {
+            child,
+            stdin,
+            lines,
+            diagnostics: Arc::new(Mutex::new(Vec::new())),
+            diagnostics_thread: None,
+            next_id: 1,
+            stopped: false,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profiler_shutdown_rejects_nonzero_exit_after_eof() {
+        let mut process = shutdown_test_process("while read -r line; do :; done; exit 7");
+        let error = process.stop().unwrap_err().to_string();
+        assert!(process.stopped);
+        assert_eq!(process.child.try_wait().unwrap().unwrap().code(), Some(7));
+        assert!(error.contains("failed after EOF"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profiler_shutdown_rejects_forced_timeout_cleanup() {
+        let mut process = shutdown_test_process("exec sleep 30");
+        let started = Instant::now();
+        let error = process.stop().unwrap_err().to_string();
+        assert!(process.stopped);
+        assert!(!process.child.try_wait().unwrap().unwrap().success());
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(error.contains("forced termination"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profiler_shutdown_accepts_successful_eof_and_is_idempotent() {
+        let mut process = shutdown_test_process("while read -r line; do :; done; exit 0");
+        process.stop().unwrap();
+        assert!(process.stopped);
+        assert!(process.child.try_wait().unwrap().unwrap().success());
+        process.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profiler_shutdown_preserves_intentional_takeover_termination() {
+        let mut process = shutdown_test_process("exec sleep 30");
+        process.kill_now().unwrap();
+        assert!(process.stopped);
+        assert!(!process.child.try_wait().unwrap().unwrap().success());
+        process.stop().unwrap();
+    }
 
     #[test]
     fn rollup_reports_resident_proportional_and_private_memory_separately() {

@@ -850,6 +850,13 @@ are replayed. This profiler-only fan-out does not alter MCP worker policy,
 discovery membership, preparation batch bounds, publication atomicity, or the
 retrieval hot path.
 
+The benchmark-only MCP multiprocess profiler closes stdin and observes graceful
+child exit every 20 ms for at most two seconds. Measured nonzero exit, wait
+failure or forced timeout cleanup aborts report publication; an intentional
+takeover leader kill remains a separate lifecycle transition. Forced cleanup
+reuses the existing kill/wait path, and `Drop` performs best-effort cleanup.
+This adds no child fan-out or production lifecycle work.
+
 The benchmark-only MCP multiprocess resource snapshot opens each sampled
 process's `/proc/PID/smaps_rollup` once and reads at most 16 KiB plus one
 overflow-detection byte into a bounded buffer. Parsing makes four bounded
