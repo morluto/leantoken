@@ -1342,8 +1342,9 @@ covered requirements, indexed requirements blocked by path or budget limits,
 and requirements absent from the index. Every focus path reports
 `indexed_paths`, `minimum_fragments`, `selected_fragments`, and `satisfied`.
 Ordinary soft focus has a minimum of zero: an indexed focus pattern can report
-`satisfied: true` with zero selected fragments. Check `selected_fragments` to
-determine whether it received source evidence. Strict focus defaults to a
+`satisfied: true` with zero selected fragments. Inspect the response's `fragments`
+for delivered source: `selected_fragments` can include evidence later suppressed
+by a server-managed receipt. Strict focus defaults to a
 minimum of one; `minimum_fragments_per_focus_path` explicitly sets the minimum
 for either soft or strict focus. Only strict or explicit minimum requests
 contribute to `path_scope_satisfied`.
@@ -1353,8 +1354,11 @@ These fields report path coverage only; they do not claim task relevance. Explic
 Strict changed-path requests return resolved and selected changed-path counts.
 An empty strict scope therefore returns an explicit coverage failure rather
 than unrelated evidence. Already-held matching hashes satisfy a must-cover or
-evidence requirement without resending source. Focus minimums count returned
-fragments, so hash-suppressed evidence does not fulfill a nonzero focus minimum.
+evidence requirement without resending source. Caller-provided `known_hashes`
+suppress fragments before focus selection and do not fulfill a nonzero focus
+minimum. A server-managed `receipt_id` suppresses source after focus coverage is
+calculated, so its reported focus minimum can remain satisfied with no delivered
+fragments.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
 result limits with aggregate counts in both `compact` and `balanced` responses.
