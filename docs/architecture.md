@@ -809,6 +809,8 @@ profiler observes acquisition separately from post-acquisition publication,
 screens those phases at nine and five seconds respectively, and preserves total
 takeover time. Its attempt shares one deadline across both waits and verifies
 the same unique successor still owns the lock after publication.
+The profiler's default idle observation is nine seconds; shorter explicit
+windows cannot promote a decision and preserve any response-parity failure.
 
 MCP retrieval preparation gives generation-zero `reconcile_working_tree`
 waiters the same absolute 30-second cold-index deadline as readiness waiting.

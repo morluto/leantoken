@@ -117,6 +117,9 @@ five-second publication for arbitrary repositories or hard latency under host
 overload. Production polling remains 500 ms through eight seconds. Use at least
 nine idle seconds when investigating stable capped followers; a short smoke
 does not exercise their worst probe phase.
+The profiler defaults to nine idle seconds. Explicitly shorter windows retain
+their measurements but return `insufficient_evidence`; a response-parity
+failure still returns `invalid_measurement`.
 
 The default dedicated polling probe creates 50,001 directories to exceed the
 recursive watcher bound. It fails if a full reconciliation is observed at

@@ -31,6 +31,7 @@ const MAX_FIXTURE_FILES: usize = 10_000;
 const MAX_FUNCTIONS_PER_FILE: usize = 1_000;
 const MAX_WARM_ITERATIONS: usize = 1_000;
 const MAX_IDLE_SECONDS: u64 = 60;
+const MIN_STABLE_FOLLOWER_IDLE_SECONDS: u64 = 9;
 const MAX_POLLING_DIRECTORIES: usize = 60_000;
 const MAX_POLLING_OBSERVATION_SECONDS: u64 = 120;
 const MAX_PARITY_MISMATCH_PATHS: usize = 32;
@@ -62,8 +63,8 @@ struct Args {
     /// Concurrent warm query rounds per process.
     #[arg(long, default_value_t = 10)]
     warm_iterations: usize,
-    /// Idle CPU observation window after retrieval rounds.
-    #[arg(long, default_value_t = 5)]
+    /// Idle CPU observation window; shorter runs are incomplete follower evidence.
+    #[arg(long, default_value_t = MIN_STABLE_FOLLOWER_IDLE_SECONDS)]
     idle_seconds: u64,
     /// Empty directories used to force the bounded periodic-polling fallback.
     #[arg(long, default_value_t = 50_001)]
@@ -597,7 +598,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             timeout,
         )?)
     };
-    let decision = make_decision(&runs, thresholds);
+    let decision =
+        enforce_follower_idle_window(make_decision(&runs, thresholds), args.idle_seconds);
     let report = Report {
         schema_version: 4,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -2022,6 +2024,19 @@ fn insufficient_decision(reason: &str) -> Decision {
     }
 }
 
+fn enforce_follower_idle_window(mut decision: Decision, idle_seconds: u64) -> Decision {
+    if idle_seconds < MIN_STABLE_FOLLOWER_IDLE_SECONDS {
+        decision.reasons.push(format!(
+            "idle observation is shorter than the {MIN_STABLE_FOLLOWER_IDLE_SECONDS}-second stable-follower window"
+        ));
+        // A short observation must not conceal a complete-response mismatch.
+        if decision.recommendation != "invalid_measurement" {
+            decision.recommendation = "insufficient_evidence";
+        }
+    }
+    decision
+}
+
 fn workload_cpu_ratio(
     runs: &[RunMeasurement],
     topology: Topology,
@@ -2124,6 +2139,34 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_idle_window_covers_stable_follower_probes() {
+        let arguments = Args::try_parse_from(["mcp_multiprocess_profile"]).unwrap();
+        assert!(
+            arguments.idle_seconds >= 9,
+            "default observation must cover the eight-second capped follower phase"
+        );
+    }
+
+    #[test]
+    fn short_idle_evidence_cannot_promote_a_decision_or_conceal_parity_failure() {
+        let mut complete = insufficient_decision("fixture");
+        complete.recommendation = "retain_stdio";
+        complete.reasons.clear();
+        let short = enforce_follower_idle_window(complete.clone(), 8);
+        assert_eq!(short.recommendation, "insufficient_evidence");
+        assert!(short.reasons[0].contains("9-second stable-follower window"));
+        assert_eq!(
+            enforce_follower_idle_window(complete.clone(), 9).recommendation,
+            "retain_stdio"
+        );
+        complete.recommendation = "invalid_measurement";
+        complete.reasons.push("response parity failed".into());
+        let invalid = enforce_follower_idle_window(complete, 1);
+        assert_eq!(invalid.recommendation, "invalid_measurement");
+        assert_eq!(invalid.reasons[0], "response parity failed");
+    }
 
     fn takeover(acquisition_ms: f64, ready_after_acquisition_ms: f64) -> TakeoverMeasurement {
         TakeoverMeasurement {
