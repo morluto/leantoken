@@ -100,6 +100,27 @@ estimated read connections, WAL, leader and watcher ownership, admission
 entries/directories, generation publication, response-accounting writes, and
 takeover separate.
 
+Schema v4 also includes optional `rollup_rss_kib`, `pss_kib` and `private_kib`
+in each process resource snapshot, with corresponding `aggregate_` fields.
+Existing `rss_kib` and `peak_rss_kib` retain Linux status `VmRSS` and `VmHWM`
+semantics. Each snapshot reads at most 16 KiB plus one overflow-detection byte
+from `/proc/PID/smaps_rollup`. Rollup RSS counts resident pages; PSS apportions
+shared pages between processes; private memory sums `Private_Clean` and
+`Private_Dirty`. These are resident-page observations, not heap allocation-owner
+measurements. Status RSS uses asynchronous accounting and can differ from the
+rollup snapshot; the metrics are sampled sequentially and are not one atomic
+cohort snapshot. See the [Linux proc documentation](https://docs.kernel.org/filesystems/proc.html).
+
+Missing, unreadable, oversized or malformed rollup observations serialize as
+`null`, independently for each metric. An aggregate is `null` if any cohort
+member lacks that metric or the sum overflows; missing values never become
+zero. Warm-idle resource sampling follows the timed query and idle CPU windows.
+Takeover verification also samples resources after the measured acquisition
+and generation-ready phases, within the end-to-end takeover observation.
+These additive diagnostics do not change the decision thresholds. Compare
+RSS and PSS separately when describing follower cost: shared disk-cache
+ownership does not imply shared tokenizer, runtime or reader-pool allocations.
+
 Schema v4 splits takeover into `leadership_acquisition_ms` and
 `generation_ready_after_acquisition_ms`, retaining end-to-end `takeover_ms`.
 The first timer starts before killing the leader and stops at the first unique

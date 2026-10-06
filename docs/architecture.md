@@ -850,6 +850,15 @@ are replayed. This profiler-only fan-out does not alter MCP worker policy,
 discovery membership, preparation batch bounds, publication atomicity, or the
 retrieval hot path.
 
+The benchmark-only MCP multiprocess resource snapshot opens each sampled
+process's `/proc/PID/smaps_rollup` once and reads at most 16 KiB plus one
+overflow-detection byte into a bounded buffer. Parsing makes four bounded
+passes for RSS, PSS and private clean/dirty; optional cohort sums require every
+process's metric and checked addition. Unavailable or invalid observations
+remain absent. This sampling runs after timed warm-query/idle CPU windows and
+after takeover acquisition/publication phases, not in production requests or
+the periodic polling loop. It adds no process fan-out or production allocations.
+
 The MCP multiprocess measurement parser normalizes ANSI SGR in at most two
 selected watcher diagnostic lines. Plain lines borrow their existing bytes;
 each colored-line copy is no larger than its input. Missing counters remain
