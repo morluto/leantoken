@@ -2081,6 +2081,7 @@ fn failed_rollback_retains_recovery_journal() {
     let transaction = begin_setup_transaction(&plan)
         .unwrap()
         .expect("transaction");
+    let journal_before = fs::read(transaction_path(&runtime_root)).expect("recovery journal");
     fs::write(&path, "new").unwrap();
     fs::remove_file(&path).unwrap();
     fs::remove_dir(&parent).unwrap();
@@ -2088,8 +2089,17 @@ fn failed_rollback_retains_recovery_journal() {
 
     let error = rollback_setup(None, &[&plan.edits[0]], &[], Some(transaction))
         .expect_err("rollback must fail");
-    assert!(matches!(error, Error::Io(_)));
-    assert!(transaction_path(&runtime_root).exists());
+    assert_eq!(
+        fs::read(transaction_path(&runtime_root)).expect("failed rollback must retain journal"),
+        journal_before,
+        "failed rollback must preserve recovery data: {error:?}"
+    );
+    assert_eq!(fs::read_to_string(&parent).unwrap(), "blocks restoration");
+    assert!(
+        matches!(error, Error::Io(_)),
+        "unexpected rollback error: {error:?}; target metadata: {:?}",
+        fs::symlink_metadata(&path)
+    );
 }
 
 #[test]
