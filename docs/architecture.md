@@ -2059,6 +2059,14 @@ marker—fail the stable required check. Unknown changed paths and unavailable
 comparison revisions expand selection monotonically within the event's allowed
 lane set; they cannot silently create an event-ineligible job.
 
+Authoritative coverage cleans workspace artifacts and profile data before
+instrumentation, while retaining reusable dependency artifacts. Cleanup warnings
+or failures invalidate the evidence. The coverage lane also exercises this
+boundary with two tiny disposable crates and two source versions: an obsolete
+feature executable and removed source owner must disappear from the current
+report, current function coverage must remain, and dependency artifact digests
+must survive cleanup unchanged. Fixture builds use their own target directory.
+
 ## Failure behavior
 
 - Request validation failures are typed and do not terminate MCP.

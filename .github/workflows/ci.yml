@@ -340,6 +340,12 @@ jobs:
           dist plan
           mkdir -p target && touch target/ci-command-completed
 
+      - name: Verify coverage workspace artifact cleanup
+        if: matrix.command == 'coverage'
+        run: |
+          cargo test --locked --package leantoken-xtask \
+            workspace_cleanup_removes_stale_maps_and_preserves_dependencies -- --ignored
+
       - name: Measure authoritative product coverage and enforce owner budgets
         if: matrix.command == 'coverage'
         run: |
