@@ -343,8 +343,7 @@ jobs:
       - name: Verify coverage workspace artifact cleanup
         if: matrix.command == 'coverage'
         run: |
-          cargo test --locked --package leantoken-xtask \
-            workspace_cleanup_removes_stale_maps_and_preserves_dependencies -- --ignored
+          cargo xtask coverage check-cache-cleanup
 
       - name: Measure authoritative product coverage and enforce owner budgets
         if: matrix.command == 'coverage'

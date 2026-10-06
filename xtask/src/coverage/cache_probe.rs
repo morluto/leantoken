@@ -2,20 +2,14 @@ use std::{collections::BTreeMap, fs, path::Path};
 
 use super::{clean_workspace, logged};
 
-#[test]
-#[ignore = "requires cargo-llvm-cov 0.9.1 and llvm-tools; exercised by the coverage lane"]
-fn workspace_cleanup_removes_stale_maps_and_preserves_dependencies() {
+pub(super) fn run(workspace: &Path) -> Result<(), String> {
     // Build executable fixtures under the workspace target: /tmp can be noexec.
-    let scratch = crate::workspace_root().join("target/coverage-cache-fixtures");
-    fs::create_dir_all(&scratch).unwrap();
-    let fixture = tempfile::tempdir_in(&scratch).expect("coverage cache fixture");
+    let scratch = workspace.join("target/coverage-cache-fixtures");
+    fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
+    let fixture = tempfile::tempdir_in(&scratch).map_err(|error| error.to_string())?;
     let root = fixture.path().join("workspace");
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "coverage::cache_tests::cached_artifact_child",
-            "--nocapture",
-        ])
+        .args(["coverage", "check-cache-cleanup-worker"])
         .env("LEANTOKEN_COVERAGE_CACHE_FIXTURE", &root)
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env_remove("RUSTFLAGS")
@@ -26,20 +20,23 @@ fn workspace_cleanup_removes_stale_maps_and_preserves_dependencies() {
         .env_remove("CARGO_LLVM_COV_BUILD_DIR")
         .env_remove("CARGO_BUILD_BUILD_DIR")
         .output()
-        .expect("run isolated coverage fixture");
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "coverage cache regression failed\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    println!(
+        "coverage cache cleanup: obsolete maps excluded, current coverage retained, dependency artifacts unchanged"
     );
+    Ok(())
 }
 
-#[test]
-fn cached_artifact_child() {
-    let Some(root) = std::env::var_os("LEANTOKEN_COVERAGE_CACHE_FIXTURE") else {
-        return;
-    };
+pub(super) fn worker() -> Result<(), String> {
+    let root = std::env::var_os("LEANTOKEN_COVERAGE_CACHE_FIXTURE")
+        .ok_or("coverage cache worker requires an isolated fixture root")?;
     let root = Path::new(&root);
     let dependency = root.parent().unwrap().join("dependency");
     fs::create_dir_all(root.join("src")).unwrap();
@@ -139,6 +136,7 @@ fixture_dependency = { path = "../dependency" }
         "obsolete function in report"
     );
     assert!(has_executed_function(&current, "current_entry"));
+    Ok(())
 }
 
 fn phase(root: &Path, name: &str, command: &[&str]) {

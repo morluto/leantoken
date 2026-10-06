@@ -4,6 +4,8 @@ use std::{collections::BTreeMap, fs};
 
 const POLICY: &str = "ci/coverage-policy.json";
 
+mod cache_probe;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Policy {
@@ -345,6 +347,12 @@ fn command(filter: Option<&str>) -> Vec<String> {
 }
 
 pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
+    if args.as_slice() == ["check-cache-cleanup"] {
+        return cache_probe::run(root);
+    }
+    if args.as_slice() == ["check-cache-cleanup-worker"] {
+        return cache_probe::worker();
+    }
     if args.as_slice() == ["check-policy"] {
         return check_policy(root);
     }
@@ -361,7 +369,10 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
         [dry, flag, filter] if dry == "--dry-run" && flag == "--filterset" => {
             (true, Some(filter.as_str()))
         }
-        _ => return Err("usage: cargo xtask coverage [--dry-run] [--filterset FILTER]".into()),
+        _ => return Err(
+            "usage: cargo xtask coverage [--dry-run] [--filterset FILTER] | check-cache-cleanup"
+                .into(),
+        ),
     };
     let command = command(filter);
     if dry_run {
@@ -565,9 +576,6 @@ fn invalid_profile_diagnostics(diagnostics: &str) -> bool {
             || line.contains("llvm profile error:")
     })
 }
-
-#[cfg(test)]
-mod cache_tests;
 
 #[cfg(test)]
 mod tests {
