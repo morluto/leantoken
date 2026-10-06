@@ -410,6 +410,19 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
     // An unchanged subject (for example, "unchanged files") is still primary
     // task evidence. Reserve preservation roles for an instruction or predicate.
+    let unchanged_subject = words.iter().position(|word| *word == "unchanged");
+    let unchanged_requirement = unchanged_subject.is_some_and(|subject| {
+        words.windows(2).enumerate().any(|(index, pair)| {
+            subject < index
+                && matches!(
+                    pair,
+                    [
+                        "is" | "are" | "be" | "was" | "were",
+                        "required" | "mandatory" | "necessary" | "needed"
+                    ]
+                )
+        })
+    });
     let unchanged_instruction = words.iter().position(|word| {
         matches!(
             *word,
@@ -502,6 +515,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         "retained",
         "retaining",
     ]) || unchanged_predicate
+        || unchanged_requirement
         || has_any(&[
             "without changing",
             "must remain",
@@ -512,6 +526,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let primary = !preserve
         && !test
         && (first
+            || unchanged_subject.is_some()
             || has_word(&[
                 "fix",
                 "implement",
@@ -1491,6 +1506,45 @@ mod tests {
                     .iter()
                     .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
                 "passive or inflected preservation predicate must remain a constraint: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn later_unchanged_subjects_retain_primary_change_queries() {
+        let queries = plan(
+            "Fix watcher polling; unchanged records are refreshed hashed and published",
+            16,
+        )
+        .queries;
+        let subject_queries = queries
+            .iter()
+            .filter(|query| query.value == "records")
+            .collect::<Vec<_>>();
+        assert!(
+            !subject_queries.is_empty(),
+            "subject evidence must be queried"
+        );
+        assert!(subject_queries.iter().all(|query| {
+            query.has_facet(FacetKind::PrimaryChange)
+                && !query.has_facet(FacetKind::PreserveConstraint)
+        }));
+    }
+
+    #[test]
+    fn nominal_unchanged_requirements_keep_preservation_constraints() {
+        for task in [
+            "Refactor the serializer; unchanged wire format is required",
+            "The unchanged response shape is mandatory",
+            "An unchanged API contract is necessary",
+            "An unchanged output is needed",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "nominal preservation requirement must remain a constraint: {task}"
             );
         }
     }
