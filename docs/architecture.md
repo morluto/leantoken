@@ -843,6 +843,14 @@ each colored-line copy is no larger than its input. Missing counters remain
 unobserved, and unrelated or incomplete control sequences remain intact. This
 adds no process fan-out or production watcher work.
 
+MCP response-parity comparison makes at most two passes over the existing result
+content array. It parses one text payload at a time, retaining only a 49-byte
+receipt identifier, then normalizes valid v1 identifiers in native
+`retrieval_receipt` resource links that match that payload identity. Other link
+fields, mismatched references, malformed or unsupported URIs, and source payload
+strings remain comparable. This adds no recursive URI scan or retained source
+cache.
+
 The process performing the initial index exposes detailed phases for discovery,
 hash-and-plan, preparation, relational staging, the four FTS builds, and
 commit/checkpoint. `files_staged` remains explicitly unpublished until the
