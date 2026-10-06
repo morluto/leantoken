@@ -62,7 +62,9 @@ impl RepositoryWatcher {
         debounce: Duration,
         policy: DiscoveryPolicy,
         cancellation: CancellationToken,
-        watcher_factory: WatcherFactory,
+        watcher_factory: impl FnOnce(EventCallback, Config) -> notify::Result<NativeWatcher>
+        + Send
+        + 'static,
         poll_interval: Duration,
     ) -> Result<(Self, mpsc::Receiver<WatcherMessage>)> {
         let root = root.as_ref().canonicalize().map_err(Error::Io)?;
@@ -200,24 +202,20 @@ impl RepositoryWatcher {
                 tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => break,
-                    Some(raw) = raw_rx.recv() => {
-                        if !pending.is_full() {
-                            process_raw_event(
-                                raw,
-                                &watched_root,
-                                &policy,
-                                &mut pending,
-                            );
-                            bound_pending_state(&mut pending, raw_capacity);
-                            if pending.is_full() {
-                                sleep.as_mut().reset(Instant::now());
-                            } else if !pending.is_empty() {
-                                sleep.as_mut().reset(Instant::now() + debounce);
-                            } else {
-                                sleep.as_mut().reset(Instant::now() + long_sleep);
-                            }
-                        } else if let Err(err) = raw {
-                            tracing::warn!(%err, "notify error");
+                    Some(raw) = raw_rx.recv(), if !pending.is_full() => {
+                        process_raw_event(
+                            raw,
+                            &watched_root,
+                            &policy,
+                            &mut pending,
+                        );
+                        bound_pending_state(&mut pending, raw_capacity);
+                        if pending.is_full() {
+                            sleep.as_mut().reset(Instant::now());
+                        } else if !pending.is_empty() {
+                            sleep.as_mut().reset(Instant::now() + debounce);
+                        } else {
+                            sleep.as_mut().reset(Instant::now() + long_sleep);
                         }
                     }
                     _ = poll_timer.tick() => {

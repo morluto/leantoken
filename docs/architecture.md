@@ -915,8 +915,11 @@ reconciliation and retries no sooner than the configured debounce, with a
 10-millisecond minimum even for zero debounce. Additional raw events, overflow
 signals, and poll ticks coalesce into that request without resetting its retry
 deadline. A new transition to full reconciliation still schedules an immediate
-delivery attempt. Cancellation retains priority and shutdown attempts one final
-flush without waiting for queue capacity.
+delivery attempt. Raw-event draining pauses while a full request is pending,
+so continuous event traffic cannot starve its expired delivery timer. The raw
+queue and overflow flag retain their existing bounds and resume after full
+delivery. Cancellation retains priority and shutdown attempts one final flush
+without waiting for queue capacity.
 
  Watcher initialization exposes a bounded diagnostic snapshot containing the
  selected native or periodic-polling backend, the exact admission entries and

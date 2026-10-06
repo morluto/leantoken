@@ -110,6 +110,70 @@ async fn shutdown_joins_while_full_reconciliation_is_backpressured() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn expired_full_queue_retry_progresses_during_continuous_raw_events() {
+    let root = tempfile::tempdir().unwrap();
+    let (callback_tx, callback_rx) = oneshot::channel();
+    let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
+        root.path(),
+        64,
+        Duration::from_millis(100),
+        DiscoveryPolicy::default(),
+        CancellationToken::new(),
+        move |callback, _config| {
+            assert!(callback_tx.send(callback).is_ok());
+            Ok(registration_success())
+        },
+        Duration::from_secs(30),
+    )
+    .await
+    .unwrap();
+    let mut callback = callback_rx.await.unwrap();
+    assert_eq!(watcher.diagnostics().backend, WatcherBackend::Native);
+
+    // Fill delivery, then retain one failed full reconciliation. The larger
+    // raw queue lets a producer keep it ready across cooperative task yields.
+    for _ in 0..65 {
+        advance(Duration::from_secs(300)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        advance(Duration::from_millis(1)).await;
+    }
+    assert_eq!(messages.len(), 64);
+    assert_eq!(watcher.diagnostics().full_reconciliation_deliveries, 64);
+    let producing = Arc::new(AtomicBool::new(true));
+    let producer = tokio::spawn({
+        let producing = Arc::clone(&producing);
+        let event = Event::new(EventKind::Any).add_path(root.path().join("changed.rs"));
+        async move {
+            while producing.load(Ordering::Relaxed) {
+                for _ in 0..256 {
+                    callback(Ok(event.clone()));
+                }
+                tokio::task::yield_now().await;
+            }
+        }
+    });
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    while messages.try_recv().is_ok() {}
+    advance(Duration::from_millis(100)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    let delivered = messages.try_recv();
+    producing.store(false, Ordering::Relaxed);
+    producer.await.unwrap();
+    watcher.shutdown().await.unwrap();
+    assert_eq!(
+        delivered,
+        Ok(WatcherMessage::ReconcileRequired),
+        "expired full delivery retry must progress even while raw events remain ready"
+    );
+}
+
 #[tokio::test]
 async fn lifecycle_shutdown_joins() {
     let root = tempfile::tempdir().unwrap();

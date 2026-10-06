@@ -12,7 +12,6 @@ pub(super) const WATCHER_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 pub(super) type EventCallback = Box<dyn FnMut(notify::Result<Event>) + Send>;
 pub(super) type NativeWatcher = Box<dyn Watcher + Send>;
-pub(super) type WatcherFactory = fn(EventCallback, Config) -> notify::Result<NativeWatcher>;
 
 pub(super) fn recommended_watcher(
     callback: EventCallback,
