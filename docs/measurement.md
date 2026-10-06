@@ -224,6 +224,12 @@ It preserves the independent warm-latency screen failure and distinguishes
 descriptive follower increments from heap-owner attribution or a passing
 memory optimization. Shared SQLite ownership does not share process memory.
 
+The [tokenizer ownership screens](../benchmarks/reports/tokenizer-ownership-linux-x86_64-2026-10-06.md)
+retain two rejected immutable-byte-sharing prototypes, exact patches and native
+paired observations. One lowers PSS/private memory but fails CPU/latency gates;
+the smaller ownership change fails the predeclared allocation floor and stops
+before native compilation. Neither external dependency override is adopted.
+
 ## Frozen retrieval sets
 
 `benchmarks/representative.json` is the visible development set. Its eight
