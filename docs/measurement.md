@@ -121,6 +121,17 @@ These additive diagnostics do not change the decision thresholds. Compare
 RSS and PSS separately when describing follower cost: shared disk-cache
 ownership does not imply shared tokenizer, runtime or reader-pool allocations.
 
+Normal measured MCP shutdown closes stdin and requires a successful exit within
+a six-second EOF grace, checked every 20 ms. This covers production's five-second
+runtime cleanup window plus one second for scheduling and observation after all
+measured requests have completed. A nonzero exit, wait
+error or forced timeout cleanup fails the matrix or dedicated polling probe
+before its report is emitted. Intentional leader termination for takeover is
+handled separately and does not count as failed EOF. Error-path `Drop` cleanup
+remains best effort; successful resource output must pass the checked shutdown
+path. The operating system's kill/wait and scheduling can add cleanup time
+beyond the graceful observation window.
+
 Schema v4 splits takeover into `leadership_acquisition_ms` and
 `generation_ready_after_acquisition_ms`, retaining end-to-end `takeover_ms`.
 The first timer starts before killing the leader and stops at the first unique
