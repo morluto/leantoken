@@ -557,7 +557,7 @@ cargo run --release -p leantoken-benchmarks --bin mcp_multiprocess_profile -- \
   --files 200 \
   --functions-per-file 40 \
   --warm-iterations 10 \
-  --idle-seconds 5 \
+  --idle-seconds 9 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
   --output target/mcp-multiprocess-cpu-v4.json
