@@ -196,6 +196,7 @@ pub(crate) struct McpProcess {
     _process_home: Option<tempfile::TempDir>,
     pub(crate) stdin: Option<ChildStdin>,
     lines: mpsc::Receiver<String>,
+    last_sent: String,
     stderr_task: Option<std::thread::JoinHandle<()>>,
     stderr: Arc<Mutex<Vec<u8>>>,
 }
@@ -299,6 +300,7 @@ impl McpProcess {
             _process_home: process_home,
             stdin: Some(stdin),
             lines,
+            last_sent: "no request sent".into(),
             stderr_task,
             stderr: captured_stderr,
         }
@@ -366,6 +368,7 @@ impl McpProcess {
     pub(crate) fn wait_until_ready(&mut self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         let mut id = 2;
+        let mut last_response = None;
         while Instant::now() < deadline {
             self.send(serde_json::json!({
                 "jsonrpc": "2.0",
@@ -382,10 +385,14 @@ impl McpProcess {
             {
                 return;
             }
+            last_response = Some(response);
             id += 1;
             std::thread::sleep(POLL_INTERVAL);
         }
-        panic!("MCP process did not become ready within {timeout:?}");
+        panic!(
+            "MCP process did not become ready within {timeout:?}; last response: {last_response:?}; stderr (first 64 KiB): {}",
+            String::from_utf8_lossy(&self.stderr.lock().expect("stderr buffer"))
+        );
     }
 
     pub(crate) fn wait_until_unavailable(&mut self, timeout: Duration) {
@@ -417,6 +424,19 @@ impl McpProcess {
     }
 
     pub(crate) fn send(&mut self, message: serde_json::Value) {
+        // Retain only bounded request identity, never source or argument bodies.
+        let describe = |value: Option<&serde_json::Value>| match value {
+            Some(serde_json::Value::String(value)) => value.chars().take(128).collect(),
+            Some(serde_json::Value::Number(value)) => value.to_string(),
+            Some(_) => "non-string/number".into(),
+            None => "absent".into(),
+        };
+        self.last_sent = format!(
+            "method={}, id={}, tool={}",
+            describe(message.get("method")),
+            describe(message.get("id")),
+            describe(message.pointer("/params/name"))
+        );
         let stdin = self.stdin.as_mut().expect("live MCP stdin");
         serde_json::to_writer(&mut *stdin, &message).expect("write MCP message");
         stdin.write_all(b"\n").expect("terminate MCP message");
@@ -424,6 +444,7 @@ impl McpProcess {
     }
 
     pub(crate) fn send_raw_line(&mut self, line: &str) {
+        self.last_sent = format!("raw line: {} bytes", line.len());
         let stdin = self.stdin.as_mut().expect("live MCP stdin");
         stdin
             .write_all(line.as_bytes())
@@ -433,16 +454,20 @@ impl McpProcess {
     }
 
     pub(crate) fn send_raw(&mut self, bytes: &[u8]) {
+        self.last_sent = format!("raw bytes: {}", bytes.len());
         let stdin = self.stdin.as_mut().expect("live MCP stdin");
         stdin.write_all(bytes).expect("write raw MCP bytes");
         stdin.flush().expect("flush raw MCP bytes");
     }
 
     pub(crate) fn message(&self, timeout: Duration) -> serde_json::Value {
-        let line = self
-            .lines
-            .recv_timeout(timeout)
-            .expect("MCP message before deadline");
+        let line = self.lines.recv_timeout(timeout).unwrap_or_else(|error| {
+            panic!(
+                "MCP message before deadline ({timeout:?}): {error:?}; last sent: {}; stderr (first 64 KiB): {}",
+                self.last_sent,
+                String::from_utf8_lossy(&self.stderr.lock().expect("stderr buffer"))
+            )
+        });
         serde_json::from_str(&line).expect("MCP JSON message")
     }
 
