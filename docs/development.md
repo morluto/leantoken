@@ -560,7 +560,7 @@ cargo run --release -p leantoken-benchmarks --bin mcp_multiprocess_profile -- \
   --idle-seconds 5 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v3.json
+  --output target/mcp-multiprocess-cpu-v4.json
 ```
 
 The example rejects more than 16 processes, 10,000 fixture files, 1,000
