@@ -1,5 +1,115 @@
 use super::*;
 
+async fn assert_full_queue_preserves_retry_deadline(debounce: Duration, poll_interval: Duration) {
+    let root = tempfile::tempdir().unwrap();
+    let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
+        root.path(),
+        1,
+        debounce,
+        DiscoveryPolicy::default(),
+        CancellationToken::new(),
+        creation_failure,
+        poll_interval,
+    )
+    .await
+    .unwrap();
+
+    // Leave the first periodic reconciliation in the single-slot delivery queue.
+    advance(poll_interval + Duration::from_millis(1)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(messages.len(), 1);
+    advance(poll_interval).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    advance(Duration::from_millis(1)).await;
+    assert!(watcher.diagnostics().poll_ticks >= 2);
+
+    let retry_delay = debounce.max(Duration::from_millis(10));
+    advance(retry_delay / 2).await;
+    assert_eq!(messages.try_recv(), Ok(WatcherMessage::ReconcileRequired));
+    advance(Duration::from_millis(1)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        messages.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        "a full queue must retain its retry deadline after capacity becomes available"
+    );
+
+    advance(retry_delay).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(messages.try_recv(), Ok(WatcherMessage::ReconcileRequired));
+    assert_eq!(watcher.diagnostics().full_reconciliation_deliveries, 2);
+    timeout(Duration::from_secs(1), watcher.shutdown())
+        .await
+        .expect("shutdown timeout")
+        .unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn full_delivery_queue_retains_retry_deadline_and_pending_reconciliation() {
+    assert_full_queue_preserves_retry_deadline(Duration::from_millis(100), Duration::from_secs(1))
+        .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_poll_ticks_do_not_restart_full_queue_retry() {
+    assert_full_queue_preserves_retry_deadline(
+        Duration::from_millis(100),
+        Duration::from_millis(10),
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn zero_debounce_still_delays_full_queue_retry() {
+    assert_full_queue_preserves_retry_deadline(Duration::ZERO, Duration::from_secs(1)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_joins_while_full_reconciliation_is_backpressured() {
+    let root = tempfile::tempdir().unwrap();
+    let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
+        root.path(),
+        1,
+        Duration::from_secs(10),
+        DiscoveryPolicy::default(),
+        CancellationToken::new(),
+        creation_failure,
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    advance(Duration::from_secs(1)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(messages.len(), 1);
+    advance(Duration::from_secs(1)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(watcher.diagnostics().poll_ticks, 2);
+    timeout(Duration::from_millis(50), watcher.shutdown())
+        .await
+        .expect("shutdown must not wait for queue capacity or delivery retry")
+        .unwrap();
+    assert_eq!(messages.try_recv(), Ok(WatcherMessage::ReconcileRequired));
+    assert_eq!(
+        messages.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    );
+}
+
 #[tokio::test]
 async fn lifecycle_shutdown_joins() {
     let root = tempfile::tempdir().unwrap();

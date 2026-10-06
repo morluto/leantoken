@@ -174,6 +174,7 @@ impl RepositoryWatcher {
             });
 
             let native_reconciliation_interval = Duration::from_secs(60 * 5); // 5 minutes
+            let delivery_retry_delay = debounce.max(Duration::from_millis(10));
             let long_sleep = Duration::from_secs(60 * 60 * 24 * 365 * 10);
             let mut sleep = Box::pin(sleep(long_sleep));
             let mut pending = PendingReconciliation::empty();
@@ -191,10 +192,8 @@ impl RepositoryWatcher {
             poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
-                if overflowed.swap(false, Ordering::Acquire) {
+                if overflowed.swap(false, Ordering::Acquire) && !pending.is_full() {
                     pending.require_full();
-                }
-                if pending.is_full() {
                     sleep.as_mut().reset(Instant::now());
                 }
 
@@ -210,22 +209,23 @@ impl RepositoryWatcher {
                                 &mut pending,
                             );
                             bound_pending_state(&mut pending, raw_capacity);
-                        } else {
-                            if let Err(err) = raw {
-                                tracing::warn!(%err, "notify error");
+                            if pending.is_full() {
+                                sleep.as_mut().reset(Instant::now());
+                            } else if !pending.is_empty() {
+                                sleep.as_mut().reset(Instant::now() + debounce);
+                            } else {
+                                sleep.as_mut().reset(Instant::now() + long_sleep);
                             }
-                        }
-                        if pending.is_full() {
-                            sleep.as_mut().reset(Instant::now());
-                        } else if !pending.is_empty() {
-                            sleep.as_mut().reset(Instant::now() + debounce);
-                        } else {
-                            sleep.as_mut().reset(Instant::now() + long_sleep);
+                        } else if let Err(err) = raw {
+                            tracing::warn!(%err, "notify error");
                         }
                     }
                     _ = poll_timer.tick() => {
                         task_counters.poll_ticks.fetch_add(1, Ordering::Relaxed);
-                        pending.require_full();
+                        if !pending.is_full() {
+                            pending.require_full();
+                            sleep.as_mut().reset(Instant::now());
+                        }
                     }
                     _ = sleep.as_mut() => {
                         if !flush(
@@ -236,7 +236,9 @@ impl RepositoryWatcher {
                             return;
                         }
                         if pending.is_full() {
-                            sleep.as_mut().reset(Instant::now() + debounce);
+                            // Further events coalesce into this sticky request without
+                            // replacing the retry deadline while delivery is blocked.
+                            sleep.as_mut().reset(Instant::now() + delivery_retry_delay);
                         } else if pending.is_empty() {
                             sleep.as_mut().reset(Instant::now() + long_sleep);
                         } else {

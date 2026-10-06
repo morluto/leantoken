@@ -910,6 +910,14 @@ cookies have separate hard bounds. Overflow or ambiguity discards detailed
 path state in favor of one sticky full-reconciliation request, so a long initial
 scan cannot accumulate an unbounded event backlog.
 
+When the public watcher queue is full, delivery retains one sticky full
+reconciliation and retries no sooner than the configured debounce, with a
+10-millisecond minimum even for zero debounce. Additional raw events, overflow
+signals, and poll ticks coalesce into that request without resetting its retry
+deadline. A new transition to full reconciliation still schedules an immediate
+delivery attempt. Cancellation retains priority and shutdown attempts one final
+flush without waiting for queue capacity.
+
  Watcher initialization exposes a bounded diagnostic snapshot containing the
  selected native or periodic-polling backend, the exact admission entries and
  directories examined, the fallback reason, and atomic poll/path/full-delivery
