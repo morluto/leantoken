@@ -44,201 +44,263 @@
 <a href=#44 id=44 data-nosnippet>44</a>        request: <span class="kw-2">&amp;</span>ContextRequest,
 <a href=#45 id=45 data-nosnippet>45</a>        handoff: <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt;,
 <a href=#46 id=46 data-nosnippet>46</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ContextPolicy&gt; {
-<a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">let </span>policy = ContextPolicy::parse(request, handoff)<span class="question-mark">?</span>;
-<a href=#48 id=48 data-nosnippet>48</a>        <span class="kw">if </span>request.task.trim().is_empty() {
-<a href=#49 id=49 data-nosnippet>49</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#50 id=50 data-nosnippet>50</a>                field: <span class="string">"task"</span>,
-<a href=#51 id=51 data-nosnippet>51</a>                reason: <span class="string">"must not be empty"</span>,
-<a href=#52 id=52 data-nosnippet>52</a>            });
-<a href=#53 id=53 data-nosnippet>53</a>        }
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="self">self</span>.token_budget_limit(request.token_budget)<span class="question-mark">?</span>;
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(max_fragments) = request.max_fragments {
-<a href=#56 id=56 data-nosnippet>56</a>            <span class="self">self</span>.result_limit(<span class="prelude-val">Some</span>(max_fragments))<span class="question-mark">?</span>;
-<a href=#57 id=57 data-nosnippet>57</a>        }
-<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(minimum) = request.minimum_fragments_per_focus_path {
-<a href=#59 id=59 data-nosnippet>59</a>            <span class="self">self</span>.result_limit(<span class="prelude-val">Some</span>(minimum))<span class="question-mark">?</span>;
-<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">if </span>minimum &gt; MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
-<a href=#61 id=61 data-nosnippet>61</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#62 id=62 data-nosnippet>62</a>                    field: <span class="string">"minimum_fragments_per_focus_path"</span>,
-<a href=#63 id=63 data-nosnippet>63</a>                    requested: minimum,
-<a href=#64 id=64 data-nosnippet>64</a>                    limit: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
-<a href=#65 id=65 data-nosnippet>65</a>                });
-<a href=#66 id=66 data-nosnippet>66</a>            }
-<a href=#67 id=67 data-nosnippet>67</a>        }
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">if </span>request.focus_paths.len() &gt; MAX_CONTEXT_FOCUS_PATTERNS {
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#70 id=70 data-nosnippet>70</a>                field: <span class="string">"focus_paths"</span>,
-<a href=#71 id=71 data-nosnippet>71</a>                requested: request.focus_paths.len(),
-<a href=#72 id=72 data-nosnippet>72</a>                limit: MAX_CONTEXT_FOCUS_PATTERNS,
-<a href=#73 id=73 data-nosnippet>73</a>            });
-<a href=#74 id=74 data-nosnippet>74</a>        }
-<a href=#75 id=75 data-nosnippet>75</a>        validate_input(<span class="kw-2">&amp;</span>request.task, <span class="string">"task"</span>, MAX_QUERY_BYTES)<span class="question-mark">?</span>;
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">if </span>request
-<a href=#77 id=77 data-nosnippet>77</a>            .include_paths
-<a href=#78 id=78 data-nosnippet>78</a>            .iter()
-<a href=#79 id=79 data-nosnippet>79</a>            .any(|pattern| pattern.trim().is_empty())
-<a href=#80 id=80 data-nosnippet>80</a>        {
-<a href=#81 id=81 data-nosnippet>81</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#82 id=82 data-nosnippet>82</a>                field: <span class="string">"include paths"</span>,
-<a href=#83 id=83 data-nosnippet>83</a>                reason: <span class="string">"must not contain empty patterns"</span>,
-<a href=#84 id=84 data-nosnippet>84</a>            });
-<a href=#85 id=85 data-nosnippet>85</a>        }
-<a href=#86 id=86 data-nosnippet>86</a>        validate_glob_patterns(<span class="kw-2">&amp;</span>request.include_paths)<span class="question-mark">?</span>;
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">if </span>request
-<a href=#88 id=88 data-nosnippet>88</a>            .must_include_paths
-<a href=#89 id=89 data-nosnippet>89</a>            .iter()
-<a href=#90 id=90 data-nosnippet>90</a>            .any(|pattern| pattern.trim().is_empty())
-<a href=#91 id=91 data-nosnippet>91</a>        {
-<a href=#92 id=92 data-nosnippet>92</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#93 id=93 data-nosnippet>93</a>                field: <span class="string">"must include paths"</span>,
-<a href=#94 id=94 data-nosnippet>94</a>                reason: <span class="string">"must not contain empty patterns"</span>,
-<a href=#95 id=95 data-nosnippet>95</a>            });
-<a href=#96 id=96 data-nosnippet>96</a>        }
-<a href=#97 id=97 data-nosnippet>97</a>        validate_glob_patterns(<span class="kw-2">&amp;</span>request.must_include_paths)<span class="question-mark">?</span>;
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">if </span>request
-<a href=#99 id=99 data-nosnippet>99</a>            .focus_paths
-<a href=#100 id=100 data-nosnippet>100</a>            .iter()
-<a href=#101 id=101 data-nosnippet>101</a>            .any(|pattern| pattern.trim().is_empty())
-<a href=#102 id=102 data-nosnippet>102</a>        {
-<a href=#103 id=103 data-nosnippet>103</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#104 id=104 data-nosnippet>104</a>                field: <span class="string">"focus paths"</span>,
-<a href=#105 id=105 data-nosnippet>105</a>                reason: <span class="string">"must not contain empty patterns"</span>,
-<a href=#106 id=106 data-nosnippet>106</a>            });
-<a href=#107 id=107 data-nosnippet>107</a>        }
-<a href=#108 id=108 data-nosnippet>108</a>        validate_glob_patterns(<span class="kw-2">&amp;</span>request.focus_paths)<span class="question-mark">?</span>;
-<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">if </span>request
-<a href=#110 id=110 data-nosnippet>110</a>            .exclude_paths
-<a href=#111 id=111 data-nosnippet>111</a>            .iter()
-<a href=#112 id=112 data-nosnippet>112</a>            .any(|pattern| pattern.trim().is_empty())
-<a href=#113 id=113 data-nosnippet>113</a>        {
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#115 id=115 data-nosnippet>115</a>                field: <span class="string">"exclude paths"</span>,
-<a href=#116 id=116 data-nosnippet>116</a>                reason: <span class="string">"must not contain empty patterns"</span>,
-<a href=#117 id=117 data-nosnippet>117</a>            });
-<a href=#118 id=118 data-nosnippet>118</a>        }
-<a href=#119 id=119 data-nosnippet>119</a>        validate_glob_patterns(<span class="kw-2">&amp;</span>request.exclude_paths)<span class="question-mark">?</span>;
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">if </span>request.focus_symbols.len() &gt; MAX_INPUT_ITEMS {
-<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#122 id=122 data-nosnippet>122</a>        }
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">for </span>symbol <span class="kw">in </span><span class="kw-2">&amp;</span>request.focus_symbols {
-<a href=#124 id=124 data-nosnippet>124</a>            validate_input(symbol, <span class="string">"focus symbol"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
-<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">if </span>symbol.trim().is_empty() {
-<a href=#126 id=126 data-nosnippet>126</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#127 id=127 data-nosnippet>127</a>                    field: <span class="string">"focus symbols"</span>,
-<a href=#128 id=128 data-nosnippet>128</a>                    reason: <span class="string">"must not contain empty symbols"</span>,
-<a href=#129 id=129 data-nosnippet>129</a>                });
-<a href=#130 id=130 data-nosnippet>130</a>            }
-<a href=#131 id=131 data-nosnippet>131</a>        }
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">if </span>request.must_include_symbols.len() &gt; MAX_INPUT_ITEMS {
-<a href=#133 id=133 data-nosnippet>133</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#134 id=134 data-nosnippet>134</a>        }
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">for </span>symbol <span class="kw">in </span><span class="kw-2">&amp;</span>request.must_include_symbols {
-<a href=#136 id=136 data-nosnippet>136</a>            validate_input(symbol, <span class="string">"must include symbol"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">if </span>symbol.trim().is_empty() {
-<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#139 id=139 data-nosnippet>139</a>                    field: <span class="string">"must include symbols"</span>,
-<a href=#140 id=140 data-nosnippet>140</a>                    reason: <span class="string">"must not contain empty symbols"</span>,
-<a href=#141 id=141 data-nosnippet>141</a>                });
-<a href=#142 id=142 data-nosnippet>142</a>            }
+<a href=#47 id=47 data-nosnippet>47</a>        validate_context_request(
+<a href=#48 id=48 data-nosnippet>48</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::services::request_limits::RequestLimits::from_config(<span class="kw-2">&amp;</span><span class="self">self</span>.config),
+<a href=#49 id=49 data-nosnippet>49</a>            request,
+<a href=#50 id=50 data-nosnippet>50</a>            handoff,
+<a href=#51 id=51 data-nosnippet>51</a>        )
+<a href=#52 id=52 data-nosnippet>52</a>    }
+<a href=#53 id=53 data-nosnippet>53</a>}
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a><span class="kw">fn </span>validate_context_request(
+<a href=#56 id=56 data-nosnippet>56</a>    limits: <span class="kw-2">&amp;</span><span class="kw">crate</span>::services::request_limits::RequestLimits,
+<a href=#57 id=57 data-nosnippet>57</a>    request: <span class="kw-2">&amp;</span>ContextRequest,
+<a href=#58 id=58 data-nosnippet>58</a>    handoff: <span class="prelude-ty">Option</span>&lt;HandoffManifestRequest&gt;,
+<a href=#59 id=59 data-nosnippet>59</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ContextPolicy&gt; {
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">let </span>policy = ContextPolicy::parse(request, handoff)<span class="question-mark">?</span>;
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">if </span>request.task.trim().is_empty() {
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#63 id=63 data-nosnippet>63</a>            field: <span class="string">"task"</span>,
+<a href=#64 id=64 data-nosnippet>64</a>            reason: <span class="string">"must not be empty"</span>,
+<a href=#65 id=65 data-nosnippet>65</a>        });
+<a href=#66 id=66 data-nosnippet>66</a>    }
+<a href=#67 id=67 data-nosnippet>67</a>    limits.token_budget(request.token_budget)<span class="question-mark">?</span>;
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(max_fragments) = request.max_fragments {
+<a href=#69 id=69 data-nosnippet>69</a>        limits.results(<span class="prelude-val">Some</span>(max_fragments))<span class="question-mark">?</span>;
+<a href=#70 id=70 data-nosnippet>70</a>    }
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(minimum) = request.minimum_fragments_per_focus_path {
+<a href=#72 id=72 data-nosnippet>72</a>        limits.results(<span class="prelude-val">Some</span>(minimum))<span class="question-mark">?</span>;
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if </span>minimum &gt; MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN {
+<a href=#74 id=74 data-nosnippet>74</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#75 id=75 data-nosnippet>75</a>                field: <span class="string">"minimum_fragments_per_focus_path"</span>,
+<a href=#76 id=76 data-nosnippet>76</a>                requested: minimum,
+<a href=#77 id=77 data-nosnippet>77</a>                limit: MAX_CONTEXT_FOCUS_CANDIDATES_PER_PATTERN,
+<a href=#78 id=78 data-nosnippet>78</a>            });
+<a href=#79 id=79 data-nosnippet>79</a>        }
+<a href=#80 id=80 data-nosnippet>80</a>    }
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">if </span>request.focus_paths.len() &gt; MAX_CONTEXT_FOCUS_PATTERNS {
+<a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#83 id=83 data-nosnippet>83</a>            field: <span class="string">"focus_paths"</span>,
+<a href=#84 id=84 data-nosnippet>84</a>            requested: request.focus_paths.len(),
+<a href=#85 id=85 data-nosnippet>85</a>            limit: MAX_CONTEXT_FOCUS_PATTERNS,
+<a href=#86 id=86 data-nosnippet>86</a>        });
+<a href=#87 id=87 data-nosnippet>87</a>    }
+<a href=#88 id=88 data-nosnippet>88</a>    validate_input(<span class="kw-2">&amp;</span>request.task, <span class="string">"task"</span>, MAX_QUERY_BYTES)<span class="question-mark">?</span>;
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">if </span>request
+<a href=#90 id=90 data-nosnippet>90</a>        .include_paths
+<a href=#91 id=91 data-nosnippet>91</a>        .iter()
+<a href=#92 id=92 data-nosnippet>92</a>        .any(|pattern| pattern.trim().is_empty())
+<a href=#93 id=93 data-nosnippet>93</a>    {
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#95 id=95 data-nosnippet>95</a>            field: <span class="string">"include paths"</span>,
+<a href=#96 id=96 data-nosnippet>96</a>            reason: <span class="string">"must not contain empty patterns"</span>,
+<a href=#97 id=97 data-nosnippet>97</a>        });
+<a href=#98 id=98 data-nosnippet>98</a>    }
+<a href=#99 id=99 data-nosnippet>99</a>    validate_glob_patterns(<span class="kw-2">&amp;</span>request.include_paths)<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">if </span>request
+<a href=#101 id=101 data-nosnippet>101</a>        .must_include_paths
+<a href=#102 id=102 data-nosnippet>102</a>        .iter()
+<a href=#103 id=103 data-nosnippet>103</a>        .any(|pattern| pattern.trim().is_empty())
+<a href=#104 id=104 data-nosnippet>104</a>    {
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#106 id=106 data-nosnippet>106</a>            field: <span class="string">"must include paths"</span>,
+<a href=#107 id=107 data-nosnippet>107</a>            reason: <span class="string">"must not contain empty patterns"</span>,
+<a href=#108 id=108 data-nosnippet>108</a>        });
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>    validate_glob_patterns(<span class="kw-2">&amp;</span>request.must_include_paths)<span class="question-mark">?</span>;
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">if </span>request
+<a href=#112 id=112 data-nosnippet>112</a>        .focus_paths
+<a href=#113 id=113 data-nosnippet>113</a>        .iter()
+<a href=#114 id=114 data-nosnippet>114</a>        .any(|pattern| pattern.trim().is_empty())
+<a href=#115 id=115 data-nosnippet>115</a>    {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#117 id=117 data-nosnippet>117</a>            field: <span class="string">"focus paths"</span>,
+<a href=#118 id=118 data-nosnippet>118</a>            reason: <span class="string">"must not contain empty patterns"</span>,
+<a href=#119 id=119 data-nosnippet>119</a>        });
+<a href=#120 id=120 data-nosnippet>120</a>    }
+<a href=#121 id=121 data-nosnippet>121</a>    validate_glob_patterns(<span class="kw-2">&amp;</span>request.focus_paths)<span class="question-mark">?</span>;
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">if </span>request
+<a href=#123 id=123 data-nosnippet>123</a>        .exclude_paths
+<a href=#124 id=124 data-nosnippet>124</a>        .iter()
+<a href=#125 id=125 data-nosnippet>125</a>        .any(|pattern| pattern.trim().is_empty())
+<a href=#126 id=126 data-nosnippet>126</a>    {
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#128 id=128 data-nosnippet>128</a>            field: <span class="string">"exclude paths"</span>,
+<a href=#129 id=129 data-nosnippet>129</a>            reason: <span class="string">"must not contain empty patterns"</span>,
+<a href=#130 id=130 data-nosnippet>130</a>        });
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>    validate_glob_patterns(<span class="kw-2">&amp;</span>request.exclude_paths)<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">if </span>request.focus_symbols.len() &gt; MAX_INPUT_ITEMS {
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#135 id=135 data-nosnippet>135</a>    }
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">for </span>symbol <span class="kw">in </span><span class="kw-2">&amp;</span>request.focus_symbols {
+<a href=#137 id=137 data-nosnippet>137</a>        validate_input(symbol, <span class="string">"focus symbol"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">if </span>symbol.trim().is_empty() {
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#140 id=140 data-nosnippet>140</a>                field: <span class="string">"focus symbols"</span>,
+<a href=#141 id=141 data-nosnippet>141</a>                reason: <span class="string">"must not contain empty symbols"</span>,
+<a href=#142 id=142 data-nosnippet>142</a>            });
 <a href=#143 id=143 data-nosnippet>143</a>        }
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">if </span>request.required_evidence.len() &gt; MAX_CONTEXT_REQUIRED_EVIDENCE {
-<a href=#145 id=145 data-nosnippet>145</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#146 id=146 data-nosnippet>146</a>                field: <span class="string">"required_evidence"</span>,
-<a href=#147 id=147 data-nosnippet>147</a>                requested: request.required_evidence.len(),
-<a href=#148 id=148 data-nosnippet>148</a>                limit: MAX_CONTEXT_REQUIRED_EVIDENCE,
-<a href=#149 id=149 data-nosnippet>149</a>            });
-<a href=#150 id=150 data-nosnippet>150</a>        }
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span><span class="kw-2">mut </span>evidence_query_bytes = <span class="number">0usize</span>;
-<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">for </span>requirement <span class="kw">in </span><span class="kw-2">&amp;</span>request.required_evidence {
-<a href=#153 id=153 data-nosnippet>153</a>            validate_glob_patterns(std::slice::from_ref(<span class="kw-2">&amp;</span>requirement.path))<span class="question-mark">?</span>;
-<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">if </span>requirement.path.trim().is_empty() {
-<a href=#155 id=155 data-nosnippet>155</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#156 id=156 data-nosnippet>156</a>                    field: <span class="string">"required_evidence path"</span>,
-<a href=#157 id=157 data-nosnippet>157</a>                    reason: <span class="string">"must not be empty"</span>,
-<a href=#158 id=158 data-nosnippet>158</a>                });
-<a href=#159 id=159 data-nosnippet>159</a>            }
-<a href=#160 id=160 data-nosnippet>160</a>            <span class="kw">if </span>requirement.queries.is_empty() {
-<a href=#161 id=161 data-nosnippet>161</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#162 id=162 data-nosnippet>162</a>                    field: <span class="string">"required_evidence queries"</span>,
-<a href=#163 id=163 data-nosnippet>163</a>                    reason: <span class="string">"must not be empty"</span>,
-<a href=#164 id=164 data-nosnippet>164</a>                });
-<a href=#165 id=165 data-nosnippet>165</a>            }
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">if </span>requirement.queries.len() &gt; MAX_CONTEXT_EVIDENCE_QUERIES {
-<a href=#167 id=167 data-nosnippet>167</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#168 id=168 data-nosnippet>168</a>                    field: <span class="string">"required_evidence queries"</span>,
-<a href=#169 id=169 data-nosnippet>169</a>                    requested: requirement.queries.len(),
-<a href=#170 id=170 data-nosnippet>170</a>                    limit: MAX_CONTEXT_EVIDENCE_QUERIES,
-<a href=#171 id=171 data-nosnippet>171</a>                });
-<a href=#172 id=172 data-nosnippet>172</a>            }
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">let </span>normalized_distinct = {
-<a href=#174 id=174 data-nosnippet>174</a>                <span class="kw">let </span><span class="kw-2">mut </span>seen = std::collections::HashSet::new();
-<a href=#175 id=175 data-nosnippet>175</a>                requirement
-<a href=#176 id=176 data-nosnippet>176</a>                    .queries
-<a href=#177 id=177 data-nosnippet>177</a>                    .iter()
-<a href=#178 id=178 data-nosnippet>178</a>                    .filter(|q| seen.insert(q.to_lowercase()))
-<a href=#179 id=179 data-nosnippet>179</a>                    .count()
-<a href=#180 id=180 data-nosnippet>180</a>            };
-<a href=#181 id=181 data-nosnippet>181</a>            <span class="kw">if </span>requirement.minimum_query_matches == <span class="number">0
-<a href=#182 id=182 data-nosnippet>182</a>                </span>|| requirement.minimum_query_matches &gt; normalized_distinct
-<a href=#183 id=183 data-nosnippet>183</a>            {
-<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#185 id=185 data-nosnippet>185</a>                    field: <span class="string">"required_evidence minimum_query_matches"</span>,
-<a href=#186 id=186 data-nosnippet>186</a>                    reason: <span class="string">"must be between one and the number of normalized distinct queries"</span>,
-<a href=#187 id=187 data-nosnippet>187</a>                });
-<a href=#188 id=188 data-nosnippet>188</a>            }
-<a href=#189 id=189 data-nosnippet>189</a>            <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>requirement.queries {
-<a href=#190 id=190 data-nosnippet>190</a>                validate_input(query, <span class="string">"required_evidence query"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
-<a href=#191 id=191 data-nosnippet>191</a>                <span class="kw">if </span>query.trim().is_empty() {
-<a href=#192 id=192 data-nosnippet>192</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
-<a href=#193 id=193 data-nosnippet>193</a>                        field: <span class="string">"required_evidence queries"</span>,
-<a href=#194 id=194 data-nosnippet>194</a>                        reason: <span class="string">"must not contain empty queries"</span>,
-<a href=#195 id=195 data-nosnippet>195</a>                    });
-<a href=#196 id=196 data-nosnippet>196</a>                }
-<a href=#197 id=197 data-nosnippet>197</a>                evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
-<a href=#198 id=198 data-nosnippet>198</a>            }
-<a href=#199 id=199 data-nosnippet>199</a>        }
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">if </span>evidence_query_bytes &gt; MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
-<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
-<a href=#202 id=202 data-nosnippet>202</a>                field: <span class="string">"required_evidence query bytes"</span>,
-<a href=#203 id=203 data-nosnippet>203</a>                requested: evidence_query_bytes,
-<a href=#204 id=204 data-nosnippet>204</a>                limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
-<a href=#205 id=205 data-nosnippet>205</a>            });
-<a href=#206 id=206 data-nosnippet>206</a>        }
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">if </span>request.known_hashes.len() &gt; MAX_INPUT_ITEMS {
-<a href=#208 id=208 data-nosnippet>208</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#209 id=209 data-nosnippet>209</a>        }
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">for </span>hash <span class="kw">in </span><span class="kw-2">&amp;</span>request.known_hashes {
-<a href=#211 id=211 data-nosnippet>211</a>            validate_input(hash, <span class="string">"known hash"</span>, <span class="number">128</span>)<span class="question-mark">?</span>;
-<a href=#212 id=212 data-nosnippet>212</a>        }
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">if </span>request.changed_paths.len() &gt; MAX_DIFF_CHANGED_PATHS {
-<a href=#214 id=214 data-nosnippet>214</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
-<a href=#215 id=215 data-nosnippet>215</a>        }
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">for </span>query <span class="kw">in </span>facets::plan(<span class="kw-2">&amp;</span>request.task, MAX_CONTEXT_QUERIES)
-<a href=#217 id=217 data-nosnippet>217</a>            .queries
-<a href=#218 id=218 data-nosnippet>218</a>            .iter()
-<a href=#219 id=219 data-nosnippet>219</a>            .filter(|query| !query.has_facet(FacetKind::TestIntent))
-<a href=#220 id=220 data-nosnippet>220</a>        {
-<a href=#221 id=221 data-nosnippet>221</a>            compile_literal_regex(<span class="kw-2">&amp;</span>query.value, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#222 id=222 data-nosnippet>222</a>        }
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="prelude-val">Ok</span>(policy)
-<a href=#224 id=224 data-nosnippet>224</a>    }
-<a href=#225 id=225 data-nosnippet>225</a>}
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>context_accounting_operation(request: <span class="kw-2">&amp;</span>ContextRequest) -&gt; TokenAccountingOperation {
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">if </span>request.plan_only {
-<a href=#229 id=229 data-nosnippet>229</a>        TokenAccountingOperation::ContextPlan
-<a href=#230 id=230 data-nosnippet>230</a>    } <span class="kw">else </span>{
-<a href=#231 id=231 data-nosnippet>231</a>        TokenAccountingOperation::Context
-<a href=#232 id=232 data-nosnippet>232</a>    }
-<a href=#233 id=233 data-nosnippet>233</a>}
-<a href=#234 id=234 data-nosnippet>234</a>
-<a href=#235 id=235 data-nosnippet>235</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>set_routing_consistency(
-<a href=#236 id=236 data-nosnippet>236</a>    response: <span class="kw-2">&amp;mut </span>ContextResponse,
-<a href=#237 id=237 data-nosnippet>237</a>    consistency: IndexConsistency,
-<a href=#238 id=238 data-nosnippet>238</a>) {
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(routing) = <span class="kw-2">&amp;mut </span>response.routing {
-<a href=#240 id=240 data-nosnippet>240</a>        routing.consistency = consistency;
-<a href=#241 id=241 data-nosnippet>241</a>    }
-<a href=#242 id=242 data-nosnippet>242</a>}
-<a href=#243 id=243 data-nosnippet>243</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">if </span>request.must_include_symbols.len() &gt; MAX_INPUT_ITEMS {
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#147 id=147 data-nosnippet>147</a>    }
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">for </span>symbol <span class="kw">in </span><span class="kw-2">&amp;</span>request.must_include_symbols {
+<a href=#149 id=149 data-nosnippet>149</a>        validate_input(symbol, <span class="string">"must include symbol"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if </span>symbol.trim().is_empty() {
+<a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#152 id=152 data-nosnippet>152</a>                field: <span class="string">"must include symbols"</span>,
+<a href=#153 id=153 data-nosnippet>153</a>                reason: <span class="string">"must not contain empty symbols"</span>,
+<a href=#154 id=154 data-nosnippet>154</a>            });
+<a href=#155 id=155 data-nosnippet>155</a>        }
+<a href=#156 id=156 data-nosnippet>156</a>    }
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">if </span>request.required_evidence.len() &gt; MAX_CONTEXT_REQUIRED_EVIDENCE {
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#159 id=159 data-nosnippet>159</a>            field: <span class="string">"required_evidence"</span>,
+<a href=#160 id=160 data-nosnippet>160</a>            requested: request.required_evidence.len(),
+<a href=#161 id=161 data-nosnippet>161</a>            limit: MAX_CONTEXT_REQUIRED_EVIDENCE,
+<a href=#162 id=162 data-nosnippet>162</a>        });
+<a href=#163 id=163 data-nosnippet>163</a>    }
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span><span class="kw-2">mut </span>evidence_query_bytes = <span class="number">0usize</span>;
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">for </span>requirement <span class="kw">in </span><span class="kw-2">&amp;</span>request.required_evidence {
+<a href=#166 id=166 data-nosnippet>166</a>        validate_glob_patterns(std::slice::from_ref(<span class="kw-2">&amp;</span>requirement.path))<span class="question-mark">?</span>;
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">if </span>requirement.path.trim().is_empty() {
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#169 id=169 data-nosnippet>169</a>                field: <span class="string">"required_evidence path"</span>,
+<a href=#170 id=170 data-nosnippet>170</a>                reason: <span class="string">"must not be empty"</span>,
+<a href=#171 id=171 data-nosnippet>171</a>            });
+<a href=#172 id=172 data-nosnippet>172</a>        }
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">if </span>requirement.queries.is_empty() {
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#175 id=175 data-nosnippet>175</a>                field: <span class="string">"required_evidence queries"</span>,
+<a href=#176 id=176 data-nosnippet>176</a>                reason: <span class="string">"must not be empty"</span>,
+<a href=#177 id=177 data-nosnippet>177</a>            });
+<a href=#178 id=178 data-nosnippet>178</a>        }
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">if </span>requirement.queries.len() &gt; MAX_CONTEXT_EVIDENCE_QUERIES {
+<a href=#180 id=180 data-nosnippet>180</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#181 id=181 data-nosnippet>181</a>                field: <span class="string">"required_evidence queries"</span>,
+<a href=#182 id=182 data-nosnippet>182</a>                requested: requirement.queries.len(),
+<a href=#183 id=183 data-nosnippet>183</a>                limit: MAX_CONTEXT_EVIDENCE_QUERIES,
+<a href=#184 id=184 data-nosnippet>184</a>            });
+<a href=#185 id=185 data-nosnippet>185</a>        }
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">let </span>normalized_distinct = {
+<a href=#187 id=187 data-nosnippet>187</a>            <span class="kw">let </span><span class="kw-2">mut </span>seen = std::collections::HashSet::new();
+<a href=#188 id=188 data-nosnippet>188</a>            requirement
+<a href=#189 id=189 data-nosnippet>189</a>                .queries
+<a href=#190 id=190 data-nosnippet>190</a>                .iter()
+<a href=#191 id=191 data-nosnippet>191</a>                .filter(|q| seen.insert(q.to_lowercase()))
+<a href=#192 id=192 data-nosnippet>192</a>                .count()
+<a href=#193 id=193 data-nosnippet>193</a>        };
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">if </span>requirement.minimum_query_matches == <span class="number">0
+<a href=#195 id=195 data-nosnippet>195</a>            </span>|| requirement.minimum_query_matches &gt; normalized_distinct
+<a href=#196 id=196 data-nosnippet>196</a>        {
+<a href=#197 id=197 data-nosnippet>197</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#198 id=198 data-nosnippet>198</a>                field: <span class="string">"required_evidence minimum_query_matches"</span>,
+<a href=#199 id=199 data-nosnippet>199</a>                reason: <span class="string">"must be between one and the number of normalized distinct queries"</span>,
+<a href=#200 id=200 data-nosnippet>200</a>            });
+<a href=#201 id=201 data-nosnippet>201</a>        }
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">for </span>query <span class="kw">in </span><span class="kw-2">&amp;</span>requirement.queries {
+<a href=#203 id=203 data-nosnippet>203</a>            validate_input(query, <span class="string">"required_evidence query"</span>, MAX_PATTERN_BYTES)<span class="question-mark">?</span>;
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">if </span>query.trim().is_empty() {
+<a href=#205 id=205 data-nosnippet>205</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(Error::InvalidInput {
+<a href=#206 id=206 data-nosnippet>206</a>                    field: <span class="string">"required_evidence queries"</span>,
+<a href=#207 id=207 data-nosnippet>207</a>                    reason: <span class="string">"must not contain empty queries"</span>,
+<a href=#208 id=208 data-nosnippet>208</a>                });
+<a href=#209 id=209 data-nosnippet>209</a>            }
+<a href=#210 id=210 data-nosnippet>210</a>            evidence_query_bytes = evidence_query_bytes.saturating_add(query.len());
+<a href=#211 id=211 data-nosnippet>211</a>        }
+<a href=#212 id=212 data-nosnippet>212</a>    }
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">if </span>evidence_query_bytes &gt; MAX_CONTEXT_EVIDENCE_QUERY_BYTES {
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RequestLimitExceeded {
+<a href=#215 id=215 data-nosnippet>215</a>            field: <span class="string">"required_evidence query bytes"</span>,
+<a href=#216 id=216 data-nosnippet>216</a>            requested: evidence_query_bytes,
+<a href=#217 id=217 data-nosnippet>217</a>            limit: MAX_CONTEXT_EVIDENCE_QUERY_BYTES,
+<a href=#218 id=218 data-nosnippet>218</a>        });
+<a href=#219 id=219 data-nosnippet>219</a>    }
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>request.known_hashes.len() &gt; MAX_INPUT_ITEMS {
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#222 id=222 data-nosnippet>222</a>    }
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">for </span>hash <span class="kw">in </span><span class="kw-2">&amp;</span>request.known_hashes {
+<a href=#224 id=224 data-nosnippet>224</a>        validate_input(hash, <span class="string">"known hash"</span>, <span class="number">128</span>)<span class="question-mark">?</span>;
+<a href=#225 id=225 data-nosnippet>225</a>    }
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">if </span>request.changed_paths.len() &gt; MAX_DIFF_CHANGED_PATHS {
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::LimitExceeded);
+<a href=#228 id=228 data-nosnippet>228</a>    }
+<a href=#229 id=229 data-nosnippet>229</a>    <span class="kw">for </span>query <span class="kw">in </span>facets::plan(<span class="kw-2">&amp;</span>request.task, MAX_CONTEXT_QUERIES)
+<a href=#230 id=230 data-nosnippet>230</a>        .queries
+<a href=#231 id=231 data-nosnippet>231</a>        .iter()
+<a href=#232 id=232 data-nosnippet>232</a>        .filter(|query| !query.has_facet(FacetKind::TestIntent))
+<a href=#233 id=233 data-nosnippet>233</a>    {
+<a href=#234 id=234 data-nosnippet>234</a>        compile_literal_regex(<span class="kw-2">&amp;</span>query.value, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#235 id=235 data-nosnippet>235</a>    }
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="prelude-val">Ok</span>(policy)
+<a href=#237 id=237 data-nosnippet>237</a>}
+<a href=#238 id=238 data-nosnippet>238</a>
+<a href=#239 id=239 data-nosnippet>239</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>context_accounting_operation(request: <span class="kw-2">&amp;</span>ContextRequest) -&gt; TokenAccountingOperation {
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">if </span>request.plan_only {
+<a href=#241 id=241 data-nosnippet>241</a>        TokenAccountingOperation::ContextPlan
+<a href=#242 id=242 data-nosnippet>242</a>    } <span class="kw">else </span>{
+<a href=#243 id=243 data-nosnippet>243</a>        TokenAccountingOperation::Context
+<a href=#244 id=244 data-nosnippet>244</a>    }
+<a href=#245 id=245 data-nosnippet>245</a>}
+<a href=#246 id=246 data-nosnippet>246</a>
+<a href=#247 id=247 data-nosnippet>247</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>set_routing_consistency(
+<a href=#248 id=248 data-nosnippet>248</a>    response: <span class="kw-2">&amp;mut </span>ContextResponse,
+<a href=#249 id=249 data-nosnippet>249</a>    consistency: IndexConsistency,
+<a href=#250 id=250 data-nosnippet>250</a>) {
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(routing) = <span class="kw-2">&amp;mut </span>response.routing {
+<a href=#252 id=252 data-nosnippet>252</a>        routing.consistency = consistency;
+<a href=#253 id=253 data-nosnippet>253</a>    }
+<a href=#254 id=254 data-nosnippet>254</a>}
+<a href=#255 id=255 data-nosnippet>255</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a><span class="attr">#[cfg(test)]
+<a href=#258 id=258 data-nosnippet>258</a></span><span class="kw">mod </span>static_input_tests {
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="attr">#[test]
+<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">fn </span>static_request_matrix_needs_no_repository() {
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>limits = <span class="kw">crate</span>::services::request_limits::RequestLimits {
+<a href=#263 id=263 data-nosnippet>263</a>            default_results: <span class="number">3</span>,
+<a href=#264 id=264 data-nosnippet>264</a>            max_results: <span class="number">7</span>,
+<a href=#265 id=265 data-nosnippet>265</a>            max_output_tokens: <span class="number">91</span>,
+<a href=#266 id=266 data-nosnippet>266</a>            context_lines: <span class="number">4</span>,
+<a href=#267 id=267 data-nosnippet>267</a>        };
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="kw">let </span>base = ContextRequest {
+<a href=#269 id=269 data-nosnippet>269</a>            task: <span class="string">"find greet"</span>.into(),
+<a href=#270 id=270 data-nosnippet>270</a>            token_budget: <span class="number">17</span>,
+<a href=#271 id=271 data-nosnippet>271</a>            include_paths: Vec::new(),
+<a href=#272 id=272 data-nosnippet>272</a>            must_include_paths: Vec::new(),
+<a href=#273 id=273 data-nosnippet>273</a>            must_include_symbols: Vec::new(),
+<a href=#274 id=274 data-nosnippet>274</a>            required_evidence: Vec::new(),
+<a href=#275 id=275 data-nosnippet>275</a>            max_fragments: <span class="prelude-val">None</span>,
+<a href=#276 id=276 data-nosnippet>276</a>            plan_only: <span class="bool-val">false</span>,
+<a href=#277 id=277 data-nosnippet>277</a>            focus_paths: Vec::new(),
+<a href=#278 id=278 data-nosnippet>278</a>            strict_focus_paths: <span class="bool-val">false</span>,
+<a href=#279 id=279 data-nosnippet>279</a>            minimum_fragments_per_focus_path: <span class="prelude-val">None</span>,
+<a href=#280 id=280 data-nosnippet>280</a>            focus_symbols: Vec::new(),
+<a href=#281 id=281 data-nosnippet>281</a>            exclude_paths: Vec::new(),
+<a href=#282 id=282 data-nosnippet>282</a>            known_hashes: Vec::new(),
+<a href=#283 id=283 data-nosnippet>283</a>            receipt_id: <span class="prelude-val">None</span>,
+<a href=#284 id=284 data-nosnippet>284</a>            prior_repository_generation: <span class="prelude-val">None</span>,
+<a href=#285 id=285 data-nosnippet>285</a>            base_revision: <span class="prelude-val">None</span>,
+<a href=#286 id=286 data-nosnippet>286</a>            changed_paths: Vec::new(),
+<a href=#287 id=287 data-nosnippet>287</a>            strict_changed_paths: <span class="bool-val">false</span>,
+<a href=#288 id=288 data-nosnippet>288</a>            explain_diagnostics: <span class="bool-val">false</span>,
+<a href=#289 id=289 data-nosnippet>289</a>        };
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">assert!</span>(validate_context_request(<span class="kw-2">&amp;</span>limits, <span class="kw-2">&amp;</span>base, <span class="prelude-val">None</span>).is_ok());
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
+<a href=#292 id=292 data-nosnippet>292</a>            (|r: <span class="kw-2">&amp;mut </span>ContextRequest| r.task = <span class="string">" "</span>.into()) <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>ContextRequest),
+<a href=#293 id=293 data-nosnippet>293</a>            |r| r.focus_paths = <span class="macro">vec!</span>[<span class="string">"["</span>.into()],
+<a href=#294 id=294 data-nosnippet>294</a>            |r| r.focus_symbols = <span class="macro">vec!</span>[<span class="string">"symbol"</span>.into(); <span class="number">257</span>],
+<a href=#295 id=295 data-nosnippet>295</a>            |r| r.changed_paths = (<span class="number">0</span>..<span class="number">513</span>).map(|i| <span class="macro">format!</span>(<span class="string">"src/{i}.rs"</span>)).collect(),
+<a href=#296 id=296 data-nosnippet>296</a>            |r| r.task = <span class="string">"a_"</span>.repeat(<span class="number">30_000</span>),
+<a href=#297 id=297 data-nosnippet>297</a>        ] {
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
+<a href=#299 id=299 data-nosnippet>299</a>            mutate(<span class="kw-2">&amp;mut </span>request);
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="macro">assert!</span>(validate_context_request(<span class="kw-2">&amp;</span>limits, <span class="kw-2">&amp;</span>request, <span class="prelude-val">None</span>).is_err());
+<a href=#301 id=301 data-nosnippet>301</a>        }
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="macro">assert!</span>(normalize_relative(<span class="string">"../outside.rs"</span>).is_err());
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="macro">assert!</span>(parse_context_revision(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="string">"r"</span>.repeat(<span class="number">257</span>))).is_err());
+<a href=#304 id=304 data-nosnippet>304</a>    }
+<a href=#305 id=305 data-nosnippet>305</a>}
 </code></pre></div></section></main></body></html>

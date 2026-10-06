@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SandboxError"],"struct":["Sandbox"]};
+window.SIDEBAR_ITEMS = {"enum":["SandboxError"],"struct":["GitFixture","Sandbox"]};

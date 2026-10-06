@@ -304,39 +304,21 @@
 <a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) writer: Arc&lt;Mutex&lt;Connection&gt;&gt;,
 <a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) readers: r2d2::Pool&lt;SqliteConnectionManager&gt;,
 <a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) path: PathBuf,
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="attr">#[cfg(test)]
-<a href=#308 id=308 data-nosnippet>308</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) diagnostics: Arc&lt;StorageDiagnostics&gt;,
-<a href=#309 id=309 data-nosnippet>309</a>}
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a><span class="attr">#[cfg(test)]
-<a href=#312 id=312 data-nosnippet>312</a>#[derive(Debug, Default)]
-<a href=#313 id=313 data-nosnippet>313</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>StorageDiagnostics {
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) active_snapshots: AtomicUsize,
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) peak_active_snapshots: AtomicUsize,
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) reader_checkout_wait_micros: Mutex&lt;Vec&lt;u64&gt;&gt;,
+<a href=#307 id=307 data-nosnippet>307</a>}
+<a href=#308 id=308 data-nosnippet>308</a>
+<a href=#309 id=309 data-nosnippet>309</a><span class="doccomment">/// Restricted writer for one uncommitted repository generation.
+<a href=#310 id=310 data-nosnippet>310</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ReconciliationWriter&lt;<span class="lifetime">'transaction</span>, <span class="lifetime">'connection</span>&gt; {
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) transaction: <span class="kw-2">&amp;</span><span class="lifetime">'transaction </span>Transaction&lt;<span class="lifetime">'connection</span>&gt;,
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) generation: i64,
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) mode: IndexingMode,
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) replacements: usize,
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) deletions: HashSet&lt;String&gt;,
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) projection_refreshes: usize,
 <a href=#317 id=317 data-nosnippet>317</a>}
-<a href=#318 id=318 data-nosnippet>318</a>
-<a href=#319 id=319 data-nosnippet>319</a><span class="attr">#[cfg(test)]
-<a href=#320 id=320 data-nosnippet>320</a>#[derive(Debug, Clone, Default, PartialEq, Eq)]
-<a href=#321 id=321 data-nosnippet>321</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>StorageDiagnosticsSnapshot {
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">pub </span>active_snapshots: usize,
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">pub </span>peak_active_snapshots: usize,
-<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub </span>reader_checkout_wait_micros: Vec&lt;u64&gt;,
-<a href=#325 id=325 data-nosnippet>325</a>}
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a><span class="doccomment">/// Restricted writer for one uncommitted repository generation.
-<a href=#328 id=328 data-nosnippet>328</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ReconciliationWriter&lt;<span class="lifetime">'transaction</span>, <span class="lifetime">'connection</span>&gt; {
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) transaction: <span class="kw-2">&amp;</span><span class="lifetime">'transaction </span>Transaction&lt;<span class="lifetime">'connection</span>&gt;,
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) generation: i64,
-<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) mode: IndexingMode,
-<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) replacements: usize,
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) deletions: HashSet&lt;String&gt;,
-<a href=#334 id=334 data-nosnippet>334</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) projection_refreshes: usize,
-<a href=#335 id=335 data-nosnippet>335</a>}
-<a href=#336 id=336 data-nosnippet>336</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#337 id=337 data-nosnippet>337</a>
-<a href=#338 id=338 data-nosnippet>338</a><span class="doccomment">/// Maximum persisted resolution candidates for one import syntax fact.
-<a href=#339 id=339 data-nosnippet>339</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_IMPORT_CANDIDATES_PER_IMPORT: usize = <span class="number">64</span>;
-<a href=#340 id=340 data-nosnippet>340</a><span class="doccomment">/// Maximum UTF-8 bytes in one persisted repository-relative import candidate.
-<a href=#341 id=341 data-nosnippet>341</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_IMPORT_CANDIDATE_PATH_BYTES: usize = <span class="number">4 </span>* <span class="number">1024</span>;
+<a href=#318 id=318 data-nosnippet>318</a><span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a><span class="doccomment">/// Maximum persisted resolution candidates for one import syntax fact.
+<a href=#321 id=321 data-nosnippet>321</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_IMPORT_CANDIDATES_PER_IMPORT: usize = <span class="number">64</span>;
+<a href=#322 id=322 data-nosnippet>322</a><span class="doccomment">/// Maximum UTF-8 bytes in one persisted repository-relative import candidate.
+<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>MAX_IMPORT_CANDIDATE_PATH_BYTES: usize = <span class="number">4 </span>* <span class="number">1024</span>;
 </code></pre></div></section></main></body></html>

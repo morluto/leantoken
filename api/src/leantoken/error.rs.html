@@ -72,7 +72,7 @@
 <a href=#72 id=72 data-nosnippet>72</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#73 id=73 data-nosnippet>73</a>            <span class="self">Self</span>::CandidateFiles =&gt; <span class="string">"narrow include_paths or index a smaller repository scope"</span>,
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="self">Self</span>::CandidateChunks | <span class="self">Self</span>::CandidateBytes =&gt; {
-<a href=#75 id=75 data-nosnippet>75</a>                <span class="string">"increase max_results or max_tokens, narrow include_paths, or make the query more selective"
+<a href=#75 id=75 data-nosnippet>75</a>                <span class="string">"narrow include_paths or make the query more selective; output budgets do not increase scan-work limits"
 <a href=#76 id=76 data-nosnippet>76</a>            </span>}
 <a href=#77 id=77 data-nosnippet>77</a>        }
 <a href=#78 id=78 data-nosnippet>78</a>    }
@@ -104,7 +104,7 @@
 <a href=#104 id=104 data-nosnippet>104</a>    </span><span class="kw">pub const fn </span>guidance(<span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
 <a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#106 id=106 data-nosnippet>106</a>            <span class="self">Self</span>::RegexFullScanFiles =&gt; {
-<a href=#107 id=107 data-nosnippet>107</a>                <span class="string">"add a mandatory case-sensitive literal or use a smaller index scope"
+<a href=#107 id=107 data-nosnippet>107</a>                <span class="string">"narrow include_paths, add a mandatory case-sensitive literal, or use a smaller index scope"
 <a href=#108 id=108 data-nosnippet>108</a>            </span>}
 <a href=#109 id=109 data-nosnippet>109</a>            <span class="self">Self</span>::RegexChunksPerFile =&gt; {
 <a href=#110 id=110 data-nosnippet>110</a>                <span class="string">"exclude or narrow paths that include unusually large files"
@@ -690,44 +690,61 @@
 <a href=#690 id=690 data-nosnippet>690</a>
 <a href=#691 id=691 data-nosnippet>691</a><span class="kw">pub type </span><span class="prelude-ty">Result</span>&lt;T, E = Error&gt; = std::result::Result&lt;T, E&gt;;
 <a href=#692 id=692 data-nosnippet>692</a>
-<a href=#693 id=693 data-nosnippet>693</a><span class="attr">#[cfg(test)]
-<a href=#694 id=694 data-nosnippet>694</a></span><span class="kw">mod </span>tests {
-<a href=#695 id=695 data-nosnippet>695</a>    <span class="kw">use </span>super::{Error, RegexWorkDimension};
-<a href=#696 id=696 data-nosnippet>696</a>
-<a href=#697 id=697 data-nosnippet>697</a>    <span class="attr">#[test]
-<a href=#698 id=698 data-nosnippet>698</a>    </span><span class="kw">fn </span>regex_work_guidance_names_controls_that_change_the_bound() {
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="kw">for </span>dimension <span class="kw">in </span>[
-<a href=#700 id=700 data-nosnippet>700</a>            RegexWorkDimension::CandidateChunks,
-<a href=#701 id=701 data-nosnippet>701</a>            RegexWorkDimension::CandidateBytes,
-<a href=#702 id=702 data-nosnippet>702</a>        ] {
-<a href=#703 id=703 data-nosnippet>703</a>            <span class="kw">let </span>guidance = dimension.guidance();
-<a href=#704 id=704 data-nosnippet>704</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"max_tokens"</span>));
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"include_paths"</span>));
-<a href=#706 id=706 data-nosnippet>706</a>            <span class="macro">assert!</span>(!guidance.contains(<span class="string">"case-sensitive"</span>));
-<a href=#707 id=707 data-nosnippet>707</a>        }
-<a href=#708 id=708 data-nosnippet>708</a>    }
+<a href=#693 id=693 data-nosnippet>693</a><span class="kw">impl </span>Error {
+<a href=#694 id=694 data-nosnippet>694</a>    <span class="doccomment">/// Safe diagnostics for bounded retrieval omissions. Cancellation, storage
+<a href=#695 id=695 data-nosnippet>695</a>    /// failures, and invalid requests must never become partial success.
+<a href=#696 id=696 data-nosnippet>696</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>retrieval_limit_details(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str)&gt; {
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#698 id=698 data-nosnippet>698</a>            <span class="self">Self</span>::RetrievalLimitExceeded { kind, .. }
+<a href=#699 id=699 data-nosnippet>699</a>            | <span class="self">Self</span>::RetrievalPathLimitExceeded { kind, .. } =&gt; {
+<a href=#700 id=700 data-nosnippet>700</a>                <span class="prelude-val">Some</span>((kind.as_str(), kind.guidance()))
+<a href=#701 id=701 data-nosnippet>701</a>            }
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="self">Self</span>::RegexWorkBudgetExceeded { dimension, .. } =&gt; {
+<a href=#703 id=703 data-nosnippet>703</a>                <span class="prelude-val">Some</span>((dimension.as_str(), dimension.guidance()))
+<a href=#704 id=704 data-nosnippet>704</a>            }
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#706 id=706 data-nosnippet>706</a>        }
+<a href=#707 id=707 data-nosnippet>707</a>    }
+<a href=#708 id=708 data-nosnippet>708</a>}
 <a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>    <span class="attr">#[test]
-<a href=#711 id=711 data-nosnippet>711</a>    </span><span class="kw">fn </span>shutdown_timeout_has_a_public_shutdown_category() {
-<a href=#712 id=712 data-nosnippet>712</a>        <span class="macro">assert_eq!</span>(
-<a href=#713 id=713 data-nosnippet>713</a>            Error::ShutdownTimeout {
-<a href=#714 id=714 data-nosnippet>714</a>                component: <span class="string">"repository watcher"
-<a href=#715 id=715 data-nosnippet>715</a>            </span>}
-<a href=#716 id=716 data-nosnippet>716</a>            .public_category(),
-<a href=#717 id=717 data-nosnippet>717</a>            <span class="string">"shutdown_timeout"
-<a href=#718 id=718 data-nosnippet>718</a>        </span>);
-<a href=#719 id=719 data-nosnippet>719</a>    }
-<a href=#720 id=720 data-nosnippet>720</a>
-<a href=#721 id=721 data-nosnippet>721</a>    <span class="attr">#[test]
-<a href=#722 id=722 data-nosnippet>722</a>    </span><span class="kw">fn </span>repository_identity_mismatch_has_a_public_client_category() {
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="macro">assert_eq!</span>(
-<a href=#724 id=724 data-nosnippet>724</a>            Error::RepositoryIdentityMismatch {
-<a href=#725 id=725 data-nosnippet>725</a>                expected: <span class="string">"expected"</span>.into(),
-<a href=#726 id=726 data-nosnippet>726</a>                actual: <span class="string">"actual"</span>.into(),
-<a href=#727 id=727 data-nosnippet>727</a>            }
-<a href=#728 id=728 data-nosnippet>728</a>            .public_category(),
-<a href=#729 id=729 data-nosnippet>729</a>            <span class="string">"repository_identity_mismatch"
-<a href=#730 id=730 data-nosnippet>730</a>        </span>);
-<a href=#731 id=731 data-nosnippet>731</a>    }
-<a href=#732 id=732 data-nosnippet>732</a>}
+<a href=#710 id=710 data-nosnippet>710</a><span class="attr">#[cfg(test)]
+<a href=#711 id=711 data-nosnippet>711</a></span><span class="kw">mod </span>tests {
+<a href=#712 id=712 data-nosnippet>712</a>    <span class="kw">use </span>super::{Error, RegexWorkDimension};
+<a href=#713 id=713 data-nosnippet>713</a>
+<a href=#714 id=714 data-nosnippet>714</a>    <span class="attr">#[test]
+<a href=#715 id=715 data-nosnippet>715</a>    </span><span class="kw">fn </span>regex_work_guidance_recommends_reducing_candidate_work() {
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">for </span>dimension <span class="kw">in </span>[
+<a href=#717 id=717 data-nosnippet>717</a>            RegexWorkDimension::CandidateChunks,
+<a href=#718 id=718 data-nosnippet>718</a>            RegexWorkDimension::CandidateBytes,
+<a href=#719 id=719 data-nosnippet>719</a>        ] {
+<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw">let </span>guidance = dimension.guidance();
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"include_paths"</span>));
+<a href=#722 id=722 data-nosnippet>722</a>            <span class="macro">assert!</span>(guidance.contains(<span class="string">"output budgets do not increase"</span>));
+<a href=#723 id=723 data-nosnippet>723</a>            <span class="macro">assert!</span>(!guidance.contains(<span class="string">"case-sensitive"</span>));
+<a href=#724 id=724 data-nosnippet>724</a>        }
+<a href=#725 id=725 data-nosnippet>725</a>    }
+<a href=#726 id=726 data-nosnippet>726</a>
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="attr">#[test]
+<a href=#728 id=728 data-nosnippet>728</a>    </span><span class="kw">fn </span>shutdown_timeout_has_a_public_shutdown_category() {
+<a href=#729 id=729 data-nosnippet>729</a>        <span class="macro">assert_eq!</span>(
+<a href=#730 id=730 data-nosnippet>730</a>            Error::ShutdownTimeout {
+<a href=#731 id=731 data-nosnippet>731</a>                component: <span class="string">"repository watcher"
+<a href=#732 id=732 data-nosnippet>732</a>            </span>}
+<a href=#733 id=733 data-nosnippet>733</a>            .public_category(),
+<a href=#734 id=734 data-nosnippet>734</a>            <span class="string">"shutdown_timeout"
+<a href=#735 id=735 data-nosnippet>735</a>        </span>);
+<a href=#736 id=736 data-nosnippet>736</a>    }
+<a href=#737 id=737 data-nosnippet>737</a>
+<a href=#738 id=738 data-nosnippet>738</a>    <span class="attr">#[test]
+<a href=#739 id=739 data-nosnippet>739</a>    </span><span class="kw">fn </span>repository_identity_mismatch_has_a_public_client_category() {
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="macro">assert_eq!</span>(
+<a href=#741 id=741 data-nosnippet>741</a>            Error::RepositoryIdentityMismatch {
+<a href=#742 id=742 data-nosnippet>742</a>                expected: <span class="string">"expected"</span>.into(),
+<a href=#743 id=743 data-nosnippet>743</a>                actual: <span class="string">"actual"</span>.into(),
+<a href=#744 id=744 data-nosnippet>744</a>            }
+<a href=#745 id=745 data-nosnippet>745</a>            .public_category(),
+<a href=#746 id=746 data-nosnippet>746</a>            <span class="string">"repository_identity_mismatch"
+<a href=#747 id=747 data-nosnippet>747</a>        </span>);
+<a href=#748 id=748 data-nosnippet>748</a>    }
+<a href=#749 id=749 data-nosnippet>749</a>}
 </code></pre></div></section></main></body></html>
