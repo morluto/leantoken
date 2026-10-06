@@ -365,8 +365,11 @@ write-amplification regression.
 Reconciliation removal staging is streamed in 256-path initial batches; the
 SQLite stage owns pending removal rows instead of retaining a second
 repository-sized path collection in Rust. CI changed-path input is capped at
-16 MiB and 100,000 paths before topology matching. Bounded live-read cursors
-also carry a fingerprint of the requested target prefix, so continuation
+16 MiB and 100,000 raw entries during parsing, before topology matching. Git's
+NUL-terminated UTF-8 filenames preserve embedded newlines and whitespace;
+legacy newline/CRLF input remains supported. Invalid UTF-8, unterminated NUL
+streams, empty records, and NULs in pre-parsed paths fail closed. Bounded
+live-read cursors also carry a fingerprint of the requested target prefix, so continuation
 cannot rely on size and timestamp metadata when a file is replaced in place.
 When a read is truncated, source-budget guidance hydrates at most one target
 range from the request's pinned indexed generation. The range remains bounded

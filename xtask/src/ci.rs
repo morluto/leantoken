@@ -885,6 +885,7 @@ fn normalize_paths(paths: &[String]) -> Result<Vec<String>, String> {
     }
     for path in paths {
         if path.is_empty()
+            || path.contains('\0')
             || path.starts_with('/')
             || path.contains('\\')
             || path
@@ -916,10 +917,34 @@ fn read_changed_paths(root: &Path, path: &str) -> Result<Vec<String>, String> {
     if contents.len() as u64 > MAX_CHANGED_PATHS_FILE_BYTES {
         return Err("changed-path input exceeded its byte bound".to_owned());
     }
-    Ok(String::from_utf8_lossy(&contents)
-        .lines()
-        .map(str::to_owned)
-        .collect())
+    let contents = String::from_utf8(contents)
+        .map_err(|error| format!("changed-path input is not UTF-8: {error}"))?;
+    if contents.contains('\0') {
+        if !contents.ends_with('\0') {
+            return Err("NUL-delimited changed-path input must end with NUL".to_owned());
+        }
+        collect_changed_paths(contents.split_terminator('\0'))
+    } else {
+        collect_changed_paths(contents.lines())
+    }
+}
+
+fn collect_changed_paths<'a>(
+    entries: impl Iterator<Item = &'a str>,
+) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    for entry in entries {
+        if paths.len() >= MAX_CHANGED_PATHS {
+            return Err(format!(
+                "changed-path input exceeds {MAX_CHANGED_PATHS} entries"
+            ));
+        }
+        if entry.is_empty() {
+            return Err("changed-path input contains an empty entry".to_owned());
+        }
+        paths.push(entry.to_owned());
+    }
+    Ok(paths)
 }
 
 fn validate_schedule(topology: &Topology, input: &PlannerInput) -> Result<(), String> {
@@ -1036,6 +1061,175 @@ mod tests {
             .iter()
             .map(|job| (job.lane.as_str(), job.runner.as_str()))
             .collect()
+    }
+
+    fn changed_path_file_input(contents: &[u8]) -> Result<PlannerInput, String> {
+        let file = tempfile::NamedTempFile::new().expect("changed-path fixture");
+        fs::write(file.path(), contents).expect("write changed paths");
+        changed_path_file_input_at(file.path())
+    }
+
+    fn changed_path_file_input_at(path: &std::path::Path) -> Result<PlannerInput, String> {
+        let args = [
+            "--event",
+            "pull_request",
+            "--base",
+            "base-sha",
+            "--head",
+            "head-sha",
+            "--source",
+            "head-sha",
+            "--changed-paths-file",
+        ]
+        .map(str::to_owned)
+        .into_iter()
+        .chain([path.to_str().expect("fixture path").to_owned()])
+        .collect::<Vec<_>>();
+        super::parse_plan_args(&workspace_root(), &args).map(|(input, _, _)| input)
+    }
+
+    #[test]
+    fn nul_changed_path_file_selects_every_owner_and_exact_job() {
+        let expected = [
+            "quality",
+            "rust-quality",
+            "secret-scan",
+            "product-linux",
+            "release-plan",
+            "npm",
+        ];
+        for paths in [
+            [
+                "docs/architecture.md",
+                "src/mcp/transport.rs",
+                "npm/leantoken.cjs",
+            ],
+            [
+                "src/mcp/transport.rs",
+                "npm/leantoken.cjs",
+                "docs/architecture.md",
+            ],
+            [
+                "npm/leantoken.cjs",
+                "docs/architecture.md",
+                "src/mcp/transport.rs",
+            ],
+        ] {
+            let contents = paths
+                .iter()
+                .flat_map(|path| path.bytes().chain([0]))
+                .collect::<Vec<_>>();
+            let parsed = changed_path_file_input(&contents).expect("parse Git path stream");
+            let plan = build_plan(&workspace_root(), parsed).expect("file-input plan");
+            assert_eq!(selected_lanes(&plan), expected, "paths: {paths:?}");
+            assert_eq!(
+                job_matrix(&plan),
+                expected
+                    .iter()
+                    .map(|lane| (*lane, "ubuntu-latest"))
+                    .collect::<Vec<_>>()
+            );
+            assert!(plan.fallback_reason.is_none());
+            validate_plan(&workspace_root(), &plan).expect("valid exact job plan");
+            let explicit = build_plan(&workspace_root(), input(Event::PullRequest, &paths))
+                .expect("explicit path plan");
+            assert_eq!(
+                serde_json::to_value(&plan.jobs).unwrap(),
+                serde_json::to_value(&explicit.jobs).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn changed_path_files_preserve_git_filenames_and_legacy_line_inputs() {
+        let paths = [
+            "docs/a note.md",
+            "src/with\nnewline.rs",
+            "npm/λ.cjs",
+            "src/carriage\r.rs",
+        ];
+        let contents = paths
+            .iter()
+            .flat_map(|path| path.bytes().chain([0]))
+            .collect::<Vec<_>>();
+        let parsed = changed_path_file_input(&contents).expect("parse exact Git filenames");
+        assert_eq!(parsed.changed_paths, paths);
+        let plan = build_plan(&workspace_root(), parsed).expect("Git filename plan");
+        let explicit = build_plan(&workspace_root(), input(Event::PullRequest, &paths))
+            .expect("explicit filename plan");
+        assert_eq!(
+            serde_json::to_value(&plan.jobs).unwrap(),
+            serde_json::to_value(&explicit.jobs).unwrap()
+        );
+        assert!(plan.fallback_reason.is_none());
+
+        for contents in [
+            b"docs/architecture.md\nsrc/mcp/transport.rs\n".as_slice(),
+            b"docs/architecture.md\r\nsrc/mcp/transport.rs\r\n".as_slice(),
+        ] {
+            let parsed = changed_path_file_input(contents).expect("legacy line input");
+            assert_eq!(
+                parsed.changed_paths,
+                ["docs/architecture.md", "src/mcp/transport.rs"]
+            );
+            let plan = build_plan(&workspace_root(), parsed).expect("legacy plan");
+            assert_eq!(
+                selected_lanes(&plan),
+                ["quality", "rust-quality", "secret-scan", "product-linux"]
+            );
+        }
+
+        let parsed = changed_path_file_input(b"").expect("empty Git diff");
+        assert!(parsed.changed_paths.is_empty());
+        let plan = build_plan(&workspace_root(), parsed).expect("empty diff plan");
+        let explicit = build_plan(&workspace_root(), input(Event::PullRequest, &[]))
+            .expect("explicit empty diff plan");
+        assert_eq!(selected_lanes(&plan), selected_lanes(&explicit));
+        assert_eq!(job_matrix(&plan), job_matrix(&explicit));
+    }
+
+    #[test]
+    fn changed_path_inputs_reject_malformed_records_before_owner_selection() {
+        for contents in [
+            b"\xff".as_slice(),
+            b"src/a.rs\0\xff\0".as_slice(),
+            b"src/a.rs\0docs/b.md".as_slice(),
+            b"\0".as_slice(),
+            b"src/a.rs\0\0".as_slice(),
+            b"src/a.rs\n\n".as_slice(),
+        ] {
+            assert!(
+                changed_path_file_input(contents).is_err(),
+                "input: {contents:?}"
+            );
+        }
+        let explicit = input(Event::PullRequest, &["docs/a.md\0src/config.rs"]);
+        assert!(build_plan(&workspace_root(), explicit).is_err());
+    }
+
+    #[test]
+    fn changed_path_file_entry_and_byte_bounds_are_enforced_during_parsing() {
+        let at_limit = b"src/config.rs\0".repeat(super::MAX_CHANGED_PATHS);
+        let parsed = changed_path_file_input(&at_limit).expect("entry bound permits its boundary");
+        assert_eq!(parsed.changed_paths.len(), super::MAX_CHANGED_PATHS);
+        let plan = build_plan(&workspace_root(), parsed).expect("bounded duplicate inputs");
+        assert_eq!(
+            selected_lanes(&plan),
+            ["quality", "rust-quality", "secret-scan", "product-linux"]
+        );
+        for record in [b"src/config.rs\0".as_slice(), b"src/config.rs\n".as_slice()] {
+            let over_limit = record.repeat(super::MAX_CHANGED_PATHS + 1);
+            let error =
+                changed_path_file_input(&over_limit).expect_err("reject excessive raw entries");
+            assert!(error.contains("entries"));
+        }
+        let file = tempfile::NamedTempFile::new().expect("byte-bound fixture");
+        file.as_file()
+            .set_len(super::MAX_CHANGED_PATHS_FILE_BYTES + 1)
+            .expect("oversized sparse path input");
+        let error =
+            changed_path_file_input_at(file.path()).expect_err("reject excessive input bytes");
+        assert!(error.contains("bytes"));
     }
 
     #[test]
