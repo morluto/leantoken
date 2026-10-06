@@ -100,6 +100,24 @@ estimated read connections, WAL, leader and watcher ownership, admission
 entries/directories, generation publication, response-accounting writes, and
 takeover separate.
 
+Schema v4 splits takeover into `leadership_acquisition_ms` and
+`generation_ready_after_acquisition_ms`, retaining end-to-end `takeover_ms`.
+The first timer starts before killing the leader and stops at the first unique
+successor lock observation; the second stops when generation two is observed.
+Lock and generation observations poll every 50 ms, so these are observed phase
+durations. Final ownership and one-watcher verification remain part of total
+takeover time, and both waits share one operation deadline.
+
+The acquisition screen is 9,000 ms: the existing eight-second maximum follower
+interval plus one second for scheduling and observation. Post-acquisition
+publication retains a separate 5,000 ms screen for the chosen synthetic fixture.
+This replaces the older aggregate five-second gate, which could reject a
+correct capped follower before it acquired leadership. It does not promise
+five-second publication for arbitrary repositories or hard latency under host
+overload. Production polling remains 500 ms through eight seconds. Use at least
+nine idle seconds when investigating stable capped followers; a short smoke
+does not exercise their worst probe phase.
+
 The default dedicated polling probe creates 50,001 directories to exceed the
 recursive watcher bound. It fails if a full reconciliation is observed at
 readiness, then requires at least one reconciliation during the following
@@ -117,10 +135,10 @@ target/release/mcp_multiprocess_profile \
   --idle-seconds 5 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v3.json
+  --output target/mcp-multiprocess-cpu-v4.json
 ```
 
-Schema v3 records the explicit `max_index_workers` value and passes it to every
+Schema v4 retains the explicit `max_index_workers` value and passes it to every
 MCP process. For a guarded cold-index comparison, run four fresh profiler
 invocations in `1,2,2,1` order with the same release binary and arguments.
 Compare shared-cache leader startup and independent-cache contention together;

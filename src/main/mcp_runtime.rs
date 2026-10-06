@@ -207,6 +207,7 @@ async fn run_mcp_index_loop(
         .await??;
 
         if let Some(leader) = leader {
+            tracing::debug!("MCP indexing leadership acquired");
             follower_backoff.reset();
             let result = run_index_leader(Arc::clone(&services), cancellation.clone()).await;
             drop(leader);
@@ -218,6 +219,10 @@ async fn run_mcp_index_loop(
         }
 
         let retry_delay = follower_backoff.failure_delay();
+        tracing::debug!(
+            retry_delay_ms = retry_delay.as_millis(),
+            "MCP follower leadership probe unavailable"
+        );
         tokio::select! {
             _ = cancellation.cancelled() => return Ok(()),
             _ = tokio::time::sleep(retry_delay) => {}

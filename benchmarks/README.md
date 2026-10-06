@@ -1242,11 +1242,15 @@ Reproduce it with the command in
 [decision note](reports/mcp-multiprocess-resource-v1-2026-07-27.md) bind the
 release binary hash, fixture size, host observations, and predeclared decision
 thresholds. The historical v1 raw report remains the evidence for its 1/2/4
-shared-cache experiment. Schema v3 additionally binds the explicit
+shared-cache experiment. Schema v4 retains the explicit
 `max_index_workers` value and is bounded to 16 processes, 10,000 files,
 1,000 functions per file, 1,000 warm rounds, a 60-second idle window, 60,000
 polling-probe directories, a 120-second polling observation, and a 300-second
-operation timeout. See the
+operation timeout. Takeover records observed leadership acquisition and
+post-acquisition generation readiness separately, screened at nine and five
+seconds respectively, while retaining total takeover time. Both phases share
+one operation deadline; production follower backoff remains capped at eight
+seconds. See the
 [measurement guide](../docs/measurement.md#stdio-mcp-multi-process-cpu-matrix)
 for the complete command and interpretation rules.
 
