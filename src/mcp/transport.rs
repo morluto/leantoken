@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, RwLock},
+    time::Duration,
 };
 
 use rmcp::{
@@ -15,7 +16,7 @@ use rmcp::{
         async_rw::{JsonRpcMessageCodec, JsonRpcMessageCodecError},
     },
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio_util::{
     bytes::BytesMut,
     codec::{Decoder, Encoder},
@@ -30,6 +31,8 @@ const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 /// client that cancels faster than handlers drain cannot grow the map or the
 /// in-flight work beyond this bound.
 const RETAINED_TOMBSTONE_MULTIPLIER: usize = 4;
+
+const MCP_STDIO_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Dispatch entry state: active (holding a permit) or tombstoned (cancelled
 /// but handler still draining). Tombstoned entries prevent ID reuse until the
@@ -66,11 +69,14 @@ impl Drop for DispatchedToolCall {
     }
 }
 
-pub(super) struct BoundedStdioTransport {
-    reader: tokio::io::BufReader<tokio::io::Stdin>,
-    writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
+pub(super) type BoundedStdioTransport = BoundedTransport<tokio::io::Stdin, tokio::io::Stdout>;
+
+pub(super) struct BoundedTransport<R, W> {
+    reader: tokio::io::BufReader<R>,
+    writer: Arc<tokio::sync::Mutex<W>>,
     decoder: JsonRpcMessageCodec<RxJsonRpcMessage<RoleServer>>,
     read_buffer: BytesMut,
+    pending_writes: tokio::task::JoinSet<std::io::Result<()>>,
     request_dispatch: RequestAdmission,
     max_dispatch_entries: usize,
     dispatched_calls: Arc<Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>>,
@@ -80,14 +86,35 @@ pub(super) struct BoundedStdioTransport {
 
 impl BoundedStdioTransport {
     pub(super) fn new(request_dispatch: RequestAdmission, result_mode: McpResultMode) -> Self {
+        Self::with_io(
+            tokio::io::stdin(),
+            tokio::io::stdout(),
+            request_dispatch,
+            result_mode,
+        )
+    }
+}
+
+impl<R, W> BoundedTransport<R, W>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    fn with_io(
+        reader: R,
+        writer: W,
+        request_dispatch: RequestAdmission,
+        result_mode: McpResultMode,
+    ) -> Self {
         let max_dispatch_entries = request_dispatch
             .capacity()
             .saturating_mul(RETAINED_TOMBSTONE_MULTIPLIER);
         Self {
-            reader: tokio::io::BufReader::with_capacity(8 * 1024, tokio::io::stdin()),
-            writer: Arc::new(tokio::sync::Mutex::new(tokio::io::stdout())),
+            reader: tokio::io::BufReader::with_capacity(8 * 1024, reader),
+            writer: Arc::new(tokio::sync::Mutex::new(writer)),
             decoder: JsonRpcMessageCodec::new_with_max_length(MAX_MCP_STDIO_FRAME_BYTES),
             read_buffer: BytesMut::new(),
+            pending_writes: tokio::task::JoinSet::new(),
             request_dispatch,
             max_dispatch_entries,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
@@ -108,7 +135,7 @@ impl BoundedStdioTransport {
     }
 
     async fn write_message(
-        writer: Arc<tokio::sync::Mutex<tokio::io::Stdout>>,
+        writer: Arc<tokio::sync::Mutex<W>>,
         item: TxJsonRpcMessage<RoleServer>,
     ) -> std::io::Result<()> {
         let mut bytes = BytesMut::new();
@@ -118,6 +145,22 @@ impl BoundedStdioTransport {
         let mut writer = writer.lock().await;
         writer.write_all(&bytes).await?;
         writer.flush().await
+    }
+
+    fn queue_direct_response(&mut self, response: TxJsonRpcMessage<RoleServer>) {
+        debug_assert!(self.pending_writes.is_empty());
+        // Retain at most one task so the frame's cursor and writer guard survive
+        // receive cancellation and keep progressing during RMCP response drain.
+        // JoinSet also aborts the write if the transport itself is dropped.
+        self.pending_writes
+            .spawn(Self::write_message(Arc::clone(&self.writer), response));
+    }
+
+    async fn finish_direct_response(&mut self) -> std::io::Result<()> {
+        if let Some(result) = self.pending_writes.join_next().await {
+            result.map_err(std::io::Error::other)??;
+        }
+        Ok(())
     }
 
     fn admit_message(
@@ -221,7 +264,11 @@ impl BoundedStdioTransport {
     }
 }
 
-impl Transport<RoleServer> for BoundedStdioTransport {
+impl<R, W> Transport<RoleServer> for BoundedTransport<R, W>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     type Error = std::io::Error;
 
     fn send(
@@ -251,6 +298,9 @@ impl Transport<RoleServer> for BoundedStdioTransport {
 
     async fn receive(&mut self) -> Option<RxJsonRpcMessage<RoleServer>> {
         loop {
+            if self.finish_direct_response().await.is_err() {
+                return None;
+            }
             let buffered_before = self.read_buffer.len();
             match self.decoder.decode(&mut self.read_buffer) {
                 Ok(Some(mut message)) => match self.admit_message(&mut message) {
@@ -267,12 +317,8 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                                 Some(id),
                             )
                         };
-                        if Self::write_message(Arc::clone(&self.writer), response)
-                            .await
-                            .is_err()
-                        {
-                            return None;
-                        }
+                        self.queue_direct_response(response);
+                        continue;
                     }
                 },
                 Err(JsonRpcMessageCodecError::MaxLineLengthExceeded) => {
@@ -293,12 +339,7 @@ impl Transport<RoleServer> for BoundedStdioTransport {
                             ErrorData::invalid_request("Invalid request", None),
                             None,
                         );
-                        if Self::write_message(Arc::clone(&self.writer), response)
-                            .await
-                            .is_err()
-                        {
-                            return None;
-                        }
+                        self.queue_direct_response(response);
                         continue;
                     }
                 },
@@ -333,7 +374,23 @@ impl Transport<RoleServer> for BoundedStdioTransport {
     }
 
     async fn close(&mut self) -> Result<(), Self::Error> {
-        self.writer.lock().await.shutdown().await
+        match tokio::time::timeout(MCP_STDIO_CLOSE_TIMEOUT, async {
+            self.finish_direct_response().await?;
+            self.writer.lock().await.shutdown().await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                // Cancellation of join_next leaves the task alive. Abort and
+                // reap the single retained task to release its writer guard.
+                self.pending_writes.shutdown().await;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "timed out closing MCP stdio transport",
+                ))
+            }
+        }
     }
 }
 
