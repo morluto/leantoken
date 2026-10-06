@@ -837,6 +837,12 @@ are replayed. This profiler-only fan-out does not alter MCP worker policy,
 discovery membership, preparation batch bounds, publication atomicity, or the
 retrieval hot path.
 
+The MCP multiprocess measurement parser normalizes ANSI SGR in at most two
+selected watcher diagnostic lines. Plain lines borrow their existing bytes;
+each colored-line copy is no larger than its input. Missing counters remain
+unobserved, and unrelated or incomplete control sequences remain intact. This
+adds no process fan-out or production watcher work.
+
 The process performing the initial index exposes detailed phases for discovery,
 hash-and-plan, preparation, relational staging, the four FTS builds, and
 commit/checkpoint. `files_staged` remains explicitly unpublished until the
