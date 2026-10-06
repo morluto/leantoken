@@ -619,7 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
             "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
-            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
+            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values and matching native v1 receipt references, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions. Conflicting payload identities and mismatched receipt references remain significant.",
             "The explicit max_index_workers value applies to every indexing attempt in this profiler. A two-worker run is a cold-start contention probe, not evidence that warm reconciliation should use two workers.",
         ],
     };
