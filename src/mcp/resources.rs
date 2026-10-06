@@ -148,49 +148,75 @@ impl LeanTokenMcp {
         let now = now_unix_millis()?;
         let mut last_error = None;
         let mut found = None;
-        let contexts = self.contexts.all();
-        for (_, mcp_services) in &contexts {
-            let _ = mcp_services.request_activation();
-        }
+        let mut contexts = self.contexts.all();
+        // Prefer the primary without waiting for an alphabetically earlier,
+        // dormant context. Snapshot readiness before any activation request.
+        contexts.sort_by_key(|(name, _)| name.as_str() != "default");
+        let contexts = contexts
+            .into_iter()
+            .map(|(_, services)| {
+                let state = services.get();
+                (services, state)
+            })
+            .collect::<Vec<_>>();
         let cancellation = CancellationToken::new();
         let deadline = tokio::time::Instant::now() + INITIAL_INDEX_WAIT;
-        for (_, mcp_services) in contexts {
-            let state = match mcp_services
-                .wait_for_services(mcp_services.get(), cancellation.clone(), deadline)
+        'lookup: for wait_for_startup in [false, true] {
+            // A ready hit needs no new repository runtime. Only a ready miss
+            // activates the bounded starting set, sharing the original deadline.
+            if wait_for_startup {
+                for (services, initial) in &contexts {
+                    if matches!(initial, McpServiceState::Starting(_))
+                        && matches!(services.get(), McpServiceState::Starting(_))
+                    {
+                        let _ = services.request_activation();
+                    }
+                }
+            }
+            for (mcp_services, initial) in &contexts {
+                let state = match (wait_for_startup, initial) {
+                    (false, McpServiceState::Ready { .. }) => initial.clone(),
+                    (true, McpServiceState::Starting(_)) => {
+                        match mcp_services
+                            .wait_for_services(initial.clone(), cancellation.clone(), deadline)
+                            .await
+                        {
+                            Ok(state) => state,
+                            Err(error) => {
+                                tracing::debug!(%error, "approved repository context unavailable for receipt lookup");
+                                continue;
+                            }
+                        }
+                    }
+                    _ => continue,
+                };
+                let services = match state {
+                    McpServiceState::Ready { services, .. } => services,
+                    _ => continue,
+                };
+                let repository_id = services.repository_id();
+                let candidate = tokio::task::spawn_blocking({
+                    let services = Arc::clone(&services);
+                    let receipt_id = receipt_id.clone();
+                    move || services.read_stored_receipt(&receipt_id, now)
+                })
                 .await
-            {
-                Ok(state) => state,
-                Err(error) => {
-                    tracing::debug!(%error, "approved repository context unavailable for receipt lookup");
-                    continue;
-                }
-            };
-            let services = match state {
-                McpServiceState::Ready { services, .. } => services,
-                _ => continue,
-            };
-            let repository_id = services.repository_id();
-            let candidate = tokio::task::spawn_blocking({
-                let services = Arc::clone(&services);
-                let receipt_id = receipt_id.clone();
-                move || services.read_stored_receipt(&receipt_id, now)
-            })
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "receipt resource read task failed");
-                ErrorData::internal_error("retrieval receipt read failed", None)
-            })?;
-            match candidate {
-                Ok(receipt) => {
-                    found = Some((repository_id, receipt));
-                    break;
-                }
-                Err(crate::Error::UnknownReceipt(_)) => {}
-                Err(other) => {
-                    tracing::error!(%other, "receipt resource read failed");
-                    // Continue checking remaining contexts; a storage error in
-                    // one repository should not hide a valid receipt in another.
-                    last_error = Some(other);
+                .map_err(|error| {
+                    tracing::error!(%error, "receipt resource read task failed");
+                    ErrorData::internal_error("retrieval receipt read failed", None)
+                })?;
+                match candidate {
+                    Ok(receipt) => {
+                        found = Some((repository_id, receipt));
+                        break 'lookup;
+                    }
+                    Err(crate::Error::UnknownReceipt(_)) => {}
+                    Err(other) => {
+                        tracing::error!(%other, "receipt resource read failed");
+                        // Continue checking remaining contexts; a storage error in
+                        // one repository should not hide a valid receipt in another.
+                        last_error = Some(other);
+                    }
                 }
             }
         }

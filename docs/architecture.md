@@ -67,6 +67,16 @@ evidence identities and remains subject to the existing per-receipt evidence
 byte limit. Receipt references and resource fields remain adapter-owned rather
 than entering service or CLI response types.
 
+Receipt lookup snapshots at most nine approved context states. It queries the
+ready primary first, then other ready contexts in alias order; a hit keeps
+starting contexts dormant. Only after all ready contexts miss does it request
+activation of the captured starting contexts and wait for their services.
+Starting-to-ready transitions are observed during those waits. The fallback
+shares one 30-second readiness deadline with the initial lookup, retains the
+existing resource-reader admission, and performs at most one storage lookup per
+context (nine total). An unknown opaque receipt can still require activation of
+every approved starting context; its identity does not expose an owner route.
+
 The bounded stdio adapter feeds bytes through RMCP's JSON-RPC codec and leaves
 MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
 input bound and pre-dispatch tool-call admission that the stock unbounded stdio
@@ -428,9 +438,10 @@ instead of an empty success.
 instances. A standalone `Services` creates one automatically; MCP creates one
 runtime first and passes it to the primary repository and every approved
 context. The primary is opened before secondary activation. Approved contexts
-retain only bounded routing state until their first selection, and concurrent
-first selections coalesce behind one activation. Never-selected contexts do
-not open SQLite, walk a repository, or start an indexing loop.
+retain only bounded routing state until their first tool selection or a receipt
+lookup that misses all ready contexts. Concurrent activation requests coalesce
+behind one startup. Contexts that neither operation activates do not open
+SQLite, walk a repository, or start an indexing loop.
 
 The runtime owns the limits that otherwise multiply with repository count:
 

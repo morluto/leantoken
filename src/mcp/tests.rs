@@ -246,6 +246,264 @@ async fn prepared_retrieval_selects_the_approved_context() {
     assert_eq!(prepared.services.repository_id(), expected_id);
 }
 
+async fn receipt_resource_fixture() -> (tempfile::TempDir, Arc<Services>, String) {
+    let root = tempfile::tempdir().expect("receipt repository");
+    std::fs::write(root.path().join("lib.rs"), "fn answer() -> u8 { 42 }\n")
+        .expect("receipt source");
+    let services = Arc::new(
+        Services::open(
+            Config::discover(root.path(), Some(root.path().join("index.sqlite")))
+                .expect("receipt config"),
+        )
+        .expect("receipt services"),
+    );
+    services
+        .index(crate::IndexingMode::Reconcile)
+        .await
+        .expect("receipt index");
+    let response = services
+        .read(crate::model::ReadRequest {
+            path: "lib.rs".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            symbol: None,
+            heading: None,
+            heading_occurrence: None,
+            continuation_cursor: None,
+            max_tokens: Some(100),
+            expected_hash: None,
+            delta: false,
+            receipt_id: None,
+            policy: crate::model::ReadPolicy::default(),
+        })
+        .await
+        .expect("receipt read");
+    let receipt_id = response.meta.receipt_id.expect("stored receipt");
+    (root, services, receipt_id)
+}
+
+fn assert_receipt_resource(response: ReadResourceResponse, receipt_id: &str, services: &Services) {
+    let ReadResourceResponse::Complete(result) = response else {
+        panic!("receipt resource must complete synchronously");
+    };
+    let value = serde_json::to_value(result).expect("resource result");
+    assert_eq!(value["contents"].as_array().expect("contents").len(), 1);
+    let receipt: serde_json::Value =
+        serde_json::from_str(value["contents"][0]["text"].as_str().expect("receipt text"))
+            .expect("receipt JSON");
+    assert_eq!(receipt["receipt_id"], receipt_id);
+    assert_eq!(receipt["repository_id"], services.repository_id());
+    assert_eq!(receipt["source_free"], true);
+    assert_eq!(receipt["evidence_count"], 1);
+    assert_eq!(receipt["evidence"][0]["path"], "lib.rs");
+}
+
+#[tokio::test]
+async fn receipt_resource_primary_hit_keeps_other_contexts_dormant() {
+    let (_root, primary, receipt_id) = receipt_resource_fixture().await;
+    let server = LeanTokenMcp::new(primary.clone());
+    let mut dormant = Vec::new();
+    let mut startups = Vec::new();
+    for name in ["aaa", "zzz"] {
+        let context = McpServices::starting_default();
+        server
+            .contexts
+            .register(name.into(), context.clone())
+            .expect("approved context");
+        startups.push(tokio::spawn({
+            let context = context.clone();
+            async move {
+                context
+                    .wait_for_activation(CancellationToken::new())
+                    .await
+                    .expect("activation");
+                context.set_failed(&crate::Error::OperationFailure(
+                    "test startup failure".into(),
+                ));
+            }
+        }));
+        dormant.push(context);
+    }
+    let response = server
+        .read_receipt_resource(super::resources::receipt_uri(&receipt_id), None)
+        .await
+        .expect("primary receipt");
+    // Join fixture tasks before asserting, including on the old eager path.
+    for startup in startups {
+        startup.abort();
+        let _ = startup.await;
+    }
+    assert_receipt_resource(response, &receipt_id, &primary);
+    assert!(
+        dormant
+            .iter()
+            .all(|context| !context.activation_requested())
+    );
+}
+
+#[tokio::test]
+async fn receipt_resource_ready_alternate_hit_keeps_other_context_dormant() {
+    let (_root, primary, _) = receipt_resource_fixture().await;
+    let (_alternate_root, alternate, receipt_id) = receipt_resource_fixture().await;
+    let server = LeanTokenMcp::new(primary);
+    server
+        .contexts
+        .register("zzz".into(), McpServices::ready(alternate.clone()))
+        .expect("ready context");
+    let dormant = McpServices::starting_default();
+    server
+        .contexts
+        .register("aaa".into(), dormant.clone())
+        .expect("dormant context");
+    let startup = tokio::spawn({
+        let dormant = dormant.clone();
+        async move {
+            dormant
+                .wait_for_activation(CancellationToken::new())
+                .await
+                .expect("activation");
+            dormant.set_failed(&crate::Error::OperationFailure(
+                "test startup failure".into(),
+            ));
+        }
+    });
+    let response = server
+        .read_receipt_resource(super::resources::receipt_uri(&receipt_id), None)
+        .await
+        .expect("ready alternate receipt");
+    startup.abort();
+    let _ = startup.await;
+    assert_receipt_resource(response, &receipt_id, &alternate);
+    assert!(!dormant.activation_requested());
+}
+
+#[tokio::test]
+async fn receipt_resource_starting_primary_does_not_block_ready_alternate() {
+    let (_root, alternate, receipt_id) = receipt_resource_fixture().await;
+    let (server, primary) = LeanTokenMcp::pending();
+    server
+        .contexts
+        .register("docs".into(), McpServices::ready(alternate.clone()))
+        .expect("ready context");
+    let startup = tokio::spawn({
+        let primary = primary.clone();
+        async move {
+            primary
+                .wait_for_activation(CancellationToken::new())
+                .await
+                .expect("activation");
+            primary.set_failed(&crate::Error::OperationFailure(
+                "test startup failure".into(),
+            ));
+        }
+    });
+    let response = server
+        .read_receipt_resource(super::resources::receipt_uri(&receipt_id), None)
+        .await
+        .expect("ready alternate receipt");
+    startup.abort();
+    let _ = startup.await;
+    assert_receipt_resource(response, &receipt_id, &alternate);
+    assert!(!primary.activation_requested());
+}
+
+#[tokio::test]
+async fn receipt_resource_ready_miss_activates_alternate_and_reads_its_receipt() {
+    let (_root, primary, _) = receipt_resource_fixture().await;
+    let (_alternate_root, alternate, receipt_id) = receipt_resource_fixture().await;
+    let server = LeanTokenMcp::new(primary);
+    let starting = McpServices::starting_default();
+    server
+        .contexts
+        .register("aaa".into(), starting.clone())
+        .expect("starting context");
+    let startup = tokio::spawn({
+        let starting = starting.clone();
+        let alternate = alternate.clone();
+        async move {
+            starting
+                .wait_for_activation(CancellationToken::new())
+                .await
+                .expect("activation");
+            starting.set_ready(alternate);
+        }
+    });
+    let response = server
+        .read_receipt_resource(super::resources::receipt_uri(&receipt_id), None)
+        .await
+        .expect("activated alternate receipt");
+    startup.await.expect("startup joins");
+    assert_receipt_resource(response, &receipt_id, &alternate);
+    assert!(starting.activation_requested());
+}
+
+#[tokio::test]
+async fn receipt_resource_failed_primary_does_not_hide_ready_alternate() {
+    let (_root, alternate, receipt_id) = receipt_resource_fixture().await;
+    let (server, primary) = LeanTokenMcp::pending();
+    primary.set_failed(&crate::Error::OperationFailure(
+        "test startup failure".into(),
+    ));
+    server
+        .contexts
+        .register("docs".into(), McpServices::ready(alternate.clone()))
+        .expect("ready context");
+    let response = server
+        .read_receipt_resource(super::resources::receipt_uri(&receipt_id), None)
+        .await
+        .expect("receipt despite failed primary");
+    assert_receipt_resource(response, &receipt_id, &alternate);
+}
+
+#[tokio::test(start_paused = true)]
+async fn receipt_resource_starting_contexts_share_one_deadline() {
+    let (server, primary) = LeanTokenMcp::pending();
+    let mut contexts = vec![primary];
+    for index in 0..MAX_REPOSITORY_CONTEXTS {
+        let context = McpServices::starting_default();
+        server
+            .contexts
+            .register(format!("context_{index}"), context.clone())
+            .expect("approved context");
+        contexts.push(context);
+    }
+    let available = server.resource_read_admission.available_permits();
+    let started = tokio::time::Instant::now();
+    let call = tokio::spawn({
+        let server = server.clone();
+        async move {
+            server
+                .read_receipt_resource(
+                    super::resources::receipt_uri(&format!("r{}", "0".repeat(48))),
+                    None,
+                )
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        for context in contexts {
+            context
+                .wait_for_activation(CancellationToken::new())
+                .await
+                .expect("activation");
+        }
+    })
+    .await
+    .expect("all starting contexts activated");
+    assert!(!call.is_finished());
+    tokio::time::advance(INITIAL_INDEX_WAIT).await;
+    let error = call
+        .await
+        .expect("lookup joins")
+        .expect_err("unknown receipt");
+    assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+    assert_eq!(tokio::time::Instant::now() - started, INITIAL_INDEX_WAIT);
+    assert_eq!(
+        server.resource_read_admission.available_permits(),
+        available
+    );
+}
+
 #[tokio::test]
 async fn receipt_resource_lookup_requests_dormant_context_activation() {
     let root = tempfile::tempdir().expect("primary repository");
@@ -275,12 +533,13 @@ async fn receipt_resource_lookup_requests_dormant_context_activation() {
                 .await
         }
     });
-    for _ in 0..100 {
-        if context.activation_requested() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
+    tokio::time::timeout(
+        INITIAL_INDEX_WAIT,
+        context.wait_for_activation(CancellationToken::new()),
+    )
+    .await
+    .expect("activation before shared readiness deadline")
+    .expect("activation requested");
     assert!(context.activation_requested());
     context.set_failed(&crate::Error::OperationFailure(
         "test startup failure".into(),
