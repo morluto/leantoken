@@ -1,0 +1,698 @@
+{
+  "schema_version": 1,
+  "experiment": "large-tree reconciliation scope",
+  "measurement_date": "2026-10-06",
+  "manifest": {
+    "native_source_commit": "7c05cd05b93c6e1dddbb8a6c9c712f856a8f3516",
+    "binary_sha256": "3af5cd2a537498078e095b8815ee25a6b73c14a03a6948c5558335ff6211fd91",
+    "original_raw_report_sha256": "cb24ba5a027691c658bdd30e3c442341ed44681eafff339ecfb110481d3fdeea",
+    "enriched_report_sha256": "d2badb6881ab29937a8820939c505aa7884ed4193a4f7eddd4213ac61de9dd57",
+    "runner_sha256": "7fcc7b23ca90b211323af8f97e0ae7f6a2c048cb548aa6579e826b723ab2a867",
+    "cpu_tick_seconds": 0.01,
+    "limits": {
+      "cpus": 1,
+      "memory_gib": 3,
+      "workers": 1,
+      "simultaneous_native_processes": 1
+    },
+    "scope": "Current release diagnostic characterization; no before/after product optimization. Phase timings are wall times; CPU and I/O are total process observations."
+  },
+  "contract_checks": {
+    "unchanged_abba_outline_requests": 40,
+    "structural_payload_parity": true,
+    "unchanged_generation": 1,
+    "same_size_same_mtime_freshness_cases_passed": 2,
+    "published_generation_after_change": 2,
+    "clean_eof_cases_passed": 2,
+    "exact_accounting_flag_and_component_sum": true
+  },
+  "limitations": [
+    "One minimum-31-second idle observation per synthetic case; not a representative source-heavy corpus or leak study.",
+    "Phase times are wall time; CPU and I/O counters are process totals.",
+    "Consistency policies have different freshness semantics; not a product before/after optimization.",
+    "Freshness latencies occur at different positions in the 30-second poll cycle.",
+    "Warm read_bytes and rchar do not capture all directory metadata/getdents work.",
+    "Original older-host client traffic remains unobserved.",
+    "Accounting checks verify the exactness flag and component sum; no separate complete-wire BPE oracle was run."
+  ],
+  "cases": [
+    {
+      "case": "admitted-empty-directories",
+      "binary_sha256": "3af5cd2a537498078e095b8815ee25a6b73c14a03a6948c5558335ff6211fd91",
+      "physical_directories_including_root": 50002,
+      "source_files": 1,
+      "source_bytes": 35,
+      "idle": {
+        "requested_minimum_wall_seconds": 31,
+        "before": {
+          "at": 896518.908609256,
+          "cpu_seconds": 4.02,
+          "rss_mib": 40.53515625,
+          "hwm_mib": 42.44921875,
+          "threads": 8,
+          "fds": 20,
+          "rchar": 374688,
+          "read_bytes": 118784,
+          "write_bytes": 794624
+        },
+        "after": {
+          "at": 896549.912575472,
+          "cpu_seconds": 5.95,
+          "rss_mib": 41.23828125,
+          "hwm_mib": 42.44921875,
+          "threads": 8,
+          "fds": 20,
+          "rchar": 387011,
+          "read_bytes": 118784,
+          "write_bytes": 798720
+        },
+        "cpu_seconds": 1.9300000000000006,
+        "wall_seconds": 31.003966215997934,
+        "memory_before": {
+          "rss_kib": 45300,
+          "pss_kib": 44330,
+          "private_kib": 43364
+        },
+        "memory_after": {
+          "rss_kib": 45436,
+          "pss_kib": 44462,
+          "private_kib": 43492
+        },
+        "reconciliations": [
+          {
+            "total_ms": 1933.4624680000002,
+            "discovery_ms": 1932.915619,
+            "hash_and_plan_ms": 0.25738900000000003,
+            "preparation_ms": 0.0,
+            "insertion_ms": 0.0,
+            "publication_ms": 0.04918
+          }
+        ]
+      },
+      "startup_profiles": [
+        {
+          "total_ms": 2797.680256,
+          "discovery_ms": 2683.38413,
+          "hash_and_plan_ms": 0.65346,
+          "preparation_ms": 99.689656,
+          "insertion_ms": 2.84633,
+          "publication_ms": 10.22912
+        }
+      ],
+      "query_arms": [
+        {
+          "consistency": "reconcile_working_tree",
+          "operations": 5,
+          "cpu_seconds": 9.09,
+          "wall_seconds": 9.184432480018586,
+          "latencies_ms": [
+            1819.8378529632464,
+            1827.3739019641653,
+            1839.8283420829102,
+            1834.473981987685,
+            1862.2083510272205
+          ],
+          "reconciliations": [
+            {
+              "total_ms": 1809.0209029999999,
+              "discovery_ms": 1808.539593,
+              "hash_and_plan_ms": 0.27931,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.042929999999999996
+            },
+            {
+              "total_ms": 1814.6305830000001,
+              "discovery_ms": 1814.209333,
+              "hash_and_plan_ms": 0.27439,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04321
+            },
+            {
+              "total_ms": 1828.014693,
+              "discovery_ms": 1827.573243,
+              "hash_and_plan_ms": 0.29057099999999997,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04774
+            },
+            {
+              "total_ms": 1823.389343,
+              "discovery_ms": 1822.949773,
+              "hash_and_plan_ms": 0.25323,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04079
+            },
+            {
+              "total_ms": 1849.966442,
+              "discovery_ms": 1849.3948919999998,
+              "hash_and_plan_ms": 0.33173,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.054200000000000005
+            }
+          ],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46408,
+            "pss_kib": 45434,
+            "private_kib": 44464
+          }
+        },
+        {
+          "consistency": "indexed_generation",
+          "operations": 5,
+          "cpu_seconds": 0.02000000000000135,
+          "wall_seconds": 0.05131386802531779,
+          "latencies_ms": [
+            10.27402002364397,
+            9.403209900483489,
+            11.063298908993602,
+            9.563219966366887,
+            10.211508953943849
+          ],
+          "reconciliations": [],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46424,
+            "pss_kib": 45450,
+            "private_kib": 44480
+          }
+        },
+        {
+          "consistency": "indexed_generation",
+          "operations": 5,
+          "cpu_seconds": 0.019999999999999574,
+          "wall_seconds": 0.04738290898967534,
+          "latencies_ms": [
+            9.97526990249753,
+            9.315748931840062,
+            9.020700003020465,
+            8.914660080336034,
+            9.270249982364476
+          ],
+          "reconciliations": [],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46432,
+            "pss_kib": 45458,
+            "private_kib": 44488
+          }
+        },
+        {
+          "consistency": "reconcile_working_tree",
+          "operations": 5,
+          "cpu_seconds": 9.22,
+          "wall_seconds": 9.324508646968752,
+          "latencies_ms": [
+            1875.992241082713,
+            1877.4690409190953,
+            1834.3899820465595,
+            1871.0054910043254,
+            1864.8866519797593
+          ],
+          "reconciliations": [
+            {
+              "total_ms": 1865.068521,
+              "discovery_ms": 1864.668411,
+              "hash_and_plan_ms": 0.2498,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.042031
+            },
+            {
+              "total_ms": 1865.1362510000001,
+              "discovery_ms": 1864.7155710000002,
+              "hash_and_plan_ms": 0.26508,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04772
+            },
+            {
+              "total_ms": 1822.783642,
+              "discovery_ms": 1822.3811620000001,
+              "hash_and_plan_ms": 0.257151,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.0406
+            },
+            {
+              "total_ms": 1859.204511,
+              "discovery_ms": 1858.739651,
+              "hash_and_plan_ms": 0.24756000000000003,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04374
+            },
+            {
+              "total_ms": 1853.643632,
+              "discovery_ms": 1853.258042,
+              "hash_and_plan_ms": 0.24585999999999997,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04006
+            }
+          ],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46480,
+            "pss_kib": 45506,
+            "private_kib": 44536
+          }
+        }
+      ],
+      "same_size_same_mtime_poll_freshness": {
+        "generation": 2,
+        "observed_ms": 9969.534963020124
+      },
+      "diagnostics": "2026-10-06T14:30:35.253361Z DEBUG storage startup pragma completed pragma=\"journal_mode\" elapsed_us=33137\n2026-10-06T14:30:35.253454Z DEBUG storage startup pragma completed pragma=\"journal_size_limit\" elapsed_us=34\n2026-10-06T14:30:35.253497Z DEBUG storage startup pragma completed pragma=\"foreign_keys\" elapsed_us=29\n2026-10-06T14:30:35.299710Z DEBUG MCP indexing leadership acquired\n2026-10-06T14:30:36.637176Z  WARN native recursive watcher admission did not complete; falling back to periodic full reconciliation entries=50002 directories=50001 cap=50000 reason=AdmissionDirectoryLimit\n2026-10-06T14:30:36.637232Z  INFO repository watcher initialized backend=PeriodicPolling fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 admission_directories=50001 admission_complete=false\n2026-10-06T14:30:39.321476Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:30:39.435118Z DEBUG repository reconciliation profile total_ms=2797.680256 discovery_ms=2683.38413 hash_and_plan_ms=0.65346 preparation_ms=99.689656 insertion_ms=2.84633 publication_ms=10.22912 preparation_batches=1 max_batch_files=1 max_batch_source_bytes=35\n2026-10-06T14:31:07.140421Z  WARN watcher scheduled bounded full reconciliation\n2026-10-06T14:31:09.074007Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:09.074369Z DEBUG repository reconciliation profile total_ms=1933.4624680000002 discovery_ms=1932.915619 hash_and_plan_ms=0.25738900000000003 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04918 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:10.512775Z DEBUG reconciliation wave started wave_id=1 waiters=1\n2026-10-06T14:31:12.321453Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:12.321846Z DEBUG repository reconciliation profile total_ms=1809.0209029999999 discovery_ms=1808.539593 hash_and_plan_ms=0.27931 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.042929999999999996 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:12.322012Z DEBUG reconciliation wave completed wave_id=1\n2026-10-06T14:31:12.332518Z DEBUG reconciliation wave started wave_id=2 waiters=1\n2026-10-06T14:31:14.146812Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:14.147187Z DEBUG repository reconciliation profile total_ms=1814.6305830000001 discovery_ms=1814.209333 hash_and_plan_ms=0.27439 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04321 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:14.147304Z DEBUG reconciliation wave completed wave_id=2\n2026-10-06T14:31:14.160217Z DEBUG reconciliation wave started wave_id=3 waiters=1\n2026-10-06T14:31:15.987872Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:15.988264Z DEBUG repository reconciliation profile total_ms=1828.014693 discovery_ms=1827.573243 hash_and_plan_ms=0.29057099999999997 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04774 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:15.988398Z DEBUG reconciliation wave completed wave_id=3\n2026-10-06T14:31:15.999950Z DEBUG reconciliation wave started wave_id=4 waiters=1\n2026-10-06T14:31:17.823030Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:17.823374Z DEBUG repository reconciliation profile total_ms=1823.389343 discovery_ms=1822.949773 hash_and_plan_ms=0.25323 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04079 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:17.823503Z DEBUG reconciliation wave completed wave_id=4\n2026-10-06T14:31:17.834400Z DEBUG reconciliation wave started wave_id=5 waiters=1\n2026-10-06T14:31:19.683917Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:19.684395Z DEBUG repository reconciliation profile total_ms=1849.966442 discovery_ms=1849.3948919999998 hash_and_plan_ms=0.33173 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.054200000000000005 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:19.684534Z DEBUG reconciliation wave completed wave_id=5\n2026-10-06T14:31:19.804896Z DEBUG reconciliation wave started wave_id=6 waiters=1\n2026-10-06T14:31:21.669657Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:21.670006Z DEBUG repository reconciliation profile total_ms=1865.068521 discovery_ms=1864.668411 hash_and_plan_ms=0.2498 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.042031 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:21.670165Z DEBUG reconciliation wave completed wave_id=6\n2026-10-06T14:31:21.680984Z DEBUG reconciliation wave started wave_id=7 waiters=1\n2026-10-06T14:31:23.545796Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:23.546162Z DEBUG repository reconciliation profile total_ms=1865.1362510000001 discovery_ms=1864.7155710000002 hash_and_plan_ms=0.26508 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04772 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:23.546303Z DEBUG reconciliation wave completed wave_id=7\n2026-10-06T14:31:23.558343Z DEBUG reconciliation wave started wave_id=8 waiters=1\n2026-10-06T14:31:25.380799Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:25.381158Z DEBUG repository reconciliation profile total_ms=1822.783642 discovery_ms=1822.3811620000001 hash_and_plan_ms=0.257151 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.0406 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:25.381278Z DEBUG reconciliation wave completed wave_id=8\n2026-10-06T14:31:25.393054Z DEBUG reconciliation wave started wave_id=9 waiters=1\n2026-10-06T14:31:27.251929Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:27.252285Z DEBUG repository reconciliation profile total_ms=1859.204511 discovery_ms=1858.739651 hash_and_plan_ms=0.24756000000000003 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04374 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:27.252444Z DEBUG reconciliation wave completed wave_id=9\n2026-10-06T14:31:27.263719Z DEBUG reconciliation wave started wave_id=10 waiters=1\n2026-10-06T14:31:29.117052Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:29.117390Z DEBUG repository reconciliation profile total_ms=1853.643632 discovery_ms=1853.258042 hash_and_plan_ms=0.24585999999999997 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04006 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:31:29.117516Z DEBUG reconciliation wave completed wave_id=10\n2026-10-06T14:31:37.139761Z  WARN watcher scheduled bounded full reconciliation\n2026-10-06T14:31:39.079551Z DEBUG repository discovery completed walk_entries=50003 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:39.088679Z DEBUG repository reconciliation profile total_ms=1948.727408 discovery_ms=1939.448268 hash_and_plan_ms=0.28907 preparation_ms=0.37885 insertion_ms=2.78364 publication_ms=5.57355 preparation_batches=1 max_batch_files=1 max_batch_source_bytes=35\n2026-10-06T14:31:39.104257Z  INFO repository watcher stopped backend=PeriodicPolling fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 admission_directories=50001 admission_complete=false poll_ticks=2 changed_path_deliveries=0 full_reconciliation_deliveries=2\n",
+      "discovery_observations": [
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 50003,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        }
+      ],
+      "watcher_admission": {
+        "entries_observed": 50002,
+        "directories_observed": 50001,
+        "complete": false,
+        "cap": 50000,
+        "fallback_reason": "admission_directory_limit",
+        "backend": "periodic_polling",
+        "population_note": "Capped observed prefix, not the complete physical tree."
+      },
+      "shutdown": {
+        "shutdown_exit_code": 0,
+        "shutdown_ms": 16.015080036595464,
+        "pending_response_ids": [],
+        "unanswered_request_ids": []
+      },
+      "outline_requests": 21
+    },
+    {
+      "case": "generated-directory-control",
+      "binary_sha256": "3af5cd2a537498078e095b8815ee25a6b73c14a03a6948c5558335ff6211fd91",
+      "physical_directories_including_root": 50003,
+      "source_files": 1,
+      "source_bytes": 35,
+      "idle": {
+        "requested_minimum_wall_seconds": 31,
+        "before": {
+          "at": 896585.220745101,
+          "cpu_seconds": 1.42,
+          "rss_mib": 40.5234375,
+          "hwm_mib": 42.4296875,
+          "threads": 8,
+          "fds": 20,
+          "rchar": 374688,
+          "read_bytes": 4096,
+          "write_bytes": 794624
+        },
+        "after": {
+          "at": 896616.223489367,
+          "cpu_seconds": 1.42,
+          "rss_mib": 41.23046875,
+          "hwm_mib": 42.4296875,
+          "threads": 8,
+          "fds": 20,
+          "rchar": 387011,
+          "read_bytes": 4096,
+          "write_bytes": 798720
+        },
+        "cpu_seconds": 0.0,
+        "wall_seconds": 31.002744266064838,
+        "memory_before": {
+          "rss_kib": 45408,
+          "pss_kib": 44498,
+          "private_kib": 43592
+        },
+        "memory_after": {
+          "rss_kib": 45572,
+          "pss_kib": 44622,
+          "private_kib": 43676
+        },
+        "reconciliations": [
+          {
+            "total_ms": 0.73709,
+            "discovery_ms": 0.32455,
+            "hash_and_plan_ms": 0.15977999999999998,
+            "preparation_ms": 0.0,
+            "insertion_ms": 0.0,
+            "publication_ms": 0.03853
+          }
+        ]
+      },
+      "startup_profiles": [
+        {
+          "total_ms": 120.954495,
+          "discovery_ms": 0.36819,
+          "hash_and_plan_ms": 0.7358399999999999,
+          "preparation_ms": 96.000246,
+          "insertion_ms": 3.0728999999999997,
+          "publication_ms": 19.869619
+        }
+      ],
+      "query_arms": [
+        {
+          "consistency": "reconcile_working_tree",
+          "operations": 5,
+          "cpu_seconds": 0.030000000000000027,
+          "wall_seconds": 0.059394508018158376,
+          "latencies_ms": [
+            15.245579998008907,
+            9.852529037743807,
+            11.103259981609881,
+            10.788089013658464,
+            11.692829080857337
+          ],
+          "reconciliations": [
+            {
+              "total_ms": 0.66694,
+              "discovery_ms": 0.29824,
+              "hash_and_plan_ms": 0.22855999999999999,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.05168
+            },
+            {
+              "total_ms": 0.5997399999999999,
+              "discovery_ms": 0.25793,
+              "hash_and_plan_ms": 0.16561,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.035769999999999996
+            },
+            {
+              "total_ms": 0.74812,
+              "discovery_ms": 0.33652,
+              "hash_and_plan_ms": 0.22502,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.03861
+            },
+            {
+              "total_ms": 0.5311699999999999,
+              "discovery_ms": 0.2799,
+              "hash_and_plan_ms": 0.13848,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.044539999999999996
+            },
+            {
+              "total_ms": 0.5560689999999999,
+              "discovery_ms": 0.291811,
+              "hash_and_plan_ms": 0.16795100000000002,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.037190999999999995
+            }
+          ],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46400,
+            "pss_kib": 45450,
+            "private_kib": 44504
+          }
+        },
+        {
+          "consistency": "indexed_generation",
+          "operations": 5,
+          "cpu_seconds": 0.010000000000000009,
+          "wall_seconds": 0.0580690479837358,
+          "latencies_ms": [
+            11.009088950231671,
+            10.632549994625151,
+            12.080039945431054,
+            11.96746900677681,
+            11.443818919360638
+          ],
+          "reconciliations": [],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46432,
+            "pss_kib": 45482,
+            "private_kib": 44536
+          }
+        },
+        {
+          "consistency": "indexed_generation",
+          "operations": 5,
+          "cpu_seconds": 0.030000000000000027,
+          "wall_seconds": 0.05722345702815801,
+          "latencies_ms": [
+            10.736748925410211,
+            10.630168952047825,
+            12.106659938581288,
+            11.722270050086081,
+            11.201570043340325
+          ],
+          "reconciliations": [],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46444,
+            "pss_kib": 45494,
+            "private_kib": 44548
+          }
+        },
+        {
+          "consistency": "reconcile_working_tree",
+          "operations": 5,
+          "cpu_seconds": 0.020000000000000018,
+          "wall_seconds": 0.06100046797655523,
+          "latencies_ms": [
+            12.205649982206523,
+            12.369499076157808,
+            11.500999913550913,
+            11.54441898688674,
+            12.41913007106632
+          ],
+          "reconciliations": [
+            {
+              "total_ms": 0.7457699999999999,
+              "discovery_ms": 0.33290000000000003,
+              "hash_and_plan_ms": 0.16231,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.10799
+            },
+            {
+              "total_ms": 0.6785,
+              "discovery_ms": 0.35517,
+              "hash_and_plan_ms": 0.17675,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04757
+            },
+            {
+              "total_ms": 0.60273,
+              "discovery_ms": 0.32828,
+              "hash_and_plan_ms": 0.15785,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.05244
+            },
+            {
+              "total_ms": 0.6196799999999999,
+              "discovery_ms": 0.33044999999999997,
+              "hash_and_plan_ms": 0.17545000000000002,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.04264
+            },
+            {
+              "total_ms": 0.5504600000000001,
+              "discovery_ms": 0.28042,
+              "hash_and_plan_ms": 0.16278,
+              "preparation_ms": 0.0,
+              "insertion_ms": 0.0,
+              "publication_ms": 0.038231
+            }
+          ],
+          "generation": 1,
+          "memory": {
+            "rss_kib": 46476,
+            "pss_kib": 45526,
+            "private_kib": 44580
+          }
+        }
+      ],
+      "same_size_same_mtime_poll_freshness": {
+        "generation": 2,
+        "observed_ms": 29070.316424011253
+      },
+      "diagnostics": "2026-10-06T14:31:44.163212Z DEBUG storage startup pragma completed pragma=\"journal_mode\" elapsed_us=9503\n2026-10-06T14:31:44.163311Z DEBUG storage startup pragma completed pragma=\"journal_size_limit\" elapsed_us=36\n2026-10-06T14:31:44.163328Z DEBUG storage startup pragma completed pragma=\"foreign_keys\" elapsed_us=5\n2026-10-06T14:31:44.207855Z DEBUG MCP indexing leadership acquired\n2026-10-06T14:31:45.613801Z  WARN native recursive watcher admission did not complete; falling back to periodic full reconciliation entries=50002 directories=50001 cap=50000 reason=AdmissionDirectoryLimit\n2026-10-06T14:31:45.613848Z  INFO repository watcher initialized backend=PeriodicPolling fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 admission_directories=50001 admission_complete=false\n2026-10-06T14:31:45.615183Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:31:45.735091Z DEBUG repository reconciliation profile total_ms=120.954495 discovery_ms=0.36819 hash_and_plan_ms=0.7358399999999999 preparation_ms=96.000246 insertion_ms=3.0728999999999997 publication_ms=19.869619 preparation_batches=1 max_batch_files=1 max_batch_source_bytes=35\n2026-10-06T14:32:16.116654Z  WARN watcher scheduled bounded full reconciliation\n2026-10-06T14:32:16.117695Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.117942Z DEBUG repository reconciliation profile total_ms=0.73709 discovery_ms=0.32455 hash_and_plan_ms=0.15977999999999998 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.03853 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.827495Z DEBUG reconciliation wave started wave_id=1 waiters=1\n2026-10-06T14:32:16.827908Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.828219Z DEBUG repository reconciliation profile total_ms=0.66694 discovery_ms=0.29824 hash_and_plan_ms=0.22855999999999999 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.05168 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.828312Z DEBUG reconciliation wave completed wave_id=1\n2026-10-06T14:32:16.842764Z DEBUG reconciliation wave started wave_id=2 waiters=1\n2026-10-06T14:32:16.843177Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.843431Z DEBUG repository reconciliation profile total_ms=0.5997399999999999 discovery_ms=0.25793 hash_and_plan_ms=0.16561 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.035769999999999996 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.843496Z DEBUG reconciliation wave completed wave_id=2\n2026-10-06T14:32:16.852494Z DEBUG reconciliation wave started wave_id=3 waiters=1\n2026-10-06T14:32:16.852978Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.853271Z DEBUG repository reconciliation profile total_ms=0.74812 discovery_ms=0.33652 hash_and_plan_ms=0.22502 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.03861 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.853386Z DEBUG reconciliation wave completed wave_id=3\n2026-10-06T14:32:16.863504Z DEBUG reconciliation wave started wave_id=4 waiters=1\n2026-10-06T14:32:16.863855Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.864063Z DEBUG repository reconciliation profile total_ms=0.5311699999999999 discovery_ms=0.2799 hash_and_plan_ms=0.13848 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.044539999999999996 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.864178Z DEBUG reconciliation wave completed wave_id=4\n2026-10-06T14:32:16.874476Z DEBUG reconciliation wave started wave_id=5 waiters=1\n2026-10-06T14:32:16.874833Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:16.875064Z DEBUG repository reconciliation profile total_ms=0.5560689999999999 discovery_ms=0.291811 hash_and_plan_ms=0.16795100000000002 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.037190999999999995 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:16.875157Z DEBUG reconciliation wave completed wave_id=5\n2026-10-06T14:32:17.012365Z DEBUG reconciliation wave started wave_id=6 waiters=1\n2026-10-06T14:32:17.012857Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:17.013152Z DEBUG repository reconciliation profile total_ms=0.7457699999999999 discovery_ms=0.33290000000000003 hash_and_plan_ms=0.16231 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.10799 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:17.013292Z DEBUG reconciliation wave completed wave_id=6\n2026-10-06T14:32:17.024340Z DEBUG reconciliation wave started wave_id=7 waiters=1\n2026-10-06T14:32:17.024792Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:17.025051Z DEBUG repository reconciliation profile total_ms=0.6785 discovery_ms=0.35517 hash_and_plan_ms=0.17675 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04757 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:17.025131Z DEBUG reconciliation wave completed wave_id=7\n2026-10-06T14:32:17.036765Z DEBUG reconciliation wave started wave_id=8 waiters=1\n2026-10-06T14:32:17.037164Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:17.037401Z DEBUG repository reconciliation profile total_ms=0.60273 discovery_ms=0.32828 hash_and_plan_ms=0.15785 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.05244 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:17.037543Z DEBUG reconciliation wave completed wave_id=8\n2026-10-06T14:32:17.048373Z DEBUG reconciliation wave started wave_id=9 waiters=1\n2026-10-06T14:32:17.048812Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:17.049059Z DEBUG repository reconciliation profile total_ms=0.6196799999999999 discovery_ms=0.33044999999999997 hash_and_plan_ms=0.17545000000000002 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.04264 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:17.049136Z DEBUG reconciliation wave completed wave_id=9\n2026-10-06T14:32:17.060061Z DEBUG reconciliation wave started wave_id=10 waiters=1\n2026-10-06T14:32:17.060447Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:17.060676Z DEBUG repository reconciliation profile total_ms=0.5504600000000001 discovery_ms=0.28042 hash_and_plan_ms=0.16278 preparation_ms=0.0 insertion_ms=0.0 publication_ms=0.038231 preparation_batches=0 max_batch_files=0 max_batch_source_bytes=0\n2026-10-06T14:32:17.060802Z DEBUG reconciliation wave completed wave_id=10\n2026-10-06T14:32:46.117218Z  WARN watcher scheduled bounded full reconciliation\n2026-10-06T14:32:46.118044Z DEBUG repository discovery completed walk_entries=2 files=1 total_source_bytes=35 max_depth=1\n2026-10-06T14:32:46.127196Z DEBUG repository reconciliation profile total_ms=9.57324 discovery_ms=0.28718 hash_and_plan_ms=0.220609 preparation_ms=0.41618 insertion_ms=2.6554399999999996 publication_ms=5.74255 preparation_batches=1 max_batch_files=1 max_batch_source_bytes=35\n2026-10-06T14:32:46.146812Z  INFO repository watcher stopped backend=PeriodicPolling fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 admission_directories=50001 admission_complete=false poll_ticks=2 changed_path_deliveries=0 full_reconciliation_deliveries=2\n",
+      "discovery_observations": [
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        },
+        {
+          "walk_entries": 2,
+          "files": 1,
+          "total_source_bytes": 35,
+          "max_depth": 1
+        }
+      ],
+      "watcher_admission": {
+        "entries_observed": 50002,
+        "directories_observed": 50001,
+        "complete": false,
+        "cap": 50000,
+        "fallback_reason": "admission_directory_limit",
+        "backend": "periodic_polling",
+        "population_note": "Capped observed prefix, not the complete physical tree."
+      },
+      "shutdown": {
+        "shutdown_exit_code": 0,
+        "shutdown_ms": 15.887730056419969,
+        "pending_response_ids": [],
+        "unanswered_request_ids": []
+      },
+      "outline_requests": 21
+    }
+  ]
+}

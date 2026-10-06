@@ -156,6 +156,13 @@ evidence, not portable constants. Compare CPU per repository and per operation
 alongside complete-request latency and throughput; a faster aggregate finish
 does not excuse response drift or superlinear CPU.
 
+A pinned [large-tree scope characterization](../benchmarks/reports/idle-reconciliation-tree-scope-linux-x86_64-2026-10-06.md)
+separates raw watch-admission counts from ignore-aware repeated discovery and
+compares explicit consistency policies without changing their freshness contracts.
+It reports total process CPU, reconciliation wall phases, RSS/PSS/private memory,
+same-size/same-mtime automatic freshness and clean EOF. This is diagnostic
+evidence, not a before/after product optimization or a complete-wire BPE oracle.
+
 ## Frozen retrieval sets
 
 `benchmarks/representative.json` is the visible development set. Its eight
