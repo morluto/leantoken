@@ -15,7 +15,10 @@
       "workers": 1,
       "simultaneous_native_processes": 1
     },
-    "scope": "Current release diagnostic characterization; no before/after product optimization. Phase timings are wall times; CPU and I/O are total process observations."
+    "scope": "Pinned unmerged release-profile build diagnostic characterization; no before/after product optimization. Phase timings are wall times; CPU and I/O are total process observations.",
+    "native_source_ref": "refs/heads/measurement/idle-tree-source-7c05cd05",
+    "native_source_url": "https://github.com/morluto/leantoken/commit/7c05cd05b93c6e1dddbb8a6c9c712f856a8f3516",
+    "native_source_status": "Clean unmerged experimental revision; locked native release-profile build, not a published product release."
   },
   "contract_checks": {
     "unchanged_abba_outline_requests": 40,

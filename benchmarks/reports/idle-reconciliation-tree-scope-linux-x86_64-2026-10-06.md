@@ -1,6 +1,6 @@
 # Large-tree reconciliation scope on Linux x86-64
 
-A current native release spends most of its measured warm reconciliation time
+The pinned native release-profile build spends most of its measured warm reconciliation time
 walking admitted empty directories. Moving the same directory population under
 the existing generated `target` exclusion removes that repeated discovery work,
 even though native recursive-watch admission still reaches its raw directory cap.
@@ -12,8 +12,14 @@ admission diagnostics, memory snapshots and checked shutdown metadata.
 
 ## Pinned environment and workload
 
-- Native source: `7c05cd05b93c6e1dddbb8a6c9c712f856a8f3516`; clean locked release,
-  without `cfg(test)`. Binary SHA-256:
+- Native source: [7c05cd05b93c6e1dddbb8a6c9c712f856a8f3516](https://github.com/morluto/leantoken/commit/7c05cd05b93c6e1dddbb8a6c9c712f856a8f3516),
+  retained by `measurement/idle-tree-source-7c05cd05`. This is an unmerged
+  experimental revision built from a clean tree with `cargo build --locked --release`,
+  without `cfg(test)`; it is not a published product release. Fetch the retained
+  branch before checking out the commit to reproduce the source. Relative to main
+  `622340e396eaca37778cf2107972c0e9ad01bab4`, its only changes are in
+  `src/services/context/facets.rs` and `tests/services/context_regressions.rs`.
+  Outline, tokenizer, watcher and indexing code is identical. Binary SHA-256:
   `3af5cd2a537498078e095b8815ee25a6b73c14a03a6948c5558335ff6211fd91`.
 - Disposable Linux container: one CPU quota, 3 GiB memory, no network, one
   index worker, one native MCP process at a time, isolated HOME/cache.
