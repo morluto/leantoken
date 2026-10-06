@@ -4,6 +4,8 @@ use std::{collections::BTreeMap, fs};
 
 const POLICY: &str = "ci/coverage-policy.json";
 
+mod cache_probe;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Policy {
@@ -345,6 +347,12 @@ fn command(filter: Option<&str>) -> Vec<String> {
 }
 
 pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
+    if args.as_slice() == ["check-cache-cleanup"] {
+        return cache_probe::run(root);
+    }
+    if args.as_slice() == ["check-cache-cleanup-worker"] {
+        return cache_probe::worker();
+    }
     if args.as_slice() == ["check-policy"] {
         return check_policy(root);
     }
@@ -361,7 +369,10 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
         [dry, flag, filter] if dry == "--dry-run" && flag == "--filterset" => {
             (true, Some(filter.as_str()))
         }
-        _ => return Err("usage: cargo xtask coverage [--dry-run] [--filterset FILTER]".into()),
+        _ => return Err(
+            "usage: cargo xtask coverage [--dry-run] [--filterset FILTER] | check-cache-cleanup"
+                .into(),
+        ),
     };
     let command = command(filter);
     if dry_run {
@@ -431,8 +442,7 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
         serde_json::to_vec_pretty(&identity).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    let clean = ["cargo", "llvm-cov", "clean", "--profraw-only"].map(str::to_owned);
-    logged(root, &clean, "clean")?;
+    clean_workspace(root)?;
     let tests = logged(root, &command, "tests");
     let report_path = output.join("coverage.json");
     let report = vec![
@@ -458,6 +468,11 @@ pub(super) fn run(root: &Path, args: Vec<String>) -> Result<(), String> {
     }
     fs::write(output.join("run.json"), serde_json::json!({"product_coverage_valid": filter.is_none(), "diagnostics_complete": true}).to_string()).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn clean_workspace(root: &Path) -> Result<(), String> {
+    let command = ["cargo", "llvm-cov", "clean", "--workspace", "--locked"].map(str::to_owned);
+    logged(root, &command, "clean")
 }
 
 fn source_identity(root: &Path) -> Result<String, String> {

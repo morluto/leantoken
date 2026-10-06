@@ -340,6 +340,11 @@ jobs:
           dist plan
           mkdir -p target && touch target/ci-command-completed
 
+      - name: Verify coverage workspace artifact cleanup
+        if: matrix.command == 'coverage'
+        run: |
+          cargo xtask coverage check-cache-cleanup
+
       - name: Measure authoritative product coverage and enforce owner budgets
         if: matrix.command == 'coverage'
         run: |

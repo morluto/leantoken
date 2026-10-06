@@ -47,8 +47,13 @@ and the instrumented nextest JUnit inventory for 30 days. Warnings in any
 coverage phase, including the instrumented test phase, invalidate the run.
 Coverage enables nextest successful-test output so passing tests cannot hide
 profile diagnostics. Both captured streams are checked, including LLVM profile
-write errors and mismatched functions. Profile cleanup is limited to
-cargo-llvm-cov's raw profiles. Stable branch coverage is unavailable and carries no correctness claim. The process
+write errors and mismatched functions. Cleanup uses
+`cargo llvm-cov clean --workspace --locked` to remove cached workspace coverage
+maps and profiles while retaining dependency artifacts.
+`cargo xtask coverage check-cache-cleanup` runs the disposable old/current-source
+regression and checks dependency preservation; the coverage lane requires it
+before instrumenting the product plan. Stable branch coverage is unavailable
+and carries no correctness claim. The process
 harness preserves `LLVM_PROFILE_FILE`; gracefully exiting children contribute
 coverage, while forced termination may lose profile buffers. Process assertions
 remain the authority for shutdown and failure composition.
