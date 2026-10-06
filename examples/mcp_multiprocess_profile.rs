@@ -35,6 +35,7 @@ const MIN_STABLE_FOLLOWER_IDLE_SECONDS: u64 = 9;
 const MAX_POLLING_DIRECTORIES: usize = 60_000;
 const MAX_POLLING_OBSERVATION_SECONDS: u64 = 120;
 const MAX_PARITY_MISMATCH_PATHS: usize = 32;
+const MAX_SMAPS_ROLLUP_BYTES: usize = 16 * 1_024;
 const WORKLOADS: [Workload; 4] = [
     Workload::Files,
     Workload::Search,
@@ -184,6 +185,9 @@ struct ProcessResources {
     role: &'static str,
     rss_kib: usize,
     peak_rss_kib: usize,
+    rollup_rss_kib: Option<usize>,
+    pss_kib: Option<usize>,
+    private_kib: Option<usize>,
     threads: usize,
     file_descriptors: usize,
     database_file_descriptors: usize,
@@ -287,6 +291,9 @@ struct RunMeasurement {
     watcher_processes: usize,
     aggregate_rss_kib: usize,
     aggregate_peak_rss_kib: usize,
+    aggregate_rollup_rss_kib: Option<usize>,
+    aggregate_pss_kib: Option<usize>,
+    aggregate_private_kib: Option<usize>,
     aggregate_threads: usize,
     aggregate_file_descriptors: usize,
     aggregate_estimated_read_connections: usize,
@@ -1006,6 +1013,11 @@ fn run_measurement(
         watcher_processes,
         aggregate_rss_kib: resources.iter().map(|sample| sample.rss_kib).sum(),
         aggregate_peak_rss_kib: resources.iter().map(|sample| sample.peak_rss_kib).sum(),
+        aggregate_rollup_rss_kib: sum_observed_kib(
+            resources.iter().map(|sample| sample.rollup_rss_kib),
+        ),
+        aggregate_pss_kib: sum_observed_kib(resources.iter().map(|sample| sample.pss_kib)),
+        aggregate_private_kib: sum_observed_kib(resources.iter().map(|sample| sample.private_kib)),
         aggregate_threads: resources.iter().map(|sample| sample.threads).sum(),
         aggregate_file_descriptors: resources.iter().map(|sample| sample.file_descriptors).sum(),
         aggregate_estimated_read_connections: resources
@@ -1708,6 +1720,7 @@ fn sample_process(
     leader: bool,
 ) -> Result<ProcessResources, Box<dyn Error>> {
     let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
+    let rollup = sample_smaps_rollup(Path::new(&format!("/proc/{pid}/smaps_rollup")));
     let fd_root = PathBuf::from(format!("/proc/{pid}/fd"));
     let mut file_descriptors = 0usize;
     let mut database_file_descriptors = 0usize;
@@ -1736,6 +1749,9 @@ fn sample_process(
         role: if leader { "leader" } else { "follower" },
         rss_kib: status_kib(&status, "VmRSS:")?,
         peak_rss_kib: status_kib(&status, "VmHWM:")?,
+        rollup_rss_kib: rollup.rss_kib,
+        pss_kib: rollup.pss_kib,
+        private_kib: rollup.private_kib,
         threads: status_number(&status, "Threads:")?,
         file_descriptors,
         database_file_descriptors,
@@ -1743,6 +1759,60 @@ fn sample_process(
         estimated_established_read_connections: database_file_descriptors.saturating_sub(1),
         inotify_file_descriptors,
     })
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SmapsRollup {
+    rss_kib: Option<usize>,
+    pss_kib: Option<usize>,
+    private_kib: Option<usize>,
+}
+
+fn sample_smaps_rollup(path: &Path) -> SmapsRollup {
+    let read = || -> std::io::Result<String> {
+        let mut contents = String::with_capacity(MAX_SMAPS_ROLLUP_BYTES + 1);
+        fs::File::open(path)?
+            .take((MAX_SMAPS_ROLLUP_BYTES + 1) as u64)
+            .read_to_string(&mut contents)?;
+        Ok(contents)
+    };
+    match read() {
+        Ok(contents) if contents.len() <= MAX_SMAPS_ROLLUP_BYTES => parse_smaps_rollup(&contents),
+        _ => SmapsRollup::default(),
+    }
+}
+
+fn parse_smaps_rollup(contents: &str) -> SmapsRollup {
+    let private_kib = rollup_kib(contents, "Private_Clean:").and_then(|clean| {
+        rollup_kib(contents, "Private_Dirty:").and_then(|dirty| clean.checked_add(dirty))
+    });
+    SmapsRollup {
+        rss_kib: rollup_kib(contents, "Rss:"),
+        pss_kib: rollup_kib(contents, "Pss:"),
+        private_kib,
+    }
+}
+
+fn rollup_kib(contents: &str, key: &str) -> Option<usize> {
+    let mut matches = contents.lines().filter_map(|line| line.strip_prefix(key));
+    let mut fields = matches.next()?.split_whitespace();
+    if matches.next().is_some() {
+        return None;
+    }
+    let value = fields.next()?;
+    if !value.bytes().all(|byte| byte.is_ascii_digit())
+        || fields.next() != Some("kB")
+        || fields.next().is_some()
+    {
+        return None;
+    }
+    value.parse().ok()
+}
+
+fn sum_observed_kib(values: impl IntoIterator<Item = Option<usize>>) -> Option<usize> {
+    let mut values = values.into_iter().peekable();
+    values.peek()?;
+    values.try_fold(0usize, |total, value| total.checked_add(value?))
 }
 
 fn status_kib(status: &str, key: &str) -> Result<usize, Box<dyn Error>> {
@@ -2141,6 +2211,113 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rollup_reports_resident_proportional_and_private_memory_separately() {
+        let contents = "00400000-7fffffff ---p 00000000 00:00 0 [rollup]\n\
+                        Rss: 120 kB\nPss: 90 kB\n\
+                        Private_Clean: 20 kB\nPrivate_Dirty: 40 kB\n\
+                        Shared_Clean: 60 kB\nPss_Anon: 80 kB\n";
+        assert_eq!(
+            parse_smaps_rollup(contents),
+            SmapsRollup {
+                rss_kib: Some(120),
+                pss_kib: Some(90),
+                private_kib: Some(60),
+            }
+        );
+        assert_eq!(parse_smaps_rollup(""), SmapsRollup::default());
+        assert_eq!(parse_smaps_rollup("Pss: 0 kB\n").pss_kib, Some(0));
+    }
+
+    #[test]
+    fn rollup_missing_or_malformed_metrics_remain_unobserved() {
+        for invalid in [
+            "",
+            "90",
+            "90 KB",
+            "90 bytes",
+            "90 kB extra",
+            "-90 kB",
+            "+90 kB",
+            "NaN kB",
+        ] {
+            let contents = format!(
+                "Rss: 120 kB\nPss: {invalid}\nPrivate_Clean: 20 kB\nPrivate_Dirty: 40 kB\n"
+            );
+            let sample = parse_smaps_rollup(&contents);
+            assert_eq!(sample.pss_kib, None, "{invalid}");
+            assert_eq!(sample.rss_kib, Some(120));
+            assert_eq!(sample.private_kib, Some(60));
+        }
+        for contents in [
+            "Private_Clean: 20 kB\n",
+            "Private_Dirty: 40 kB\n",
+            "Private_Clean: 20 kB\nPrivate_Dirty: 40 bytes\n",
+        ] {
+            assert_eq!(parse_smaps_rollup(contents).private_kib, None);
+        }
+        assert_eq!(parse_smaps_rollup("Pss_Anon: 90 kB\n").pss_kib, None);
+    }
+
+    #[test]
+    fn rollup_duplicate_keys_and_overflow_do_not_report_partial_values() {
+        let sample = parse_smaps_rollup(
+            "Rss: 120 kB\nPss: 90 kB\nPss: 90 kB\n\
+             Private_Clean: 20 kB\nPrivate_Clean: 20 kB\nPrivate_Dirty: 40 kB\n",
+        );
+        assert_eq!(sample.rss_kib, Some(120));
+        assert_eq!(sample.pss_kib, None);
+        assert_eq!(sample.private_kib, None);
+        let overflow = format!(
+            "Pss: {}0 kB\nPrivate_Clean: {} kB\nPrivate_Dirty: 1 kB\n",
+            usize::MAX,
+            usize::MAX,
+        );
+        assert_eq!(parse_smaps_rollup(&overflow), SmapsRollup::default());
+    }
+
+    #[test]
+    fn rollup_sampling_rejects_oversized_unreadable_and_invalid_utf8_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("smaps_rollup");
+        assert_eq!(sample_smaps_rollup(&path), SmapsRollup::default());
+        assert_eq!(
+            sample_smaps_rollup(directory.path()),
+            SmapsRollup::default()
+        );
+
+        let mut contents = "Rss: 120 kB\nPss: 90 kB\n".to_owned();
+        contents.push_str(&" ".repeat(MAX_SMAPS_ROLLUP_BYTES - contents.len()));
+        fs::write(&path, &contents).unwrap();
+        assert_eq!(sample_smaps_rollup(&path).pss_kib, Some(90));
+        contents.push(' ');
+        fs::write(&path, &contents).unwrap();
+        assert_eq!(sample_smaps_rollup(&path), SmapsRollup::default());
+        fs::write(&path, b"Pss: 90 kB\n\xff").unwrap();
+        assert_eq!(sample_smaps_rollup(&path), SmapsRollup::default());
+    }
+
+    #[test]
+    fn memory_aggregates_require_complete_nonempty_cohorts_and_checked_sums() {
+        assert_eq!(sum_observed_kib([Some(90), Some(80)]), Some(170));
+        assert_eq!(sum_observed_kib([Some(0)]), Some(0));
+        assert_eq!(sum_observed_kib([]), None);
+        assert_eq!(sum_observed_kib([Some(90), None]), None);
+        assert_eq!(sum_observed_kib([None, Some(90)]), None);
+        assert_eq!(sum_observed_kib([Some(usize::MAX), Some(1)]), None);
+    }
+
+    #[test]
+    fn process_resources_serialize_unobserved_memory_as_null() {
+        let resources = watcher_test_resources();
+        let serialized = serde_json::to_value(resources).unwrap();
+        for field in ["rollup_rss_kib", "pss_kib", "private_kib"] {
+            assert_eq!(serialized.get(field), Some(&Value::Null));
+        }
+        assert_eq!(serialized["rss_kib"], 1);
+        assert_eq!(serialized["peak_rss_kib"], 1);
+    }
+
+    #[test]
     fn default_idle_window_covers_stable_follower_probes() {
         let arguments = Args::try_parse_from(["mcp_multiprocess_profile"]).unwrap();
         assert!(
@@ -2320,6 +2497,9 @@ mod tests {
             role: "leader",
             rss_kib: 1,
             peak_rss_kib: 1,
+            rollup_rss_kib: None,
+            pss_kib: None,
+            private_kib: None,
             threads: 1,
             file_descriptors: 1,
             database_file_descriptors: 1,
