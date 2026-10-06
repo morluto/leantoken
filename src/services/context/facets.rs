@@ -410,19 +410,43 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
     // An unchanged subject (for example, "unchanged files") is still primary
     // task evidence. Reserve preservation roles for an instruction or predicate.
-    let unchanged_predicate = words.windows(2).any(|pair| {
-        matches!(
-            pair,
-            [
-                "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were",
-                "unchanged"
-            ]
-        )
-    }) || words.iter().enumerate().any(|(index, word)| {
+    let unchanged_instruction = words.iter().position(|word| {
         matches!(
             *word,
             "ensure" | "ensures" | "ensuring" | "leave" | "leaving"
-        ) && words[index + 1..].contains(&"unchanged")
+        )
+    });
+    let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
+        if *word != "unchanged"
+            || words.get(index + 1).is_some_and(|next| {
+                !matches!(
+                    *next,
+                    "after"
+                        | "before"
+                        | "during"
+                        | "throughout"
+                        | "for"
+                        | "under"
+                        | "until"
+                        | "within"
+                        | "despite"
+                        | "except"
+                )
+            })
+        {
+            return false;
+        }
+        // A predicate ends the clause or precedes a circumstance/reason phrase.
+        // A following noun instead makes "unchanged" an attributive modifier.
+        let copular = index.checked_sub(1).is_some_and(|previous| {
+            matches!(
+                words[previous],
+                "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were"
+            )
+        });
+        // Direct ensure/leave instructions require a subject before the predicate.
+        let instruction = unchanged_instruction.is_some_and(|start| start + 1 < index);
+        copular || instruction
     });
     let preserve = has_word(&[
         "preserve",
@@ -1329,6 +1353,12 @@ mod tests {
             "watcher periodic polling full reconciliation unchanged file hashing cooldown CPU",
             "Find how unchanged records are refreshed hashed and published",
             "Investigate unchanged entries that remain in the cache",
+            "Ensure unchanged records are refreshed, hashed, and published",
+            "Ensure cached unchanged records are refreshed",
+            "Leave unchanged files out of the scan",
+            "Leave cached unchanged files out of the scan",
+            "Find where there are unchanged records",
+            "Investigate why these are unchanged files",
         ] {
             let queries = plan(task, 16).queries;
             assert!(
@@ -1357,7 +1387,15 @@ mod tests {
             "The response must be unchanged",
             "Ensure the wire format is unchanged",
             "Ensure the wire format unchanged",
+            "Ensuring the wire format unchanged",
+            "The update ensures the wire format unchanged",
             "Leave the wire format unchanged",
+            "Leaving the wire format unchanged",
+            "Ensure unchanged records remain unchanged",
+            "Leave unchanged files unchanged",
+            "The output is unchanged during the refactor",
+            "Ensure the output unchanged throughout the refactor",
+            "Leave the output unchanged for compatibility",
             "Refactor the serializer while ensuring the wire format is unchanged",
             "Keep the output unchanged",
             "Preserve unchanged source files",
