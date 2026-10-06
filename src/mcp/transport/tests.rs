@@ -1,4 +1,11 @@
+use std::{
+    pin::Pin,
+    task::{Context, Poll, Waker},
+    time::Duration,
+};
+
 use rmcp::{model::JsonRpcMessage, service::RxJsonRpcMessage};
+use tokio::io::{AsyncReadExt, BufReader, DuplexStream, Empty};
 
 use super::super::{
     DEFAULT_DISPATCHED_TOOL_CALL_CAPACITY, McpResultMode, RequestAdmission, RoleServer,
@@ -7,6 +14,160 @@ use super::*;
 
 fn incoming_request(value: serde_json::Value) -> RxJsonRpcMessage<RoleServer> {
     serde_json::from_value(value).expect("valid MCP request")
+}
+
+fn buffered_transport(
+    input: serde_json::Value,
+    writer_capacity: usize,
+    dispatch: RequestAdmission,
+) -> (BoundedTransport<Empty, DuplexStream>, DuplexStream) {
+    let (writer, peer) = tokio::io::duplex(writer_capacity);
+    let mut transport = BoundedTransport::with_io(
+        tokio::io::empty(),
+        writer,
+        dispatch,
+        McpResultMode::Structured,
+    );
+    for frame in [
+        input,
+        serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}),
+    ] {
+        transport
+            .read_buffer
+            .extend_from_slice(serde_json::to_string(&frame).unwrap().as_bytes());
+        transport.read_buffer.extend_from_slice(b"\n");
+    }
+    (transport, peer)
+}
+
+fn assert_pending<F: Future>(future: Pin<&mut F>) {
+    let mut context = Context::from_waker(Waker::noop());
+    assert!(matches!(future.poll(&mut context), Poll::Pending));
+}
+
+fn tool_request() -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "files", "arguments": {}}
+    })
+}
+
+fn assert_ping(message: Option<RxJsonRpcMessage<RoleServer>>) {
+    assert!(
+        matches!(message, Some(JsonRpcMessage::Request(request)) if request.id == rmcp::model::NumberOrString::Number(2))
+    );
+}
+
+#[tokio::test]
+async fn cancelled_receive_preserves_rejection_while_waiting_for_the_writer() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, peer) = buffered_transport(tool_request(), 4096, dispatch);
+    let writer = Arc::clone(&transport.writer);
+    let guard = writer.lock().await;
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+    drop(guard);
+
+    let mut reader = BufReader::new(peer);
+    let mut line = String::new();
+    let (next, read) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(transport.receive(), reader.read_line(&mut line))
+    })
+    .await
+    .expect("cancelled receive must retain the rejection");
+    read.expect("read rejection");
+    assert_ping(next);
+    let response: serde_json::Value = serde_json::from_str(&line).expect("complete JSON-RPC frame");
+    assert_eq!(response["id"], 1);
+    assert_eq!(
+        response["result"]["structuredContent"]["reason"],
+        "retrieval_capacity_exhausted"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_receive_preserves_partial_rejection_frame() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, mut peer) = buffered_transport(tool_request(), 8, dispatch);
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+    let mut prefix = [0; 8];
+    peer.read_exact(&mut prefix)
+        .await
+        .expect("read partial frame");
+
+    let mut resumed = Box::pin(transport.receive());
+    assert_pending(resumed.as_mut());
+    let mut reader = BufReader::new(peer);
+    let mut line = String::from_utf8(prefix.to_vec()).expect("JSON prefix");
+    let (next, read) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(resumed, reader.read_line(&mut line))
+    })
+    .await
+    .expect("partial rejection must resume without blocking the next request");
+    read.expect("read rejection suffix");
+    assert_ping(next);
+    let response: serde_json::Value =
+        serde_json::from_str(&line).expect("no lost or duplicated frame prefix");
+    assert_eq!(response["id"], 1);
+    assert_eq!(
+        response["result"]["structuredContent"]["reason"],
+        "retrieval_capacity_exhausted"
+    );
+}
+
+#[tokio::test]
+async fn close_finishes_a_cancelled_partial_rejection() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, mut peer) = buffered_transport(tool_request(), 8, dispatch);
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+
+    let mut bytes = Vec::new();
+    let (closed, read) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(transport.close(), peer.read_to_end(&mut bytes))
+    })
+    .await
+    .expect("close must drain retained output before shutting down its writer");
+    closed.expect("close transport");
+    read.expect("read final output");
+    let response: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("complete final rejection");
+    assert_eq!(response["id"], 1);
+}
+
+#[tokio::test]
+async fn cancelled_receive_preserves_invalid_shape_errors() {
+    let (mut transport, peer) = buffered_transport(
+        serde_json::json!({"foo": "bar"}),
+        4096,
+        RequestAdmission::new(1),
+    );
+    let writer = Arc::clone(&transport.writer);
+    let guard = writer.lock().await;
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+    drop(guard);
+
+    let mut reader = BufReader::new(peer);
+    let mut line = String::new();
+    let (next, read) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(transport.receive(), reader.read_line(&mut line))
+    })
+    .await
+    .expect("invalid shape response must survive receive cancellation");
+    read.expect("read invalid request error");
+    assert_ping(next);
+    let response: serde_json::Value = serde_json::from_str(&line).expect("complete error frame");
+    assert_eq!(response["error"]["code"], -32600);
+    assert_eq!(response["id"], serde_json::Value::Null);
 }
 
 #[test]
