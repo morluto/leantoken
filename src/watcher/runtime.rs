@@ -20,6 +20,19 @@ pub(crate) async fn join_watcher(handle: JoinHandle<()>) -> Result<()> {
     Ok(())
 }
 
+fn coalesce_queued_raw_events(raw_rx: &mut mpsc::Receiver<notify::Result<Event>>) {
+    // A full reconciliation covers this existing prefix. Snapshot its length
+    // so concurrent callbacks cannot extend the work or starve delivery.
+    let queued = raw_rx.len();
+    for _ in 0..queued {
+        match raw_rx.try_recv() {
+            Ok(Err(error)) => tracing::warn!(%error, "notify error"),
+            Ok(Ok(_)) => {}
+            Err(_) => break,
+        }
+    }
+}
+
 impl RepositoryWatcher {
     /// Start watching a canonical repository root.
     ///
@@ -226,6 +239,12 @@ impl RepositoryWatcher {
                         }
                     }
                     _ = sleep.as_mut() => {
+                        if pending.is_full() {
+                            // The current full request also covers earlier overflow.
+                            // Overflow from later callbacks must remain observable.
+                            overflowed.swap(false, Ordering::Acquire);
+                            coalesce_queued_raw_events(&mut raw_rx);
+                        }
                         if !flush(
                             &mut pending,
                             &tx,

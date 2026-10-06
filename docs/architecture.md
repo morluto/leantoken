@@ -917,9 +917,13 @@ signals, and poll ticks coalesce into that request without resetting its retry
 deadline. A new transition to full reconciliation still schedules an immediate
 delivery attempt. Raw-event draining pauses while a full request is pending,
 so continuous event traffic cannot starve its expired delivery timer. The raw
-queue and overflow flag retain their existing bounds and resume after full
-delivery. Cancellation retains priority and shutdown attempts one final flush
-without waiting for queue capacity.
+queue and overflow flag retain their existing bounds. Before each full delivery
+attempt, the watcher coalesces the raw prefix already queued, examining at most
+the raw queue's capacity; callbacks cannot extend that fixed prefix. This keeps
+pre-delivery rescan/error bursts covered by one full request. Later events are
+retained for subsequent delivery. Ordinary draining resumes after full delivery.
+Cancellation retains priority and shutdown attempts one final flush without
+waiting for queue capacity.
 
  Watcher initialization exposes a bounded diagnostic snapshot containing the
  selected native or periodic-polling backend, the exact admission entries and

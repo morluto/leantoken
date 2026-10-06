@@ -110,12 +110,16 @@ async fn shutdown_joins_while_full_reconciliation_is_backpressured() {
     );
 }
 
-#[tokio::test(start_paused = true)]
-async fn expired_full_queue_retry_progresses_during_continuous_raw_events() {
-    let root = tempfile::tempdir().unwrap();
+async fn backpressured_native_watcher(
+    root: &Path,
+) -> (
+    RepositoryWatcher,
+    mpsc::Receiver<WatcherMessage>,
+    EventCallback,
+) {
     let (callback_tx, callback_rx) = oneshot::channel();
-    let (watcher, mut messages) = RepositoryWatcher::start_with_factory(
-        root.path(),
+    let (watcher, messages) = RepositoryWatcher::start_with_factory(
+        root,
         64,
         Duration::from_millis(100),
         DiscoveryPolicy::default(),
@@ -128,7 +132,7 @@ async fn expired_full_queue_retry_progresses_during_continuous_raw_events() {
     )
     .await
     .unwrap();
-    let mut callback = callback_rx.await.unwrap();
+    let callback = callback_rx.await.unwrap();
     assert_eq!(watcher.diagnostics().backend, WatcherBackend::Native);
 
     // Fill delivery, then retain one failed full reconciliation. The larger
@@ -142,6 +146,62 @@ async fn expired_full_queue_retry_progresses_during_continuous_raw_events() {
     }
     assert_eq!(messages.len(), 64);
     assert_eq!(watcher.diagnostics().full_reconciliation_deliveries, 64);
+    (watcher, messages, callback)
+}
+
+async fn assert_rescan_burst_coalesces(burst_len: usize) {
+    let root = tempfile::tempdir().unwrap();
+    let (watcher, mut messages, mut callback) = backpressured_native_watcher(root.path()).await;
+    for _ in 0..burst_len {
+        callback(Err(notify::Error::generic("rescan needed")));
+    }
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    while messages.try_recv().is_ok() {}
+    advance(Duration::from_millis(100)).await;
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(messages.try_recv(), Ok(WatcherMessage::ReconcileRequired));
+    // Give queued pre-delivery errors ample time to expose serialized full requests.
+    for _ in 0..20 {
+        advance(Duration::from_millis(10)).await;
+        tokio::task::yield_now().await;
+    }
+    let extra = messages.try_recv();
+    let full_deliveries = watcher.diagnostics().full_reconciliation_deliveries;
+    assert_eq!(extra, Err(tokio::sync::mpsc::error::TryRecvError::Empty));
+    assert_eq!(
+        full_deliveries, 65,
+        "one full delivery must cover the queued burst"
+    );
+    callback(Err(notify::Error::generic(
+        "new change after full delivery",
+    )));
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(messages.try_recv(), Ok(WatcherMessage::ReconcileRequired));
+    assert_eq!(watcher.diagnostics().full_reconciliation_deliveries, 66);
+    watcher.shutdown().await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn queued_rescan_burst_is_covered_by_one_full_delivery() {
+    assert_rescan_burst_coalesces(64).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn overflowed_rescan_burst_is_covered_without_losing_later_events() {
+    assert_rescan_burst_coalesces(257).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn expired_full_queue_retry_progresses_during_continuous_raw_events() {
+    let root = tempfile::tempdir().unwrap();
+    let (watcher, mut messages, mut callback) = backpressured_native_watcher(root.path()).await;
     let producing = Arc::new(AtomicBool::new(true));
     let producer = tokio::spawn({
         let producing = Arc::clone(&producing);
