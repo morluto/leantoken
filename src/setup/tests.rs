@@ -2047,8 +2047,7 @@ fn discovery_rollback_preserves_concurrent_replacements_after_remove() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "replacement skill");
 }
 
-#[test]
-fn failed_rollback_retains_recovery_journal() {
+fn assert_failed_rollback_retains_recovery_journal(block_parent: bool) {
     let temp = tempfile::tempdir().unwrap();
     let runtime_root = temp.path().join("runtime");
     let parent = temp.path().join("config");
@@ -2084,8 +2083,10 @@ fn failed_rollback_retains_recovery_journal() {
     let journal_before = fs::read(transaction_path(&runtime_root)).expect("recovery journal");
     fs::write(&path, "new").unwrap();
     fs::remove_file(&path).unwrap();
-    fs::remove_dir(&parent).unwrap();
-    fs::write(&parent, "blocks restoration").unwrap();
+    if block_parent {
+        fs::remove_dir(&parent).unwrap();
+        fs::write(&parent, "blocks restoration").unwrap();
+    }
 
     let error = rollback_setup(None, &[&plan.edits[0]], &[], Some(transaction))
         .expect_err("rollback must fail");
@@ -2094,12 +2095,46 @@ fn failed_rollback_retains_recovery_journal() {
         journal_before,
         "failed rollback must preserve recovery data: {error:?}"
     );
-    assert_eq!(fs::read_to_string(&parent).unwrap(), "blocks restoration");
-    assert!(
-        matches!(error, Error::Io(_)),
-        "unexpected rollback error: {error:?}; target metadata: {:?}",
-        fs::symlink_metadata(&path)
-    );
+    if block_parent {
+        assert_eq!(fs::read_to_string(&parent).unwrap(), "blocks restoration");
+    } else {
+        assert!(parent.is_dir());
+        assert!(
+            !path.exists(),
+            "rollback must preserve the concurrent deletion"
+        );
+    }
+    let metadata_error =
+        fs::symlink_metadata(&path).expect_err("target is inaccessible or missing");
+    // Windows reports a missing child; Unix rejects the non-directory parent.
+    // The former reaches the applied-state guard, while the latter fails reading.
+    if metadata_error.kind() == std::io::ErrorKind::NotFound {
+        let expected = format!(
+            "cannot recover setup because {} changed afterward",
+            path.display()
+        );
+        assert!(
+            matches!(&error, Error::SetupFailure(message) if message == &expected),
+            "unexpected missing-target rollback error: {error:?}"
+        );
+    } else {
+        assert!(
+            matches!(&error, Error::Io(cause)
+                if cause.kind() == metadata_error.kind()
+                    && cause.raw_os_error() == metadata_error.raw_os_error()),
+            "unexpected rollback error: {error:?}; target metadata: {metadata_error:?}"
+        );
+    }
+}
+
+#[test]
+fn failed_rollback_retains_recovery_journal() {
+    assert_failed_rollback_retains_recovery_journal(true);
+}
+
+#[test]
+fn failed_rollback_retains_journal_for_deleted_target() {
+    assert_failed_rollback_retains_recovery_journal(false);
 }
 
 #[test]

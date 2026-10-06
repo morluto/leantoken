@@ -326,14 +326,14 @@ fn write_bounded_diff_fixture(root: &std::path::Path, changed: bool) {
 
 fn write_tracked_working_tree_fixture(root: &std::path::Path, changed: bool) {
     let value = if changed { "true" } else { "false" };
+    // Exercise the path limit with one shared filler blob per revision rather
+    // than hundreds of unrelated loose-object writes during Git fixture setup.
+    let source = format!("pub fn generic_marker() -> bool {{ {value} }}\n");
     for index in 0..512 {
         let directory = root.join(format!("src/group_{:02}", index % 8));
         std::fs::create_dir_all(&directory).expect("fixture directory");
-        std::fs::write(
-            directory.join(format!("file_{index:03}.rs")),
-            format!("pub fn generic_marker_{index:03}() -> bool {{ {value} }}\n"),
-        )
-        .expect("fixture source");
+        std::fs::write(directory.join(format!("file_{index:03}.rs")), &source)
+            .expect("fixture source");
     }
 }
 
