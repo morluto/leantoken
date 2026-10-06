@@ -31,6 +31,8 @@ async fn context_unchanged_subject_recovers_distinct_owner_bodies() {
         "Find how unchanged records are refreshed hashed and published",
         "Ensure unchanged records are refreshed, hashed, and published",
         "Fix watcher polling; unchanged records are refreshed hashed and published",
+        "Ensure cached unchanged and stale records are refreshed hashed and published",
+        "Find how unchanged records are refreshed hashed and published when a full scan is required",
     ] {
         let mut request = context_limit_request(600);
         request.task = task.into();

@@ -412,15 +412,32 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     // task evidence. Reserve preservation roles for an instruction or predicate.
     let unchanged_subject = words.iter().position(|word| *word == "unchanged");
     let unchanged_requirement = unchanged_subject.is_some_and(|subject| {
-        words.windows(2).enumerate().any(|(index, pair)| {
-            subject < index
-                && matches!(
-                    pair,
-                    [
-                        "is" | "are" | "be" | "was" | "were",
-                        "required" | "mandatory" | "necessary" | "needed"
-                    ]
-                )
+        // Only the first governing predicate can make this subject a
+        // requirement. A subordinate clause describes another subject.
+        let predicate = (subject + 1..words.len()).find(|index| {
+            matches!(
+                words[*index],
+                "is" | "are"
+                    | "be"
+                    | "was"
+                    | "were"
+                    | "when"
+                    | "while"
+                    | "if"
+                    | "unless"
+                    | "because"
+                    | "where"
+                    | "which"
+                    | "that"
+                    | "before"
+                    | "after"
+            )
+        });
+        predicate.is_some_and(|index| {
+            matches!(words[index], "is" | "are" | "be" | "was" | "were")
+                && words.get(index + 1).is_some_and(|word| {
+                    matches!(*word, "required" | "mandatory" | "necessary" | "needed")
+                })
         })
     });
     let unchanged_instruction = words.iter().position(|word| {
@@ -428,6 +445,33 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
             *word,
             "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
         )
+    });
+    // Determiners and common modifiers do not supply an instruction's
+    // subject by themselves. Locate its first subject word once, so repeated
+    // occurrences of unchanged do not trigger repeated prefix scans.
+    let instruction_subject = unchanged_instruction.and_then(|start| {
+        (start + 1..words.len()).find(|index| {
+            let word = words[*index];
+            !word.ends_with("ly")
+                && !matches!(
+                    word,
+                    "a" | "an"
+                        | "the"
+                        | "some"
+                        | "all"
+                        | "each"
+                        | "every"
+                        | "these"
+                        | "those"
+                        | "our"
+                        | "your"
+                        | "its"
+                        | "cached"
+                        | "unchanged"
+                        | "still"
+                        | "otherwise"
+                )
+        })
     });
     let mut copular_predicate = false;
     let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
@@ -451,7 +495,10 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
                 | "left"
                 | "kept"
         ) {
-            copular_predicate = true;
+            // Existential there is/are introduces a subject after the
+            // copula, including coordinated adjective phrases.
+            copular_predicate =
+                !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
             return false;
         }
         if copular_predicate && (word.ends_with("ly") || matches!(*word, "still" | "otherwise")) {
@@ -501,7 +548,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         // A following noun instead makes "unchanged" an attributive modifier.
 
         // Direct ensure/leave instructions require a subject before the predicate.
-        let instruction = unchanged_instruction.is_some_and(|start| start + 1 < index);
+        let instruction = instruction_subject.is_some_and(|subject| subject < index);
         copular || instruction
     });
     let preserve = has_word(&[
@@ -1435,6 +1482,78 @@ mod tests {
                     .iter()
                     .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
                 "an unchanged subject is not a preservation instruction: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn coordinated_unchanged_subjects_keep_primary_roles() {
+        for task in [
+            "Ensure cached unchanged and stale records are refreshed",
+            "Ensure the cached unchanged and fresh entries are hashed",
+            "Ensure the unchanged and stale files are published",
+            "Find where there are unchanged and stale records",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "coordinated unchanged subjects must stay primary: {task}"
+            );
+        }
+        for task in [
+            "Ensure cached records unchanged and clients remain compatible",
+            "Ensure output unchanged and clients remain compatible",
+            "Ensure the cached output unchanged and error messages stable",
+            "The wire format is unchanged and clients remain compatible",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "a real subject precedes the preservation predicate: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn nominal_requirement_stops_at_the_subject_predicate() {
+        for task in [
+            "Find how unchanged records are processed when a full scan is required",
+            "Find how unchanged records are refreshed because a retry is necessary",
+            "Find unchanged entries when a full scan is required",
+            "Find unchanged files if a retry is mandatory",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "a subordinate requirement does not govern unchanged subjects: {task}"
+            );
+        }
+        for task in [
+            "An unchanged API contract is required during the migration",
+            "Unchanged response fields and stable error codes are mandatory",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "a directly governed nominal requirement stays a constraint: {task}"
             );
         }
     }
