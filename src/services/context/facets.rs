@@ -450,7 +450,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
             }
             // An explicit instruction can prohibit changing this subject.
             // Observations and unrelated subordinate predicates stay primary.
-            if !unchanged_instruction.is_some_and(|start| start < subject) {
+            if unchanged_instruction.is_none_or(|start| start >= subject) {
                 return false;
             }
             let mut action = index + 1;
