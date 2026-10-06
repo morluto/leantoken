@@ -1270,11 +1270,12 @@ fn normalize_response(mut response: Value) -> Value {
 }
 
 fn normalize_native_receipt_links(response: &mut Value) {
-    let mut expected_receipt_id = response
-        .pointer("/result/structuredContent/meta/receipt_id")
-        .and_then(Value::as_str)
-        .filter(|id| id.len() == 49)
-        .map(str::to_owned);
+    let mut expected_receipt_id =
+        match response.pointer("/result/structuredContent/meta/receipt_id") {
+            Some(Value::String(id)) if id.len() == 49 => Some(id.clone()),
+            Some(_) => return,
+            None => None,
+        };
     let Some(content) = response
         .pointer_mut("/result/content")
         .and_then(Value::as_array_mut)
@@ -2384,6 +2385,13 @@ mod tests {
                 normalize_response(mismatched)
             );
             if keep_text {
+                let mut invalid_structured_identity = second.clone();
+                invalid_structured_identity["result"]["structuredContent"]["meta"]["receipt_id"] =
+                    "invalid".into();
+                assert_ne!(
+                    normalize_response(first.clone()),
+                    normalize_response(invalid_structured_identity)
+                );
                 let mut conflicting = second;
                 let mut text: Value = serde_json::from_str(
                     conflicting["result"]["content"][1]["text"]
