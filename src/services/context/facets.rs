@@ -413,14 +413,30 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let unchanged_instruction = words.iter().position(|word| {
         matches!(
             *word,
-            "ensure" | "ensures" | "ensuring" | "leave" | "leaving"
+            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
         )
     });
     let mut copular_predicate = false;
     let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
         if matches!(
             *word,
-            "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were"
+            "remain"
+                | "remains"
+                | "remained"
+                | "remaining"
+                | "stay"
+                | "stays"
+                | "stayed"
+                | "staying"
+                | "is"
+                | "are"
+                | "be"
+                | "been"
+                | "being"
+                | "was"
+                | "were"
+                | "left"
+                | "kept"
         ) {
             copular_predicate = true;
             return false;
@@ -443,12 +459,32 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
                         | "within"
                         | "despite"
                         | "except"
+                        | "in"
+                        | "on"
+                        | "at"
+                        | "by"
+                        | "with"
+                        | "from"
+                        | "since"
+                        | "and"
+                        | "or"
+                        | "but"
+                        | "if"
+                        | "unless"
+                        | "when"
+                        | "whenever"
+                        | "provided"
+                        | "although"
+                        | "though"
+                        | "as"
+                        | "because"
                 )
             })
         {
             return false;
         }
-        // A predicate ends the clause or precedes a circumstance/reason phrase.
+        // A predicate ends the clause or precedes a circumstance, reason,
+        // coordinated clause, or condition.
         // A following noun instead makes "unchanged" an attributive modifier.
 
         // Direct ensure/leave instructions require a subject before the predicate.
@@ -1368,6 +1404,10 @@ mod tests {
             "Investigate why these are unchanged files",
             "Find where there are entirely unchanged records",
             "Find which files are completely unchanged records",
+            "Find unchanged and stale records",
+            "Ensure unchanged and stale records are refreshed",
+            "Find how unchanged records and stale files are processed",
+            "Find why files are not unchanged",
         ] {
             let queries = plan(task, 16).queries;
             assert!(
@@ -1412,6 +1452,13 @@ mod tests {
             "The output remains otherwise unchanged",
             "The output is exactly unchanged",
             "Leave the wire format completely unchanged",
+            "Refactor the serializer while the wire format is unchanged and clients remain compatible",
+            "The wire format is unchanged and stable",
+            "The output is unchanged unless the input changes",
+            "The output is unchanged if the input is identical",
+            "The output remains unchanged when the input is identical",
+            "The output is unchanged in the new release",
+            "The output is unchanged as specified",
             "Refactor the serializer while ensuring the wire format is unchanged",
             "Keep the output unchanged",
             "Preserve unchanged source files",
@@ -1422,6 +1469,28 @@ mod tests {
                     .iter()
                     .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
                 "preservation predicate must remain a constraint: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_passive_and_inflected_predicates_preserve_constraints() {
+        for task in [
+            "Refactor the serializer while the wire format should be left unchanged",
+            "The wire format has remained unchanged",
+            "Refactor the serializer while remaining unchanged",
+            "The output remained unchanged",
+            "The output stayed unchanged",
+            "The output is staying unchanged",
+            "The output is being left entirely unchanged",
+            "The output must be kept unchanged",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "passive or inflected preservation predicate must remain a constraint: {task}"
             );
         }
     }
