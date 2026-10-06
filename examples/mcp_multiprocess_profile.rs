@@ -619,7 +619,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
             "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
-            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions.",
+            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values and matching native v1 receipt references, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions. Conflicting payload identities and mismatched receipt references remain significant.",
             "The explicit max_index_workers value applies to every indexing attempt in this profiler. A two-worker run is a cold-start contention probe, not evidence that warm reconciliation should use two workers.",
         ],
     };
@@ -1264,8 +1264,77 @@ fn normalize_response(mut response: Value) -> Value {
     if let Value::Object(object) = &mut response {
         object.remove("id");
     }
+    normalize_native_receipt_links(&mut response);
     remove_generated_identifiers(&mut response);
     response
+}
+
+fn normalize_native_receipt_links(response: &mut Value) {
+    let mut expected_receipt_id =
+        match response.pointer("/result/structuredContent/meta/receipt_id") {
+            Some(Value::String(id)) if id.len() == 49 => Some(id.clone()),
+            Some(_) => return,
+            None => None,
+        };
+    let Some(content) = response
+        .pointer_mut("/result/content")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for block in content.iter() {
+        if block.get("type").and_then(Value::as_str) != Some("text") {
+            continue;
+        }
+        let Some(payload) = block
+            .get("text")
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        else {
+            continue;
+        };
+        let Some(receipt_id) = payload.pointer("/meta/receipt_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if receipt_id.len() != 49
+            || expected_receipt_id
+                .as_deref()
+                .is_some_and(|expected| expected != receipt_id)
+        {
+            return;
+        }
+        if expected_receipt_id.is_none() {
+            expected_receipt_id = Some(receipt_id.to_owned());
+        }
+    }
+    let Some(expected_receipt_id) = expected_receipt_id else {
+        return;
+    };
+    for block in content {
+        if block.get("type").and_then(Value::as_str) != Some("resource_link")
+            || block.get("name").and_then(Value::as_str) != Some("retrieval_receipt")
+        {
+            continue;
+        }
+        let Some(uri) = block.get_mut("uri") else {
+            continue;
+        };
+        let Some(receipt_id) = uri
+            .as_str()
+            .and_then(|uri| uri.strip_prefix("leantoken://receipt/v1/"))
+        else {
+            continue;
+        };
+        if receipt_id == expected_receipt_id
+            && receipt_id.len() == 49
+            && receipt_id.starts_with('r')
+            && receipt_id[1..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            *uri = Value::String("leantoken://receipt/v1/<generated-receipt>".to_owned());
+        }
+    }
 }
 
 fn response_fingerprint(response: &Value) -> String {
@@ -2208,6 +2277,180 @@ mod tests {
         assert_eq!(observation.poll_ticks, None);
         assert_eq!(observation.changed_path_deliveries, None);
         assert_eq!(observation.full_reconciliation_deliveries, None);
+    }
+
+    #[test]
+    fn parity_normalizes_native_receipt_links_without_hiding_semantic_drift() {
+        let first = parity_receipt_response(&format!("r{}", "a".repeat(48)));
+        let second = parity_receipt_response(&format!("r{}", "b".repeat(48)));
+        assert_eq!(
+            normalize_response(first.clone()),
+            normalize_response(second.clone())
+        );
+        for (field, changed) in [
+            ("name", "other_resource"),
+            ("type", "text"),
+            ("mimeType", "application/other"),
+            ("uri", "leantoken://receipt/v2/changed"),
+        ] {
+            let mut drifted = second.clone();
+            drifted["result"]["content"][0][field] = changed.into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(drifted)
+            );
+        }
+        let mut mismatched_link = second.clone();
+        mismatched_link["result"]["content"][0]["uri"] =
+            format!("leantoken://receipt/v1/r{}", "c".repeat(48)).into();
+        assert_ne!(
+            normalize_response(first.clone()),
+            normalize_response(mismatched_link)
+        );
+        let mut reordered = second.clone();
+        reordered["result"]["content"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        assert_ne!(
+            normalize_response(first.clone()),
+            normalize_response(reordered)
+        );
+        for field in ["source_tokens", "protocol_tokens"] {
+            let mut drifted = second.clone();
+            let mut text: Value = serde_json::from_str(
+                drifted["result"]["content"][1]["text"]
+                    .as_str()
+                    .expect("text payload"),
+            )
+            .expect("payload JSON");
+            text["meta"][field] = 99.into();
+            drifted["result"]["content"][1]["text"] = serde_json::to_string(&text).unwrap().into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(drifted)
+            );
+        }
+    }
+
+    fn parity_receipt_response(receipt_id: &str) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [
+                    {"type": "resource_link", "name": "retrieval_receipt",
+                     "uri": format!("leantoken://receipt/v1/{receipt_id}")},
+                    {"type": "text", "text": serde_json::to_string(&json!({
+                        "meta": {"receipt_id": receipt_id, "source_tokens": 4, "protocol_tokens": 10},
+                        "content": "fn answer() {}"
+                    })).unwrap()}
+                ],
+                "isError": false
+            }
+        })
+    }
+
+    #[test]
+    fn parity_normalizes_structured_receipts_and_preserves_dual_identity_conflicts() {
+        let first_id = format!("r{}", "a".repeat(48));
+        let second_id = format!("r{}", "b".repeat(48));
+        for keep_text in [false, true] {
+            let mut first = parity_receipt_response(&first_id);
+            let mut second = parity_receipt_response(&second_id);
+            for response in [&mut first, &mut second] {
+                response["result"]["structuredContent"] = serde_json::from_str::<Value>(
+                    response["result"]["content"][1]["text"].as_str().unwrap(),
+                )
+                .unwrap();
+                if !keep_text {
+                    response["result"]["content"].as_array_mut().unwrap().pop();
+                }
+            }
+            assert_eq!(
+                normalize_response(first.clone()),
+                normalize_response(second.clone())
+            );
+            let mut drifted = second.clone();
+            drifted["result"]["structuredContent"]["source_free"] = true.into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(drifted)
+            );
+            let mut mismatched = second.clone();
+            mismatched["result"]["content"][0]["uri"] =
+                format!("leantoken://receipt/v1/r{}", "c".repeat(48)).into();
+            assert_ne!(
+                normalize_response(first.clone()),
+                normalize_response(mismatched)
+            );
+            if keep_text {
+                let mut invalid_structured_identity = second.clone();
+                invalid_structured_identity["result"]["structuredContent"]["meta"]["receipt_id"] =
+                    "invalid".into();
+                assert_ne!(
+                    normalize_response(first.clone()),
+                    normalize_response(invalid_structured_identity)
+                );
+                let mut conflicting = second;
+                let mut text: Value = serde_json::from_str(
+                    conflicting["result"]["content"][1]["text"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                text["meta"]["receipt_id"] = format!("r{}", "c".repeat(48)).into();
+                conflicting["result"]["content"][1]["text"] =
+                    serde_json::to_string(&text).unwrap().into();
+                assert_ne!(normalize_response(first), normalize_response(conflicting));
+            }
+        }
+    }
+
+    #[test]
+    fn parity_preserves_unrelated_malformed_and_payload_receipt_uris() {
+        let first_id = format!("r{}", "a".repeat(48));
+        let second_id = format!("r{}", "b".repeat(48));
+        for field in ["type", "name"] {
+            let mut first = parity_receipt_response(&first_id);
+            let mut second = parity_receipt_response(&second_id);
+            first["result"]["content"][0][field] = "other".into();
+            second["result"]["content"][0][field] = "other".into();
+            assert_ne!(normalize_response(first), normalize_response(second));
+        }
+        for prefix in ["https://example.com/", "leantoken://receipt/v2/"] {
+            let mut first = parity_receipt_response(&first_id);
+            let mut second = parity_receipt_response(&second_id);
+            first["result"]["content"][0]["uri"] = format!("{prefix}{first_id}").into();
+            second["result"]["content"][0]["uri"] = format!("{prefix}{second_id}").into();
+            assert_ne!(normalize_response(first), normalize_response(second));
+        }
+        for (first, second) in [
+            (
+                format!("r{}", "A".repeat(48)),
+                format!("r{}", "B".repeat(48)),
+            ),
+            (
+                format!("r{}", "a".repeat(47)),
+                format!("r{}", "b".repeat(47)),
+            ),
+        ] {
+            assert_ne!(
+                normalize_response(parity_receipt_response(&first)),
+                normalize_response(parity_receipt_response(&second))
+            );
+        }
+        let mut first = parity_receipt_response(&first_id);
+        let mut second = parity_receipt_response(&second_id);
+        for (response, id) in [(&mut first, first_id), (&mut second, second_id)] {
+            response["result"]["content"][1]["text"] = serde_json::to_string(&json!({
+                "source": {"type": "resource_link", "name": "retrieval_receipt",
+                           "uri": format!("leantoken://receipt/v1/{id}")}
+            }))
+            .unwrap()
+            .into();
+        }
+        assert_ne!(normalize_response(first), normalize_response(second));
     }
 
     #[test]
