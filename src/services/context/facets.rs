@@ -411,7 +411,13 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     // An unchanged subject (for example, "unchanged files") is still primary
     // task evidence. Reserve preservation roles for an instruction or predicate.
     let unchanged_subject = words.iter().position(|word| *word == "unchanged");
-    let unchanged_requirement = unchanged_subject.is_some_and(|subject| {
+    let unchanged_instruction = words.iter().position(|word| {
+        matches!(
+            *word,
+            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+        )
+    });
+    let unchanged_constraint = unchanged_subject.is_some_and(|subject| {
         // Only the first governing predicate can make this subject a
         // requirement. A subordinate clause describes another subject.
         let predicate = (subject + 1..words.len()).find(|index| {
@@ -434,17 +440,50 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
             )
         });
         predicate.is_some_and(|index| {
-            matches!(words[index], "is" | "are" | "be" | "was" | "were")
-                && words.get(index + 1).is_some_and(|word| {
-                    matches!(*word, "required" | "mandatory" | "necessary" | "needed")
-                })
+            if !matches!(words[index], "is" | "are" | "be" | "was" | "were") {
+                return false;
+            }
+            if words.get(index + 1).is_some_and(|word| {
+                matches!(*word, "required" | "mandatory" | "necessary" | "needed")
+            }) {
+                return true;
+            }
+            // An explicit instruction can prohibit changing this subject.
+            // Observations and unrelated subordinate predicates stay primary.
+            if !unchanged_instruction.is_some_and(|start| start < subject) {
+                return false;
+            }
+            let mut action = index + 1;
+            if words
+                .get(action)
+                .is_some_and(|word| matches!(*word, "not" | "never"))
+            {
+                action += 1;
+            } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
+                return false;
+            }
+            while words
+                .get(action)
+                .is_some_and(|word| word.ends_with("ly") || matches!(*word, "be" | "being"))
+            {
+                action += 1;
+            }
+            words.get(action).is_some_and(|word| {
+                matches!(
+                    *word,
+                    "modified"
+                        | "changed"
+                        | "altered"
+                        | "rewritten"
+                        | "updated"
+                        | "mutated"
+                        | "overwritten"
+                        | "deleted"
+                        | "removed"
+                        | "touched"
+                )
+            })
         })
-    });
-    let unchanged_instruction = words.iter().position(|word| {
-        matches!(
-            *word,
-            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
-        )
     });
     // Determiners and common modifiers do not supply an instruction's
     // subject by themselves. Locate its first subject word once, so repeated
@@ -562,7 +601,7 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         "retained",
         "retaining",
     ]) || unchanged_predicate
-        || unchanged_requirement
+        || unchanged_constraint
         || has_any(&[
             "without changing",
             "must remain",
@@ -1648,6 +1687,42 @@ mod tests {
             query.has_facet(FacetKind::PrimaryChange)
                 && !query.has_facet(FacetKind::PreserveConstraint)
         }));
+    }
+
+    #[test]
+    fn unchanged_subject_prohibitions_keep_preservation_constraints() {
+        for task in [
+            "Refactor the serializer; ensure unchanged files are not modified",
+            "Ensure unchanged records are never altered",
+            "Ensure unchanged output is not deliberately rewritten",
+            "Ensure unchanged files must not be modified",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "an explicit prohibition must retain preservation evidence: {task}"
+            );
+        }
+        for task in [
+            "Find how unchanged files are not modified",
+            "Ensure unchanged records are not processed",
+            "Ensure unchanged files are processed when a scan is not modified",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "a fact, skipped operation or subordinate predicate stays primary: {task}"
+            );
+        }
     }
 
     #[test]
