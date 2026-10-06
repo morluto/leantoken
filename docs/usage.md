@@ -545,7 +545,7 @@ Logs go to stderr. Stdout is reserved for MCP protocol messages. After tool
 arguments deserialize successfully, argument-validation and service failures
 are native MCP tool-error results with `isError: true`. Their logical payload
 carries a fixed, allowlisted message, `status: "error"`, and stable `category`
-for model-visible recovery. Decode that payload according to the negotiated
+for model-visible recovery. Decode that payload according to the configured
 result mode: `structuredContent` in `structured`, both structured content and
 JSON text in `dual`, or JSON text in `text`.
 
