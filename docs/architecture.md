@@ -801,6 +801,16 @@ capped exponential polling from 500 milliseconds through eight seconds, so
 stable followers stop opening the lock file twice per second while an
 operating-system lock release after process exit still provides bounded
 failover without a PID lease or stale-lock cleanup.
+The eight-second bound applies to the next scheduled probe, excluding host
+scheduling and lock-call delay; generation publication then depends on the
+repository's reconciliation work. Optional debug events report failed-probe
+delay and successful acquisition without adding probes. The Linux multiprocess
+profiler observes acquisition separately from post-acquisition publication,
+screens those phases at nine and five seconds respectively, and preserves total
+takeover time. Its attempt shares one deadline across both waits and verifies
+the same unique successor still owns the lock after publication.
+The profiler's default idle observation is nine seconds; shorter explicit
+windows cannot promote a decision and preserve any response-parity failure.
 
 MCP retrieval preparation gives generation-zero `reconcile_working_tree`
 waiters the same absolute 30-second cold-index deadline as readiness waiting.

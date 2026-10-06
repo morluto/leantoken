@@ -557,10 +557,10 @@ cargo run --release -p leantoken-benchmarks --bin mcp_multiprocess_profile -- \
   --files 200 \
   --functions-per-file 40 \
   --warm-iterations 10 \
-  --idle-seconds 5 \
+  --idle-seconds 9 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v3.json
+  --output target/mcp-multiprocess-cpu-v4.json
 ```
 
 The example rejects more than 16 processes, 10,000 fixture files, 1,000
@@ -569,7 +569,7 @@ directories, 120 polling-observation seconds, a timeout above 300 seconds, or
 an explicit worker limit outside `1..=64`. It requires Linux `/proc`; use
 `--skip-polling-probe` only for a mechanical smoke run. A guarded 1-vs-2
 cold-start contention comparison runs the complete profiler four times in
-external `1,2,2,1` order and retains every schema-v3 report. Historical raw
+external `1,2,2,1` order and retains every schema-v4 report. Historical raw
 artifacts and their interpretation are linked from the benchmark guide; write
 new host-local evidence under `target/` unless it is being reviewed as a
 versioned benchmark report.

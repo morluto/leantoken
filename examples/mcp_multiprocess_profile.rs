@@ -31,6 +31,7 @@ const MAX_FIXTURE_FILES: usize = 10_000;
 const MAX_FUNCTIONS_PER_FILE: usize = 1_000;
 const MAX_WARM_ITERATIONS: usize = 1_000;
 const MAX_IDLE_SECONDS: u64 = 60;
+const MIN_STABLE_FOLLOWER_IDLE_SECONDS: u64 = 9;
 const MAX_POLLING_DIRECTORIES: usize = 60_000;
 const MAX_POLLING_OBSERVATION_SECONDS: u64 = 120;
 const MAX_PARITY_MISMATCH_PATHS: usize = 32;
@@ -62,8 +63,8 @@ struct Args {
     /// Concurrent warm query rounds per process.
     #[arg(long, default_value_t = 10)]
     warm_iterations: usize,
-    /// Idle CPU observation window after retrieval rounds.
-    #[arg(long, default_value_t = 5)]
+    /// Idle CPU observation window; shorter runs are incomplete follower evidence.
+    #[arg(long, default_value_t = MIN_STABLE_FOLLOWER_IDLE_SECONDS)]
     idle_seconds: u64,
     /// Empty directories used to force the bounded periodic-polling fallback.
     #[arg(long, default_value_t = 50_001)]
@@ -134,7 +135,8 @@ struct DecisionThresholds {
     max_warm_p95_ratio: f64,
     max_normalized_wal_bytes_per_query_ratio: f64,
     max_established_read_connections_per_process: usize,
-    max_takeover_ms: f64,
+    max_leadership_acquisition_ms: f64,
+    max_generation_ready_after_acquisition_ms: f64,
     max_eight_process_cpu_per_query_ratio: f64,
     max_independent_cold_cpu_per_repository_ratio: f64,
 }
@@ -147,7 +149,10 @@ impl Default for DecisionThresholds {
             max_warm_p95_ratio: 3.0,
             max_normalized_wal_bytes_per_query_ratio: 3.0,
             max_established_read_connections_per_process: 8,
-            max_takeover_ms: 5_000.0,
+            // The production follower interval caps at eight seconds. Allow
+            // one second for scheduling and 50 ms lock-owner observations.
+            max_leadership_acquisition_ms: 9_000.0,
+            max_generation_ready_after_acquisition_ms: 5_000.0,
             max_eight_process_cpu_per_query_ratio: 2.0,
             max_independent_cold_cpu_per_repository_ratio: 2.0,
         }
@@ -265,6 +270,8 @@ struct TakeoverMeasurement {
     killed_leader_pid: u32,
     successor_leader_pid: u32,
     takeover_ms: f64,
+    leadership_acquisition_ms: f64,
+    generation_ready_after_acquisition_ms: f64,
     repository_generation: i64,
     watcher_processes_after_takeover: usize,
 }
@@ -591,9 +598,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             timeout,
         )?)
     };
-    let decision = make_decision(&runs, thresholds);
+    let decision =
+        enforce_follower_idle_window(make_decision(&runs, thresholds), args.idle_seconds);
     let report = Report {
-        schema_version: 3,
+        schema_version: 4,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         platform: "linux-procfs",
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")?
@@ -1586,21 +1594,35 @@ fn measure_takeover(
         .position(|process| process.pid() == leader_pid)
         .ok_or("leader process missing")?;
     let started = Instant::now();
+    let deadline = started + timeout;
     processes[leader_index].kill_now()?;
     fs::write(
         repository.join("file_00000.rs"),
         "pub fn changed_after_leader_crash() -> usize { 2 }\n",
     )?;
-    wait_for_generation(database, 2, timeout)?;
     let live_pids = processes
         .iter()
         .filter(|process| !process.stopped)
         .map(McpProcess::pid)
         .collect::<Vec<_>>();
     let leadership_path = PathBuf::from(format!("{}.leader.lock", database.display()));
-    let successor_owners = wait_for_lock_owner(&leadership_path, &live_pids, timeout)?;
+    let successor_owners = wait_for_lock_owner(
+        &leadership_path,
+        &live_pids,
+        remaining_takeover_timeout(deadline)?,
+    )?;
     if successor_owners.len() != 1 || successor_owners[0] == leader_pid {
         return Err(format!("invalid successor leadership: {successor_owners:?}").into());
+    }
+    let acquired = Instant::now();
+    wait_for_generation(database, 2, remaining_takeover_timeout(deadline)?)?;
+    let generation_ready = Instant::now();
+    let current_owners = lock_owner_pids(&leadership_path, &live_pids)?;
+    if current_owners != successor_owners {
+        return Err(format!(
+            "successor leadership changed during reconciliation: {current_owners:?}"
+        )
+        .into());
     }
     let watcher_processes_after_takeover = live_pids
         .iter()
@@ -1616,9 +1638,50 @@ fn measure_takeover(
         killed_leader_pid: leader_pid,
         successor_leader_pid: successor_owners[0],
         takeover_ms: started.elapsed().as_secs_f64() * 1_000.0,
+        leadership_acquisition_ms: acquired.duration_since(started).as_secs_f64() * 1_000.0,
+        generation_ready_after_acquisition_ms: generation_ready
+            .duration_since(acquired)
+            .as_secs_f64()
+            * 1_000.0,
         repository_generation: 2,
         watcher_processes_after_takeover,
     })
+}
+
+fn remaining_takeover_timeout(deadline: Instant) -> Result<Duration, Box<dyn Error>> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| "leader takeover exceeded its operation deadline".into())
+}
+
+fn takeover_phase_failures(
+    takeover: &TakeoverMeasurement,
+    thresholds: DecisionThresholds,
+) -> Vec<String> {
+    [
+        (
+            "leadership acquisition",
+            takeover.leadership_acquisition_ms,
+            thresholds.max_leadership_acquisition_ms,
+        ),
+        (
+            "generation ready after acquisition",
+            takeover.generation_ready_after_acquisition_ms,
+            thresholds.max_generation_ready_after_acquisition_ms,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(phase, observed, limit)| {
+        if !observed.is_finite() || observed < 0.0 {
+            Some(format!("{phase} had an invalid duration"))
+        } else if observed > limit {
+            Some(format!("{phase} exceeded {limit:.0} ms"))
+        } else {
+            None
+        }
+    })
+    .collect()
 }
 
 fn write_fixture(
@@ -1914,15 +1977,13 @@ fn make_decision(runs: &[RunMeasurement], thresholds: DecisionThresholds) -> Dec
                 run.process_count
             ));
         }
-        if run
-            .takeover
-            .as_ref()
-            .is_some_and(|takeover| takeover.takeover_ms > thresholds.max_takeover_ms)
-        {
-            reasons.push(format!(
-                "{}-process {:?} order {} takeover exceeded {:.0} ms",
-                run.process_count, run.topology, run.order_index, thresholds.max_takeover_ms
-            ));
+        if let Some(takeover) = &run.takeover {
+            for failure in takeover_phase_failures(takeover, thresholds) {
+                reasons.push(format!(
+                    "{}-process {:?} order {} {failure}",
+                    run.process_count, run.topology, run.order_index,
+                ));
+            }
         }
     }
     Decision {
@@ -1961,6 +2022,19 @@ fn insufficient_decision(reason: &str) -> Decision {
         eight_process_cpu_per_query_ratio: None,
         independent_cold_cpu_per_repository_ratio: None,
     }
+}
+
+fn enforce_follower_idle_window(mut decision: Decision, idle_seconds: u64) -> Decision {
+    if idle_seconds < MIN_STABLE_FOLLOWER_IDLE_SECONDS {
+        decision.reasons.push(format!(
+            "idle observation is shorter than the {MIN_STABLE_FOLLOWER_IDLE_SECONDS}-second stable-follower window"
+        ));
+        // A short observation must not conceal a complete-response mismatch.
+        if decision.recommendation != "invalid_measurement" {
+            decision.recommendation = "insufficient_evidence";
+        }
+    }
+    decision
 }
 
 fn workload_cpu_ratio(
@@ -2065,6 +2139,81 @@ use std::os::unix::fs::MetadataExt;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_idle_window_covers_stable_follower_probes() {
+        let arguments = Args::try_parse_from(["mcp_multiprocess_profile"]).unwrap();
+        assert!(
+            arguments.idle_seconds >= 9,
+            "default observation must cover the eight-second capped follower phase"
+        );
+    }
+
+    #[test]
+    fn short_idle_evidence_cannot_promote_a_decision_or_conceal_parity_failure() {
+        let mut complete = insufficient_decision("fixture");
+        complete.recommendation = "retain_stdio";
+        complete.reasons.clear();
+        let short = enforce_follower_idle_window(complete.clone(), 8);
+        assert_eq!(short.recommendation, "insufficient_evidence");
+        assert!(short.reasons[0].contains("9-second stable-follower window"));
+        assert_eq!(
+            enforce_follower_idle_window(complete.clone(), 9).recommendation,
+            "retain_stdio"
+        );
+        complete.recommendation = "invalid_measurement";
+        complete.reasons.push("response parity failed".into());
+        let invalid = enforce_follower_idle_window(complete, 1);
+        assert_eq!(invalid.recommendation, "invalid_measurement");
+        assert_eq!(invalid.reasons[0], "response parity failed");
+    }
+
+    fn takeover(acquisition_ms: f64, ready_after_acquisition_ms: f64) -> TakeoverMeasurement {
+        TakeoverMeasurement {
+            killed_leader_pid: 1,
+            successor_leader_pid: 2,
+            takeover_ms: acquisition_ms + ready_after_acquisition_ms,
+            leadership_acquisition_ms: acquisition_ms,
+            generation_ready_after_acquisition_ms: ready_after_acquisition_ms,
+            repository_generation: 2,
+            watcher_processes_after_takeover: 1,
+        }
+    }
+
+    #[test]
+    fn capped_follower_delay_is_distinct_from_generation_readiness() {
+        // The leader exits immediately after the capped follower probe. Its
+        // next acquisition is eight seconds later; publication takes 200 ms.
+        let measurement = takeover(8_000.0, 200.0);
+        assert!(measurement.takeover_ms > 5_000.0);
+        assert!(takeover_phase_failures(&measurement, DecisionThresholds::default()).is_empty());
+    }
+
+    #[test]
+    fn takeover_phase_gates_reject_slow_acquisition_and_slow_publication_separately() {
+        let thresholds = DecisionThresholds::default();
+        assert_eq!(
+            takeover_phase_failures(&takeover(9_001.0, 200.0), thresholds),
+            ["leadership acquisition exceeded 9000 ms"]
+        );
+        assert_eq!(
+            takeover_phase_failures(&takeover(8_000.0, 5_001.0), thresholds),
+            ["generation ready after acquisition exceeded 5000 ms"]
+        );
+        assert!(takeover_phase_failures(&takeover(9_000.0, 5_000.0), thresholds).is_empty());
+        assert_eq!(
+            takeover_phase_failures(&takeover(f64::NAN, -1.0), thresholds).len(),
+            2
+        );
+    }
+
+    #[test]
+    fn later_takeover_phases_cannot_restart_an_expired_timeout() {
+        assert!(remaining_takeover_timeout(Instant::now() - Duration::from_secs(1)).is_err());
+        let remaining =
+            remaining_takeover_timeout(Instant::now() + Duration::from_secs(1)).unwrap();
+        assert!(remaining > Duration::ZERO && remaining <= Duration::from_secs(1));
+    }
 
     #[test]
     fn percentile_interpolates_deterministically() {
