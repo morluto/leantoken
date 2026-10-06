@@ -410,9 +410,20 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
     // An unchanged subject (for example, "unchanged files") is still primary
     // task evidence. Reserve preservation roles for an instruction or predicate.
-    let unchanged_predicate = words
-        .windows(2)
-        .any(|pair| matches!(pair, ["remain" | "remains" | "stay" | "stays", "unchanged"]));
+    let unchanged_predicate = words.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [
+                "remain" | "remains" | "stay" | "stays" | "is" | "are" | "be" | "was" | "were",
+                "unchanged"
+            ]
+        )
+    }) || words.iter().enumerate().any(|(index, word)| {
+        matches!(
+            *word,
+            "ensure" | "ensures" | "ensuring" | "leave" | "leaving"
+        ) && words[index + 1..].contains(&"unchanged")
+    });
     let preserve = has_word(&[
         "preserve",
         "preserved",
@@ -1341,6 +1352,13 @@ mod tests {
             "The output remains unchanged",
             "The output should stay unchanged",
             "The output stays unchanged",
+            "The wire format is unchanged",
+            "The serialized fields are unchanged",
+            "The response must be unchanged",
+            "Ensure the wire format is unchanged",
+            "Ensure the wire format unchanged",
+            "Leave the wire format unchanged",
+            "Refactor the serializer while ensuring the wire format is unchanged",
             "Keep the output unchanged",
             "Preserve unchanged source files",
         ] {
