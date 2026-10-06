@@ -569,7 +569,7 @@ directories, 120 polling-observation seconds, a timeout above 300 seconds, or
 an explicit worker limit outside `1..=64`. It requires Linux `/proc`; use
 `--skip-polling-probe` only for a mechanical smoke run. A guarded 1-vs-2
 cold-start contention comparison runs the complete profiler four times in
-external `1,2,2,1` order and retains every schema-v3 report. Historical raw
+external `1,2,2,1` order and retains every schema-v4 report. Historical raw
 artifacts and their interpretation are linked from the benchmark guide; write
 new host-local evidence under `target/` unless it is being reviewed as a
 versioned benchmark report.

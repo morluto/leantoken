@@ -1471,7 +1471,7 @@ still requires normal stdio MCP contention and multi-process evidence; this
 lane never changes the production worker default. The corpus is manual because
 its dependency tree is too expensive for ordinary pull-request CI.
 
-For that contention check, run the schema-v3 stdio profiler in external
+For that contention check, run the schema-v4 stdio profiler in external
 A/B/B/A worker order (`1,2,2,1`) against one release binary. Pass
 `--max-index-workers` explicitly and retain all four raw reports. The value is
 recorded in each report and passed to every MCP process. Shared-cache runs
