@@ -9,6 +9,7 @@
 //! ```
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     error::Error,
     fs,
@@ -1396,12 +1397,16 @@ fn parse_watcher_observation(
     resources: &ProcessResources,
     lines: &[String],
 ) -> WatcherObservation {
-    let initialized = lines
+    let initialized_line = lines
         .iter()
-        .find(|line| line.contains("repository watcher initialized"));
-    let stopped = lines
+        .find(|line| line.contains("repository watcher initialized"))
+        .map(|line| strip_ansi_sgr(line));
+    let stopped_line = lines
         .iter()
-        .find(|line| line.contains("repository watcher stopped"));
+        .find(|line| line.contains("repository watcher stopped"))
+        .map(|line| strip_ansi_sgr(line));
+    let initialized = initialized_line.as_deref();
+    let stopped = stopped_line.as_deref();
     let backend = if initialized.is_some_and(|line| line.contains("backend=PeriodicPolling")) {
         "periodic_polling"
     } else if initialized.is_some_and(|line| line.contains("backend=Native"))
@@ -1427,6 +1432,41 @@ fn parse_watcher_observation(
             .and_then(|line| diagnostic_u64(line, "changed_path_deliveries")),
         full_reconciliation_deliveries: stopped
             .and_then(|line| diagnostic_u64(line, "full_reconciliation_deliveries")),
+    }
+}
+
+fn strip_ansi_sgr(line: &str) -> Cow<'_, str> {
+    let bytes = line.as_bytes();
+    let mut output = None;
+    let mut copied = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\x1b' && bytes.get(index + 1) == Some(&b'[') {
+            let mut end = index + 2;
+            while bytes
+                .get(end)
+                .is_some_and(|byte| byte.is_ascii_digit() || matches!(*byte, b';' | b':'))
+            {
+                end += 1;
+            }
+            if bytes.get(end) == Some(&b'm') {
+                // ASCII escape boundaries are also UTF-8 boundaries. Preserve
+                // unrelated or incomplete controls and allocate only for SGR.
+                let output = output.get_or_insert_with(|| String::with_capacity(line.len()));
+                output.push_str(&line[copied..index]);
+                copied = end + 1;
+                index = copied;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    match output {
+        Some(mut output) => {
+            output.push_str(&line[copied..]);
+            Cow::Owned(output)
+        }
+        None => Cow::Borrowed(line),
     }
 }
 
@@ -2056,9 +2096,8 @@ mod tests {
         assert_ne!(normalize_response(first), normalize_response(drifted));
     }
 
-    #[test]
-    fn watcher_diagnostics_include_backend_admission_and_delivery_counts() {
-        let resources = ProcessResources {
+    fn watcher_test_resources() -> ProcessResources {
+        ProcessResources {
             pid: 42,
             role: "leader",
             rss_kib: 1,
@@ -2069,7 +2108,12 @@ mod tests {
             sqlite_artifact_file_descriptors: 1,
             estimated_established_read_connections: 0,
             inotify_file_descriptors: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn watcher_diagnostics_include_backend_admission_and_delivery_counts() {
+        let resources = watcher_test_resources();
         let lines = vec![
             "repository watcher initialized backend=PeriodicPolling \
              fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 \
@@ -2092,6 +2136,78 @@ mod tests {
         assert_eq!(observation.poll_ticks, Some(1));
         assert_eq!(observation.changed_path_deliveries, Some(0));
         assert_eq!(observation.full_reconciliation_deliveries, Some(1));
+    }
+
+    #[test]
+    fn colored_watcher_diagnostics_match_plain_fields() {
+        let resources = watcher_test_resources();
+        for (backend, initialized, stopped) in [
+            (
+                "native",
+                "repository watcher initialized backend=Native fallback_reason=None \
+                 admission_entries=8 admission_directories=1 admission_complete=true",
+                "repository watcher stopped backend=Native poll_ticks=0 \
+                 changed_path_deliveries=1 full_reconciliation_deliveries=0",
+            ),
+            (
+                "periodic_polling",
+                "repository watcher initialized backend=PeriodicPolling \
+                 fallback_reason=Some(AdmissionDirectoryLimit) admission_entries=50002 \
+                 admission_directories=50001 admission_complete=false",
+                "repository watcher stopped backend=PeriodicPolling poll_ticks=1 \
+                 changed_path_deliveries=0 full_reconciliation_deliveries=1",
+            ),
+        ] {
+            let plain = vec![initialized.to_owned(), stopped.to_owned()];
+            // Match tracing's actual italic field / dim equals / plain value output.
+            let colored = plain
+                .iter()
+                .map(|line| {
+                    line.split_whitespace()
+                        .map(|part| match part.split_once('=') {
+                            Some((field, value)) => {
+                                format!("\x1b[3m{field}\x1b[0m\x1b[2m=\x1b[0m{value}")
+                            }
+                            None => part.to_owned(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect::<Vec<_>>();
+            let expected = parse_watcher_observation(42, &resources, &plain);
+            assert_eq!(expected.backend, backend);
+            let actual = parse_watcher_observation(42, &resources, &colored);
+            assert_eq!(
+                serde_json::to_value(actual).expect("colored observation"),
+                serde_json::to_value(expected).expect("plain observation"),
+            );
+        }
+    }
+
+    #[test]
+    fn sgr_normalization_preserves_unicode_and_unrelated_controls() {
+        assert_eq!(strip_ansi_sgr("α\x1b[38;5;1mβ\x1b[0mγ"), "αβγ");
+        assert_eq!(strip_ansi_sgr("\x1b[m\x1b[1:2mvalue\x1b[0m"), "value");
+        for unchanged in ["plain αβγ", "\x1b[2Kvalue", "\x1b[31", "\x1b[βm"] {
+            assert!(
+                matches!(strip_ansi_sgr(unchanged), Cow::Borrowed(value) if value == unchanged)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_watcher_diagnostics_remain_unobserved() {
+        let resources = watcher_test_resources();
+        let lines = vec!["repository watcher stopped".to_owned()];
+        let observation = parse_watcher_observation(42, &resources, &lines);
+        assert_eq!(observation.backend, "unobserved");
+        assert_eq!(observation.admission_entries, None);
+        assert_eq!(observation.admission_directories, None);
+        assert_eq!(observation.admission_complete, None);
+        assert_eq!(observation.fallback_reason, None);
+        assert_eq!(observation.poll_ticks, None);
+        assert_eq!(observation.changed_path_deliveries, None);
+        assert_eq!(observation.full_reconciliation_deliveries, None);
     }
 
     #[test]
