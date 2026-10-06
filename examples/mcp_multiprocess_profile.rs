@@ -36,6 +36,8 @@ const MAX_POLLING_DIRECTORIES: usize = 60_000;
 const MAX_POLLING_OBSERVATION_SECONDS: u64 = 120;
 const MAX_PARITY_MISMATCH_PATHS: usize = 32;
 const MAX_SMAPS_ROLLUP_BYTES: usize = 16 * 1_024;
+// Production permits five seconds of runtime cleanup; allow observation/scheduling slack.
+const MCP_SHUTDOWN_GRACE: Duration = Duration::from_secs(6);
 const WORKLOADS: [Workload; 4] = [
     Workload::Files,
     Workload::Search,
@@ -498,7 +500,7 @@ impl McpProcess {
             return Ok(());
         }
         self.stdin.take();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + MCP_SHUTDOWN_GRACE;
         while Instant::now() < deadline {
             match self.child.try_wait() {
                 Ok(Some(status)) => {
@@ -524,8 +526,9 @@ impl McpProcess {
         }
         self.kill_now()?;
         Err(format!(
-            "MCP process {} did not exit within two seconds after EOF; forced termination",
-            self.pid()
+            "MCP process {} did not exit within {} seconds after EOF; forced termination",
+            self.pid(),
+            MCP_SHUTDOWN_GRACE.as_secs()
         )
         .into())
     }
@@ -2279,6 +2282,18 @@ mod tests {
         assert!(process.stopped);
         assert!(process.child.try_wait().unwrap().unwrap().success());
         process.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profiler_shutdown_allows_the_production_five_second_window() {
+        let mut process = shutdown_test_process("while read -r line; do :; done; exec sleep 5");
+        let result = process.stop();
+        assert!(
+            result.is_ok(),
+            "production-compliant EOF rejected: {result:?}"
+        );
+        assert!(process.child.try_wait().unwrap().unwrap().success());
     }
 
     #[cfg(unix)]

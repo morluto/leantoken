@@ -122,7 +122,9 @@ RSS and PSS separately when describing follower cost: shared disk-cache
 ownership does not imply shared tokenizer, runtime or reader-pool allocations.
 
 Normal measured MCP shutdown closes stdin and requires a successful exit within
-the existing two-second EOF grace, checked every 20 ms. A nonzero exit, wait
+a six-second EOF grace, checked every 20 ms. This covers production's five-second
+runtime cleanup window plus one second for scheduling and observation after all
+measured requests have completed. A nonzero exit, wait
 error or forced timeout cleanup fails the matrix or dedicated polling probe
 before its report is emitted. Intentional leader termination for takeover is
 handled separately and does not count as failed EOF. Error-path `Drop` cleanup

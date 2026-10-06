@@ -850,8 +850,10 @@ are replayed. This profiler-only fan-out does not alter MCP worker policy,
 discovery membership, preparation batch bounds, publication atomicity, or the
 retrieval hot path.
 
-The benchmark-only MCP multiprocess profiler closes stdin and observes graceful
-child exit every 20 ms for at most two seconds. Measured nonzero exit, wait
+The benchmark-only MCP multiprocess profiler closes stdin after measured requests
+complete and observes graceful child exit every 20 ms for at most six seconds:
+production's five-second runtime cleanup plus one second for observation and
+scheduling. Measured nonzero exit, wait
 failure or forced timeout cleanup aborts report publication; an intentional
 takeover leader kill remains a separate lifecycle transition. Forced cleanup
 reuses the existing kill/wait path, and `Drop` performs best-effort cleanup.
