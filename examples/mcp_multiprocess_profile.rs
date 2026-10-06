@@ -25,6 +25,11 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+#[path = "mcp_multiprocess_profile/files_pagination.rs"]
+mod files_pagination;
+
+use files_pagination::ValidatedFilesCursor;
+
 const MAX_PROCESSES: usize = 16;
 const MAX_INDEX_WORKERS: usize = 64;
 const MAX_FIXTURE_FILES: usize = 10_000;
@@ -310,6 +315,7 @@ struct RunMeasurement {
     generation_publications: i64,
     expected_response_accounting_updates: usize,
     observed_response_accounting_updates: i64,
+    files_pagination_validation_requests: usize,
     parity_checked: usize,
     parity_mismatches: usize,
     processes: Vec<ProcessMeasurement>,
@@ -441,9 +447,23 @@ impl McpProcess {
         &mut self,
         workload: Workload,
     ) -> Result<(u64, Instant), Box<dyn Error>> {
+        let (name, arguments) = workload_request(workload);
+        self.send_tool_query(name, arguments)
+    }
+
+    fn send_files_page(&mut self, cursor: &str) -> Result<(u64, Instant), Box<dyn Error>> {
+        let (name, mut arguments) = workload_request(Workload::Files);
+        arguments["operation"]["cursor"] = json!(cursor);
+        self.send_tool_query(name, arguments)
+    }
+
+    fn send_tool_query(
+        &mut self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<(u64, Instant), Box<dyn Error>> {
         let id = self.take_id();
         let started = Instant::now();
-        let (name, arguments) = workload_request(workload);
         self.send(&json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -628,7 +648,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let decision =
         enforce_follower_idle_window(make_decision(&runs, thresholds), args.idle_seconds);
     let report = Report {
-        schema_version: 4,
+        schema_version: 5,
         generated_at_unix_seconds: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         platform: "linux-procfs",
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")?
@@ -654,7 +674,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "Latency is host-local wall time from one orchestrator and is comparable only on the same host and release build.",
             "Startup readiness and concurrent-query responses are observed by one orchestrator in process order, so later processes can include bounded client-side receipt delay.",
             "Watcher backend is confirmed with Linux inotify descriptors; admission counters are parsed from the product's structured tracing fields.",
-            "Complete response parity removes only JSON-RPC request ids, generated receipt_id/repository_id values and matching native v1 receipt references, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares every other observable result field across processes, workloads, topologies, and ABBA repetitions. Conflicting payload identities and mismatched receipt references remain significant.",
+            "Response parity removes JSON-RPC request ids, generated receipt_id/repository_id values and matching native v1 receipt references, instantaneous freshness, and their derived path_and_metadata_tokens/total_response_tokens accounting (the independent topology uses distinct canonical roots and concurrent freshness is a liveness observation), then compares the remaining observable fields across processes, workloads, topologies, and ABBA repetitions. Files continuation comparison additionally requires the full in-session validation described below. Conflicting payload identities and mismatched receipt references remain significant.",
+            "Files cursors are compared semantically only after complete ordered fixture traversal through their owning session and deterministic continuation replay. The verified first-page cursor becomes a complete-page fingerprint; unknown warm cursors remain significant. Validation requests are outside timed warm rounds but included in query-accounting/WAL denominators.",
             "The explicit max_index_workers value applies to every indexing attempt in this profiler. A two-worker run is a cold-start contention probe, not evidence that warm reconciliation should use two workers.",
         ],
     };
@@ -888,6 +909,8 @@ fn run_measurement(
 
     let cold_values = measure_query_round(&mut processes, timeout)?;
     let mut baselines = vec![HashMap::new(); process_count];
+    let mut files_cursors = vec![None; process_count];
+    let mut files_pagination_validation_requests = 0;
     for workload in WORKLOADS {
         for (index, process) in processes.iter_mut().enumerate() {
             let (id, _) = process.send_workload_query(workload)?;
@@ -895,7 +918,28 @@ fn run_measurement(
             if !successful_tool_response(&response) {
                 return Err(format!("MCP baseline query did not succeed: {response}").into());
             }
-            baselines[index].insert(workload, normalize_response(response));
+            let response = if workload == Workload::Files {
+                let deadline = Instant::now() + timeout;
+                let baseline = files_pagination::validate_baseline(response, files, |cursor| {
+                    if Instant::now() >= deadline {
+                        return Err(
+                            "files pagination validation exceeded its operation deadline".into(),
+                        );
+                    }
+                    let (id, _) = process.send_files_page(cursor)?;
+                    let remaining = deadline
+                        .checked_duration_since(Instant::now())
+                        .filter(|remaining| !remaining.is_zero())
+                        .ok_or("files pagination validation exceeded its operation deadline")?;
+                    process.receive(id, remaining)
+                })?;
+                files_cursors[index] = baseline.cursor;
+                files_pagination_validation_requests += baseline.validation_requests;
+                baseline.response
+            } else {
+                normalize_response(response)
+            };
+            baselines[index].insert(workload, response);
         }
     }
     let mut workloads = Vec::with_capacity(WORKLOADS.len());
@@ -904,6 +948,7 @@ fn run_measurement(
             &mut processes,
             workload,
             &baselines,
+            &files_cursors,
             warm_iterations,
             timeout,
         )?);
@@ -1020,8 +1065,9 @@ fn run_measurement(
         .iter()
         .map(|measurement| measurement.parity_mismatches)
         .sum();
-    let expected_response_accounting_updates =
-        process_count * (1 + WORKLOADS.len() * (1 + warm_iterations));
+    let expected_response_accounting_updates = process_count
+        * (1 + WORKLOADS.len() * (1 + warm_iterations))
+        + files_pagination_validation_requests;
 
     Ok(RunMeasurement {
         topology,
@@ -1057,6 +1103,7 @@ fn run_measurement(
         observed_response_accounting_updates: storage_after_queries
             .response_accounting_updates
             .saturating_sub(storage_before_queries.response_accounting_updates),
+        files_pagination_validation_requests,
         parity_checked,
         parity_mismatches,
         processes: process_measurements,
@@ -1088,6 +1135,7 @@ fn measure_workload(
     processes: &mut [McpProcess],
     workload: Workload,
     baselines: &[HashMap<Workload, Value>],
+    files_cursors: &[Option<ValidatedFilesCursor>],
     iterations: usize,
     timeout: Duration,
 ) -> Result<WorkloadMeasurement, Box<dyn Error>> {
@@ -1120,7 +1168,14 @@ fn measure_workload(
             }
             compare_response_parity(
                 &baselines[index][&workload],
-                &normalize_response(response),
+                &files_pagination::normalize(
+                    response,
+                    if workload == Workload::Files {
+                        files_cursors[index].as_ref()
+                    } else {
+                        None
+                    },
+                ),
                 &format!("warm_process_{index}"),
                 &mut parity_checked,
                 &mut parity_mismatches,

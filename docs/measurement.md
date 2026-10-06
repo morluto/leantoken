@@ -100,6 +100,28 @@ estimated read connections, WAL, leader and watcher ownership, admission
 entries/directories, generation publication, response-accounting writes, and
 takeover separate.
 
+Schema v5 validates files continuations before comparing independent repository
+identities. Baseline setup follows every page through the cursor's owning MCP
+session, requiring generation one, full scope, exact accounting and the complete
+known fixture path order. It rejects missing, duplicated, skipped, reordered or
+empty pages, repeated cursors, contradictory text/structured payloads and changed
+repository/generation. The owning service validates cursor kind, stream,
+generation, position and checksum on each continuation request. Replaying the
+first continuation must return the same observable page and raw next cursor.
+
+Only that proven first-page cursor is replaced by a fingerprint of the complete
+normalized page sequence for cross-repository comparison. Warm replies must
+still carry the identical raw cursor issued to that process; unknown, missing or
+changed cursors remain significant. Other page content and metadata remain in
+the fingerprint. This does not make production cursors portable between roots.
+At most one continuation per fixture file, including replay, is issued per
+process; traversal/replay shares one operation timeout. The verifier retains
+only the first/current page, a digest and at most 10,000 fixed-size cursor hashes.
+`files_pagination_validation_requests` reports the additional calls. They precede
+timed warm rounds and are included in response-accounting/WAL denominators.
+Schema v5 retains the v4 resource and takeover fields; its validated-page
+fingerprints are not comparable with older prefix-only fingerprints.
+
 Schema v4 also includes optional `rollup_rss_kib`, `pss_kib` and `private_kib`
 in each process resource snapshot, with corresponding `aggregate_` fields.
 Existing `rss_kib` and `peak_rss_kib` retain Linux status `VmRSS` and `VmHWM`
@@ -170,7 +192,7 @@ target/release/mcp_multiprocess_profile \
   --idle-seconds 9 \
   --polling-directories 50001 \
   --polling-observation-seconds 31 \
-  --output target/mcp-multiprocess-cpu-v4.json
+  --output target/mcp-multiprocess-cpu-v5.json
 ```
 
 Schema v4 retains the explicit `max_index_workers` value and passes it to every

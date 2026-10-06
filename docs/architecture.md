@@ -850,6 +850,19 @@ are replayed. This profiler-only fan-out does not alter MCP worker policy,
 discovery membership, preparation batch bounds, publication atomicity, or the
 retrieval hot path.
 
+The benchmark-only MCP files-parity verifier traverses the known generated
+fixture through its owning session, then replays the first continuation. Each
+page must advance the exact fixture path order; source generation, full scope
+and exactness remain fixed. Additional calls are bounded by the fixture's
+1–10,000 files and share one operation deadline per process. The verifier retains
+the first/current page, one rolling digest and at most 10,000 32-byte cursor
+hashes; raw cursors are bounded to 11,000 bytes. It validates one process at a
+time before timed warm rounds, counts these calls in query-accounting/WAL totals,
+and never retains the complete page corpus. Only a proven session cursor is
+canonicalized to the complete-page fingerprint; unknown warm cursors and other
+observable drift remain significant. Production cursor validation and process
+fan-out are unchanged.
+
 The benchmark-only MCP multiprocess profiler closes stdin after measured requests
 complete and observes graceful child exit every 20 ms for at most six seconds:
 production's five-second runtime cleanup plus one second for observation and
