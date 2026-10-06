@@ -1,4 +1,99 @@
 use super::*;
+use std::collections::BTreeSet;
+
+#[tokio::test]
+async fn context_unchanged_subject_recovers_distinct_owner_bodies() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    for (name, operation) in [
+        ("refresh", "extend"),
+        ("hash", "reverse"),
+        ("publish", "sort"),
+    ] {
+        let source = format!(
+            "pub fn {name}_records(records: &[u64]) -> Vec<u64> {{\n\
+             // Process unchanged records before the next stage.\n\
+             let mut output = records.to_vec();\n\
+             output.{operation}({});\n\
+             output\n\
+             }}\n",
+            if operation == "extend" { "[1]" } else { "" }
+        );
+        std::fs::write(root.path().join(format!("{name}.rs")), source).expect("write owner");
+    }
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index");
+    let mut request = context_limit_request(600);
+    request.task = "Find how unchanged records are refreshed hashed and published".into();
+    request.max_fragments = Some(3);
+    let response = services.context(request.clone()).await.expect("context");
+    let paths = response
+        .fragments
+        .iter()
+        .map(|fragment| fragment.path.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        paths,
+        BTreeSet::from(["hash.rs", "publish.rs", "refresh.rs"])
+    );
+    assert!(
+        response
+            .fragments
+            .iter()
+            .all(|fragment| fragment.content.contains("let mut output"))
+    );
+    assert_eq!(
+        response.meta.source_tokens,
+        response
+            .fragments
+            .iter()
+            .map(|fragment| leantoken::tokens::count(&fragment.content))
+            .sum::<usize>()
+    );
+    assert!(response.meta.source_tokens <= request.token_budget);
+
+    let repeated = services
+        .context(request.clone())
+        .await
+        .expect("repeat context");
+    let identity = |fragments: &[leantoken::model::ContextFragment]| {
+        fragments
+            .iter()
+            .map(|fragment| {
+                (
+                    fragment.path.clone(),
+                    fragment.start_line,
+                    fragment.end_line,
+                    fragment.content.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(identity(&response.fragments), identity(&repeated.fragments));
+    let mut plan_request = request.clone();
+    plan_request.plan_only = true;
+    let planned = services.context(plan_request).await.expect("plan");
+    let plan = planned.plan.expect("query plan");
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|candidate| (&candidate.path, candidate.start_line, candidate.end_line))
+            .collect::<Vec<_>>(),
+        response
+            .fragments
+            .iter()
+            .map(|fragment| (&fragment.path, fragment.start_line, fragment.end_line))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(plan.estimated_source_tokens, response.meta.source_tokens);
+    request.known_hashes = response.receipt.fragment_hashes;
+    let suppressed = services.context(request).await.expect("known-hash context");
+    assert!(suppressed.fragments.is_empty());
+}
 
 #[tokio::test]
 async fn context_structural_scan_limit_does_not_prevent_scoped_lexical_recovery() {
