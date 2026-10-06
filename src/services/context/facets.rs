@@ -406,8 +406,190 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     let words = clause
         .split(|character: char| !character.is_alphanumeric() && character != '_')
         .filter(|word| !word.is_empty())
-        .collect::<HashSet<_>>();
+        .collect::<Vec<_>>();
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
+    // An unchanged subject (for example, "unchanged files") is still primary
+    // task evidence. Reserve preservation roles for an instruction or predicate.
+    let unchanged_subject = words.iter().position(|word| *word == "unchanged");
+    let unchanged_instruction = words.iter().position(|word| {
+        matches!(
+            *word,
+            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+        )
+    });
+    let unchanged_constraint = unchanged_subject.is_some_and(|subject| {
+        // Only the first governing predicate can make this subject a
+        // requirement. A subordinate clause describes another subject.
+        let predicate = (subject + 1..words.len()).find(|index| {
+            matches!(
+                words[*index],
+                "is" | "are"
+                    | "be"
+                    | "was"
+                    | "were"
+                    | "when"
+                    | "while"
+                    | "if"
+                    | "unless"
+                    | "because"
+                    | "where"
+                    | "which"
+                    | "that"
+                    | "before"
+                    | "after"
+            )
+        });
+        predicate.is_some_and(|index| {
+            if !matches!(words[index], "is" | "are" | "be" | "was" | "were") {
+                return false;
+            }
+            if words.get(index + 1).is_some_and(|word| {
+                matches!(*word, "required" | "mandatory" | "necessary" | "needed")
+            }) {
+                return true;
+            }
+            // An explicit instruction can prohibit changing this subject.
+            // Observations and unrelated subordinate predicates stay primary.
+            if unchanged_instruction.is_none_or(|start| start >= subject) {
+                return false;
+            }
+            let mut action = index + 1;
+            if words
+                .get(action)
+                .is_some_and(|word| matches!(*word, "not" | "never"))
+            {
+                action += 1;
+            } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
+                return false;
+            }
+            while words
+                .get(action)
+                .is_some_and(|word| word.ends_with("ly") || matches!(*word, "be" | "being"))
+            {
+                action += 1;
+            }
+            words.get(action).is_some_and(|word| {
+                matches!(
+                    *word,
+                    "modified"
+                        | "changed"
+                        | "altered"
+                        | "rewritten"
+                        | "updated"
+                        | "mutated"
+                        | "overwritten"
+                        | "deleted"
+                        | "removed"
+                        | "touched"
+                )
+            })
+        })
+    });
+    // Determiners and common modifiers do not supply an instruction's
+    // subject by themselves. Locate its first subject word once, so repeated
+    // occurrences of unchanged do not trigger repeated prefix scans.
+    let instruction_subject = unchanged_instruction.and_then(|start| {
+        (start + 1..words.len()).find(|index| {
+            let word = words[*index];
+            !word.ends_with("ly")
+                && !matches!(
+                    word,
+                    "a" | "an"
+                        | "the"
+                        | "some"
+                        | "all"
+                        | "each"
+                        | "every"
+                        | "these"
+                        | "those"
+                        | "our"
+                        | "your"
+                        | "its"
+                        | "cached"
+                        | "unchanged"
+                        | "still"
+                        | "otherwise"
+                )
+        })
+    });
+    let mut copular_predicate = false;
+    let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
+        if matches!(
+            *word,
+            "remain"
+                | "remains"
+                | "remained"
+                | "remaining"
+                | "stay"
+                | "stays"
+                | "stayed"
+                | "staying"
+                | "is"
+                | "are"
+                | "be"
+                | "been"
+                | "being"
+                | "was"
+                | "were"
+                | "left"
+                | "kept"
+        ) {
+            // Existential there is/are introduces a subject after the
+            // copula, including coordinated adjective phrases.
+            copular_predicate =
+                !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
+            return false;
+        }
+        if copular_predicate && (word.ends_with("ly") || matches!(*word, "still" | "otherwise")) {
+            return false;
+        }
+        let copular = std::mem::take(&mut copular_predicate);
+        if *word != "unchanged"
+            || words.get(index + 1).is_some_and(|next| {
+                !matches!(
+                    *next,
+                    "after"
+                        | "before"
+                        | "during"
+                        | "throughout"
+                        | "for"
+                        | "under"
+                        | "until"
+                        | "within"
+                        | "despite"
+                        | "except"
+                        | "in"
+                        | "on"
+                        | "at"
+                        | "by"
+                        | "with"
+                        | "from"
+                        | "since"
+                        | "and"
+                        | "or"
+                        | "but"
+                        | "if"
+                        | "unless"
+                        | "when"
+                        | "whenever"
+                        | "provided"
+                        | "although"
+                        | "though"
+                        | "as"
+                        | "because"
+                )
+            })
+        {
+            return false;
+        }
+        // A predicate ends the clause or precedes a circumstance, reason,
+        // coordinated clause, or condition.
+        // A following noun instead makes "unchanged" an attributive modifier.
+
+        // Direct ensure/leave instructions require a subject before the predicate.
+        let instruction = instruction_subject.is_some_and(|subject| subject < index);
+        copular || instruction
+    });
     let preserve = has_word(&[
         "preserve",
         "preserved",
@@ -418,17 +600,19 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         "retain",
         "retained",
         "retaining",
-        "unchanged",
-    ]) || has_any(&[
-        "without changing",
-        "must remain",
-        "do not change",
-        "while maintaining",
-    ]);
+    ]) || unchanged_predicate
+        || unchanged_constraint
+        || has_any(&[
+            "without changing",
+            "must remain",
+            "do not change",
+            "while maintaining",
+        ]);
     let test = has_word(&["test", "tests", "regression", "spec", "coverage", "assert"]);
     let primary = !preserve
         && !test
         && (first
+            || unchanged_subject.is_some()
             || has_word(&[
                 "fix",
                 "implement",
@@ -1305,6 +1489,258 @@ mod tests {
             plan(task, 12).queries,
             plan_with_workflow_evidence(task, &WorkflowEvidence::default(), 12).queries
         );
+    }
+
+    #[test]
+    fn unchanged_subjects_do_not_become_preservation_constraints() {
+        for task in [
+            "watcher periodic polling full reconciliation unchanged file hashing cooldown CPU",
+            "Find how unchanged records are refreshed hashed and published",
+            "Investigate unchanged entries that remain in the cache",
+            "Ensure unchanged records are refreshed, hashed, and published",
+            "Ensure cached unchanged records are refreshed",
+            "Leave unchanged files out of the scan",
+            "Leave cached unchanged files out of the scan",
+            "Find where there are unchanged records",
+            "Investigate why these are unchanged files",
+            "Find where there are entirely unchanged records",
+            "Find which files are completely unchanged records",
+            "Find unchanged and stale records",
+            "Ensure unchanged and stale records are refreshed",
+            "Find how unchanged records and stale files are processed",
+            "Find why files are not unchanged",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "an unchanged subject is not a preservation instruction: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn coordinated_unchanged_subjects_keep_primary_roles() {
+        for task in [
+            "Ensure cached unchanged and stale records are refreshed",
+            "Ensure the cached unchanged and fresh entries are hashed",
+            "Ensure the unchanged and stale files are published",
+            "Find where there are unchanged and stale records",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "coordinated unchanged subjects must stay primary: {task}"
+            );
+        }
+        for task in [
+            "Ensure cached records unchanged and clients remain compatible",
+            "Ensure output unchanged and clients remain compatible",
+            "Ensure the cached output unchanged and error messages stable",
+            "The wire format is unchanged and clients remain compatible",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "a real subject precedes the preservation predicate: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn nominal_requirement_stops_at_the_subject_predicate() {
+        for task in [
+            "Find how unchanged records are processed when a full scan is required",
+            "Find how unchanged records are refreshed because a retry is necessary",
+            "Find unchanged entries when a full scan is required",
+            "Find unchanged files if a retry is mandatory",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "a subordinate requirement does not govern unchanged subjects: {task}"
+            );
+        }
+        for task in [
+            "An unchanged API contract is required during the migration",
+            "Unchanged response fields and stable error codes are mandatory",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "a directly governed nominal requirement stays a constraint: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_predicates_keep_preservation_constraints() {
+        for task in [
+            "The output must remain unchanged",
+            "The output remains unchanged",
+            "The output should stay unchanged",
+            "The output stays unchanged",
+            "The wire format is unchanged",
+            "The serialized fields are unchanged",
+            "The response must be unchanged",
+            "Ensure the wire format is unchanged",
+            "Ensure the wire format unchanged",
+            "Ensuring the wire format unchanged",
+            "The update ensures the wire format unchanged",
+            "Leave the wire format unchanged",
+            "Leaving the wire format unchanged",
+            "Ensure unchanged records remain unchanged",
+            "Leave unchanged files unchanged",
+            "The output is unchanged during the refactor",
+            "Ensure the output unchanged throughout the refactor",
+            "Leave the output unchanged for compatibility",
+            "Refactor the serializer while the wire format should remain completely unchanged",
+            "The output should remain entirely unchanged during the refactor",
+            "The serialized fields are fully unchanged",
+            "The output is still unchanged",
+            "The output remains otherwise unchanged",
+            "The output is exactly unchanged",
+            "Leave the wire format completely unchanged",
+            "Refactor the serializer while the wire format is unchanged and clients remain compatible",
+            "The wire format is unchanged and stable",
+            "The output is unchanged unless the input changes",
+            "The output is unchanged if the input is identical",
+            "The output remains unchanged when the input is identical",
+            "The output is unchanged in the new release",
+            "The output is unchanged as specified",
+            "Refactor the serializer while ensuring the wire format is unchanged",
+            "Keep the output unchanged",
+            "Preserve unchanged source files",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "preservation predicate must remain a constraint: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn unchanged_passive_and_inflected_predicates_preserve_constraints() {
+        for task in [
+            "Refactor the serializer while the wire format should be left unchanged",
+            "The wire format has remained unchanged",
+            "Refactor the serializer while remaining unchanged",
+            "The output remained unchanged",
+            "The output stayed unchanged",
+            "The output is staying unchanged",
+            "The output is being left entirely unchanged",
+            "The output must be kept unchanged",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "passive or inflected preservation predicate must remain a constraint: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn later_unchanged_subjects_retain_primary_change_queries() {
+        let queries = plan(
+            "Fix watcher polling; unchanged records are refreshed hashed and published",
+            16,
+        )
+        .queries;
+        let subject_queries = queries
+            .iter()
+            .filter(|query| query.value == "records")
+            .collect::<Vec<_>>();
+        assert!(
+            !subject_queries.is_empty(),
+            "subject evidence must be queried"
+        );
+        assert!(subject_queries.iter().all(|query| {
+            query.has_facet(FacetKind::PrimaryChange)
+                && !query.has_facet(FacetKind::PreserveConstraint)
+        }));
+    }
+
+    #[test]
+    fn unchanged_subject_prohibitions_keep_preservation_constraints() {
+        for task in [
+            "Refactor the serializer; ensure unchanged files are not modified",
+            "Ensure unchanged records are never altered",
+            "Ensure unchanged output is not deliberately rewritten",
+            "Ensure unchanged files must not be modified",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "an explicit prohibition must retain preservation evidence: {task}"
+            );
+        }
+        for task in [
+            "Find how unchanged files are not modified",
+            "Ensure unchanged records are not processed",
+            "Ensure unchanged files are processed when a scan is not modified",
+        ] {
+            let queries = plan(task, 16).queries;
+            assert!(
+                queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
+            );
+            assert!(
+                queries
+                    .iter()
+                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+                "a fact, skipped operation or subordinate predicate stays primary: {task}"
+            );
+        }
+    }
+
+    #[test]
+    fn nominal_unchanged_requirements_keep_preservation_constraints() {
+        for task in [
+            "Refactor the serializer; unchanged wire format is required",
+            "The unchanged response shape is mandatory",
+            "An unchanged API contract is necessary",
+            "An unchanged output is needed",
+        ] {
+            assert!(
+                plan(task, 16)
+                    .queries
+                    .iter()
+                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
+                "nominal preservation requirement must remain a constraint: {task}"
+            );
+        }
     }
 
     #[test]
