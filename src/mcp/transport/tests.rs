@@ -142,6 +142,90 @@ async fn close_finishes_a_cancelled_partial_rejection() {
     assert_eq!(response["id"], 1);
 }
 
+#[tokio::test(start_paused = true)]
+async fn close_bounds_a_retained_write_when_the_peer_stops_reading() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, _peer) = buffered_transport(tool_request(), 8, dispatch);
+    let writer = Arc::clone(&transport.writer);
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+
+    let started = tokio::time::Instant::now();
+    let error = tokio::time::timeout(Duration::from_secs(3), transport.close())
+        .await
+        .expect("close must finish within its own shutdown budget")
+        .expect_err("an undrained write must time out");
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert_eq!(started.elapsed(), Duration::from_secs(2));
+    assert!(transport.pending_write.is_none());
+    assert!(
+        writer.try_lock().is_ok(),
+        "cancelled close must release its writer"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_bounds_waiting_for_another_sender() {
+    let (mut transport, _peer) = buffered_transport(tool_request(), 8, RequestAdmission::new(1));
+    let writer = Arc::clone(&transport.writer);
+    let _guard = writer.lock().await;
+
+    let started = tokio::time::Instant::now();
+    let error = tokio::time::timeout(Duration::from_secs(3), transport.close())
+        .await
+        .expect("close must not wait indefinitely for another sender")
+        .expect_err("an occupied writer must time out");
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert_eq!(started.elapsed(), Duration::from_secs(2));
+}
+
+struct PendingShutdownWriter;
+
+impl AsyncWrite for PendingShutdownWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Poll::Ready(Ok(buffer.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn close_bounds_the_writer_shutdown_and_releases_its_guard() {
+    let mut transport = BoundedTransport::with_io(
+        tokio::io::empty(),
+        PendingShutdownWriter,
+        RequestAdmission::new(1),
+        McpResultMode::Structured,
+    );
+    let writer = Arc::clone(&transport.writer);
+    let started = tokio::time::Instant::now();
+    let error = tokio::time::timeout(Duration::from_secs(3), transport.close())
+        .await
+        .expect("the shutdown operation must share the close budget")
+        .expect_err("a blocked shutdown must time out");
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert_eq!(started.elapsed(), Duration::from_secs(2));
+    assert!(
+        writer.try_lock().is_ok(),
+        "timed-out shutdown must release its writer"
+    );
+}
+
 #[tokio::test]
 async fn cancelled_receive_preserves_invalid_shape_errors() {
     let (mut transport, peer) = buffered_transport(

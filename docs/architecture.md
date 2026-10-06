@@ -75,7 +75,9 @@ reader does not provide.
 Direct admission rejections and invalid-shape errors retain at most one write
 future on the transport. Its encoded frame, byte cursor, and writer ownership
 survive cancellation of the SDK's receive future. The adapter finishes that
-write before consuming another frame or shutting down the writer; it neither
+write before consuming another frame. Closing has one two-second budget covering
+retained output, writer admission, and writer shutdown; expiry drops the retained
+write (including its writer guard) and returns `TimedOut`. The adapter neither
 spawns response tasks nor adds an outbound queue. Dispatch permits, cancelled
 request tombstones, and legacy/current result shapes keep their existing bounds
 and ownership.

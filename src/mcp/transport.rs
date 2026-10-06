@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     pin::Pin,
     sync::{Arc, Mutex, RwLock},
+    time::Duration,
 };
 
 use rmcp::{
@@ -31,6 +32,8 @@ const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 /// client that cancels faster than handlers drain cannot grow the map or the
 /// in-flight work beyond this bound.
 const RETAINED_TOMBSTONE_MULTIPLIER: usize = 4;
+
+const MCP_STDIO_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 
 type PendingWrite = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
 
@@ -377,8 +380,23 @@ where
     }
 
     async fn close(&mut self) -> Result<(), Self::Error> {
-        self.finish_direct_response().await?;
-        self.writer.lock().await.shutdown().await
+        match tokio::time::timeout(MCP_STDIO_CLOSE_TIMEOUT, async {
+            self.finish_direct_response().await?;
+            self.writer.lock().await.shutdown().await
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                // Cancelling the borrowing close future leaves the retained
+                // write alive. Drop it too, including any owned writer guard.
+                self.pending_write = None;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "timed out closing MCP stdio transport",
+                ))
+            }
+        }
     }
 }
 
