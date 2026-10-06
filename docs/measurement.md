@@ -217,6 +217,13 @@ It reports total process CPU, reconciliation wall phases, RSS/PSS/private memory
 same-size/same-mtime automatic freshness and clean EOF. This is diagnostic
 evidence, not a before/after product optimization or a complete-wire BPE oracle.
 
+A pinned [shared-cache memory characterization](../benchmarks/reports/shared-cache-mcp-memory-linux-x86_64-2026-10-06.md)
+reports status/rollup RSS, PSS and private resident pages for the complete
+schema-v5 1/4/8-process matrix, plus an empty-root tokenizer activation control.
+It preserves the independent warm-latency screen failure and distinguishes
+descriptive follower increments from heap-owner attribution or a passing
+memory optimization. Shared SQLite ownership does not share process memory.
+
 ## Frozen retrieval sets
 
 `benchmarks/representative.json` is the visible development set. Its eight
