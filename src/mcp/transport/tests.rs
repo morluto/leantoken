@@ -142,6 +142,47 @@ async fn close_finishes_a_cancelled_partial_rejection() {
     assert_eq!(response["id"], 1);
 }
 
+#[tokio::test]
+async fn cancelled_receive_allows_handler_response_drain_after_partial_rejection() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, mut peer) = buffered_transport(tool_request(), 8, dispatch);
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+
+    let mut prefix = [0; 8];
+    peer.read_exact(&mut prefix)
+        .await
+        .expect("read partial direct frame");
+
+    // RMCP stops polling receive before draining handler responses. The peer
+    // can resume reading during that drain, before Transport::close is called.
+    let sending = transport.send(TxJsonRpcMessage::<RoleServer>::error(
+        ErrorData::invalid_request("handler response", None),
+        Some(rmcp::model::NumberOrString::Number(3)),
+    ));
+    let mut reader = BufReader::new(peer);
+    let mut direct = String::from_utf8(prefix.to_vec()).expect("JSON prefix");
+    let mut handler = String::new();
+    let (sent, read) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(sending, async {
+            reader.read_line(&mut direct).await?;
+            reader.read_line(&mut handler).await
+        })
+    })
+    .await
+    .expect("handler response drain must progress without receive or close");
+    sent.expect("send handler response");
+    read.expect("read both responses");
+    let direct: serde_json::Value = serde_json::from_str(&direct).expect("complete direct frame");
+    let handler: serde_json::Value =
+        serde_json::from_str(&handler).expect("complete handler frame");
+    assert_eq!(direct["id"], 1);
+    assert_eq!(handler["id"], 3);
+    assert_ping(transport.receive().await);
+}
+
 #[tokio::test(start_paused = true)]
 async fn close_bounds_a_retained_write_when_the_peer_stops_reading() {
     let dispatch = RequestAdmission::new(1);
@@ -159,11 +200,32 @@ async fn close_bounds_a_retained_write_when_the_peer_stops_reading() {
         .expect_err("an undrained write must time out");
     assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     assert_eq!(started.elapsed(), Duration::from_secs(2));
-    assert!(transport.pending_write.is_none());
+    assert!(transport.pending_writes.is_empty());
     assert!(
         writer.try_lock().is_ok(),
         "cancelled close must release its writer"
     );
+}
+
+#[tokio::test]
+async fn dropping_transport_aborts_a_retained_partial_write() {
+    let dispatch = RequestAdmission::new(1);
+    let _permit = dispatch.try_admit().expect("occupy tool capacity");
+    let (mut transport, mut peer) = buffered_transport(tool_request(), 8, dispatch);
+    let writer = Arc::clone(&transport.writer);
+    let mut receiving = Box::pin(transport.receive());
+    assert_pending(receiving.as_mut());
+    drop(receiving);
+    let mut prefix = [0; 8];
+    peer.read_exact(&mut prefix)
+        .await
+        .expect("read partial frame");
+    assert!(writer.try_lock().is_err());
+
+    drop(transport);
+    let _guard = tokio::time::timeout(Duration::from_secs(1), writer.lock())
+        .await
+        .expect("dropping the transport must release its retained writer task");
 }
 
 #[tokio::test(start_paused = true)]

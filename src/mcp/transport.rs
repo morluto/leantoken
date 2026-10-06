@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    pin::Pin,
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
@@ -34,8 +33,6 @@ const RETAINED_MCP_FRAME_CAPACITY: usize = 64 * 1024;
 const RETAINED_TOMBSTONE_MULTIPLIER: usize = 4;
 
 const MCP_STDIO_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
-
-type PendingWrite = Pin<Box<dyn Future<Output = std::io::Result<()>> + Send>>;
 
 /// Dispatch entry state: active (holding a permit) or tombstoned (cancelled
 /// but handler still draining). Tombstoned entries prevent ID reuse until the
@@ -79,7 +76,7 @@ pub(super) struct BoundedTransport<R, W> {
     writer: Arc<tokio::sync::Mutex<W>>,
     decoder: JsonRpcMessageCodec<RxJsonRpcMessage<RoleServer>>,
     read_buffer: BytesMut,
-    pending_write: Option<PendingWrite>,
+    pending_writes: tokio::task::JoinSet<std::io::Result<()>>,
     request_dispatch: RequestAdmission,
     max_dispatch_entries: usize,
     dispatched_calls: Arc<Mutex<HashMap<rmcp::model::RequestId, DispatchEntry>>>,
@@ -117,7 +114,7 @@ where
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             decoder: JsonRpcMessageCodec::new_with_max_length(MAX_MCP_STDIO_FRAME_BYTES),
             read_buffer: BytesMut::new(),
-            pending_write: None,
+            pending_writes: tokio::task::JoinSet::new(),
             request_dispatch,
             max_dispatch_entries,
             dispatched_calls: Arc::new(Mutex::new(HashMap::new())),
@@ -151,20 +148,17 @@ where
     }
 
     fn queue_direct_response(&mut self, response: TxJsonRpcMessage<RoleServer>) {
-        debug_assert!(self.pending_write.is_none());
-        // The write future owns both the encoded frame's cursor and the writer
-        // guard. Keep it on the transport when the SDK cancels receive().
-        self.pending_write = Some(Box::pin(Self::write_message(
-            Arc::clone(&self.writer),
-            response,
-        )));
+        debug_assert!(self.pending_writes.is_empty());
+        // Retain at most one task so the frame's cursor and writer guard survive
+        // receive cancellation and keep progressing during RMCP response drain.
+        // JoinSet also aborts the write if the transport itself is dropped.
+        self.pending_writes
+            .spawn(Self::write_message(Arc::clone(&self.writer), response));
     }
 
     async fn finish_direct_response(&mut self) -> std::io::Result<()> {
-        if let Some(write) = self.pending_write.as_mut() {
-            let result = write.await;
-            self.pending_write = None;
-            result?;
+        if let Some(result) = self.pending_writes.join_next().await {
+            result.map_err(std::io::Error::other)??;
         }
         Ok(())
     }
@@ -388,9 +382,9 @@ where
         {
             Ok(result) => result,
             Err(_) => {
-                // Cancelling the borrowing close future leaves the retained
-                // write alive. Drop it too, including any owned writer guard.
-                self.pending_write = None;
+                // Cancellation of join_next leaves the task alive. Abort and
+                // reap the single retained task to release its writer guard.
+                self.pending_writes.shutdown().await;
                 Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "timed out closing MCP stdio transport",

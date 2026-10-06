@@ -73,14 +73,16 @@ input bound and pre-dispatch tool-call admission that the stock unbounded stdio
 reader does not provide.
 
 Direct admission rejections and invalid-shape errors retain at most one write
-future on the transport. Its encoded frame, byte cursor, and writer ownership
-survive cancellation of the SDK's receive future. The adapter finishes that
-write before consuming another frame. Closing has one two-second budget covering
-retained output, writer admission, and writer shutdown; expiry drops the retained
-write (including its writer guard) and returns `TimedOut`. The adapter neither
-spawns response tasks nor adds an outbound queue. Dispatch permits, cancelled
-request tombstones, and legacy/current result shapes keep their existing bounds
-and ownership.
+task on the transport, with no outbound queue. Its encoded frame, byte cursor,
+and writer ownership survive cancellation of the SDK's receive future. The task
+continues writing while RMCP drains ordinary handler responses, even when the SDK
+stops polling receive. The adapter joins it before consuming another frame.
+Closing has one two-second budget covering retained output, writer admission,
+and writer shutdown; expiry aborts and reaps the single retained task, releases
+its writer guard, and returns `TimedOut`. Dropping the transport also aborts the
+task. No task is created for idle input. Dispatch permits, cancelled request
+tombstones, and legacy/current result shapes keep their existing bounds and
+ownership.
 
 Package-manager and Git release probes used by `upgrade` run in isolated
 process groups with a 15-second wall-clock deadline and a one-MiB stdout bound.
