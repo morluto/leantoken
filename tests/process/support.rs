@@ -315,6 +315,11 @@ impl McpProcess {
         std::mem::take(&mut *self.stderr.lock().expect("stderr buffer"))
     }
 
+    fn stderr_snapshot(&self) -> String {
+        let output = self.stderr.lock().expect("stderr buffer");
+        String::from_utf8_lossy(&output).into_owned()
+    }
+
     pub(crate) fn wait_for_stderr(&mut self, message: &str, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         loop {
@@ -391,7 +396,7 @@ impl McpProcess {
         }
         panic!(
             "MCP process did not become ready within {timeout:?}; last response: {last_response:?}; stderr (first 64 KiB): {}",
-            String::from_utf8_lossy(&self.stderr.lock().expect("stderr buffer"))
+            self.stderr_snapshot()
         );
     }
 
@@ -465,7 +470,7 @@ impl McpProcess {
             panic!(
                 "MCP message before deadline ({timeout:?}): {error:?}; last sent: {}; stderr (first 64 KiB): {}",
                 self.last_sent,
-                String::from_utf8_lossy(&self.stderr.lock().expect("stderr buffer"))
+                self.stderr_snapshot()
             )
         });
         serde_json::from_str(&line).expect("MCP JSON message")
