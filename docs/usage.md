@@ -1339,16 +1339,22 @@ remain bound to the selected repository identity and generation.
 
 The `coverage` receipt distinguishes unmatched focus/include constraints,
 covered requirements, indexed requirements blocked by path or budget limits,
-and requirements absent from the index. Every focus path returns indexed and
-selected fragment counts with an implicit minimum of one; strict or explicit
-minimum requests contribute to `path_scope_satisfied`.
-The field reports path coverage only; it does not claim task relevance. Explicit
+and requirements absent from the index. Every focus path reports
+`indexed_paths`, `minimum_fragments`, `selected_fragments`, and `satisfied`.
+Ordinary soft focus has a minimum of zero: an indexed focus pattern can report
+`satisfied: true` with zero selected fragments. Check `selected_fragments` to
+determine whether it received source evidence. Strict focus defaults to a
+minimum of one; `minimum_fragments_per_focus_path` explicitly sets the minimum
+for either soft or strict focus. Only strict or explicit minimum requests
+contribute to `path_scope_satisfied`.
+These fields report path coverage only; they do not claim task relevance. Explicit
 `required_evidence` contracts instead contribute to
 `evidence_scope_satisfied` and report matched and unmatched queries per path.
 Strict changed-path requests return resolved and selected changed-path counts.
 An empty strict scope therefore returns an explicit coverage failure rather
 than unrelated evidence. Already-held matching hashes satisfy a must-cover or
-evidence requirement without resending source.
+evidence requirement without resending source. Focus minimums count returned
+fragments, so hash-suppressed evidence does not fulfill a nonzero focus minimum.
 
 `omission_summary` distinguishes path filtering, known hashes, and budget or
 result limits with aggregate counts in both `compact` and `balanced` responses.
