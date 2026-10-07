@@ -51,13 +51,15 @@ cargo fmt --all -- --check
 Run a focused test module while developing:
 
 ```bash
-cargo test-focused services::
+cargo test-focused product::services::
 cargo test-focused platform
 ```
 
 Named suite domains (`indexing_repository`, `storage`, `retrieval`, `protocol`,
 `platform`, and `contracts`) route directly to their owning package. Other
 module or exact-test filters search both the product and domain-suite packages.
+Prefix a filter with `product::` or `suite::` to select its owner explicitly
+and avoid compiling unrelated test harnesses merely to discover their names.
 Zero matches fail instead of returning false-green; a name present in both
 packages fails as ambiguous and asks for a domain-qualified selector. Use the
 ownership map under [Test responsibilities](#test-responsibilities), and run
@@ -105,10 +107,17 @@ inventory, and rejects actual `include!()` syntax without matching comments or
 strings. The raw SQLite read session is private to storage, so the compiler—not
 a source-text scan—enforces the service snapshot boundary.
 
+Local Cargo builds default to one compiler job; direct libtest runs default
+to two test threads. Override Cargo's build bound with `-j` when appropriate.
+Keep compilation, full product tests, extras, and coverage serial on a shared
+development machine. Coverage uses a separate instrumented build and should
+run only when its evidence is needed.
+
 The product runner starts one `cargo nextest run` for product units, private
 domain suites, ordinary integration, and executable/MCP process behavior. That
-single Cargo build graph and nextest scheduler has one platform-wide bound:
-four tests on Linux, three on macOS, and two on Windows. Nested nextest groups
+single Cargo build graph and nextest scheduler has a two-test local bound.
+CI retains its platform bounds: four tests on Linux, three on macOS, and two
+on Windows. Nested nextest groups
 reserve capacity for cold indexing/SQLite, Git fixtures, filesystem/watcher,
 real-process/MCP, extended, and cheap tests. No second Cargo planner competes
 for package-cache or artifact locks. Local runs select the `local` profile; CI
@@ -401,8 +410,7 @@ run them in parallel rather than starting one executable per file.
   bounded chunking, targeted reconciliation, and dependency invalidation;
 - `crates/test-suite/src/domains/retrieval.rs`: public retrieval primitive
   compatibility plus cross-component budget, scope, known-hash omission, and
-  receipt composition; detailed tokenizer and ranking behavior stays with the
-  owning production modules;
+  receipt composition;
 - `src/cache/tests/compact.rs` and `tests/cli.rs`: selective maintenance eligibility,
   leases, preservation, cancellation, and CLI consent/preview contracts;
 - `crates/test-suite/src/domains/platform.rs`: public configuration path,
@@ -421,12 +429,14 @@ run them in parallel rather than starting one executable per file.
   publication, leader failover, MCP EOF shutdown, and repository-free episode
   audit behavior through the executable;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
-`src/episode.rs` owns unit coverage for versioned analyzer adapters, published
+`src/episode.rs` owns golden and boundary coverage for versioned analyzer adapters, published
 60-run replay, exact/proxy classification boundaries, binding/privacy failure,
 resource caps, and deterministic JSON/Markdown normalization.
 
-Pure parsing, text-range, ranking, tokenization, and watcher state behavior is
-covered next to the owning module where private invariants matter.
+Prioritize real-binary E2E, component integration, and real-data golden tests
+in that order. Keep colocated private checks only for consequential invariants
+that these layers cannot reasonably exercise. See
+[test selection](testing.md#test-selection) before adding or duplicating tests.
 
 CI runs the complete suite on Linux, macOS, and Windows. A local Linux pass is
 not evidence for native watcher or path behavior on the other platforms; rely

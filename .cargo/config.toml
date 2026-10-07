@@ -1,3 +1,11 @@
+[build]
+# Keep local compilation from occupying the machine; CI can override with -j.
+jobs = 1
+
+[env]
+# Bound direct libtest/example runs as well as the nextest product plan.
+RUST_TEST_THREADS = { value = "2", force = false }
+
 [alias]
 # Focused product-test loop; append a module or exact test-name filter.
 test-focused = "run --locked --package leantoken-xtask -- test-focused"

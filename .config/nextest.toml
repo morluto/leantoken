@@ -9,6 +9,7 @@ test-threads = 4
 
 [profile.local]
 inherits = "default"
+test-threads = 2
 retries = 0
 flaky-result = "fail"
 fail-fast = true

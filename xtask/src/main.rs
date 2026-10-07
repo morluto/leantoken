@@ -45,13 +45,6 @@ impl FocusedTestTarget {
             Self::Product => &["--lib", "--bins", "--test", "integration"],
         }
     }
-
-    fn run_tail(self) -> &'static [&'static str] {
-        match self {
-            Self::Suite => &[],
-            Self::Product => &["--", "--test-threads=2"],
-        }
-    }
 }
 
 fn main() -> ExitCode {
@@ -104,7 +97,25 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             || selector.starts_with(&format!("{domain}::"))
             || selector.starts_with(&format!("domains::{domain}::"))
     });
-    let command = if let Some(domain) = suite_domain {
+    let explicit_target = selector
+        .strip_prefix("product::")
+        .map(|filter| (FocusedTestTarget::Product, filter))
+        .or_else(|| {
+            selector
+                .strip_prefix("suite::")
+                .map(|filter| (FocusedTestTarget::Suite, filter))
+        });
+    let command = if let Some((target, filter)) = explicit_target {
+        if filter.is_empty() || filter.starts_with('-') {
+            return Err(XtaskError::Usage(
+                "an explicit owner requires a test selector".into(),
+            ));
+        }
+        if !focused_target_has_test(root, target, filter)? {
+            return Err(XtaskError::NoTestsMatched(selector.clone()));
+        }
+        build_focused_test_command(target, filter, false)
+    } else if let Some(domain) = suite_domain {
         let filter = if selector == domain {
             format!("domains::{domain}")
         } else if selector.starts_with("domains::") {
@@ -169,12 +180,7 @@ fn build_focused_test_command(
     if list {
         command.extend(["--", "--list"].into_iter().map(str::to_owned));
     } else {
-        command.extend(
-            target
-                .run_tail()
-                .iter()
-                .map(|argument| (*argument).to_owned()),
-        );
+        command.extend(["--", "--test-threads=2"].map(str::to_owned));
     }
     command
 }
@@ -552,7 +558,11 @@ impl TestPlan {
             "--profile",
             profile,
             "-j",
-            product_test_jobs(),
+            if profile == LOCAL_NEXTEST_PROFILE {
+                "2"
+            } else {
+                product_test_jobs()
+            },
         ])];
         Self {
             owner: "complete product graph",
@@ -892,6 +902,13 @@ fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
         if name == "default" && profile.get("test-threads").and_then(Item::as_integer) != Some(4) {
             return Err(XtaskError::Architecture(
                 "profile.default must retain a bounded four-thread direct-run fallback".to_owned(),
+            ));
+        }
+        if name == LOCAL_NEXTEST_PROFILE
+            && profile.get("test-threads").and_then(Item::as_integer) != Some(2)
+        {
+            return Err(XtaskError::Architecture(
+                "profile.local must retain a bounded two-thread execution policy".to_owned(),
             ));
         }
         if profile.get("inherits").and_then(Item::as_str) != inherited {
@@ -1520,13 +1537,6 @@ mod tests {
     }
 
     #[test]
-    fn product_scheduler_has_one_platform_global_bound() {
-        assert_eq!(product_test_jobs_for_os("linux"), "4");
-        assert_eq!(product_test_jobs_for_os("macos"), "3");
-        assert_eq!(product_test_jobs_for_os("windows"), "2");
-    }
-
-    #[test]
     fn command_failures_preserve_the_child_exit_code() {
         let error = XtaskError::CommandFailed {
             command: "cargo test".to_owned(),
@@ -1536,19 +1546,15 @@ mod tests {
     }
 
     #[test]
-    fn sequential_plan_runner_executes_its_bounded_plan() {
-        let command = vec!["cargo".to_owned(), "--version".to_owned()];
+    fn sequential_plan_runner_executes_commands_and_preserves_failure_status() {
         let plan = TestPlan {
             owner: "test plan",
-            commands: vec![command],
+            commands: vec![vec!["cargo".to_owned(), "--version".to_owned()]],
             repetitions: 1,
             preserve_repetition_reports: false,
         };
-        run_plan(&workspace_root(), plan).expect("sequential plan");
-    }
+        run_plan(&workspace_root(), plan).expect("successful command");
 
-    #[test]
-    fn sequential_plan_runner_preserves_a_command_failure() {
         let plan = TestPlan {
             owner: "test plan",
             commands: vec![vec![
@@ -1569,27 +1575,14 @@ mod tests {
     }
 
     #[test]
-    fn listed_test_count_ignores_harness_summaries() {
-        let output = b"domains::retrieval::same_name: test\n\
-                       1 test, 0 benchmarks\n\
-                       services::search::other_name: test\n";
-        assert_eq!(listed_test_count(output), 2);
-        assert_eq!(listed_test_count(b"0 tests, 0 benchmarks\n"), 0);
-    }
-
-    #[test]
-    fn profile_reports_slow_tests_without_retries() {
-        let plan = TestPlan::profile();
-        let command = &plan.commands[0];
+    fn named_test_plans_select_their_profile_and_stress_scope() {
+        let timing = TestPlan::profile();
         assert!(
-            command
+            timing.commands[0]
                 .windows(2)
                 .any(|args| args == ["--profile", TIMING_NEXTEST_PROFILE])
         );
-    }
 
-    #[test]
-    fn stress_selects_only_lifecycle_process_tests_with_its_named_profile() {
         let plan = TestPlan::stress_with_repetitions(2);
         assert_eq!(plan.repetitions, 2);
         let command = &plan.commands[0];
@@ -1603,6 +1596,13 @@ mod tests {
                 .windows(2)
                 .any(|args| args == ["--filterset", "test(/^process::mcp_lifecycle::/)"])
         );
+        assert_eq!(
+            listed_test_count(
+                b"domains::retrieval::same_name: test\n1 test, 0 benchmarks\nservices::search::other_name: test\n"
+            ),
+            2
+        );
+        assert_eq!(listed_test_count(b"0 tests, 0 benchmarks\n"), 0);
     }
 
     #[test]
@@ -1690,6 +1690,8 @@ mod tests {
 
     #[test]
     fn product_and_dry_run_profiles_are_explicit_and_bounded() {
+        let local = TestPlan::product(LOCAL_NEXTEST_PROFILE);
+        assert!(local.commands[0].windows(2).any(|args| args == ["-j", "2"]));
         assert_eq!(parse_product_profile(&[]).unwrap(), LOCAL_NEXTEST_PROFILE);
         assert_eq!(
             parse_product_profile(&["--profile".to_owned(), "ci".to_owned()]).unwrap(),

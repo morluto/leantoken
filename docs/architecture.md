@@ -2047,8 +2047,11 @@ database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
 The product test orchestrator starts exactly one Cargo build planner and one
-nextest scheduler for the complete product graph. Its global execution bound is
-four tests on Linux, three on macOS, and two on Windows. Within that pool,
+nextest scheduler for the complete product graph. Local compilation defaults
+to one Cargo build job; local product and focused libtest execution is bounded
+to two tests. Explicit focused-owner selectors compile only the selected
+package's harnesses. CI retains a global execution bound of four tests on Linux,
+three on macOS, and two on Windows. Within that pool,
 checked groups cap cheap work at eight, cold-index/SQLite and Git fixtures at
 two each, filesystem/watcher and extended work at one each, and process/MCP
 work at four. The extended owner alone reserves the whole pool; the other
