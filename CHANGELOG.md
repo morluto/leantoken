@@ -1,6 +1,57 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.1.29] - 2026-10-07
+### Benchmarks
+
+- **indexing:** Record exact token-count reuse rejection (#629) ([#629](https://github.com/morluto/leantoken/pull/629))
+### Bug Fixes
+
+- **cli:** Reject malformed batched history targets
+- **benchmarks:** Validate files continuations before comparing identities (#638) ([#638](https://github.com/morluto/leantoken/pull/638))
+- **benchmarks:** Reject failed MCP profiler shutdown (#637) ([#637](https://github.com/morluto/leantoken/pull/637))
+- **bench:** Separate MCP takeover acquisition and publication (#630) ([#630](https://github.com/morluto/leantoken/pull/630))
+- **benchmarks:** Normalize matching native receipt identities (#626) ([#626](https://github.com/morluto/leantoken/pull/626))
+- **profiling:** Parse ANSI-colored watcher diagnostics (#625) ([#625](https://github.com/morluto/leantoken/pull/625))
+- **mcp:** Keep ready receipt hits from activating dormant contexts (#624) ([#624](https://github.com/morluto/leantoken/pull/624))
+- **indexing:** Honor watcher backpressure retry deadlines (#621) ([#621](https://github.com/morluto/leantoken/pull/621))
+- **ci:** Exclude stale workspace coverage maps (#620) ([#620](https://github.com/morluto/leantoken/pull/620))
+- **ci:** Parse NUL-delimited Git changed paths (#619) ([#619](https://github.com/morluto/leantoken/pull/619))
+- **mcp:** Preserve direct replies across receive cancellation (#614) ([#614](https://github.com/morluto/leantoken/pull/614))
+- **testing:** Align fixtures, validation, coverage and release profiling (#601) ([#601](https://github.com/morluto/leantoken/pull/601))
+- **core:** Preserve bounded evidence and runtime ownership (#600) ([#600](https://github.com/morluto/leantoken/pull/600))
+### Chores
+
+- **test:** Bound local concurrency and streamline focused runs
+### Documentation
+
+- **measurement:** Preserve rejected tokenizer ownership screens (#640) ([#640](https://github.com/morluto/leantoken/pull/640))
+- Publish shared-cache MCP memory characterization (#639) ([#639](https://github.com/morluto/leantoken/pull/639))
+- **measurement:** Characterize large-tree reconciliation scope (#633) ([#633](https://github.com/morluto/leantoken/pull/633))
+- **mcp:** Clarify argument error recovery boundary (#631) ([#631](https://github.com/morluto/leantoken/pull/631))
+- **context:** Distinguish receipt suppression from known hashes (#628) ([#628](https://github.com/morluto/leantoken/pull/628))
+- **context:** Clarify soft focus coverage minimums (#627) ([#627](https://github.com/morluto/leantoken/pull/627))
+### Features
+
+- **cache:** Compact selected inactive indexes (#642) ([#642](https://github.com/morluto/leantoken/pull/642))
+- **benchmarks:** Report proportional and private MCP memory (#634) ([#634](https://github.com/morluto/leantoken/pull/634))
+### Refactoring
+
+- **test:** Consolidate process and frozen-report coverage
+- **setup:** Reuse launcher path matcher
+- **mcp:** Share resource protocol policy
+- **mcp:** Centralize legacy protocol shape
+- **cursors:** Remove unused legacy version paths
+### Testing
+
+- **npm:** Exercise the installed product and simplify packaging
+- Prune redundant units and repair flaky assertions
+- **ci:** Fix Windows rollback and diff fixtures (#622) ([#622](https://github.com/morluto/leantoken/pull/622))
+- **mcp:** Use shared protocol shape policy
+- Remove retired wire compatibility checks
+- Drop unused changed-path compatibility mode
+- Remove retired compatibility assertions
+
 ## [0.1.28] - 2026-08-31
 ### Bug Fixes
 
