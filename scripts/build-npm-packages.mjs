@@ -76,45 +76,30 @@ async function extractBinary(archive, binaryName, destination) {
   }
 }
 
-async function copyPackageDocs(destination) {
-  await Promise.all(
-    ["LICENSE-APACHE", "LICENSE-MIT", "README.md"].map((name) =>
-      copyFile(join(ROOT, name), join(destination, name)),
-    ),
-  );
-}
-
-async function writeJson(path, value) {
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function commonMetadata(name, version, description) {
-  return {
-    name,
-    version,
-    description,
-    license: "MIT OR Apache-2.0",
-    repository: REPOSITORY,
-    homepage: REPOSITORY,
-    engines: { node: ">=18" },
-  };
-}
-
 async function buildRootPackage(stagingDir, artifactsDir, version) {
   const packageDir = join(stagingDir, "leantoken");
   const binDir = join(packageDir, "bin");
   await mkdir(binDir, { recursive: true });
   const packageJson = {
-    ...commonMetadata(
-      "leantoken",
-      version,
-      "Token-budgeted repository context for coding agents",
-    ),
+    name: "leantoken",
+    version,
+    description: "Token-budgeted repository context for coding agents",
+    license: "MIT OR Apache-2.0",
+    repository: REPOSITORY,
+    homepage: REPOSITORY,
+    engines: { node: ">=18" },
     bin: { leantoken: "bin/leantoken.cjs" },
     files: ["bin", "platforms.json", "LICENSE-APACHE", "LICENSE-MIT", "README.md"],
   };
-  await writeJson(join(packageDir, "package.json"), packageJson);
-  await copyPackageDocs(packageDir);
+  await writeFile(
+    join(packageDir, "package.json"),
+    `${JSON.stringify(packageJson, null, 2)}\n`,
+  );
+  await Promise.all(
+    ["LICENSE-APACHE", "LICENSE-MIT", "README.md"].map((name) =>
+      copyFile(join(ROOT, name), join(packageDir, name)),
+    ),
+  );
   await copyFile(join(ROOT, "npm", "leantoken.cjs"), join(binDir, "leantoken.cjs"));
   await copyFile(join(ROOT, "npm", "platforms.json"), join(packageDir, "platforms.json"));
   await chmod(join(binDir, "leantoken.cjs"), 0o755);
@@ -131,12 +116,6 @@ async function buildRootPackage(stagingDir, artifactsDir, version) {
   return packageDir;
 }
 
-function pack(packageDir, outputDir) {
-  run("npm", ["pack", "--silent", "--pack-destination", outputDir, packageDir], {
-    capture: true,
-  });
-}
-
 export async function buildNpmPackages({ artifactsDir, outputDir, version }) {
   const resolvedArtifacts = resolve(artifactsDir);
   const resolvedOutput = resolve(outputDir);
@@ -151,7 +130,10 @@ export async function buildNpmPackages({ artifactsDir, outputDir, version }) {
 
   const stagingDir = await mkdtemp(join(tmpdir(), "leantoken-npm-packages-"));
   try {
-    pack(await buildRootPackage(stagingDir, resolvedArtifacts, version), resolvedOutput);
+    const packageDir = await buildRootPackage(stagingDir, resolvedArtifacts, version);
+    run("npm", ["pack", "--silent", "--pack-destination", resolvedOutput, packageDir], {
+      capture: true,
+    });
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }

@@ -182,7 +182,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install project Rust
-        if: contains(fromJSON('["product","contract","examples","release-plan","stress","profile"]'), matrix.command)
+        if: contains(fromJSON('["product","contract","examples","release-plan","stress","profile","npm"]'), matrix.command)
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
@@ -207,7 +207,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust dependencies
-        if: contains(fromJSON('["rust-quality","product","contract","examples","coverage","dependency-audit","stress","profile"]'), matrix.command)
+        if: contains(fromJSON('["rust-quality","product","contract","examples","coverage","dependency-audit","stress","profile","npm"]'), matrix.command)
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: evidence-${{ matrix.lane }}-${{ matrix.runner }}
