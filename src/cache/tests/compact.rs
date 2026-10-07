@@ -263,6 +263,21 @@ fn compact_rejects_future_metadata_unexpected_artifacts_and_invalid_selectors() 
     fs::remove_file(database.parent().unwrap().join("keep.txt")).unwrap();
     let connection = Connection::open(&database).unwrap();
     connection
+        .execute_batch("UPDATE meta SET repository_root=''")
+        .unwrap();
+    drop(connection);
+    assert!(matches!(
+        manager.compact(&selected(&id, true)).unwrap().results[0].outcome,
+        CacheCompactOutcome::SkippedUnsafe { .. }
+    ));
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute(
+            "UPDATE meta SET repository_root=?1",
+            [temp.path().to_str().unwrap()],
+        )
+        .unwrap();
+    connection
         .execute(
             "UPDATE meta SET schema_version=?1",
             [CURRENT_SCHEMA_VERSION + 1],
@@ -531,4 +546,48 @@ fn compact_preserves_mtime_based_retention_by_skipping_legacy_cache() {
     );
     assert_eq!(before.age_seconds, after.age_seconds);
     assert_eq!(content(&database).0, 42);
+}
+
+#[test]
+fn compact_aggregates_shared_volume_space_requirements() {
+    use crate::cache::compact_sqlite::{same_volume, space_shortage_from};
+    let temp = tempfile::tempdir().unwrap();
+    assert!(same_volume(temp.path(), temp.path()).unwrap());
+    let mib = 1024 * 1024;
+    // Individually sufficient volumes are insufficient when sharing one pool.
+    assert!(space_shortage_from(temp.path(), mib, 34 * mib, 33 * mib, false).is_none());
+    assert!(space_shortage_from(temp.path(), mib, 34 * mib, 34 * mib, true).is_some());
+    assert!(space_shortage_from(temp.path(), mib, 67 * mib, 67 * mib, true).is_none());
+    assert!(space_shortage_from(temp.path(), mib, 67 * mib, 67 * mib - 1, true).is_some());
+}
+
+#[test]
+fn compact_human_diagnostics_match_machine_actions() {
+    let outcomes = [
+        CacheCompactOutcome::WouldCompact,
+        CacheCompactOutcome::Compacted,
+        CacheCompactOutcome::SkippedActive {
+            detail: "held".into(),
+        },
+        CacheCompactOutcome::SkippedUnsafe {
+            detail: "ownership".into(),
+        },
+        CacheCompactOutcome::SkippedLowBenefit,
+        CacheCompactOutcome::SkippedTooLarge,
+        CacheCompactOutcome::SkippedInsufficientSpace {
+            detail: "headroom".into(),
+        },
+        CacheCompactOutcome::Failed {
+            error: "interrupted".into(),
+        },
+    ];
+    for outcome in outcomes {
+        let wire = serde_json::to_value(&outcome).unwrap();
+        assert_eq!(wire["action"].as_str(), Some(outcome.label()));
+        let diagnostic = wire
+            .get("detail")
+            .or_else(|| wire.get("error"))
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(diagnostic, outcome.diagnostic());
+    }
 }

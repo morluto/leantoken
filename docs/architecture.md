@@ -814,7 +814,10 @@ Previews use read-only connections and neither VACUUM nor checkpoint.
 Maintenance connections disable mmap, use an 8 MiB page-cache target and
 file-backed SQLite temporary work, and wait at most 100 ms for SQLite locks.
 Free-space preflight checks the database volume (twice logical page bytes plus
-32 MiB) and SQLite temporary volume (logical page bytes plus 32 MiB). The Unix
+32 MiB) and SQLite temporary volume (logical page bytes plus 32 MiB). When they
+share a volume, require their combined headroom from both observations; unknown
+volume identity conservatively uses the combined requirement. Unix device IDs
+and Windows volume serial numbers identify the volumes. The Unix
 candidate order matches the bundled VFS: configured SQLite temp directory,
 `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp`, `/tmp`, then the working
 directory; Windows uses configured `TMP`/`TEMP`. Writability is checked with an

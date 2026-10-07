@@ -123,18 +123,55 @@ pub(super) fn space_shortage_with(
     available: impl Fn(&Path) -> std::io::Result<u64>,
 ) -> Result<Option<String>> {
     let temporary = temporary_directory(connection)?;
-    let margin = 32 * 1024 * 1024;
-    let database_required = bytes.saturating_mul(2).saturating_add(margin);
-    let temporary_required = bytes.saturating_add(margin);
-    let database_available = available(directory)?;
-    let temporary_available = available(&temporary)?;
-    if database_available < database_required || temporary_available < temporary_required {
-        return Ok(Some(format!(
-            "database volume needs {database_required} free bytes (available {database_available}); SQLite temporary directory {} needs {temporary_required} (available {temporary_available})",
-            temporary.display()
-        )));
+    let shared = same_volume(directory, &temporary).unwrap_or(true);
+    Ok(space_shortage_from(
+        &temporary,
+        bytes,
+        available(directory)?,
+        available(&temporary)?,
+        shared,
+    ))
+}
+
+pub(super) fn same_volume(left: &Path, right: &Path) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(fs::metadata(left)?.dev() == fs::metadata(right)?.dev())
     }
-    Ok(None)
+    #[cfg(windows)]
+    {
+        let left = winapi_util::Handle::from_path_any(left)?;
+        let right = winapi_util::Handle::from_path_any(right)?;
+        Ok(
+            winapi_util::file::information(left.as_file())?.volume_serial_number()
+                == winapi_util::file::information(right.as_file())?.volume_serial_number(),
+        )
+    }
+}
+
+pub(super) fn space_shortage_from(
+    temporary: &Path,
+    bytes: u64,
+    database_available: u64,
+    temporary_available: u64,
+    shared: bool,
+) -> Option<String> {
+    let margin = 32 * 1024 * 1024;
+    let mut database_required = bytes.saturating_mul(2).saturating_add(margin);
+    let mut temporary_required = bytes.saturating_add(margin);
+    if shared {
+        let combined = database_required.saturating_add(temporary_required);
+        database_required = combined;
+        temporary_required = combined;
+    }
+    if database_available < database_required || temporary_available < temporary_required {
+        return Some(format!(
+            "database volume needs {database_required} free bytes (available {database_available}); SQLite temporary directory {} needs {temporary_required} (available {temporary_available}); shared or unidentified volume: {shared}",
+            temporary.display()
+        ));
+    }
+    None
 }
 
 fn unsigned_pragma(connection: &Connection, name: &str) -> Result<u64> {

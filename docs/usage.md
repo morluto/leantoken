@@ -447,6 +447,8 @@ the managed cache root are not eligible.
 Apply checks free space on **both** the database filesystem and SQLite's actual
 temporary directory, requiring twice the logical database size plus 32 MiB on
 the database volume and one database size plus 32 MiB on the temporary volume.
+If both directories share a volume, their requirements are added (three database
+sizes plus 64 MiB). An unknown volume identity also uses the combined requirement.
 The preflight is conservative, not a reservation against other writers or disk
 quotas. On Unix, configure `SQLITE_TMPDIR` before launching to select a suitable
 disk location; no SQLite global or process environment is changed by the command:
