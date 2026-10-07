@@ -9,7 +9,8 @@ const FAILOVER_LIVENESS_TIMEOUT: Duration = Duration::from_secs(60);
 const INDEX_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROCESS_FAILURE_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) fn mcp_initialize_precedes_storage_open() {
+#[test]
+fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -48,7 +49,8 @@ pub(super) fn mcp_initialize_precedes_storage_open() {
     });
 }
 
-pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
+#[test]
+fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -138,7 +140,8 @@ pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     }
 }
 
-pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
+#[test]
+fn mcp_recovers_when_startup_database_contention_clears() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -166,7 +169,8 @@ pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
     process.wait_until_ready(INDEX_READY_TIMEOUT);
 }
 
-pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
+#[test]
+fn mcp_eof_cancels_contended_startup_promptly() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -253,7 +257,8 @@ fn wait_until_lock_held(path: &std::path::Path, timeout: Duration, process: &mut
     }
 }
 
-pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
+#[test]
+fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -283,7 +288,8 @@ pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     );
 }
 
-pub(super) fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
+#[test]
+fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -310,7 +316,8 @@ pub(super) fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
-pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
+#[test]
+fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
     let home = directories::BaseDirs::new()
         .expect("home directories")
         .home_dir()
@@ -365,7 +372,8 @@ pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
     }
 }
 
-pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
+#[test]
+fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn original() {}\n").expect("fixture");
     std::fs::write(root.path().join("b.rs"), "fn crosses_limit() {}\n").expect("second file");
@@ -427,7 +435,8 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     assert!(process.child.try_wait().expect("poll process").is_none());
 }
 
-pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
+#[test]
+fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
     write_rust_fixture_set(root.path(), "file", 20, 100);
     let database = root.path().join("index.sqlite");
@@ -475,7 +484,8 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     );
 }
 
-pub(super) fn mcp_follower_takes_over_after_leader_exit() {
+#[test]
+fn mcp_follower_takes_over_after_leader_exit() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn before_failover() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -505,7 +515,8 @@ pub(super) fn mcp_follower_takes_over_after_leader_exit() {
     });
 }
 
-pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
+#[test]
+fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn first() {}\n").expect("first fixture");
     std::fs::write(root.path().join("b.rs"), "fn exceeds_limit() {}\n").expect("second fixture");
@@ -543,7 +554,8 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
 }
 
-pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
+#[test]
+fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("old.rs"),

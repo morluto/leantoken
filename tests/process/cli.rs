@@ -5,7 +5,8 @@ use super::support::{
     leantoken_program_name, run, run_error,
 };
 
-pub(super) fn cli_indexes_statuses_and_searches_as_json() {
+#[test]
+fn cli_indexes_statuses_and_searches_as_json() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -99,9 +100,60 @@ pub(super) fn cli_indexes_statuses_and_searches_as_json() {
     assert_eq!(delta["window"], "delta");
     assert_eq!(delta["response_accounting"]["tracked_requests"], 1);
     assert_eq!(delta["observations"]["request_classification"]["useful"], 1);
+
+    let response_limit = search["meta"]["total_response_tokens"]
+        .as_u64()
+        .expect("exact full response token count")
+        .checked_sub(1)
+        .expect("non-empty full response token count");
+    let response_limit_arg = response_limit.to_string();
+    let rejected = run_error(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "answer",
+            "--mode",
+            "identifier",
+            "--max-tokens",
+            "100",
+            "--max-response-tokens",
+            &response_limit_arg,
+        ],
+    );
+    assert_eq!(rejected["category"], "request_limit_exceeded");
+    assert_eq!(rejected["field"], "max_response_tokens");
+    assert_eq!(rejected["provided_max_response_tokens"], response_limit);
+    let retry_limit = rejected["retry_with_at_least"]
+        .as_u64()
+        .expect("exact retry token limit");
+    assert_eq!(rejected["minimum_required_response_tokens"], retry_limit);
+
+    let retry_limit_arg = retry_limit.to_string();
+    let bounded = run(
+        root.path(),
+        &database,
+        &[
+            "search",
+            "answer",
+            "--mode",
+            "identifier",
+            "--max-tokens",
+            "100",
+            "--max-response-tokens",
+            &retry_limit_arg,
+        ],
+    );
+    assert!(
+        bounded["meta"]["total_response_tokens"]
+            .as_u64()
+            .is_some_and(|tokens| tokens <= retry_limit),
+        "CLI response exceeded its requested retry limit: {bounded}"
+    );
 }
 
-pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {
+#[test]
+fn cli_search_compact_and_coordinate_projections_are_source_free() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -147,7 +199,8 @@ pub(super) fn cli_search_compact_and_coordinate_projections_are_source_free() {
     assert!(coordinates["groups"][0].get("content_hash").is_none());
 }
 
-pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
+#[test]
+fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("source directory");
     std::fs::create_dir(root.path().join("third_party")).expect("dependency directory");
@@ -294,7 +347,8 @@ pub(super) fn cli_scoped_index_omits_dependencies_and_discloses_the_boundary() {
     );
 }
 
-pub(super) fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
+#[test]
+fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_is_requested() {
     let root = tempfile::tempdir().expect("temporary repository");
     let source = root.path().join("lib.rs");
     std::fs::write(&source, "pub fn answer() -> u8 { 41 }\n").expect("write fixture");
@@ -327,7 +381,8 @@ pub(super) fn cli_retrieval_reconciles_live_changes_unless_snapshot_consistency_
     assert_eq!(status["working_tree_checked"], false);
 }
 
-pub(super) fn cli_savings_renders_a_color_aware_human_table() {
+#[test]
+fn cli_savings_renders_a_color_aware_human_table() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -406,7 +461,8 @@ pub(super) fn cli_savings_renders_a_color_aware_human_table() {
     );
 }
 
-pub(super) fn cli_index_explains_skipped_binary_files_without_returning_paths() {
+#[test]
+fn cli_index_explains_skipped_binary_files_without_returning_paths() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write text fixture");
@@ -431,7 +487,8 @@ pub(super) fn cli_index_explains_skipped_binary_files_without_returning_paths() 
     assert!(!response.to_string().contains("secret-binary.rs"));
 }
 
-pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
+#[test]
+fn cli_files_tree_treats_dot_as_the_repository_root() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("src directory");
     std::fs::write(root.path().join("README.md"), "fixture\n").expect("readme");
@@ -474,7 +531,8 @@ pub(super) fn cli_files_tree_treats_dot_as_the_repository_root() {
     }
 }
 
-pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
+#[test]
+fn cold_cli_status_and_retrieval_explain_index_readiness() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn pending() {}\n").expect("source");
     let database = root.path().join("index.sqlite");
@@ -530,7 +588,204 @@ pub(super) fn cold_cli_status_and_retrieval_explain_index_readiness() {
     );
 }
 
-pub(super) fn cli_json_errors_expose_stable_safe_metadata() {
+#[test]
+fn cli_outline_and_context_emit_workflow_handoff_contracts() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::create_dir_all(root.path().join("src")).expect("source directory");
+    std::fs::create_dir_all(root.path().join("tests")).expect("test directory");
+    std::fs::create_dir_all(root.path().join("docs")).expect("docs directory");
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn workflow_target() -> bool { true }\n",
+    )
+    .expect("write source");
+    std::fs::write(
+        root.path().join("tests/lib.rs"),
+        "#[test]\nfn workflow_target_regression() { assert!(true); }\n",
+    )
+    .expect("write test");
+    std::fs::write(
+        root.path().join("AGENTS.md"),
+        "# Contribution rules\nRun focused tests before changing behavior.\n",
+    )
+    .expect("write repository guidance");
+    std::fs::write(
+        root.path().join("docs/development.md"),
+        "# Development\nValidate changes with the focused test suite.\n",
+    )
+    .expect("write development guidance");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    let outline = run(
+        root.path(),
+        &database,
+        &["outline", "src/lib.rs", "--projection", "signatures"],
+    );
+    assert_eq!(outline["files"][0]["path"], "src/lib.rs");
+    assert_eq!(outline["returned_symbols"], 1);
+    assert_eq!(
+        outline["files"][0]["signatures"][0]["name"],
+        "workflow_target"
+    );
+    assert!(outline["files"][0].get("symbols").is_none());
+
+    let context = run(
+        root.path(),
+        &database,
+        &[
+            "context",
+            "--task",
+            "Prepare a contribution for workflow_target",
+            "--workflow",
+            "contribution",
+            "--evidence-symbol",
+            "workflow_target",
+            "--evidence-path",
+            "src/lib.rs",
+            "--required-evidence",
+            r#"{"path":"src/lib.rs","queries":["workflow_target"]}"#,
+            "--test-intent",
+            "run workflow_target_regression",
+            "--changed-path",
+            "src/lib.rs",
+            "--response-profile",
+            "balanced",
+            "--budget",
+            "1000",
+            "--handoff",
+            "--handoff-summary",
+            "Review the workflow_target change",
+        ],
+    );
+    assert_eq!(context["workflow"], "contribution");
+    assert_eq!(context["effective_response_profile"], "balanced");
+    assert_eq!(
+        context["coverage"]["required_evidence"][0]["path"],
+        "src/lib.rs"
+    );
+    assert_eq!(
+        context["coverage"]["required_evidence"][0]["satisfied"],
+        true
+    );
+    assert_eq!(
+        context["coverage"]["required_evidence"][0]["matched_queries"][0],
+        "workflow_target"
+    );
+    assert!(
+        context["workflow_receipt"].is_object(),
+        "CLI contribution evidence should produce a workflow receipt: {context}"
+    );
+    let manifest = &context["handoff_manifest"];
+    assert_eq!(manifest["summary"], "Review the workflow_target change");
+    assert_eq!(
+        manifest["repository_generation"],
+        context["meta"]["repository_generation"]
+    );
+    assert!(
+        manifest["evidence"]
+            .as_array()
+            .is_some_and(|evidence| !evidence.is_empty()),
+        "handoff should carry selected evidence coordinates: {context}"
+    );
+}
+
+#[test]
+fn cli_json_query_numeric_summary_and_diff_cover_live_files() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(
+        root.path().join("before.json"),
+        r#"{"service":{"version":1,"timeout":30},"samples":[2,4,6]}"#,
+    )
+    .expect("write base JSON");
+    std::fs::write(
+        root.path().join("after.json"),
+        r#"{"service":{"version":2,"timeout":30},"samples":[2,4,6]}"#,
+    )
+    .expect("write head JSON");
+    std::fs::write(root.path().join("broken.json"), "{broken").expect("write malformed JSON");
+    let database = root.path().join("index.sqlite");
+    run(root.path(), &database, &["index"]);
+
+    let query = run(
+        root.path(),
+        &database,
+        &[
+            "json",
+            "query",
+            "before.json",
+            "--pointer",
+            "/service/version",
+        ],
+    );
+    assert_eq!(query["kind"], "query");
+    assert_eq!(query["value"], 1);
+    assert_eq!(query["sources"][0]["path"], "before.json");
+
+    let summary = run(
+        root.path(),
+        &database,
+        &[
+            "json",
+            "numeric-summary",
+            "before.json",
+            "--pointer",
+            "/samples",
+        ],
+    );
+    assert_eq!(summary["kind"], "numeric_summary");
+    assert_eq!(summary["numeric_summary"]["count"], 3);
+    assert_eq!(summary["numeric_summary"]["min"], 2.0);
+    assert_eq!(summary["numeric_summary"]["median"], 4.0);
+    assert_eq!(summary["numeric_summary"]["max"], 6.0);
+
+    let diff = run(
+        root.path(),
+        &database,
+        &[
+            "json",
+            "diff-fields",
+            "before.json",
+            "after.json",
+            "--pointer",
+            "/service/version",
+            "--pointer",
+            "/service/timeout",
+        ],
+    );
+    assert_eq!(diff["kind"], "diff_fields");
+    assert_eq!(diff["differences"].as_array().map(Vec::len), Some(2));
+    assert_eq!(diff["differences"][0]["before"], 1);
+    assert_eq!(diff["differences"][0]["after"], 2);
+    assert_eq!(diff["differences"][0]["changed"], true);
+    assert_eq!(diff["differences"][1]["changed"], false);
+
+    let malformed = run_error(root.path(), &database, &["json", "query", "broken.json"]);
+    assert_eq!(malformed["category"], "invalid_json");
+    assert_eq!(malformed["field"], "path");
+    assert!(
+        malformed["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+
+    let invalid_selector = run_error(
+        root.path(),
+        &database,
+        &["json", "query", "before.json", "--jmespath", "service["],
+    );
+    assert_eq!(invalid_selector["category"], "invalid_json_selector");
+    assert_eq!(invalid_selector["stage"], "compile");
+    assert_eq!(invalid_selector["field"], "JMESPath expression");
+    assert!(
+        invalid_selector["reason"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+}
+
+#[test]
+fn cli_json_errors_expose_stable_safe_metadata() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn indexed() {}\n").expect("source");
     let database = root.path().join("index.sqlite");
@@ -577,6 +832,35 @@ pub(super) fn cli_json_errors_expose_stable_safe_metadata() {
         })
     );
 
+    let oversized_pattern = "x".repeat(4_097);
+    let error = run_error(
+        root.path(),
+        &database,
+        &["files", "glob", "--pattern", &oversized_pattern],
+    );
+    assert_eq!(error["category"], "input_too_long");
+    assert_eq!(error["field"], "pattern");
+    assert_eq!(error["limit"], 4_096);
+
+    let incompatible_context = run_error(
+        root.path(),
+        &database,
+        &[
+            "context",
+            "--task",
+            "change indexed",
+            "--strict-focus-paths",
+            "--plan-only",
+            "--handoff",
+        ],
+    );
+    assert_eq!(incompatible_context["category"], "invalid_input");
+    assert_eq!(
+        incompatible_context["violations"][0]["field"],
+        "focus paths"
+    );
+    assert_eq!(incompatible_context["violations"][1]["field"], "plan_only");
+
     let database_directory = root.path().join("database-directory");
     std::fs::create_dir(&database_directory).expect("database directory");
     let internal = run_error(root.path(), &database_directory, &["status"]);
@@ -589,8 +873,41 @@ pub(super) fn cli_json_errors_expose_stable_safe_metadata() {
     assert_eq!(internal.as_object().map(serde_json::Map::len), Some(2));
 }
 
-pub(super) fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
+#[test]
+fn cli_regex_chunk_limit_reports_path_and_remediation() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("large.txt"), "x\n".repeat(20_560))
+        .expect("write bounded large-file fixture");
+    let database = root.path().join("index.sqlite");
+    run(
+        root.path(),
+        &database,
+        &["--tokenizer", "estimate", "index"],
+    );
+
+    let error = run_error(root.path(), &database, &["search", ".", "--mode", "regex"]);
+    assert_eq!(error["category"], "request_limit_exceeded");
+    assert_eq!(error["reason"], "regex_chunks_per_file");
+    assert_eq!(error["blocking_path"], "large.txt");
+    assert_eq!(error["requested"], 257);
+    assert_eq!(error["limit"], 256);
+    assert!(error["error"].as_str().is_some_and(|message| {
+        message.contains("exclude or narrow paths that include unusually large files")
+    }));
+}
+
+#[test]
+fn cli_json_parse_errors_are_structured_without_changing_clap_help() {
     assert_cli_parse_error(&["files", "tree", "--max-results", "nope", "--json"]);
+    assert_cli_parse_error(&["search", "answer", "--max-response-tokens", "0", "--json"]);
+    assert_cli_parse_error(&[
+        "context",
+        "--task",
+        "review",
+        "--required-evidence",
+        "{",
+        "--json",
+    ]);
     assert_cli_parse_error(&["--json", "--unknown"]);
 
     let human_arguments = ["files", "tree", "--max-results", "nope"];
@@ -619,7 +936,8 @@ pub(super) fn cli_json_parse_errors_are_structured_without_changing_clap_help() 
     assert!(String::from_utf8_lossy(&help.stdout).contains("Usage: leantoken"));
 }
 
-pub(super) fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
+#[test]
+fn cli_index_limit_error_is_structured_and_does_not_publish_partial_files() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("a");
     std::fs::write(root.path().join("b.rs"), "fn b() {}\n").expect("b");

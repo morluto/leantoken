@@ -578,7 +578,7 @@ impl TestPlan {
                 "--test",
                 "integration",
                 "--filterset",
-                "test(/^process::mcp_lifecycle_/)",
+                "test(/^process::mcp_lifecycle::/)",
                 "--profile",
                 STRESS_NEXTEST_PROFILE,
                 "-j",
@@ -1601,7 +1601,7 @@ mod tests {
         assert!(
             command
                 .windows(2)
-                .any(|args| args == ["--filterset", "test(/^process::mcp_lifecycle_/)"])
+                .any(|args| args == ["--filterset", "test(/^process::mcp_lifecycle::/)"])
         );
     }
 

@@ -1,7 +1,8 @@
 use super::support::Command;
 use std::fs;
 
-pub(super) fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
+#[test]
+fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
     let temp = tempfile::tempdir().unwrap();
     let repository = temp.path().join("repository");
     fs::create_dir(&repository).unwrap();
@@ -59,6 +60,31 @@ pub(super) fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
     let entries = list["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 1);
     let id = entries[0]["id"].as_str().unwrap();
+    let index_content_version = entries[0]["index_content_version"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let repository_root = repository.to_str().unwrap();
+    let filtered = command()
+        .args([
+            "--json",
+            "cache",
+            "list",
+            "--state",
+            "current",
+            "--compatibility",
+            "compatible-current",
+            "--index-content-version",
+            &index_content_version,
+            "--repository-root",
+            repository_root,
+        ])
+        .output()
+        .unwrap();
+    assert!(filtered.status.success());
+    let filtered: serde_json::Value = serde_json::from_slice(&filtered.stdout).unwrap();
+    assert_eq!(filtered["entries"], list["entries"]);
+
     let database = cache_root.join(id).join("index.sqlite");
     let connection = rusqlite::Connection::open(&database).unwrap();
     connection.execute_batch("CREATE TABLE compact_churn(id INTEGER PRIMARY KEY,payload BLOB); INSERT INTO compact_churn VALUES(1,zeroblob(1048576)); DELETE FROM compact_churn;").unwrap();

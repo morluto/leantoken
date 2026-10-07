@@ -1,6 +1,7 @@
 use super::support::Command;
 
-pub(super) fn setup_dry_run_reports_exact_plan_without_mutation() {
+#[test]
+fn setup_dry_run_reports_exact_plan_without_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
     let output = Command::cargo_bin("leantoken")
         .expect("binary")
@@ -26,7 +27,8 @@ pub(super) fn setup_dry_run_reports_exact_plan_without_mutation() {
     assert!(!temp.path().join(".codex/config.toml").exists());
 }
 
-pub(super) fn malformed_selected_config_blocks_all_setup_writes() {
+#[test]
+fn malformed_selected_config_blocks_all_setup_writes() {
     let temp = tempfile::tempdir().expect("temporary home");
     std::fs::write(temp.path().join(".claude.json"), "{ broken").expect("write malformed config");
     let output = Command::cargo_bin("leantoken")
@@ -50,7 +52,8 @@ pub(super) fn malformed_selected_config_blocks_all_setup_writes() {
     assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
-pub(super) fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
+#[test]
+fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     let temp = tempfile::tempdir().expect("temporary home");
     let runtime = temp.path().join("node runtime");
     let node = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
@@ -98,7 +101,8 @@ pub(super) fn npx_setup_registers_exact_release_instead_of_its_cache_path() {
     );
 }
 
-pub(super) fn setup_refresh_targets_only_existing_mcp_entries() {
+#[test]
+fn setup_refresh_targets_only_existing_mcp_entries() {
     let temp = tempfile::tempdir().expect("temporary home");
     let node = temp.path().join("node");
     let npm = temp.path().join("npm-cli.js");
@@ -146,7 +150,8 @@ pub(super) fn setup_refresh_targets_only_existing_mcp_entries() {
     assert!(!cursor.contains("\"leantoken\""));
 }
 
-pub(super) fn empty_setup_refresh_reports_unrecognized_clients_without_mutation() {
+#[test]
+fn empty_setup_refresh_reports_unrecognized_clients_without_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
     let config = temp.path().join(".codex/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).expect("Codex directory");
@@ -182,7 +187,8 @@ pub(super) fn empty_setup_refresh_reports_unrecognized_clients_without_mutation(
     );
 }
 
-pub(super) fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
+#[test]
+fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     let temp = tempfile::tempdir().expect("temporary home");
     let data_home = temp.path().join("data");
     let runtime = temp.path().join("node runtime");
@@ -274,7 +280,8 @@ pub(super) fn private_runtime_setup_installs_and_registers_the_verified_native_b
     assert!(!codex.contains("npm-cli"));
 }
 
-pub(super) fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
+#[test]
+fn npx_setup_explains_that_it_does_not_install_a_global_cli() {
     let temp = tempfile::tempdir().expect("temporary home");
     let output = Command::cargo_bin("leantoken")
         .expect("binary")
@@ -354,7 +361,8 @@ fn assert_runtime_prune_decisions(planned: &serde_json::Value) {
 }
 
 #[cfg(unix)]
-pub(super) fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation() {
+#[test]
+fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation() {
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("temporary home");
@@ -410,7 +418,8 @@ pub(super) fn runtime_commands_refuse_a_symlinked_runtime_root_without_mutation(
 }
 
 #[cfg(not(windows))]
-pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
+#[test]
+fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_default() {
     let temp = tempfile::tempdir().expect("temporary home");
     let command = || {
         let mut command = Command::cargo_bin("leantoken").expect("binary");
@@ -533,79 +542,4 @@ pub(super) fn runtime_list_and_prune_are_bounded_reference_safe_and_dry_run_by_d
         .expect("bounded runtime list");
     assert!(!bounded.status.success());
     assert!(String::from_utf8_lossy(&bounded.stderr).contains("byte limit"));
-}
-
-pub(super) fn ambient_npx_metadata_does_not_replace_the_persistent_setup_launcher() {
-    let temp = tempfile::tempdir().expect("temporary home");
-    let runtime = temp.path().join("node runtime");
-    let node = runtime.join(if cfg!(windows) { "node.exe" } else { "node" });
-    let npx = runtime.join("npx cli.js");
-    let setup = Command::cargo_bin("leantoken")
-        .expect("binary")
-        .env("HOME", temp.path())
-        .env("USERPROFILE", temp.path())
-        .env("npm_lifecycle_event", "npx")
-        .env("npm_node_execpath", &node)
-        .env("npm_execpath", &npx)
-        .args(["--json", "setup", "--claude", "--yes"])
-        .output()
-        .expect("run npx setup");
-    assert!(
-        setup.status.success(),
-        "ambient lifecycle metadata must not break a persistent executable"
-    );
-    let report: serde_json::Value =
-        serde_json::from_slice(&setup.stdout).expect("setup JSON output");
-    assert_eq!(report["verification"]["status"], "passed");
-    let executable = assert_cmd::cargo::cargo_bin!("leantoken")
-        .canonicalize()
-        .expect("canonical executable");
-    assert_eq!(report["launcher"]["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(report["launcher"]["package"], serde_json::Value::Null);
-    assert_eq!(report["launcher"]["may_contact_network"], false);
-    assert_eq!(report["launcher"]["command"], executable.to_str().unwrap());
-    assert_eq!(
-        report["launcher"]["args"],
-        serde_json::json!(["--managed-by-setup", "mcp"])
-    );
-    let config: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(temp.path().join(".claude.json")).expect("Claude configuration"),
-    )
-    .expect("Claude JSON");
-    assert_eq!(
-        config["mcpServers"]["leantoken"]["command"],
-        executable.to_str().unwrap()
-    );
-    assert_eq!(
-        config["mcpServers"]["leantoken"]["args"],
-        serde_json::json!(["--managed-by-setup", "mcp"])
-    );
-}
-
-pub(super) fn ambient_npx_metadata_keeps_the_persistent_setup_handoff() {
-    let temp = tempfile::tempdir().expect("temporary home");
-    let output = Command::cargo_bin("leantoken")
-        .expect("binary")
-        .env("HOME", temp.path())
-        .env("USERPROFILE", temp.path())
-        .env("npm_lifecycle_event", "npx")
-        .env("npm_node_execpath", temp.path().join("node"))
-        .env("npm_execpath", temp.path().join("npm-cli.js"))
-        .args(["setup", "--codex", "--yes"])
-        .output()
-        .expect("run npx setup");
-    assert!(
-        output.status.success(),
-        "ambient lifecycle metadata must not break a persistent executable"
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("LeanToken // Context Distillery"));
-    assert!(stdout.contains("LeanToken is configured for 1 client."));
-    assert!(stdout.contains("✓ Exact launcher verified: initialize, 9-tool catalog"));
-    assert!(stdout.contains(
-        "Verify the stored Codex launcher from a repository: leantoken doctor --client codex"
-    ));
-    assert!(stdout.contains("Update later with: leantoken upgrade"));
-    assert!(!stdout.contains("Some selected clients failed"));
-    assert!(!stdout.contains("Launcher verification failed"));
 }

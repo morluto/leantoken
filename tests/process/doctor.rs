@@ -1,6 +1,7 @@
 use super::support::{Command, EXPECTED_INDEX_CONTENT_VERSION, assert_runtime_version, run};
 
-pub(super) fn doctor_verifies_identity_catalog_and_first_retrieval() {
+#[test]
+fn doctor_verifies_identity_catalog_and_first_retrieval() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -50,7 +51,8 @@ pub(super) fn doctor_verifies_identity_catalog_and_first_retrieval() {
     );
 }
 
-pub(super) fn doctor_preserves_an_explicit_index_scope() {
+#[test]
+fn doctor_preserves_an_explicit_index_scope() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("create source directory");
     std::fs::write(
@@ -75,7 +77,8 @@ pub(super) fn doctor_preserves_an_explicit_index_scope() {
     assert_eq!(report["first_call"]["status"], "ready");
 }
 
-pub(super) fn doctor_preserves_index_limits() {
+#[test]
+fn doctor_preserves_index_limits() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::create_dir(root.path().join("src")).expect("create source directory");
     std::fs::write(root.path().join("src/small.rs"), "pub fn small() {}\n")
@@ -116,7 +119,8 @@ pub(super) fn doctor_preserves_index_limits() {
     assert_eq!(status["file_count"], 1);
 }
 
-pub(super) fn doctor_surfaces_bounded_redacted_child_diagnostics() {
+#[test]
+fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
     let blocked_parent = root.path().join("blocked");
@@ -147,7 +151,8 @@ pub(super) fn doctor_surfaces_bounded_redacted_child_diagnostics() {
     assert!(message.len() < 5_000, "diagnostic must remain bounded");
 }
 
-pub(super) fn doctor_human_output_uses_context_distillery_handoff() {
+#[test]
+fn doctor_human_output_uses_context_distillery_handoff() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -183,7 +188,8 @@ pub(super) fn doctor_human_output_uses_context_distillery_handoff() {
     assert!(stdout.contains("leantoken.context first"));
 }
 
-pub(super) fn doctor_can_exercise_the_exact_codex_registration() {
+#[test]
+fn doctor_can_exercise_the_exact_codex_registration() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
@@ -244,7 +250,8 @@ pub(super) fn doctor_can_exercise_the_exact_codex_registration() {
     assert_eq!(report["first_call"]["status"], "ready");
 }
 
-pub(super) fn configured_doctor_launches_workspace_relative_commands_from_the_workspace() {
+#[test]
+fn configured_doctor_launches_workspace_relative_commands_from_the_workspace() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
@@ -305,7 +312,8 @@ pub(super) fn configured_doctor_launches_workspace_relative_commands_from_the_wo
     assert_eq!(report["first_call"]["status"], "ready");
 }
 
-pub(super) fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
+#[test]
+fn configured_doctor_isolates_selected_client_from_unrelated_config_errors() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
@@ -356,7 +364,8 @@ pub(super) fn configured_doctor_isolates_selected_client_from_unrelated_config_e
     );
 }
 
-pub(super) fn configured_doctor_maps_malformed_client_config_to_registration_stage() {
+#[test]
+fn configured_doctor_maps_malformed_client_config_to_registration_stage() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
@@ -386,7 +395,8 @@ pub(super) fn configured_doctor_maps_malformed_client_config_to_registration_sta
     assert_eq!(error["stage"], "registration");
 }
 
-pub(super) fn configured_doctor_rejects_a_disabled_opencode_registration() {
+#[test]
+fn configured_doctor_rejects_a_disabled_opencode_registration() {
     let home = tempfile::tempdir().expect("temporary home");
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn ready() {}\n").expect("write fixture");
@@ -460,7 +470,8 @@ pub(super) fn configured_doctor_rejects_a_disabled_opencode_registration() {
 }
 
 #[cfg(unix)]
-pub(super) fn configured_doctor_rejects_a_registration_changed_during_the_probe() {
+#[test]
+fn configured_doctor_rejects_a_registration_changed_during_the_probe() {
     use std::os::unix::fs::PermissionsExt;
 
     let home = tempfile::tempdir().expect("temporary home");

@@ -107,14 +107,14 @@ pub(crate) fn assert_runtime_version(value: &serde_json::Value) {
     assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }
 
-pub(crate) fn run(
+fn run_json_command(
     root: &std::path::Path,
     database: &std::path::Path,
     arguments: &[&str],
-) -> serde_json::Value {
+) -> std::process::Output {
     let mut command = Command::cargo_bin("leantoken").expect("binary");
     let _process_home = apply_hermetic_environment(&mut command, root);
-    let output = command
+    command
         .args([
             "--root",
             root.to_str().expect("root UTF-8"),
@@ -124,7 +124,15 @@ pub(crate) fn run(
         ])
         .args(arguments)
         .output()
-        .expect("run leantoken");
+        .expect("run leantoken")
+}
+
+pub(crate) fn run(
+    root: &std::path::Path,
+    database: &std::path::Path,
+    arguments: &[&str],
+) -> serde_json::Value {
+    let output = run_json_command(root, database, arguments);
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -138,19 +146,7 @@ pub(crate) fn run_error(
     database: &std::path::Path,
     arguments: &[&str],
 ) -> serde_json::Value {
-    let mut command = Command::cargo_bin("leantoken").expect("binary");
-    let _process_home = apply_hermetic_environment(&mut command, root);
-    let output = command
-        .args([
-            "--root",
-            root.to_str().expect("root UTF-8"),
-            "--database",
-            database.to_str().expect("database UTF-8"),
-            "--json",
-        ])
-        .args(arguments)
-        .output()
-        .expect("run leantoken");
+    let output = run_json_command(root, database, arguments);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     serde_json::from_slice(&output.stderr).expect("structured error")
@@ -211,7 +207,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_options(root, database, arguments, false)
+        Self::spawn_with_command_args(root, database, arguments, &[], Stdio::null())
     }
 
     pub(crate) fn spawn_with_mcp_args(
@@ -219,7 +215,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_command_args(root, database, &[], arguments, false)
+        Self::spawn_with_command_args(root, database, &[], arguments, Stdio::null())
     }
 
     pub(crate) fn spawn_with_captured_stderr(
@@ -227,16 +223,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_options(root, database, arguments, true)
-    }
-
-    pub(crate) fn spawn_with_options(
-        root: &std::path::Path,
-        database: &std::path::Path,
-        arguments: &[&str],
-        capture_stderr: bool,
-    ) -> Self {
-        Self::spawn_with_command_args(root, database, arguments, &[], capture_stderr)
+        Self::spawn_with_command_args(root, database, arguments, &[], Stdio::piped())
     }
 
     pub(crate) fn spawn_with_command_args(
@@ -244,7 +231,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
         mcp_arguments: &[&str],
-        capture_stderr: bool,
+        stderr: Stdio,
     ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         let process_home = apply_hermetic_std_environment(&mut command, root);
@@ -258,11 +245,7 @@ impl McpProcess {
             .args(arguments)
             .arg("mcp")
             .args(mcp_arguments);
-        command.stderr(if capture_stderr {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        });
+        command.stderr(stderr);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

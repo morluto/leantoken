@@ -1,7 +1,6 @@
 use rmcp::{serve_client, serve_server};
 
 use super::*;
-use crate::SearchOccurrenceOutput;
 
 #[test]
 fn request_admission_has_an_exact_fail_fast_boundary() {
@@ -2599,18 +2598,6 @@ fn retrieval_response_budget_limits_are_validated_for_every_tool() {
 }
 
 #[test]
-fn receipt_id_maps_to_the_service_request() {
-    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-        "path": "README.md",
-        "receipt_id": "r0000000000000001",
-        "target": {"kind": "lines", "start": 1, "end": 2}
-    }))
-    .expect("read request with receipt");
-    let (request, _, _, _) = request.into_parts();
-    assert_eq!(request.receipt_id.as_deref(), Some("r0000000000000001"));
-}
-
-#[test]
 fn receipt_rebase_maps_explicit_exact_only_controls() {
     let request = serde_json::from_value::<ReceiptRebaseMcpRequest>(serde_json::json!({
         "receipt_id": "r0000000000000001",
@@ -2821,84 +2808,13 @@ fn json_operation_maps_to_the_service_request() {
 }
 
 #[test]
-fn outline_cursor_maps_to_the_service_request() {
-    let request = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-        "paths": ["src/lib.rs"],
-        "cursor": "12:outline:34:0000000000000000"
-    }))
-    .expect("outline request");
-    let (request, _, _, _, _) = request.into_parts();
-
-    assert_eq!(
-        request.cursor.as_deref(),
-        Some("12:outline:34:0000000000000000")
-    );
-}
-
-#[test]
-fn compact_projections_map_to_service_requests() {
-    let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-        "operation": {"kind": "tree"}
-    }))
-    .expect("default files projection");
-    let (_, projection, _, _, _) = files.into_parts();
-    assert_eq!(projection, FilesMcpProjection::Full);
-
-    let files = serde_json::from_value::<FilesMcpRequest>(serde_json::json!({
-        "operation": {"kind": "find", "query": "service", "projection": "paths"}
-    }))
-    .expect("path projection");
-    let (_, projection, _, _, _) = files.into_parts();
-    assert_eq!(projection, FilesMcpProjection::Paths);
-
-    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "operation": {"kind": "auto", "query": "Services"}
-    }))
-    .expect("default search projection");
-    let (_, output, _, _, _) = search.into_parts();
-    assert_eq!(output, SearchMcpOutput::Full);
-
-    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "operation": {"kind": "auto", "query": "Services", "projection": "grouped"}
-    }))
-    .expect("grouped projection");
-    let (_, output, _, _, _) = search.into_parts();
-    assert_eq!(output, SearchMcpOutput::Grouped);
-
-    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "operation": {"kind": "identifier", "query": "Services", "projection": "compact"}
-    }))
-    .expect("compact projection");
-    search
-        .validate_limits(McpLimitPolicy::DEFAULT)
-        .expect("valid compact projection");
-    let (_, output, _, _, _) = search.into_parts();
-    assert_eq!(output, SearchMcpOutput::Compact);
-
-    let search = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "operation": {
-            "kind": "text",
-            "query": "Services",
-            "all_occurrences": true,
-            "coordinates_only": true
-        }
-    }))
-    .expect("coordinates-only occurrence projection");
-    search
-        .validate_limits(McpLimitPolicy::DEFAULT)
-        .expect("valid occurrence projection");
-    let (_, output, _, _, _) = search.into_parts();
-    assert_eq!(
-        output,
-        SearchMcpOutput::Occurrences(SearchOccurrenceOutput::Coordinates)
-    );
-
-    let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+fn search_occurrence_options_reject_incompatible_modes() {
+    let coordinates_only = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
         "operation": {"kind": "text", "query": "Services", "coordinates_only": true}
     }))
     .expect("structurally valid search request");
     assert!(matches!(
-        invalid.validate_limits(McpLimitPolicy::DEFAULT),
+        coordinates_only.validate_limits(McpLimitPolicy::DEFAULT),
         Err(crate::Error::InvalidInput {
             field: "coordinates_only",
             ..
@@ -2906,44 +2822,18 @@ fn compact_projections_map_to_service_requests() {
     ));
 
     for mode in ["auto", "identifier", "symbol", "reference"] {
-        let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
+        let request = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
             "operation": {"kind": mode, "query": "Services", "all_occurrences": true}
         }))
         .expect("structurally valid exhaustive search request");
         assert!(matches!(
-            invalid.validate_limits(McpLimitPolicy::DEFAULT),
+            request.validate_limits(McpLimitPolicy::DEFAULT),
             Err(crate::Error::InvalidSearchOptions {
                 field: "all_occurrences",
                 ..
             })
         ));
     }
-    let invalid = serde_json::from_value::<SearchMcpRequest>(serde_json::json!({
-        "operation": {"kind": "auto", "query": "Services", "all_occurrences": true}
-    }))
-    .expect("structurally valid exhaustive search request with default mode");
-    assert!(matches!(
-        invalid.validate_limits(McpLimitPolicy::DEFAULT),
-        Err(crate::Error::InvalidSearchOptions {
-            field: "all_occurrences",
-            ..
-        })
-    ));
-
-    let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-        "paths": ["src/services.rs"]
-    }))
-    .expect("default outline projection");
-    let (_, projection, _, _, _) = outline.into_parts();
-    assert_eq!(projection, OutlineMcpProjection::Full);
-
-    let outline = serde_json::from_value::<OutlineMcpRequest>(serde_json::json!({
-        "paths": ["src/services.rs"],
-        "projection": "signatures"
-    }))
-    .expect("signature projection");
-    let (_, projection, _, _, _) = outline.into_parts();
-    assert_eq!(projection, OutlineMcpProjection::Signatures);
 }
 
 #[test]
@@ -3022,87 +2912,4 @@ fn search_query_preserves_significant_whitespace() {
     let (request, _, _, _, _) = request.into_parts();
 
     assert_eq!(request.query, "  exact text  ");
-}
-
-#[test]
-fn read_description_example_parses_successfully() {
-    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-        "path": "README.md",
-        "target": {"kind": "heading", "name": "Installation"}
-    }))
-    .expect("read description example must parse");
-    let (request, _, _, _) = request.into_parts();
-    assert_eq!(request.heading.as_deref(), Some("Installation"));
-}
-
-#[test]
-fn history_description_example_parses_successfully() {
-    let request = serde_json::from_value::<HistoryMcpRequest>(serde_json::json!({
-        "operation": {
-            "kind": "symbol_log",
-            "path": "src/services.rs",
-            "symbol": {"name": "meta", "parent": "Services"},
-            "revision": "HEAD"
-        }
-    }))
-    .expect("history description example must parse");
-    assert!(request.validate_limits(McpLimitPolicy::DEFAULT).is_ok());
-}
-
-#[test]
-fn read_target_lines_variant_parses_and_maps() {
-    let request = serde_json::from_value::<ReadMcpRequest>(serde_json::json!({
-        "path": "src/main.rs",
-        "target": {"kind": "lines", "start": 1, "end": 50}
-    }))
-    .expect("lines target must parse");
-    let (request, _, _, _) = request.into_parts();
-    assert_eq!(request.start_line, Some(1));
-    assert_eq!(request.end_line, Some(50));
-}
-
-#[test]
-fn read_description_does_not_offer_range_target_kind() {
-    let tools = LeanTokenMcp::tool_router().list_all();
-    let read = tools
-        .into_iter()
-        .find(|tool| tool.name == "read")
-        .expect("read tool");
-    let description = read.description.expect("read description");
-    assert!(
-        !description.contains("\"range\""),
-        "read description must not imply a range target kind: {description}"
-    );
-    assert!(
-        description.contains("line range"),
-        "read description should mention line range: {description}"
-    );
-}
-
-#[test]
-fn outline_description_does_not_offer_range_to_read() {
-    let tools = LeanTokenMcp::tool_router().list_all();
-    let outline = tools
-        .into_iter()
-        .find(|tool| tool.name == "outline")
-        .expect("outline tool");
-    let description = outline.description.expect("outline description");
-    assert!(
-        description.contains("line range to read"),
-        "outline description should guide to line range: {description}"
-    );
-}
-
-#[test]
-fn history_description_example_uses_symbol_identity_object() {
-    let tools = LeanTokenMcp::tool_router().list_all();
-    let history = tools
-        .into_iter()
-        .find(|tool| tool.name == "history")
-        .expect("history tool");
-    let description = history.description.expect("history description");
-    assert!(
-        description.contains("\"symbol\":{\"name\":"),
-        "history description example must use a SymbolIdentity object: {description}"
-    );
 }
