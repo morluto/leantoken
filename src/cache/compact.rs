@@ -66,6 +66,11 @@ impl CacheManager {
         // Pin the validated inode before any path-based SQLite open.
         let expected_database =
             compact_sqlite::pin_database(&directory, &row.path.join(DATABASE_NAME))?;
+        if !compact_sqlite::has_wal_header(&expected_database)? {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "compaction requires an existing WAL database; rollback journals are not maintained".into(),
+            });
+        }
         let inspected = self.inspect_managed_cache(id, identity, false)?;
         row.size_bytes_before = Some(inspected.entry.size_bytes);
         if let Some(outcome) = compact_eligibility(inspected, request.max_database_bytes) {
@@ -73,12 +78,7 @@ impl CacheManager {
         }
         let path = fs::canonicalize(&row.path)?.join(DATABASE_NAME);
         let expected = same_file::Handle::from_file(directory.into_std_file())?;
-        if !compact_sqlite::directory_matches(&expected, path.parent().expect("database parent"))? {
-            return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: "cache directory identity changed".into(),
-            });
-        }
-        if let Some(detail) = compact_sqlite::linked_artifact(&row.path)? {
+        if let Some(detail) = compact_sqlite::unsafe_artifact_detail(&expected, &path, &row.path)? {
             return Ok(CacheCompactOutcome::SkippedUnsafe { detail });
         }
         let Some(connection) =

@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use super::remove_managed_artifacts;
 mod compact;
 mod leases;
 mod list;
@@ -9,7 +11,7 @@ pub(super) use super::{
     AccessTimeSource, CacheCompatibility, CacheListRequest, CacheManager, CachePruneAction,
     CachePruneRequest, CacheState, DATABASE_NAME, MAX_CACHE_COMPATIBILITY_FILTERS,
     MAX_CACHE_CONTENT_VERSION_FILTERS, MAX_CACHE_LIST_LIMIT, SECONDS_PER_DAY, WAL_NAME,
-    make_previous_cache_list_cursor, remove_managed_artifacts, unix_seconds,
+    make_previous_cache_list_cursor, unix_seconds,
 };
 pub(super) use crate::config::INDEX_CONTENT_VERSION;
 pub(super) use crate::config::parse_managed_cache_id;

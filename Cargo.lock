@@ -1004,6 +1004,7 @@ dependencies = [
  "jsonc-parser",
  "leantoken-test-support",
  "libc",
+ "nix",
  "notify",
  "nucleo-matcher",
  "pulldown-cmark",

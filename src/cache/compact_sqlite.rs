@@ -45,6 +45,18 @@ pub(super) fn pin_database(directory: &cap_std::fs::Dir, path: &Path) -> Result<
     Ok(same_file::Handle::from_file(file)?)
 }
 
+pub(super) fn has_wal_header(database: &same_file::Handle) -> Result<bool> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = database.as_file();
+    file.seek(SeekFrom::Start(0))?;
+    let mut header = [0; 20];
+    match file.read_exact(&mut header) {
+        Ok(()) => Ok(&header[..16] == b"SQLite format 3\0" && header[18..20] == [2, 2]),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(super) fn open_pinned(
     expected: &same_file::Handle,
     path: &Path,
@@ -107,8 +119,8 @@ pub(super) fn open_pinned_with(
 type FileIdentity = (u64, u64);
 
 #[cfg(unix)]
-fn open_file_identities() -> Result<BTreeMap<u32, FileIdentity>> {
-    use std::os::unix::fs::MetadataExt;
+pub(super) fn open_file_identities() -> Result<BTreeMap<u32, FileIdentity>> {
+    use nix::sys::stat::{SFlag, fstat};
     let root = if Path::new("/proc/self/fd").is_dir() {
         Path::new("/proc/self/fd")
     } else {
@@ -129,13 +141,17 @@ fn open_file_identities() -> Result<BTreeMap<u32, FileIdentity>> {
         else {
             continue;
         };
-        let metadata = match fs::metadata(entry.path()) {
+        let metadata = match fstat(number as std::os::fd::RawFd) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
+            Err(nix::errno::Errno::EBADF) => continue,
+            Err(error) => return Err(std::io::Error::from_raw_os_error(error as i32).into()),
         };
-        if metadata.is_file() {
-            files.insert(number, (metadata.dev(), metadata.ino()));
+        if SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT == SFlag::S_IFREG {
+            #[cfg(target_os = "macos")]
+            let device = metadata.st_dev as u64;
+            #[cfg(not(target_os = "macos"))]
+            let device = metadata.st_dev;
+            files.insert(number, (device, metadata.st_ino));
         }
     }
     Ok(files)
@@ -193,6 +209,17 @@ fn sqlite_file_identities(
     Ok(allowed)
 }
 
+pub(super) fn unsafe_artifact_detail(
+    directory: &same_file::Handle,
+    database: &Path,
+    cache_path: &Path,
+) -> Result<Option<String>> {
+    if !directory_matches(directory, database.parent().expect("database parent"))? {
+        return Ok(Some("cache directory identity changed".into()));
+    }
+    linked_artifact(cache_path)
+}
+
 pub(super) fn opened_path_matches(
     connection: &Connection,
     directory: &same_file::Handle,
@@ -214,14 +241,23 @@ pub(super) fn directory_matches(expected: &same_file::Handle, path: &Path) -> Re
 }
 
 pub(super) fn database_matches(expected: &same_file::Handle, path: &Path) -> Result<bool> {
-    // Check the held file, not just metadata obtained from a mutable pathname.
-    if file_link_count(expected.as_file())? != 1
-        || !fs::symlink_metadata(path)?.file_type().is_file()
-    {
+    // Never open and close another Unix handle for this inode: closing it
+    // would release this process's POSIX locks, including SQLite's locks.
+    let current = fs::symlink_metadata(path)?;
+    if file_link_count(expected.as_file())? != 1 || !current.file_type().is_file() {
         return Ok(false);
     }
-    let current = same_file::Handle::from_path(path)?;
-    Ok(expected == &current && file_link_count(current.as_file())? == 1)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let held = expected.as_file().metadata()?;
+        Ok(current.nlink() == 1 && (held.dev(), held.ino()) == (current.dev(), current.ino()))
+    }
+    #[cfg(windows)]
+    {
+        let current = same_file::Handle::from_path(path)?;
+        Ok(expected == &current && file_link_count(current.as_file())? == 1)
+    }
 }
 
 fn file_link_count(file: &fs::File) -> std::io::Result<u64> {

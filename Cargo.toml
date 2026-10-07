@@ -108,6 +108,9 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 wait-timeout = "0.2.1"
 
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.27.1", default-features = false, features = ["fs"] }
+
 [target.'cfg(windows)'.dependencies]
 winapi-util = "0.1.11"
 

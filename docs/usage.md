@@ -440,6 +440,8 @@ use OS quotas when a hard CPU or memory ceiling is required.
 Apply requires the same exclusive lifetime lease used by pruning, plus a SQLite
 exclusive locking mode. Active leaders/followers, unsupported ownership,
 unexpected artifacts, symlinks, and multiply linked artifacts are skipped.
+Only existing WAL databases are eligible. Rollback-mode databases are skipped
+before SQLite inspection; their journal mode and journal contents remain untouched.
 Connections outside the lease protocol can block maintenance and produce a
 failure; their snapshots are never forcibly released. Explicit databases outside
 the managed cache root are not eligible.
@@ -468,7 +470,7 @@ SQLite maintenance rather than causing a source reindex or schema upgrade.
 Apply validates SQLite integrity and retained schema/metadata, VACUUMs in place,
 and checkpoints under the held lease. Reports distinguish `vacuum_committed`
 from the final outcome: a later validation/checkpoint failure does not imply
-VACUUM was rolled back. Older supported metadata layouts with a persisted access timestamp and repository
+VACUUM was rolled back. Older supported WAL metadata layouts with a persisted access timestamp and repository
 generations remain unchanged. Caches whose access age comes from database/WAL
 mtimes are skipped, so maintenance cannot make them appear recently accessed. Stop clients predating cache leases before any
 maintenance. Compaction is not source-text compression; dense databases may

@@ -182,7 +182,7 @@ fn compact_retains_readable_older_metadata_without_migration() {
     // A minimal older readable metadata layout, not a simulated full release schema.
     connection
         .execute_batch(
-            "CREATE TABLE meta(id INTEGER PRIMARY KEY,schema_version INTEGER,repository_root TEXT,last_access_unix_seconds INTEGER);
+            "PRAGMA journal_mode=WAL; CREATE TABLE meta(id INTEGER PRIMARY KEY,schema_version INTEGER,repository_root TEXT,last_access_unix_seconds INTEGER);
         CREATE TABLE payload(id INTEGER PRIMARY KEY,data BLOB);
         INSERT INTO payload VALUES(1,zeroblob(1048576)); DELETE FROM payload;",
         )
@@ -703,6 +703,7 @@ fn compact_rejects_restored_path_when_sqlite_opened_inode_was_replaced() {
 #[test]
 fn compact_windows_pin_prevents_database_rename_during_sqlite_open() {
     use crate::cache::compact_sqlite::pin_database;
+    use crate::cache::open_managed_artifacts;
     let temp = tempfile::tempdir().unwrap();
     let manager = CacheManager::new(temp.path().join("managed"), 100);
     let (_, database) = fixture(&manager, temp.path());
@@ -751,4 +752,103 @@ fn compact_refuses_unidentified_existing_descriptor_before_sqlite_open() {
     .unwrap();
     assert!(connection.is_none());
     assert_eq!(fs::read(&database).unwrap(), before);
+}
+
+#[test]
+fn compact_skips_rollback_database_before_creating_or_recovering_journal() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (id, database) = fixture(&manager, temp.path());
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute_batch("PRAGMA journal_mode=DELETE;")
+        .unwrap();
+    drop(connection);
+    let before = fs::read(&database).unwrap();
+    let journal = database.with_file_name("index.sqlite-journal");
+    for apply in [false, true] {
+        let row = &manager.compact(&selected(&id, apply)).unwrap().results[0];
+        assert!(
+            matches!(&row.outcome, CacheCompactOutcome::SkippedUnsafe { detail } if detail.contains("WAL"))
+        );
+        assert!(!row.vacuum_committed);
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert!(!journal.exists());
+    }
+    // A rollback journal alias must never be opened, recovered, or overwritten.
+    let external = temp.path().join("external-journal");
+    fs::write(&external, b"external content must remain unchanged").unwrap();
+    fs::hard_link(&external, &journal).unwrap();
+    for apply in [false, true] {
+        let row = &manager.compact(&selected(&id, apply)).unwrap().results[0];
+        assert!(matches!(
+            row.outcome,
+            CacheCompactOutcome::SkippedUnsafe { .. }
+        ));
+        assert!(!row.vacuum_committed);
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert_eq!(
+            fs::read(&external).unwrap(),
+            b"external content must remain unchanged"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn compact_descriptor_snapshot_reports_underlying_file_identity() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+    let temp = tempfile::tempdir().unwrap();
+    let file = fs::File::create(temp.path().join("identity")).unwrap();
+    let metadata = file.metadata().unwrap();
+    let (socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let snapshot = crate::cache::compact_sqlite::open_file_identities().unwrap();
+    assert!(!snapshot.contains_key(&(socket.as_raw_fd() as u32)));
+    assert_eq!(
+        snapshot.get(&(file.as_raw_fd() as u32)),
+        Some(&(metadata.dev(), metadata.ino()))
+    );
+}
+
+#[test]
+fn compact_identity_checks_do_not_release_sqlite_process_locks() {
+    use crate::cache::compact_sqlite::{database_matches, has_wal_header};
+    const CHILD_DATABASE: &str = "LEANTOKEN_COMPACT_LOCK_TEST_DATABASE";
+    if let Some(path) = std::env::var_os(CHILD_DATABASE) {
+        let connection = Connection::open(path).unwrap();
+        connection.busy_timeout(Duration::from_millis(100)).unwrap();
+        let error = connection.execute_batch("BEGIN IMMEDIATE").unwrap_err();
+        assert_eq!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseBusy)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let database = temp.path().join("locked.sqlite");
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute_batch("CREATE TABLE data(value); INSERT INTO data VALUES(1)")
+        .unwrap();
+    let pinned = same_file::Handle::from_path(&database).unwrap();
+    connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
+    assert!(database_matches(&pinned, &database).unwrap());
+    assert!(!has_wal_header(&pinned).unwrap());
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "cache::tests::compact::compact_identity_checks_do_not_release_sqlite_process_locks",
+            "--nocapture",
+        ])
+        .env(CHILD_DATABASE, &database)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    connection.execute_batch("ROLLBACK").unwrap();
 }
