@@ -72,6 +72,11 @@ impl CacheManager {
                 }),
             });
         }
+        if inspected.entry.access_time_source != Some(AccessTimeSource::Database) {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "cache access age comes from artifact mtimes; compaction would change retention order".into(),
+            });
+        }
         if inspected.entry.size_bytes > request.max_database_bytes {
             return Ok(CacheCompactOutcome::SkippedTooLarge);
         }

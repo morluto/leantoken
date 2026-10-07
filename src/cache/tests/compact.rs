@@ -182,14 +182,14 @@ fn compact_retains_readable_older_metadata_without_migration() {
     // A minimal older readable metadata layout, not a simulated full release schema.
     connection
         .execute_batch(
-            "CREATE TABLE meta(id INTEGER PRIMARY KEY,schema_version INTEGER,repository_root TEXT);
+            "CREATE TABLE meta(id INTEGER PRIMARY KEY,schema_version INTEGER,repository_root TEXT,last_access_unix_seconds INTEGER);
         CREATE TABLE payload(id INTEGER PRIMARY KEY,data BLOB);
         INSERT INTO payload VALUES(1,zeroblob(1048576)); DELETE FROM payload;",
         )
         .unwrap();
     connection
         .execute(
-            "INSERT INTO meta VALUES(1,4,?1)",
+            "INSERT INTO meta VALUES(1,4,?1,42)",
             [temp.path().to_str().unwrap()],
         )
         .unwrap();
@@ -490,4 +490,45 @@ fn compact_post_validation_failure_keeps_commit_flag_and_data() {
             .unwrap(),
         "ok"
     );
+}
+
+#[test]
+fn compact_preserves_mtime_based_retention_by_skipping_legacy_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 10000);
+    let (id, database) = fixture(&manager, temp.path());
+    let connection = Connection::open(&database).unwrap();
+    connection
+        .execute_batch("ALTER TABLE meta DROP COLUMN last_access_unix_seconds")
+        .unwrap();
+    drop(connection);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&database)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(100)))
+        .unwrap();
+    let before = manager
+        .inspect_managed_cache(&id, parse_managed_cache_id(&id).unwrap(), true)
+        .unwrap()
+        .entry;
+    assert_eq!(before.access_time_source, Some(AccessTimeSource::FileMtime));
+    for apply in [false, true] {
+        let report = manager.compact(&selected(&id, apply)).unwrap();
+        assert!(matches!(
+            report.results[0].outcome,
+            CacheCompactOutcome::SkippedUnsafe { .. }
+        ));
+        assert!(!report.results[0].vacuum_committed);
+    }
+    let after = manager
+        .inspect_managed_cache(&id, parse_managed_cache_id(&id).unwrap(), true)
+        .unwrap()
+        .entry;
+    assert_eq!(
+        before.last_access_unix_seconds,
+        after.last_access_unix_seconds
+    );
+    assert_eq!(before.age_seconds, after.age_seconds);
+    assert_eq!(content(&database).0, 42);
 }

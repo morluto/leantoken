@@ -28,8 +28,10 @@ pub(super) fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
         scan.has_artifacts = true;
         scan.size_bytes = scan.size_bytes.saturating_add(metadata.len());
         let name = child.file_name();
-        // Read-only WAL inspection can refresh SHM and lock-file mtimes.
-        if (name == OsStr::new(DATABASE_NAME) || name == OsStr::new(WAL_NAME))
+        // Read-only inspection can create an empty WAL or refresh SHM/lock mtimes.
+        // Only a WAL containing bytes can carry a later transaction timestamp.
+        if (name == OsStr::new(DATABASE_NAME)
+            || (name == OsStr::new(WAL_NAME) && metadata.len() > 0))
             && let Ok(modified) = metadata.modified()
         {
             let modified = unix_seconds(modified);

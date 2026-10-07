@@ -803,7 +803,9 @@ hard CPU quota and filesystem/commit work can overrun the callback deadline.
 
 Apply acquires the exclusive cache lifetime lease and re-inspects ownership and
 compatibility without opening `Services`, binding access metadata, or migrating
-schemas. No-follow capability directory validation, held filesystem identity
+schemas. Entries whose access age falls back to artifact mtimes are skipped,
+so VACUUM cannot refresh legacy retention/LRU order. Empty WAL sidecars created
+by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
 handles, SQLite no-follow opening, canonical filename checks, and rejection of
 multiply linked artifacts prevent ordinary aliasing outside the chosen cache.
 SQLite exclusive locking also refuses connections outside the lease protocol.

@@ -463,8 +463,9 @@ SQLite maintenance rather than causing a source reindex or schema upgrade.
 Apply validates SQLite integrity and retained schema/metadata, VACUUMs in place,
 and checkpoints under the held lease. Reports distinguish `vacuum_committed`
 from the final outcome: a later validation/checkpoint failure does not imply
-VACUUM was rolled back. Older supported metadata layouts and repository
-generations remain unchanged. Stop clients predating cache leases before any
+VACUUM was rolled back. Older supported metadata layouts with a persisted access timestamp and repository
+generations remain unchanged. Caches whose access age comes from database/WAL
+mtimes are skipped, so maintenance cannot make them appear recently accessed. Stop clients predating cache leases before any
 maintenance. Compaction is not source-text compression; dense databases may
 save very little and are normally skipped by the benefit thresholds.
 

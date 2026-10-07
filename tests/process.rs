@@ -1,3 +1,4 @@
+mod cache;
 mod cli;
 mod doctor;
 mod mcp_lifecycle;
@@ -296,4 +297,9 @@ fn ambient_npx_metadata_does_not_replace_the_persistent_setup_launcher() {
 #[test]
 fn ambient_npx_metadata_keeps_the_persistent_setup_handoff() {
     runtime::ambient_npx_metadata_keeps_the_persistent_setup_handoff();
+}
+
+#[test]
+fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
+    cache::cli_cache_compact_previews_applies_and_reports_reader_failures();
 }

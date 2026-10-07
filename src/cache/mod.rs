@@ -1,4 +1,4 @@
-//! Explicit inspection and pruning of centrally managed repository caches.
+//! Explicit inspection, pruning, and compaction of managed repository caches.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
