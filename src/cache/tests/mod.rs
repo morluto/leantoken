@@ -1,3 +1,4 @@
+mod compact;
 mod leases;
 mod list;
 mod prune;

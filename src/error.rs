@@ -409,6 +409,9 @@ pub enum Error {
     /// A best-effort cache maintenance operation failed.
     #[error("cache pruning failed: {0}")]
     CachePruneFailure(String),
+    /// Explicit cache compaction failed.
+    #[error("cache compaction failed: {0}")]
+    CacheCompactFailure(String),
     /// Setup or installation state failed an ownership or recovery invariant.
     #[error("setup failed: {0}")]
     SetupFailure(String),
@@ -587,6 +590,7 @@ impl Error {
             Self::SerializationFailure(_) => "serialization_failure",
             Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
             Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::CacheCompactFailure(_) => "cache_compact_failure",
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
             Self::ShutdownTimeout { .. } => "shutdown_timeout",
@@ -636,6 +640,7 @@ impl Error {
             Self::SerializationFailure(_) => "serialization_failure",
             Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
             Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::CacheCompactFailure(_) => "cache_compact_failure",
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
             Self::DoctorFailure { .. } => "doctor_failure",

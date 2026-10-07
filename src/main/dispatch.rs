@@ -16,6 +16,16 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             cache::print_prune(&report, json)?;
             ensure_cache_prune_succeeded(&report)
         }
+        AppRequest::CacheCompact(request) => {
+            let report = cache::compact(&request)?;
+            cache::print_compact(&report, json)?;
+            if report.has_failures() {
+                return Err(leantoken::Error::CacheCompactFailure(
+                    "one or more selected caches could not be compacted".into(),
+                ));
+            }
+            Ok(())
+        }
         AppRequest::RuntimeList => setup::print_runtime_list(&setup::list_runtimes()?, json),
         AppRequest::RuntimePrune(request) => {
             let report = setup::prune_runtimes(request)?;

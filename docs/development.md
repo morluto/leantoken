@@ -403,6 +403,8 @@ run them in parallel rather than starting one executable per file.
   compatibility plus cross-component budget, scope, known-hash omission, and
   receipt composition; detailed tokenizer and ranking behavior stays with the
   owning production modules;
+- `src/cache/tests/compact.rs` and `tests/cli.rs`: selective maintenance eligibility,
+  leases, preservation, cancellation, and CLI consent/preview contracts;
 - `crates/test-suite/src/domains/platform.rs`: public configuration path,
   cache identity, safety, and limit boundaries plus native watcher delivery
   and shutdown;

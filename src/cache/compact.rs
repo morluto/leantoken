@@ -1,0 +1,162 @@
+use super::*;
+use std::time::Instant;
+
+impl CacheManager {
+    pub(super) fn compact(&self, request: &CacheCompactRequest) -> Result<CacheCompactReport> {
+        validate_compact_request(request)?;
+        let mode = MutationMode::parse(
+            request.dry_run,
+            request.yes,
+            "cache compact requires --yes or --dry-run",
+        )?;
+        let mut results = Vec::with_capacity(request.ids.len());
+        for id in request.ids.iter().collect::<BTreeSet<_>>() {
+            let started = Instant::now();
+            let mut row = CacheCompactResult {
+                id: id.clone(),
+                path: self.root.join(id),
+                outcome: CacheCompactOutcome::SkippedUnsafe {
+                    detail: "not inspected".into(),
+                },
+                size_bytes_before: None,
+                size_bytes_after: None,
+                database_bytes: None,
+                reusable_bytes: None,
+                reclaimed_bytes: 0,
+                vacuum_committed: false,
+                elapsed_millis: 0,
+            };
+            row.outcome = match self.compact_one(id, request, mode, &mut row) {
+                Ok(outcome) => outcome,
+                Err(error) => CacheCompactOutcome::Failed {
+                    error: error.to_string(),
+                },
+            };
+            row.elapsed_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            results.push(row);
+        }
+        Ok(CacheCompactReport {
+            cache_root: self.root.clone(),
+            dry_run: mode.is_dry_run(),
+            reclaimed_bytes: results.iter().map(|row| row.reclaimed_bytes).sum(),
+            results,
+        })
+    }
+
+    fn compact_one(
+        &self,
+        id: &str,
+        request: &CacheCompactRequest,
+        mode: MutationMode,
+        row: &mut CacheCompactResult,
+    ) -> Result<CacheCompactOutcome> {
+        let identity = parse_managed_cache_id(id).expect("validated cache identity");
+        // Hold the no-follow directory handle throughout SQLite maintenance.
+        let (directory, artifacts) = match open_managed_artifacts(&row.path) {
+            Ok(opened) => opened,
+            Err(detail) => return Ok(CacheCompactOutcome::SkippedUnsafe { detail }),
+        };
+        row.size_bytes_before = Some(artifacts.iter().map(|(_, bytes)| *bytes).sum());
+        let coordination = IndexCoordination::for_database(&row.path.join(DATABASE_NAME));
+        let Some(_lease) = coordination.try_acquire_prune_lease()? else {
+            return Ok(CacheCompactOutcome::SkippedActive {
+                detail: "cache lease is held by a running process".into(),
+            });
+        };
+        let inspected = self.inspect_managed_cache(id, identity, false)?;
+        row.size_bytes_before = Some(inspected.entry.size_bytes);
+        if !inspected.safe_to_prune || inspected.entry.repository_root.is_none() {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: inspected.entry.detail.unwrap_or_else(|| {
+                    "cache metadata or repository ownership is not safe to compact".into()
+                }),
+            });
+        }
+        if inspected.entry.size_bytes > request.max_database_bytes {
+            return Ok(CacheCompactOutcome::SkippedTooLarge);
+        }
+        let path = fs::canonicalize(&row.path)?.join(DATABASE_NAME);
+        let expected = same_file::Handle::from_file(directory.into_std_file())?;
+        if !compact_sqlite::directory_matches(&expected, path.parent().expect("database parent"))? {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "cache directory identity changed".into(),
+            });
+        }
+        if let Some(detail) = compact_sqlite::linked_artifact(&row.path)? {
+            return Ok(CacheCompactOutcome::SkippedUnsafe { detail });
+        }
+        let connection = compact_sqlite::open(&path, mode.is_dry_run())?;
+        if connection
+            .path()
+            .and_then(|p| fs::canonicalize(p).ok())
+            .as_deref()
+            != Some(path.as_path())
+        {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "SQLite resolved an unexpected database path".into(),
+            });
+        }
+        if !compact_sqlite::directory_matches(&expected, path.parent().expect("database parent"))? {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "cache directory identity changed while opening SQLite".into(),
+            });
+        }
+        let (bytes, reusable) = compact_sqlite::page_space(&connection)?;
+        row.database_bytes = Some(bytes);
+        row.reusable_bytes = Some(reusable);
+        if bytes > request.max_database_bytes {
+            return Ok(CacheCompactOutcome::SkippedTooLarge);
+        }
+        if reusable < request.min_reclaim_bytes
+            || reusable.saturating_mul(100)
+                < bytes.saturating_mul(u64::from(request.min_reclaim_percent))
+        {
+            return Ok(CacheCompactOutcome::SkippedLowBenefit);
+        }
+        if mode.is_dry_run() {
+            return Ok(CacheCompactOutcome::WouldCompact);
+        }
+        if let Some(detail) = compact_sqlite::space_shortage(
+            &connection,
+            path.parent().expect("database parent"),
+            bytes,
+        )? {
+            return Ok(CacheCompactOutcome::SkippedInsufficientSpace { detail });
+        }
+        let result =
+            compact_sqlite::vacuum(&connection, request.max_seconds, &mut row.vacuum_committed);
+        drop(connection);
+        // Observe artifacts after SQLite closes, including removed/recycled WALs.
+        let after = scan_artifacts(&row.path)?.size_bytes;
+        row.size_bytes_after = Some(after);
+        row.reclaimed_bytes = row.size_bytes_before.unwrap_or(after).saturating_sub(after);
+        result?;
+        Ok(CacheCompactOutcome::Compacted)
+    }
+}
+
+fn validate_compact_request(request: &CacheCompactRequest) -> Result<()> {
+    if request.ids.is_empty() || request.ids.len() > MAX_CACHE_COMPACT_IDS {
+        return Err(Error::InvalidRequest(format!(
+            "cache compact requires 1–{MAX_CACHE_COMPACT_IDS} explicit --id values"
+        )));
+    }
+    let mut unique = BTreeSet::new();
+    for id in &request.ids {
+        if parse_managed_cache_id(id).is_none() || !unique.insert(id) {
+            return Err(Error::InvalidRequest(
+                "cache compact identities must be valid and unique".into(),
+            ));
+        }
+    }
+    if request.min_reclaim_bytes == 0
+        || !(1..=100).contains(&request.min_reclaim_percent)
+        || request.max_database_bytes == 0
+        || !(1..=3600).contains(&request.max_seconds)
+    {
+        return Err(Error::InvalidRequest(
+            "cache compact requires positive byte bounds, 1–100 percent, and 1–3600 seconds".into(),
+        ));
+    }
+    Ok(())
+}

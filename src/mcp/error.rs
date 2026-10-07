@@ -295,6 +295,7 @@ pub(super) fn into_mcp_error(error: crate::Error) -> ErrorData {
         crate::Error::SerializationFailure(_)
         | crate::Error::ResponseAccountingInvariant(_)
         | crate::Error::CachePruneFailure(_)
+        | crate::Error::CacheCompactFailure(_)
         | crate::Error::SetupFailure(_)
         | crate::Error::OperationFailure(_) => {
             tracing::error!(%cause, category = cause.public_category(), "typed product failure");

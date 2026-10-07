@@ -1,22 +1,46 @@
 ---
 source: tests/cli.rs
-expression: "help(&[\"cache\"])"
+assertion_line: 118
+expression: "help(&[\"cache\", \"compact\"])"
 ---
-Inspect or prune centrally managed repository caches
+Compact explicitly selected inactive caches with worthwhile reusable space
 
-Usage: leantoken cache [OPTIONS] <COMMAND>
-
-Commands:
-  list     List managed caches, sizes, roots, access times, and active leases
-  prune    Remove inactive managed caches selected by explicit criteria
-  compact  Compact explicitly selected inactive caches with worthwhile reusable space
-  help     Print this message or the help of the given subcommand(s)
+Usage: leantoken cache compact [OPTIONS] --id <CACHE_ID>
 
 Options:
+      --id <CACHE_ID>
+          Exact managed cache identity (repeatable; at most eight)
+
       --root <PATH>
           Repository root path
 
           [default: .]
+
+      --min-reclaim-bytes <BYTES>
+          Minimum reusable page bytes (both benefit thresholds must pass)
+
+          [default: 67108864]
+
+      --min-reclaim-percent <MIN_RECLAIM_PERCENT>
+          Minimum reusable page percentage (1-100)
+
+          [default: 10]
+
+      --max-database-bytes <BYTES>
+          Maximum logical database or artifact footprint to process
+
+          [default: 1073741824]
+
+      --max-seconds <MAX_SECONDS>
+          Cooperative per-cache deadline in seconds (1-3600)
+
+          [default: 120]
+
+      --dry-run
+          Preview thresholds without VACUUM or checkpoints; default without --yes
+
+  -y, --yes
+          Apply eligible compaction without prompting
 
       --database <PATH>
           SQLite database path
