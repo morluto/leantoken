@@ -812,9 +812,12 @@ eligible without migration. Empty WAL sidecars created
 by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
 handles, SQLite no-follow opening, canonical filename checks, and rejection of
 multiply linked artifacts reject filesystem aliases observed during validation.
+Before pinning on Unix, a descriptor snapshot refuses a main database already
+open in the calling process, including preview and rollback-mode skips. This
+avoids open/close side effects on an existing connection's POSIX locks.
 The validated main file remains pinned throughout maintenance. Unix verifies
 SQLite's actual newly opened regular-file identities for apply using `/proc/self/fd` or
-`/dev/fd`, with two observations of at most 1024 descriptors each per cache.
+`/dev/fd`, with at most three observations of 1024 descriptors each per cache.
 Each numeric descriptor is inspected with the safe `nix::sys::stat::fstat`
 wrapper, obtaining the underlying device/inode on all Unix platforms without
 duplicating or closing SQLite descriptors (which could release POSIX locks).
@@ -830,7 +833,9 @@ handle; header reads borrow the pinned handle so neither check releases
 process-wide POSIX locks. This adds no
 retrieval-time descriptor scan or process-global configuration change.
 SQLite exclusive locking also refuses connections outside the lease protocol.
-Previews use read-only connections and neither VACUUM nor checkpoint.
+Previews use read-only connections and neither VACUUM nor checkpoint. An
+outside SQLite connection in another process can still preview; a connection
+already open in the calling Unix process makes maintenance active/ineligible.
 
 Filesystem ownership is a trust boundary: in-place maintenance requires an
 owner-controlled cache root and quiescent filesystem tools, with cache clients

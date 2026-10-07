@@ -63,14 +63,12 @@ impl CacheManager {
                 detail: "cache lease is held by a running process".into(),
             });
         };
-        // Pin the validated inode before any path-based SQLite open.
+        // Admit and pin before any metadata/SQLite open can affect existing locks.
         let expected_database =
-            compact_sqlite::pin_database(&directory, &row.path.join(DATABASE_NAME))?;
-        if !compact_sqlite::has_wal_header(&expected_database)? {
-            return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: "compaction requires an existing WAL database; rollback journals are not maintained".into(),
-            });
-        }
+            match compact_sqlite::admit_database(&directory, &row.path.join(DATABASE_NAME))? {
+                Ok(database) => database,
+                Err(outcome) => return Ok(outcome),
+            };
         let inspected = self.inspect_managed_cache(id, identity, false)?;
         row.size_bytes_before = Some(inspected.entry.size_bytes);
         if let Some(outcome) = compact_eligibility(inspected, request.max_database_bytes) {

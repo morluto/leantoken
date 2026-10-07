@@ -92,6 +92,12 @@ pub(super) fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
     assert_eq!(fs::read(&database).unwrap(), before);
     #[cfg(windows)]
     {
+        let outside_preview = command().arg("--json").args(arguments).output().unwrap();
+        assert!(outside_preview.status.success());
+        let outside_preview: serde_json::Value =
+            serde_json::from_slice(&outside_preview.stdout).unwrap();
+        assert_eq!(outside_preview["results"][0]["action"], "would_compact");
+        assert_eq!(outside_preview["results"][0]["vacuum_committed"], false);
         let failed = command()
             .env("TMP", temp.path().join("missing-tmp"))
             .env("TEMP", temp.path())

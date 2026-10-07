@@ -442,7 +442,10 @@ exclusive locking mode. Active leaders/followers, unsupported ownership,
 unexpected artifacts, symlinks, and multiply linked artifacts are skipped.
 Only existing WAL databases are eligible. Rollback-mode databases are skipped
 before SQLite inspection; their journal mode and journal contents remain untouched.
-Connections outside the lease protocol can block maintenance and produce a
+On Unix, a database already open in the calling process is skipped as active
+before opening another handle, including preview; this preserves existing
+SQLite process locks. CLI preview can still inspect outside connections in
+other processes. Connections outside the lease protocol can block maintenance and produce a
 failure; their snapshots are never forcibly released. Explicit databases outside
 the managed cache root are not eligible. Keep backup/linking/file-move tools
 quiescent during maintenance. The cache root must be controlled by its owner;

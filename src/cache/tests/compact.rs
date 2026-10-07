@@ -104,6 +104,12 @@ fn compact_preview_does_not_vacuum_checkpoint_or_claim_savings() {
     let main_before = fs::read(&database).unwrap();
     let wal_before = fs::read(&wal).unwrap();
     let report = manager.compact(&selected(&id, false)).unwrap();
+    #[cfg(unix)]
+    assert!(matches!(
+        report.results[0].outcome,
+        CacheCompactOutcome::SkippedActive { .. }
+    ));
+    #[cfg(windows)]
     assert_eq!(report.results[0].outcome, CacheCompactOutcome::WouldCompact);
     assert_eq!(report.reclaimed_bytes, 0);
     assert!(!report.results[0].vacuum_committed);
@@ -238,6 +244,12 @@ fn compact_fails_closed_for_external_reader_without_forcing_snapshot_release() {
         .execute_batch("UPDATE meta SET repository_generation=43;")
         .unwrap();
     let report = manager.compact(&selected(&id, true)).unwrap();
+    #[cfg(unix)]
+    assert!(matches!(
+        report.results[0].outcome,
+        CacheCompactOutcome::SkippedActive { .. }
+    ));
+    #[cfg(windows)]
     assert!(report.has_failures());
     assert!(!report.results[0].vacuum_committed);
     assert_eq!(
@@ -829,15 +841,19 @@ fn compact_identity_checks_do_not_release_sqlite_process_locks() {
         return;
     }
     let temp = tempfile::tempdir().unwrap();
-    let database = temp.path().join("locked.sqlite");
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (id, database) = fixture(&manager, temp.path());
     let connection = Connection::open(&database).unwrap();
     connection
-        .execute_batch("CREATE TABLE data(value); INSERT INTO data VALUES(1)")
+        .execute_batch("PRAGMA journal_mode=DELETE")
         .unwrap();
     let pinned = same_file::Handle::from_path(&database).unwrap();
     connection.execute_batch("BEGIN EXCLUSIVE").unwrap();
     assert!(database_matches(&pinned, &database).unwrap());
     assert!(!has_wal_header(&pinned).unwrap());
+    let report = manager.compact(&selected(&id, false)).unwrap();
+    assert!(!report.results[0].vacuum_committed);
+
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",

@@ -45,6 +45,37 @@ pub(super) fn pin_database(directory: &cap_std::fs::Dir, path: &Path) -> Result<
     Ok(same_file::Handle::from_file(file)?)
 }
 
+pub(super) fn admit_database(
+    directory: &cap_std::fs::Dir,
+    path: &Path,
+) -> Result<std::result::Result<same_file::Handle, CacheCompactOutcome>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::symlink_metadata(path)?;
+        let identity = (metadata.dev(), metadata.ino());
+        if open_file_identities()?
+            .values()
+            .any(|value| *value == identity)
+        {
+            // Even a read-only open/close can release an existing SQLite
+            // connection's process-wide POSIX locks for this inode.
+            return Ok(Err(CacheCompactOutcome::SkippedActive {
+                detail: "cache database is already open in this process".into(),
+            }));
+        }
+    }
+    let database = pin_database(directory, path)?;
+    if !has_wal_header(&database)? {
+        return Ok(Err(CacheCompactOutcome::SkippedUnsafe {
+            detail:
+                "compaction requires an existing WAL database; rollback journals are not maintained"
+                    .into(),
+        }));
+    }
+    Ok(Ok(database))
+}
+
 pub(super) fn has_wal_header(database: &same_file::Handle) -> Result<bool> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = database.as_file();
