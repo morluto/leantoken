@@ -785,6 +785,111 @@ fn cli_json_query_numeric_summary_and_diff_cover_live_files() {
 }
 
 #[test]
+fn cli_history_reads_diffs_and_lists_commits_for_a_symbol() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let repository = root.path();
+    leantoken_test_support::GitFixture::init(repository);
+    std::fs::write(
+        repository.join("lib.rs"),
+        "pub fn history_target() -> u8 { 1 }\n",
+    )
+    .expect("write initial source");
+    let base = leantoken_test_support::GitFixture::commit_all(repository, "add history target");
+
+    std::fs::write(
+        repository.join("lib.rs"),
+        "pub fn history_target() -> u8 { 2 }\n",
+    )
+    .expect("change source");
+    let head = leantoken_test_support::GitFixture::commit_all(repository, "change history target");
+    let database = repository.join("index.sqlite");
+    run(repository, &database, &["index"]);
+
+    let historical = run(
+        repository,
+        &database,
+        &["history", "read-symbol", "lib.rs", "history_target", &base],
+    );
+    assert_eq!(historical["kind"], "read_symbol");
+    assert!(
+        historical["symbol"]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("{ 1 }"))
+    );
+
+    let diff = run(
+        repository,
+        &database,
+        &[
+            "history",
+            "diff-symbol",
+            "lib.rs",
+            "history_target",
+            &base,
+            &head,
+        ],
+    );
+    assert_eq!(diff["kind"], "diff_symbol");
+    assert_eq!(diff["before"]["name"], "history_target");
+    assert_eq!(diff["after"]["name"], "history_target");
+    assert!(diff["before"].get("content").is_none());
+    assert!(diff["after"].get("content").is_none());
+    let patch = diff["diff"].as_str().expect("unified symbol diff");
+    assert!(patch.contains("-pub fn history_target() -> u8 { 1 }"));
+    assert!(patch.contains("+pub fn history_target() -> u8 { 2 }"));
+
+    let targets = r#"[{"path":"lib.rs","symbol":"history_target"}]"#;
+    let batch = run(
+        repository,
+        &database,
+        &["history", "diff-symbols", targets, &base, &head],
+    );
+    assert_eq!(batch["kind"], "diff_symbols");
+    assert_eq!(batch["results"].as_array().map(Vec::len), Some(1));
+    assert_eq!(batch["results"][0]["status"], "modified");
+    assert_eq!(batch["results"][0]["before"]["name"], "history_target");
+    assert_eq!(batch["results"][0]["after"]["name"], "history_target");
+    let batch_patch = batch["results"][0]["diff"]
+        .as_str()
+        .expect("batched symbol diff");
+    assert!(batch_patch.contains("-pub fn history_target() -> u8 { 1 }"));
+    assert!(batch_patch.contains("+pub fn history_target() -> u8 { 2 }"));
+
+    let log = run(
+        repository,
+        &database,
+        &["history", "symbol-log", "lib.rs", "history_target"],
+    );
+    assert_eq!(log["kind"], "symbol_log");
+    assert_eq!(log["commits"].as_array().map(Vec::len), Some(2));
+    assert!(log["commits"].to_string().contains("change history target"));
+
+    let invalid_json = run_error(
+        repository,
+        &database,
+        &["history", "diff-symbols", "[", &base, &head],
+    );
+    assert_eq!(invalid_json["category"], "invalid_input");
+    assert!(
+        invalid_json["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("targets must be a JSON array"))
+    );
+
+    let invalid_shape = run_error(
+        repository,
+        &database,
+        &["history", "diff-symbols", "[{}]", &base, &head],
+    );
+    assert_eq!(invalid_shape["category"], "invalid_input");
+    assert!(
+        invalid_shape["error"]
+            .as_str()
+            .is_some_and(|message| message.contains("targets must be a JSON array"))
+    );
+}
+
+#[test]
 fn cli_json_errors_expose_stable_safe_metadata() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn indexed() {}\n").expect("source");
