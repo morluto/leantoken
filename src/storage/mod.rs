@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::time::Instant;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fmt, fs,

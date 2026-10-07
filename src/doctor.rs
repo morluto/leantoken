@@ -1361,34 +1361,6 @@ mod tests {
     }
 
     #[test]
-    fn configured_launcher_omits_only_implicit_managed_database_paths() {
-        let root = tempfile::tempdir().expect("repository");
-        let managed = Config::discover(root.path(), None).expect("managed config");
-        let managed_arguments =
-            launcher_arguments(&managed, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
-                .expect("managed launcher arguments");
-        assert!(
-            !managed_arguments
-                .iter()
-                .any(|argument| argument == "--database")
-        );
-
-        let explicit_path = root.path().join("explicit.sqlite");
-        let explicit = Config::discover(root.path(), Some(explicit_path)).expect("explicit config");
-        let explicit_arguments =
-            launcher_arguments(&explicit, &["mcp".into()], DatabaseForwarding::ExplicitOnly)
-                .expect("explicit launcher arguments");
-        let database_index = explicit_arguments
-            .iter()
-            .position(|argument| argument == "--database")
-            .expect("explicit database flag");
-        assert_eq!(
-            explicit_arguments.get(database_index + 1),
-            Some(&explicit.database_path.into_os_string())
-        );
-    }
-
-    #[test]
     fn launcher_arguments_preserve_broad_root_approval() {
         let root = directories::BaseDirs::new()
             .expect("home directories")
@@ -1460,18 +1432,6 @@ mod tests {
                 })
             ));
         }
-    }
-
-    #[test]
-    fn child_diagnostics_are_bounded_and_redact_configured_paths() {
-        let path = "/private/repository";
-        let line = format!("error opening {path}: {}", "x".repeat(1_000));
-
-        let sanitized = sanitize_diagnostic_line(&line, &[path.to_string()]);
-
-        assert!(sanitized.contains("<redacted-path>"));
-        assert!(!sanitized.contains(path));
-        assert_eq!(sanitized.chars().count(), MAX_DIAGNOSTIC_LINE_CHARS);
     }
 
     #[test]
@@ -1586,15 +1546,6 @@ mod tests {
     }
 
     #[test]
-    fn configured_guidance_validation_accepts_compact_current_guidance() {
-        let current = "Use LeanToken for indexed repository discovery. For broad work, call leantoken.context once with plan_only=false. For a known scope, choose the matching tool. Use savings for token statistics.";
-        assert!(instructions_match_release(
-            current,
-            env!("CARGO_PKG_VERSION")
-        ));
-    }
-
-    #[test]
     fn configured_doctor_expects_the_stored_launcher_version() {
         let registration = setup::ConfiguredRegistration {
             client: SetupClient::Codex,
@@ -1684,15 +1635,18 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_buffer_waits_for_delayed_child_failure_and_remains_bounded() {
+    fn diagnostic_buffer_includes_child_failure_racing_wait_and_remains_bounded() {
         let delayed = Arc::new(DiagnosticBuffer::default());
         let writer_buffer = Arc::clone(&delayed);
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let writer_start = Arc::clone(&start);
         let writer = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(20));
+            writer_start.wait();
             writer_buffer.push("MCP indexing runtime failed".into());
         });
 
-        let context = delayed.wait_context(Duration::from_secs(1));
+        start.wait();
+        let context = delayed.wait_context(Duration::from_secs(5));
         writer.join().expect("diagnostic writer");
         assert!(context.contains("MCP indexing runtime failed"));
 

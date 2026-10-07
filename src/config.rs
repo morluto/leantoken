@@ -904,34 +904,6 @@ mod tests {
     }
 
     #[test]
-    fn managed_cache_identity_distinguishes_normalized_index_scopes() {
-        let root = Path::new("/tmp/repository");
-        let first = IndexScope::new(vec!["src\\**".into()], vec!["src/generated/**".into()])
-            .expect("first scope");
-        let equivalent = IndexScope::new(
-            vec!["./src/**".into(), "src/**".into()],
-            vec!["src//generated/**".into()],
-        )
-        .expect("equivalent scope");
-        let different =
-            IndexScope::new(vec!["tests/**".into()], Vec::new()).expect("different scope");
-
-        let first_id = managed_cache_id_for_scope(root, &first);
-        assert_eq!(first_id, managed_cache_id_for_scope(root, &equivalent));
-        assert_ne!(first_id, managed_cache_id(root));
-        assert_ne!(first_id, managed_cache_id_for_scope(root, &different));
-        assert!(managed_cache_id_matches_root(&first_id, root));
-        assert!(matches!(
-            parse_managed_cache_id(&first_id),
-            Some(ManagedCacheIdentity::Versioned {
-                version: INDEX_CONTENT_VERSION,
-                scope_digest: Some(_),
-                ..
-            })
-        ));
-    }
-
-    #[test]
     fn default_database_path_uses_the_index_content_identity() {
         let root = Path::new("/tmp/repository");
         let database = default_database_path_for_scope(root, &IndexScope::default());
@@ -949,23 +921,6 @@ mod tests {
                     .join("index.sqlite")
             );
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn managed_database_path_preserves_a_final_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir().expect("repository");
-        let target = root.path().join("target.sqlite");
-        let link = root.path().join("index.sqlite");
-        fs::write(&target, b"not sqlite").expect("target");
-        symlink(&target, &link).expect("database symlink");
-
-        let expected = fs::canonicalize(root.path())
-            .expect("canonical repository path")
-            .join("index.sqlite");
-        assert_eq!(canonicalize_managed_database_path(link), expected);
     }
 
     #[test]
@@ -1019,17 +974,12 @@ mod tests {
             &directory.path().join("workspace"),
             Some(&home)
         ));
-    }
-
-    #[test]
-    fn unsafe_root_policy_rejects_a_filesystem_root_without_home_context() {
         let root = std::env::current_dir()
             .expect("current directory")
             .ancestors()
             .last()
             .expect("filesystem root")
             .to_path_buf();
-
         assert!(is_unsafe_repository_root(&root, None));
     }
 

@@ -31,7 +31,7 @@ async fn file_operations_page_without_duplicates() {
                     operation: operation.clone(),
                     path: None,
                     query: matches!(operation, FileOperation::Find).then(|| "rs".into()),
-                    pattern: matches!(operation, FileOperation::Glob).then(|| "*.rs".into()),
+                    pattern: matches!(operation, FileOperation::Glob).then(|| "**/*.rs".into()),
                     max_results: Some(2),
                     cursor,
                     depth: Some(1),
@@ -197,6 +197,35 @@ async fn files_glob_selective_pattern_returns_only_matching_paths() {
         .map(|entry| entry.path)
         .collect::<Vec<_>>();
     assert_eq!(paths, vec!["target_one.rs", "target_two.rs"]);
+
+    let recursive = services
+        .files(FilesRequest {
+            operation: FileOperation::Glob,
+            path: None,
+            query: None,
+            pattern: Some("**".into()),
+            max_results: Some(10),
+            cursor: None,
+            depth: None,
+        })
+        .await
+        .expect("recursive glob fallback");
+    assert_eq!(
+        recursive
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<std::collections::HashSet<_>>(),
+        [
+            "alpha.rs",
+            "bravo.rs",
+            "other.txt",
+            "target_one.rs",
+            "target_two.rs"
+        ]
+        .into_iter()
+        .collect()
+    );
 }
 
 #[tokio::test]

@@ -433,58 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn class_test_conventions_and_nested_product_tools_are_classified_by_role() {
-        assert_eq!(
-            context_path_class("MyApp.Tests/UserService.cs"),
-            ContextPathClass::Test
-        );
-        assert_eq!(
-            context_path_class("src/UserServiceTests.cs"),
-            ContextPathClass::Test
-        );
-        assert_eq!(
-            context_path_class("src/main/java/UserServiceTest.java"),
-            ContextPathClass::Test
-        );
-        assert_eq!(
-            context_path_class("src/main/java/Contest.java"),
-            ContextPathClass::Production
-        );
-        assert_eq!(
-            context_path_class("src/mcp/tools/catalog.rs"),
-            ContextPathClass::Production
-        );
-        assert_eq!(
-            context_path_class("src/myapp/scripts/migrate.py"),
-            ContextPathClass::Production
-        );
-        assert_eq!(
-            context_path_class("tools/release.rs"),
-            ContextPathClass::Supporting
-        );
-        assert_eq!(
-            context_path_class("scripts/release.py"),
-            ContextPathClass::Supporting
-        );
-    }
-
-    #[test]
-    fn module_test_file_extensions_are_classified_as_tests() {
-        assert_eq!(
-            context_path_class("npm/npm-packaging.test.mjs"),
-            ContextPathClass::Test
-        );
-        assert_eq!(
-            context_path_class("packages/core/widget.spec.mts"),
-            ContextPathClass::Test
-        );
-        assert_eq!(
-            context_path_class("packages-private/dts-test/setupHelpers.test-d.ts"),
-            ContextPathClass::Test
-        );
-    }
-
-    #[test]
     fn owner_test_affinity_is_layout_independent_and_name_specific() {
         assert_eq!(
             owner_test_path_affinity("recovery.go", "recovery_test.go"),

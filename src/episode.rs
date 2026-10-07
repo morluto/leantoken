@@ -1616,23 +1616,38 @@ mod tests {
     }
 
     #[test]
-    fn normalized_json_and_markdown_are_deterministic() {
-        let first =
-            audit_episode_bytes(EpisodeAdapter::ModelAbTrajectoryV1, TRAJECTORY).expect("first");
-        let second =
-            audit_episode_bytes(EpisodeAdapter::ModelAbTrajectoryV1, TRAJECTORY).expect("second");
-        assert_eq!(
-            serde_json::to_vec_pretty(&first).expect("first json"),
-            serde_json::to_vec_pretty(&second).expect("second json")
-        );
-        assert_eq!(first.to_markdown(), second.to_markdown());
-        assert!(
-            first
+    fn trajectory_golden_preserves_episode_counts_and_source_bindings() {
+        let report =
+            audit_episode_bytes(EpisodeAdapter::ModelAbTrajectoryV1, TRAJECTORY).expect("audit");
+
+        assert_eq!(report.adapter.name, "model_ab_trajectory");
+        assert_eq!(report.adapter.version, 1);
+        assert_eq!(report.summary.episodes, 36);
+        assert_eq!(report.summary.successful_episodes.value(), Some(13));
+        assert_eq!(report.summary.tool_calls.value(), Some(398));
+        assert_eq!(report.summary.generation_changes.value(), Some(16));
+        assert_eq!(report.summary.retry_events.value(), Some(32));
+        assert_eq!(report.summary.failure_events.value(), Some(51));
+        assert_eq!(finding(&report, "repeated_exact_evidence").occurrences, 5);
+        assert_eq!(finding(&report, "overlapping_reread").occurrences, 109);
+
+        let binding = |kind: &str| {
+            report
                 .source
                 .artifact_bindings
-                .windows(2)
-                .all(|pair| pair[0] <= pair[1])
+                .iter()
+                .find(|binding| binding.kind == kind)
+                .unwrap_or_else(|| panic!("missing {kind} binding"))
+        };
+        assert_eq!(
+            binding("classifier_source").digest,
+            "37133e6e7e4fe8830291c8b35c3f03877a56834771bd019efa88648f5530fdb6"
         );
+        assert_eq!(
+            binding("dataset").digest,
+            "8037e63f2fbddb906a6957895449d73eff31dace973a0bf48e93a7a3606ee4b7"
+        );
+        assert_eq!(report.source.artifact_bindings.len(), 6);
     }
 
     #[test]

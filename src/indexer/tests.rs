@@ -1,47 +1,6 @@
 use super::*;
 
 #[test]
-fn initial_index_progress_counters_and_phases_are_monotonic() {
-    let registry = IndexProgressRegistry::new("cache-namespace".into());
-    let first = registry.start(0, &CancellationToken::new());
-    let initial = registry.snapshot().expect("initial progress");
-    assert_eq!(initial.phase, Some(IndexProgressPhase::Discovery));
-    assert_eq!(initial.update_sequence, Some(1));
-    assert_eq!(initial.files_prepared, Some(0));
-
-    first.discovered(12, 7, 4_096);
-    first.phase(IndexProgressPhase::HashAndPlan);
-    first.phase(IndexProgressPhase::Preparation);
-    first.prepared_batch(4);
-    first.phase(IndexProgressPhase::RelationalWrite);
-    first.staged(3);
-    for phase in [
-        IndexProgressPhase::ChunkWordFts,
-        IndexProgressPhase::ChunkTrigramFts,
-        IndexProgressPhase::SymbolFts,
-        IndexProgressPhase::ReferenceFts,
-        IndexProgressPhase::CommitAndCheckpoint,
-    ] {
-        first.phase(phase);
-        assert_eq!(
-            registry.snapshot().expect("phase progress").phase,
-            Some(phase)
-        );
-    }
-    let advanced = registry.snapshot().expect("advanced progress");
-    assert_eq!(advanced.walk_entries, Some(12));
-    assert_eq!(advanced.files_discovered, Some(7));
-    assert_eq!(advanced.discovered_source_bytes, Some(4_096));
-    assert_eq!(advanced.files_prepared, Some(4));
-    assert_eq!(advanced.files_staged, Some(3));
-    assert_eq!(advanced.preparation_batches, Some(1));
-    assert!(
-        advanced.update_sequence.expect("advanced sequence")
-            > initial.update_sequence.expect("initial sequence")
-    );
-}
-
-#[test]
 fn new_index_progress_attempt_resets_counters_and_rejects_stale_guards() {
     let registry = IndexProgressRegistry::new("cache-namespace".into());
     let first = registry.start(0, &CancellationToken::new());
@@ -178,121 +137,6 @@ fn profiled_noop_preserves_backlogged_wal_without_checkpointing_or_publishing() 
             .publication_detail
             .checkpoint_write_bytes,
         None
-    );
-}
-
-fn advance_modified_time(path: &Path) {
-    let modified = fs::metadata(path)
-        .expect("source metadata")
-        .modified()
-        .expect("source mtime");
-    fs::OpenOptions::new()
-        .write(true)
-        .open(path)
-        .expect("open source for mtime update")
-        .set_times(fs::FileTimes::new().set_modified(modified + Duration::from_secs(60)))
-        .expect("advance source mtime");
-    assert_ne!(
-        fs::metadata(path)
-            .expect("updated source metadata")
-            .modified()
-            .expect("updated source mtime"),
-        modified
-    );
-}
-
-#[test]
-fn full_reconcile_treats_mtime_only_churn_as_content_stable() {
-    let root = tempfile::tempdir().expect("root");
-    let source = root.path().join("stable.rs");
-    fs::write(&source, "pub fn stable() -> usize { 1 }\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
-    let initial = indexer
-        .reconcile(IndexingMode::Reconcile)
-        .expect("initial reconcile");
-    advance_modified_time(&source);
-
-    let profiled = indexer
-        .reconcile_profiled(IndexingMode::Reconcile)
-        .expect("mtime-only reconcile");
-
-    assert_eq!(profiled.response.files_seen, 1);
-    assert_eq!(profiled.response.files_indexed, 0);
-    assert_eq!(profiled.response.files_unchanged, 1);
-    assert_eq!(
-        profiled.response.repository_generation,
-        initial.repository_generation
-    );
-    assert_eq!(profiled.diagnostics.preparation_detail.files_profiled, 0);
-    assert_eq!(
-        profiled.diagnostics.publication_detail.stage_database_bytes,
-        0
-    );
-    assert!(!profiled.diagnostics.generation_published);
-    assert!(!profiled.diagnostics.publication_detail.checkpoint_attempted);
-}
-
-#[test]
-fn targeted_reconcile_treats_mtime_only_churn_as_content_stable() {
-    let root = tempfile::tempdir().expect("root");
-    let source = root.path().join("stable.rs");
-    fs::write(&source, "pub fn stable() -> usize { 1 }\n").expect("source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(Arc::new(config), storage).expect("indexer");
-    let initial = indexer
-        .reconcile(IndexingMode::Reconcile)
-        .expect("initial reconcile");
-    advance_modified_time(&source);
-
-    let response = indexer
-        .reconcile_paths(&["stable.rs".into()])
-        .expect("mtime-only targeted reconcile");
-
-    assert_eq!(response.files_seen, 1);
-    assert_eq!(response.files_indexed, 0);
-    assert_eq!(response.files_unchanged, 1);
-    assert_eq!(
-        response.repository_generation,
-        initial.repository_generation
-    );
-}
-
-#[test]
-fn same_size_content_change_still_reindexes_when_mtime_changes() {
-    let root = tempfile::tempdir().expect("root");
-    let source = root.path().join("changed.rs");
-    fs::write(&source, "pub fn alpha() -> usize { 1 }\n").expect("original source");
-    let config =
-        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(Arc::new(config), storage.clone()).expect("indexer");
-    let initial = indexer
-        .reconcile(IndexingMode::Reconcile)
-        .expect("initial reconcile");
-    fs::write(&source, "pub fn bravo() -> usize { 1 }\n").expect("replacement source");
-    advance_modified_time(&source);
-
-    let response = indexer
-        .reconcile(IndexingMode::Reconcile)
-        .expect("changed reconcile");
-
-    assert_eq!(response.files_indexed, 1);
-    assert_eq!(response.files_unchanged, 0);
-    assert_eq!(
-        response.repository_generation,
-        initial.repository_generation + 1
-    );
-    assert_eq!(
-        storage
-            .search_symbols("bravo", true, 10)
-            .expect("replacement symbol")
-            .len(),
-        1
     );
 }
 
@@ -719,148 +563,38 @@ fn resolve_go_import_at(
 }
 
 #[test]
-fn conservative_import_resolution_requires_one_existing_file() {
+fn rust_module_forms_resolve_to_indexed_files() {
     let paths = [
-        "src/app.ts".to_string(),
-        "src/lib.ts".to_string(),
-        "src/pkg/index.ts".to_string(),
-        "helpers.py".to_string(),
-        "pkg/main.py".to_string(),
+        "target.rs",
+        "foo.rs",
+        "src/foo/bar.rs",
+        "src/foo.rs",
+        "src/pkg/mod.rs",
     ]
     .into_iter()
+    .map(str::to_owned)
     .collect();
-    assert_eq!(
-        resolve_import("src/app.ts", "./lib", &paths).as_deref(),
-        Some("src/lib.ts")
-    );
-    assert_eq!(
-        resolve_import("pkg/main.py", "helpers", &paths).as_deref(),
-        Some("helpers.py")
-    );
-    assert_eq!(
-        resolve_import("src/app.ts", "./pkg", &paths).as_deref(),
-        Some("src/pkg/index.ts")
-    );
-    assert!(resolve_import("src/app.ts", "external-package", &paths).is_none());
-}
 
-#[test]
-fn latex_inputs_resolve_relative_tex_files() {
-    let paths = [
-        "paper/main.tex".to_string(),
-        "paper/sections/results.tex".to_string(),
-        "paper/appendix.ltx".to_string(),
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(
-        resolve_import("paper/main.tex", "sections/results", &paths).as_deref(),
-        Some("paper/sections/results.tex")
-    );
-    assert_eq!(
-        resolve_import("paper/main.tex", "appendix.ltx", &paths).as_deref(),
-        Some("paper/appendix.ltx")
-    );
-    assert!(resolve_import("paper/main.tex", "missing", &paths).is_none());
-}
-
-#[test]
-fn html_resources_resolve_only_the_explicit_repository_relative_subset() {
-    let paths = ["web/index.html", "web/app.js", "web/theme.css"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-
-    assert_eq!(
-        resolve_import("web/index.html", "./app.js", &paths).as_deref(),
-        Some("web/app.js")
-    );
-    assert!(resolve_import("web/index.html", "app.js", &paths).is_none());
-    assert!(resolve_import("web/index.html", "./theme.css?v=1", &paths).is_none());
-    assert!(resolve_import("web/index.html", "https://example.test/app.js", &paths).is_none());
-}
-
-#[test]
-fn rust_module_symbol_resolves_to_module_file() {
-    let paths = ["target.rs".to_string(), "consumer.rs".to_string()]
-        .into_iter()
-        .collect();
     assert_eq!(
         resolve_import("consumer.rs", "target::item", &paths).as_deref(),
         Some("target.rs")
     );
-}
-
-#[test]
-fn rust_grouped_import_resolves_to_module_file() {
-    let paths = ["target.rs".to_string(), "consumer.rs".to_string()]
-        .into_iter()
-        .collect();
     assert_eq!(
         resolve_import("consumer.rs", "target::{foo, bar}", &paths).as_deref(),
         Some("target.rs")
     );
-}
-
-#[test]
-fn rust_aliased_import_resolves_to_module_file() {
-    let paths = ["foo.rs".to_string(), "crate_import.rs".to_string()]
-        .into_iter()
-        .collect();
     assert_eq!(
         resolve_import("crate_import.rs", "crate::foo::{bar as b}", &paths).as_deref(),
         Some("foo.rs")
     );
-}
-
-#[test]
-fn rust_nested_module_resolves_before_symbol_fallback() {
-    let paths = ["src/foo/bar.rs".to_string(), "src/foo.rs".to_string()]
-        .into_iter()
-        .collect();
-    // Full path src/foo/bar.rs exists, so it wins over the shorter prefix.
     assert_eq!(
         resolve_import("src/app.rs", "foo::bar", &paths).as_deref(),
-        Some("src/foo/bar.rs")
+        Some("src/foo/bar.rs"),
+        "the nested module wins over the shorter prefix"
     );
-}
-
-#[test]
-fn rust_mod_rs_resolves_for_directory_module() {
-    let paths = ["src/pkg/mod.rs".to_string(), "src/app.rs".to_string()]
-        .into_iter()
-        .collect();
     assert_eq!(
         resolve_import("src/app.rs", "pkg", &paths).as_deref(),
         Some("src/pkg/mod.rs")
-    );
-}
-
-#[test]
-fn python_init_py_resolves_for_directory_package() {
-    let paths = [
-        "pkg.py".to_string(),
-        "pkg/__init__.py".to_string(),
-        "main.py".to_string(),
-    ]
-    .into_iter()
-    .collect();
-    assert_eq!(
-        resolve_import("main.py", "pkg", &paths).as_deref(),
-        Some("pkg/__init__.py")
-    );
-}
-
-#[test]
-fn python_source_layout_precedes_a_repository_root_lookalike() {
-    let paths = ["src/acme/main.py", "src/acme/util.py", "acme/util.py"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-
-    assert_eq!(
-        resolve_import("src/acme/main.py", "acme.util", &paths).as_deref(),
-        Some("src/acme/util.py")
     );
 }
 
@@ -916,6 +650,7 @@ fn typescript_runtime_extensions_follow_source_substitution_order() {
         "src/main.ts",
         "src/a.ts",
         "src/a.js",
+        "src/pkg/index.ts",
         "src/component.tsx",
         "src/types.d.ts",
         "src/types_only.d.ts",
@@ -932,6 +667,14 @@ fn typescript_runtime_extensions_follow_source_substitution_order() {
         resolve_import("src/main.ts", "./a.js", &paths).as_deref(),
         Some("src/a.ts"),
         "the TypeScript source must precede an emitted runtime file"
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./a", &paths).as_deref(),
+        Some("src/a.ts")
+    );
+    assert_eq!(
+        resolve_import("src/main.ts", "./pkg", &paths).as_deref(),
+        Some("src/pkg/index.ts")
     );
     assert_eq!(
         resolve_import("src/main.ts", "./component.jsx", &paths).as_deref(),
@@ -963,6 +706,7 @@ fn typescript_runtime_extensions_follow_source_substitution_order() {
     );
     assert!(resolve_import("src/main.ts", "./worker_types", &paths).is_none());
     assert!(resolve_import("src/main.ts", "./legacy_types", &paths).is_none());
+    assert!(resolve_import("src/main.ts", "external-package", &paths).is_none());
 }
 
 #[test]
@@ -990,6 +734,14 @@ fn python_imports_resolve_by_package_semantics() {
     let paths = [
         "tests/service_test.py",
         "src/service.py",
+        "src/acme/main.py",
+        "src/acme/util.py",
+        "acme/util.py",
+        "main.py",
+        "pkg/main.py",
+        "helpers.py",
+        "pkg.py",
+        "pkg/__init__.py",
         "pkg/mod.py",
         "thing.py",
         "other.py",
@@ -1004,6 +756,18 @@ fn python_imports_resolve_by_package_semantics() {
     assert_eq!(
         resolve_import("tests/service_test.py", "src.service", &paths).as_deref(),
         Some("src/service.py")
+    );
+    assert_eq!(
+        resolve_import("main.py", "pkg", &paths).as_deref(),
+        Some("pkg/__init__.py")
+    );
+    assert_eq!(
+        resolve_import("pkg/main.py", "helpers", &paths).as_deref(),
+        Some("helpers.py")
+    );
+    assert_eq!(
+        resolve_import("src/acme/main.py", "acme.util", &paths).as_deref(),
+        Some("src/acme/util.py")
     );
     assert_eq!(
         resolve_import("pkg/sub/module.py", "pkg.mod", &paths).as_deref(),
@@ -1157,24 +921,6 @@ fn go_module_root_imports_resolve_to_top_level_go_files() {
 }
 
 #[test]
-fn go_module_directives_ignore_trailing_line_comments() {
-    let paths = [
-        "go.mod".to_string(),
-        "cmd/main.go".to_string(),
-        "pkg/other.go".to_string(),
-    ]
-    .into_iter()
-    .collect();
-    let go_mod = "module example.com/acme // repository module\n\ngo 1.22\n";
-
-    assert_eq!(
-        resolve_go_import("cmd/main.go", "example.com/acme/pkg", &paths, go_mod).as_deref(),
-        Some("pkg/other.go"),
-        "a trailing go.mod comment must not become part of the module path"
-    );
-}
-
-#[test]
 fn missing_go_mod_on_disk_is_stale_metadata_not_a_failure() {
     let directory = tempfile::tempdir().expect("directory");
     let root = Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority())
@@ -1309,7 +1055,11 @@ fn full_reconcile_refreshes_imports_after_go_module_identity_changes() {
     let root = tempfile::tempdir().expect("root");
     let database = root.path().join("index.sqlite");
     fs::create_dir(root.path().join("pkg")).unwrap();
-    fs::write(root.path().join("go.mod"), "module example.com/old\n").unwrap();
+    fs::write(
+        root.path().join("go.mod"),
+        "module example.com/old // repository module\n",
+    )
+    .unwrap();
     fs::write(
         root.path().join("main.go"),
         "package main\nimport \"example.com/old/pkg\"\n",

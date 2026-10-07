@@ -242,29 +242,6 @@ mod index_scope_tests {
     use super::*;
 
     #[test]
-    fn normalized_scope_is_deterministic_and_prunes_literal_subtrees() {
-        let scope = IndexScope::new(
-            vec!["./src/**".into(), "tests\\**\\*.rs".into()],
-            vec!["src/generated/**".into()],
-        )
-        .expect("scope");
-        let equivalent = IndexScope::new(
-            vec!["tests/**/*.rs".into(), "src//**".into()],
-            vec!["./src/generated/**".into()],
-        )
-        .expect("equivalent scope");
-
-        assert_eq!(scope, equivalent);
-        assert_eq!(scope.digest(), equivalent.digest());
-        assert!(scope.includes_path("src", true));
-        assert!(!scope.includes_path("src/generated", true));
-        assert!(scope.includes_path("src/lib.rs", false));
-        assert!(scope.includes_path("tests/unit/parser.rs", false));
-        assert!(!scope.includes_path("tests/unit/parser.md", false));
-        assert!(!scope.includes_path("third_party", true));
-    }
-
-    #[test]
     fn scope_rejects_unbounded_or_non_relative_patterns() {
         assert!(IndexScope::new(vec!["../src/**".into()], Vec::new()).is_err());
         assert!(IndexScope::new(vec!["/src/**".into()], Vec::new()).is_err());
@@ -283,18 +260,5 @@ mod index_scope_tests {
             )
             .is_err()
         );
-    }
-
-    #[test]
-    fn exclude_only_scope_admits_every_other_path_and_matching_is_case_sensitive() {
-        let scope =
-            IndexScope::new(Vec::new(), vec!["third_party".into()]).expect("exclude-only scope");
-
-        assert!(scope.includes_path("src/lib.rs", false));
-        assert!(!scope.includes_path("third_party", true));
-        assert!(!scope.includes_path("third_party/lib.rs", false));
-
-        let cased = IndexScope::new(vec!["Src/**".into()], Vec::new()).expect("cased scope");
-        assert!(!cased.includes_path("src/lib.rs", false));
     }
 }

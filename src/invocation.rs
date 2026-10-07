@@ -190,13 +190,13 @@ mod tests {
     }
 
     #[test]
-    fn genuine_npx_requires_metadata_and_package_layout() {
+    fn genuine_npx_child_uses_manager_metadata_and_package_layout() {
         let executable = absolute_path("home/.npm/_npx/123/node_modules/leantoken/bin/leantoken");
         let execpath = absolute_path("usr/lib/npm/npx-cli.js");
         let node = absolute_path("usr/bin/node");
         let identity = InvocationIdentity::detect(
             &executable,
-            &["npx".into(), "leantoken".into()],
+            &["leantoken".into(), "setup".into()],
             metadata(Some("exec"), Some("npx"), Some(&execpath), Some(&node)),
         );
         assert_eq!(identity.kind, InvocationKind::Ephemeral);
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn npm_metadata_does_not_reclassify_a_local_package_binary() {
+    fn npm_and_lifecycle_metadata_cannot_reclassify_persistent_binaries() {
         let executable = absolute_path("workspace/node_modules/leantoken/bin/leantoken");
         let execpath = absolute_path("usr/lib/node_modules/npm/bin/npm-cli.js");
         let node = absolute_path("usr/bin/node");
@@ -228,16 +228,24 @@ mod tests {
         );
         assert_eq!(identity.kind, InvocationKind::Persistent);
         assert_eq!(identity.package_manager, None);
-    }
 
-    #[test]
-    fn isolated_lifecycle_contamination_stays_persistent() {
-        let identity = InvocationIdentity::detect(
+        let project_executable = absolute_path("work/leantoken-project/target/debug/leantoken");
+        let npx_execpath = absolute_path("usr/lib/npm/npx-cli.js");
+        let project = InvocationIdentity::detect(
+            &project_executable,
+            &["leantoken".into(), "setup".into()],
+            metadata(Some("exec"), Some("npx"), Some(&npx_execpath), Some(&node)),
+        );
+        assert_eq!(project.kind, InvocationKind::Persistent);
+        assert_eq!(project.package_manager, None);
+
+        let lifecycle_only = InvocationIdentity::detect(
             Path::new("/usr/local/bin/leantoken"),
             &["leantoken".into(), "setup".into()],
             metadata(None, Some("npx"), None, None),
         );
-        assert_eq!(identity.kind, InvocationKind::Persistent);
+        assert_eq!(lifecycle_only.kind, InvocationKind::Persistent);
+        assert_eq!(lifecycle_only.package_manager, None);
     }
 
     #[test]
@@ -296,37 +304,7 @@ mod tests {
             },
         );
         assert_eq!(yarn.package_manager, Some(PackageManager::Yarn));
-    }
 
-    #[test]
-    fn genuine_npx_child_argv_does_not_need_to_repeat_the_wrapper() {
-        let executable = absolute_path("home/.npm/_npx/123/node_modules/leantoken/bin/leantoken");
-        let execpath = absolute_path("usr/lib/node_modules/npm/bin/npx-cli.js");
-        let node = absolute_path("usr/bin/node");
-        let identity = InvocationIdentity::detect(
-            &executable,
-            &["leantoken".into(), "setup".into()],
-            metadata(Some("exec"), None, Some(&execpath), Some(&node)),
-        );
-        assert_eq!(identity.package_manager, Some(PackageManager::Npx));
-    }
-
-    #[test]
-    fn ambient_npm_metadata_cannot_reclassify_a_persistent_project_binary() {
-        let executable = absolute_path("work/leantoken-project/target/debug/leantoken");
-        let execpath = absolute_path("usr/lib/npm/npx-cli.js");
-        let node = absolute_path("usr/bin/node");
-        let identity = InvocationIdentity::detect(
-            &executable,
-            &["leantoken".into(), "setup".into()],
-            metadata(Some("exec"), Some("npx"), Some(&execpath), Some(&node)),
-        );
-        assert_eq!(identity.kind, InvocationKind::Persistent);
-        assert_eq!(identity.package_manager, None);
-    }
-
-    #[test]
-    fn local_yarn_pnp_dependency_stays_persistent() {
         let executable = absolute_path(
             "workspace/.yarn/unplugged/leantoken-npm-1/node_modules/leantoken/bin/leantoken",
         );

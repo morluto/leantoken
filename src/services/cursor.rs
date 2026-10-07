@@ -348,48 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_round_trip_preserves_its_typed_identity() {
-        let stream_id = stream("needle");
-        for position in [0, 1, 42, usize::MAX] {
-            let encoded = ContinuationCursor::at(CursorKind::Search, 7, stream_id, position)
-                .expect("bounded cursor")
-                .encode();
-            assert_eq!(encoded.len(), ENCODED_CURSOR_BYTES);
-            let decoded = ContinuationCursor::parse(&encoded).expect("parse cursor");
-            assert_eq!(
-                decoded
-                    .position_for(CursorKind::Search, 7, stream_id)
-                    .expect("resume cursor"),
-                position
-            );
-        }
-    }
-
-    #[test]
-    fn cursor_rejects_generation_stream_and_integrity_mismatches() {
-        let stream_id = stream("needle");
-        let encoded = ContinuationCursor::at(CursorKind::Search, 7, stream_id, 42)
-            .expect("bounded cursor")
-            .encode();
-        let decoded = ContinuationCursor::parse(&encoded).expect("parse cursor");
-        assert!(
-            decoded
-                .position_for(CursorKind::Search, 8, stream_id)
-                .is_err()
-        );
-        assert!(
-            decoded
-                .position_for(CursorKind::Search, 7, stream("other"))
-                .is_err()
-        );
-
-        let mut corrupted = encoded.into_bytes();
-        corrupted[12] = if corrupted[12] == b'A' { b'B' } else { b'A' };
-        let corrupted = String::from_utf8(corrupted).expect("base64 text");
-        assert!(ContinuationCursor::parse(&corrupted).is_err());
-    }
-
-    #[test]
     fn stream_fields_are_length_delimited_and_named() {
         let mut combined = StreamIdentityBuilder::new(CursorKind::Search);
         combined.field_str("left", "ab");

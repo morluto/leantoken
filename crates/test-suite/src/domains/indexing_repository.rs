@@ -9,6 +9,26 @@ use leantoken::repository::{
 use leantoken::{DiscoveryLimits, Error, IndexLimitKind};
 use tokio_util::sync::CancellationToken;
 
+fn advance_modified_time(path: &std::path::Path) {
+    let modified = fs::metadata(path)
+        .expect("source metadata")
+        .modified()
+        .expect("source mtime");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open source for mtime update")
+        .set_times(fs::FileTimes::new().set_modified(modified + std::time::Duration::from_secs(60)))
+        .expect("advance source mtime");
+    assert_ne!(
+        fs::metadata(path)
+            .expect("updated source metadata")
+            .modified()
+            .expect("updated source mtime"),
+        modified
+    );
+}
+
 #[test]
 fn discover_files_honors_gitignore() {
     let root = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
@@ -75,6 +95,33 @@ fn explicit_index_scope_prunes_excluded_trees_before_limits_and_preserves_select
 
     assert_eq!(paths, ["src/lib.rs", "tests/smoke.rs"]);
     assert!(discovery.stats.walk_entries <= 8);
+
+    let exclude_only =
+        IndexScope::new(Vec::new(), vec!["third_party".into()]).expect("exclude-only scope");
+    let discovery = discover_files_with_limits_and_policy(
+        root.repo(),
+        DiscoveryLimits::default(),
+        DiscoveryPolicy::default().with_index_scope(exclude_only),
+    )
+    .expect("exclude-only discovery");
+    let paths = discovery
+        .files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"src/lib.rs"));
+    assert!(paths.contains(&"src/generated/deep/schema.rs"));
+    assert!(paths.contains(&"tests/smoke.rs"));
+    assert!(!paths.iter().any(|path| path.starts_with("third_party/")));
+
+    let wrong_case = IndexScope::new(vec!["SRC/**".into()], Vec::new()).expect("case scope");
+    let discovery = discover_files_with_limits_and_policy(
+        root.repo(),
+        DiscoveryLimits::default(),
+        DiscoveryPolicy::default().with_index_scope(wrong_case),
+    )
+    .expect("case-sensitive scope");
+    assert!(discovery.files.is_empty());
 }
 
 #[test]
@@ -267,21 +314,6 @@ fn discovery_prunes_git_metadata_before_walking_its_contents() {
             "the walker should yield only the root and visible source file"
         );
     }
-}
-
-#[test]
-fn discover_files_skips_oversized_files() {
-    let root = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
-    fs::write(root.repo().join("small.rs"), "fn a() {}\n").expect("small");
-    fs::write(root.repo().join("big.rs"), "x".repeat(2048)).expect("big");
-
-    let files = discover_files(root.repo(), 1024).expect("walk");
-    let paths = files
-        .iter()
-        .map(|file| file.relative_path.as_str())
-        .collect::<Vec<_>>();
-    assert!(paths.contains(&"small.rs"));
-    assert!(!paths.contains(&"big.rs"));
 }
 
 #[test]
@@ -511,22 +543,8 @@ fn bounded_discovery_checks_cancellation_before_limits() {
     assert!(matches!(error, Error::Cancelled));
 }
 
-#[cfg(unix)]
 #[test]
-fn resolve_existing_rejects_symlink_escape() {
-    use std::os::unix::fs::symlink;
-
-    let root = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
-    let outside = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
-    fs::write(outside.repo().join("secret"), "secret").expect("secret");
-    symlink(outside.repo().join("secret"), root.repo().join("link")).expect("symlink");
-
-    let canonical_root = root.repo().canonicalize().expect("canonical root");
-    assert!(resolve_existing(&canonical_root, "link").is_err());
-}
-
-#[test]
-fn resolve_existing_accepts_contained_file() {
+fn resolve_existing_accepts_contained_file_and_rejects_symlink_escape() {
     let root = Sandbox::new(module_path!(), "repository_case").expect("sandbox");
     fs::write(root.repo().join("file.rs"), "fn a() {}").expect("file");
 
@@ -534,6 +552,16 @@ fn resolve_existing_accepts_contained_file() {
     let resolved = resolve_existing(&canonical_root, "file.rs").expect("resolve");
     assert!(resolved.starts_with(&canonical_root));
     assert!(resolved.exists());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let outside = Sandbox::new(module_path!(), "repository_case").expect("outside sandbox");
+        fs::write(outside.repo().join("secret"), "secret").expect("secret");
+        symlink(outside.repo().join("secret"), root.repo().join("link")).expect("symlink");
+        assert!(resolve_existing(&canonical_root, "link").is_err());
+    }
 }
 
 fn require_git() {
@@ -1377,7 +1405,8 @@ fn indexer_rejects_zero_discovery_limits_at_construction() {
 #[test]
 fn indexer_reopen_leaves_unchanged_files_and_generation() {
     let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn stable() {}\n").expect("write a");
+    let source = root.repo().join("a.rs");
+    std::fs::write(&source, "fn stable() {}\n").expect("write a");
 
     let config = Arc::new(
         Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
@@ -1397,40 +1426,17 @@ fn indexer_reopen_leaves_unchanged_files_and_generation() {
     assert_eq!(second.files_indexed, 0);
     assert_eq!(second.repository_generation, 1);
 
+    advance_modified_time(&source);
+    let third = indexer
+        .reconcile(leantoken::IndexingMode::Reconcile)
+        .expect("mtime-only reconcile");
+    assert_eq!(third.files_seen, 1);
+    assert_eq!(third.files_unchanged, 1);
+    assert_eq!(third.files_indexed, 0);
+    assert_eq!(third.repository_generation, 1);
+
     let meta = storage.meta().expect("meta");
     assert_eq!(meta.repository_generation, 1);
-}
-
-#[test]
-fn indexer_change_updates_generation_and_search_index() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn old() {}\n").expect("write a");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-
-    let first = indexer
-        .reconcile(leantoken::IndexingMode::Reconcile)
-        .expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-
-    std::fs::write(root.repo().join("a.rs"), "fn new_name() {}\n").expect("change a");
-
-    let second = indexer
-        .reconcile(leantoken::IndexingMode::Reconcile)
-        .expect("second reconcile");
-    assert_eq!(second.files_indexed, 1);
-    assert_eq!(second.files_unchanged, 0);
-    assert_eq!(second.repository_generation, 2);
-
-    let old_hits = storage.search_word("old", 10).expect("search old");
-    assert_eq!(old_hits.len(), 0);
-
-    let new_hits = storage.search_word("new_name", 10).expect("search new");
-    assert_eq!(new_hits.len(), 1);
 }
 
 #[test]
@@ -1481,6 +1487,16 @@ fn targeted_reconcile_updates_only_reported_existing_file() {
             .generation,
         stable_generation
     );
+
+    let current_generation = response.repository_generation;
+    advance_modified_time(&root.repo().join("b.rs"));
+    let mtime_only = indexer
+        .reconcile_paths(&["b.rs".into()])
+        .expect("mtime-only targeted reconcile");
+    assert_eq!(mtime_only.files_seen, 1);
+    assert_eq!(mtime_only.files_indexed, 0);
+    assert_eq!(mtime_only.files_unchanged, 1);
+    assert_eq!(mtime_only.repository_generation, current_generation);
 }
 
 #[test]
@@ -2169,40 +2185,6 @@ fn new_file_delta_resolves_existing_importers() {
             .as_deref(),
         Some("target.rs")
     );
-}
-
-#[test]
-fn indexer_delete_removes_file_and_advances_generation() {
-    let root = Sandbox::new(module_path!(), "indexer_case").expect("sandbox");
-    std::fs::write(root.repo().join("a.rs"), "fn gone() {}\n").expect("write a");
-    std::fs::write(root.repo().join("b.rs"), "fn kept() {}\n").expect("write b");
-
-    let config = Arc::new(
-        Config::discover(root.repo(), Some(root.repo().join("index.sqlite"))).expect("config"),
-    );
-    let storage = Storage::open(&config.database_path).expect("storage");
-    let indexer = Indexer::new(config, storage.clone()).expect("indexer");
-
-    let first = indexer
-        .reconcile(leantoken::IndexingMode::Reconcile)
-        .expect("first reconcile");
-    assert_eq!(first.repository_generation, 1);
-    assert_eq!(first.files_indexed, 2);
-
-    std::fs::remove_file(root.repo().join("a.rs")).expect("remove a");
-
-    let second = indexer
-        .reconcile(leantoken::IndexingMode::Reconcile)
-        .expect("second reconcile");
-    assert_eq!(second.files_removed, 1);
-    assert_eq!(second.files_unchanged, 1);
-    assert_eq!(second.repository_generation, 2);
-
-    assert!(storage.find_file("a.rs").expect("find").is_none());
-    let gone_hits = storage.search_word("gone", 10).expect("search gone");
-    assert_eq!(gone_hits.len(), 0);
-    let kept_hits = storage.search_word("kept", 10).expect("search kept");
-    assert_eq!(kept_hits.len(), 1);
 }
 
 #[test]

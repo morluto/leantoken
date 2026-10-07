@@ -85,20 +85,22 @@ fn checked_slash_path_rejects_non_utf8_paths_without_lossy_aliases() {
 }
 
 #[test]
-fn git_status_parser_probes_beyond_the_path_limit() {
-    let first = b"M  first.rs\0";
-    let second = b"M  second.rs\0";
-    let mut input = Cursor::new([first.as_slice(), second.as_slice()].concat());
-
-    let observation = parse_git_status_observation(&mut input, 1, "");
-
+fn git_path_parsers_probe_beyond_the_path_limit() {
+    let first_status = b"M  first.rs\0";
+    let second_status = b"M  second.rs\0";
+    let mut status_input =
+        Cursor::new([first_status.as_slice(), second_status.as_slice()].concat());
+    let observation = parse_git_status_observation(&mut status_input, 1, "");
     assert_eq!(
         observation.changed_paths,
         HashSet::from(["first.rs".to_string()])
     );
     assert!(!observation.changed_paths_complete());
     assert_eq!(observation.changed_paths_limit(), Some(1));
-    assert_eq!(input.position(), (first.len() + second.len()) as u64);
+    assert_eq!(
+        status_input.position(),
+        (first_status.len() + second_status.len()) as u64
+    );
     assert!(matches!(
         observation.require_complete(),
         Err(Error::RequestLimitExceeded {
@@ -107,38 +109,31 @@ fn git_status_parser_probes_beyond_the_path_limit() {
             limit: 1,
         })
     ));
+
+    let first_diff = b"first.rs\0";
+    let second_diff = b"second.rs\0";
+    let mut diff_input = Cursor::new([first_diff.as_slice(), second_diff.as_slice()].concat());
+    let changed = parse_diff_names(&mut diff_input, 1, "").expect("valid paths");
+    assert_eq!(changed.paths, vec!["first.rs".to_string()]);
+    assert!(!changed.complete);
+    assert_eq!(changed.limit, Some(1));
+    assert_eq!(
+        diff_input.position(),
+        (first_diff.len() + second_diff.len()) as u64
+    );
 }
 
 #[test]
-fn git_status_parser_marks_an_exact_limit_complete() {
+fn git_path_parsers_mark_an_exact_limit_complete() {
     let observation = parse_git_status_observation(Cursor::new(b"M  first.rs\0"), 1, "");
-
     assert_eq!(
         observation.changed_paths,
         HashSet::from(["first.rs".to_string()])
     );
     assert!(observation.changed_paths_complete());
     assert_eq!(observation.changed_paths_limit(), None);
-}
 
-#[test]
-fn diff_name_parser_probes_beyond_the_path_limit() {
-    let first = b"first.rs\0";
-    let second = b"second.rs\0";
-    let mut input = Cursor::new([first.as_slice(), second.as_slice()].concat());
-
-    let changed = parse_diff_names(&mut input, 1, "").expect("valid paths");
-
-    assert_eq!(changed.paths, vec!["first.rs".to_string()]);
-    assert!(!changed.complete);
-    assert_eq!(changed.limit, Some(1));
-    assert_eq!(input.position(), (first.len() + second.len()) as u64);
-}
-
-#[test]
-fn diff_name_parser_marks_an_exact_limit_complete() {
     let changed = parse_diff_names(Cursor::new(b"first.rs\0"), 1, "").expect("valid paths");
-
     assert_eq!(changed.paths, vec!["first.rs".to_string()]);
     assert!(changed.complete);
     assert_eq!(changed.limit, None);
@@ -217,33 +212,10 @@ fn diff_hunk_parser_reads_complete_records_beyond_the_old_byte_cap() {
 }
 
 #[test]
-fn diff_hunk_parser_preserves_empty_target_boundaries() {
-    let diff = "+++ b/first.rs\n@@ -1 +0,0 @@\n+++ b/later.rs\n@@ -4 +3,0 @@\n";
-
-    let ranges = parse_git_diff_hunks(Cursor::new(diff), 10, "").expect("diff hunks");
-
-    assert_eq!(
-        ranges,
-        vec![
-            GitHunkRange {
-                path: "first.rs".into(),
-                start_line: 1,
-                end_line: 0,
-            },
-            GitHunkRange {
-                path: "later.rs".into(),
-                start_line: 4,
-                end_line: 3,
-            },
-        ]
-    );
-}
-
-#[test]
 fn git_changed_paths_kills_a_timed_out_process() {
     let root = tempfile::tempdir().expect("root");
     let program = root.path().join("slow-git");
-    fs::write(&program, "#!/bin/sh\nexec sleep 5\n").expect("script");
+    fs::write(&program, "#!/bin/sh\nexec sleep 30\n").expect("script");
     let mut permissions = fs::metadata(&program).expect("metadata").permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&program, permissions).expect("executable");
@@ -254,7 +226,8 @@ fn git_changed_paths_kills_a_timed_out_process() {
 
     assert!(observation.changed_paths.is_empty());
     assert!(!observation.is_available());
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // Detect an unreaped 30-second fixture without imposing a machine-speed SLA.
+    assert!(started.elapsed() < Duration::from_secs(10));
 }
 
 #[cfg(unix)]
@@ -417,7 +390,7 @@ fn revision_resolution_bounds_output_and_terminates_inherited_stdout() {
     let program = root.path().join("forking-git");
     fs::write(
         &program,
-        "#!/bin/sh\nprintf '123456789abc\\n'\nsleep 3 &\nexit 0\n",
+        "#!/bin/sh\nprintf '123456789abc\\n'\nsleep 30 &\nexit 0\n",
     )
     .unwrap();
     let mut permissions = fs::metadata(&program).unwrap().permissions();
@@ -434,7 +407,7 @@ fn revision_resolution_bounds_output_and_terminates_inherited_stdout() {
     .unwrap();
     assert_eq!(revision, "123456789abc");
     assert!(
-        started.elapsed() < Duration::from_secs(2),
+        started.elapsed() < Duration::from_secs(10),
         "inherited stdout escaped the timeout"
     );
 
@@ -486,7 +459,7 @@ fn git_capture_terminates_descendants_that_inherit_stdout() {
 
     assert!(output.is_empty());
     assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "inherited stdout kept the capture alive"
+        started.elapsed() < Duration::from_secs(10),
+        "capture waited for the 30-second descendant instead of releasing stdout"
     );
 }

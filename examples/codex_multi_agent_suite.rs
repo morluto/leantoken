@@ -1153,22 +1153,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_numeric_summary_reports_sample_variation() {
+    fn measurement_summaries_preserve_statistical_semantics() {
         let summary = summarize_u64(&[10, 20, 30, 40]);
         assert_eq!(summary.sum, 100);
         assert_eq!(summary.median, 25.0);
         assert!((summary.sample_standard_deviation - 12.909_944).abs() < 0.000_01);
-    }
 
-    #[test]
-    fn test_wilson_interval_contains_observed_rate() {
         let interval = wilson_interval(19, 20);
         assert!(interval.lower < 0.95);
         assert!(interval.upper > 0.95);
-    }
 
-    #[test]
-    fn test_savings_sign_is_positive_when_candidate_is_smaller() {
         assert_eq!(savings(100, 80), 0.2);
         assert_eq!(savings(100, 120), -0.2);
     }

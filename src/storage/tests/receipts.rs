@@ -199,7 +199,7 @@ fn receipt_successors_leave_retryable_immutable_sources() {
 }
 
 #[test]
-fn sqlite_decisions_match_the_previous_in_memory_oracle() {
+fn sqlite_receipt_decisions_cover_exact_overlap_and_semantic_duplicates() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let first = ReceiptEvidence::new(
@@ -213,7 +213,6 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
         .evaluate_receipt(None, 7, std::slice::from_ref(&first), true)
         .expect("create receipt")
         .receipt_id;
-    let mut oracle = vec![first.clone()];
     let candidates = vec![
         first,
         ReceiptEvidence::new("src/lib.rs", 20, 30, "second", Some("unrelated words here")),
@@ -222,7 +221,7 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
             1,
             2,
             "third",
-            Some("alpha beta gamma delta epsilon zeta"),
+            Some("epsilon delta gamma beta alpha"),
         ),
         ReceiptEvidence::new(
             "src/new.rs",
@@ -232,28 +231,31 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
             Some("completely separate implementation detail"),
         ),
     ];
-    for suppress_overlap in [true, false] {
-        let expected = candidates
-            .iter()
-            .map(|candidate| oracle_decide(&oracle, candidate, suppress_overlap))
-            .collect::<Vec<_>>();
+    for (suppress_overlap, expected) in [
+        (
+            true,
+            vec![
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::SuppressOverlap,
+                ReceiptDecision::ReturnNearDuplicate,
+                ReceiptDecision::Return,
+            ],
+        ),
+        (
+            false,
+            vec![
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::Return,
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::SuppressExact,
+            ],
+        ),
+    ] {
         let actual = storage
             .evaluate_receipt(Some(&receipt_id), 7, &candidates, suppress_overlap)
             .expect("persistent evaluation");
         assert_eq!(actual.decisions, expected);
         receipt_id = actual.receipt_id;
-        oracle.extend(
-            candidates
-                .iter()
-                .zip(expected)
-                .filter(|(_, decision)| {
-                    matches!(
-                        decision,
-                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
-                    )
-                })
-                .map(|(candidate, _)| candidate.clone()),
-        );
     }
 }
 
@@ -448,15 +450,14 @@ fn receipt_schema_contains_metadata_only() {
         let mut statement = connection
             .prepare(&format!("PRAGMA table_info({table})"))
             .expect("table info");
-        columns.extend(
-            statement
-                .query_map([], |row| row.get::<_, String>(1))
-                .expect("column rows")
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .expect("columns"),
-        );
+        let table_columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("column rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("columns");
+        assert!(!table_columns.is_empty(), "missing receipt table {table}");
+        columns.extend(table_columns);
     }
-    assert!(!columns.is_empty());
     for forbidden in ["task", "query", "source", "content", "prompt", "message"] {
         assert!(
             columns.iter().all(|column| column != forbidden),
@@ -1223,39 +1224,4 @@ fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
             )
             .expect("conflicting migration table");
     }
-}
-
-fn oracle_decide(
-    previous: &[ReceiptEvidence],
-    candidate: &ReceiptEvidence,
-    suppress_overlap: bool,
-) -> ReceiptDecision {
-    if !candidate.content_hash.is_empty()
-        && previous
-            .iter()
-            .any(|seen| seen.content_hash == candidate.content_hash)
-    {
-        return ReceiptDecision::SuppressExact;
-    }
-    if suppress_overlap
-        && previous.iter().any(|seen| {
-            !seen.exact_only()
-                && seen.path == candidate.path
-                && seen.start_line <= candidate.end_line
-                && candidate.start_line <= seen.end_line
-        })
-    {
-        return ReceiptDecision::SuppressOverlap;
-    }
-    if candidate.semantic_signature().is_some_and(|signature| {
-        previous.iter().any(|seen| {
-            !seen.exact_only()
-                && seen
-                    .semantic_signature()
-                    .is_some_and(|prior| (signature ^ prior).count_ones() <= 8)
-        })
-    }) {
-        return ReceiptDecision::ReturnNearDuplicate;
-    }
-    ReceiptDecision::Return
 }

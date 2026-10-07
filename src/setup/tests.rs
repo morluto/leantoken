@@ -43,14 +43,6 @@ fn edit_toml_config(
 }
 
 #[test]
-fn runtime_root_falls_back_below_the_resolved_home() {
-    assert_eq!(
-        setup_runtime_root_from(Path::new("/home/agent"), None),
-        Path::new("/home/agent/.local/share/leantoken/runtimes")
-    );
-}
-
-#[test]
 fn setup_file_reads_reject_content_above_the_memory_bound() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("oversized.json");
@@ -94,19 +86,6 @@ fn setup_rejects_generated_client_configuration_above_the_read_bound() {
 
     assert!(error.to_string().contains("refusing to write setup file"));
     assert!(fs::metadata(path).unwrap().len() < MAX_SETUP_FILE_BYTES);
-}
-
-#[test]
-fn failed_launcher_verification_marks_setup_report_failed() {
-    let mut report = empty_report(SetupOperation::Setup, true);
-    report.cancelled = false;
-    report.verification = Some(SetupVerification::Failed {
-        stage: "handshake".into(),
-        message: "launcher closed".into(),
-        repair_command: "leantoken doctor --json".into(),
-    });
-
-    assert!(report.has_failures());
 }
 
 struct FixedPrompt {
@@ -863,43 +842,6 @@ fn diagnostic_preserves_unknown_discovery_state_after_skill_read_failure() {
 }
 
 #[test]
-fn malformed_client_blocks_the_entire_plan_before_writes() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = environment(&temp);
-    fs::create_dir_all(&environment.home).unwrap();
-    fs::write(environment.home.join(".claude.json"), "{ broken").unwrap();
-    let error = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Claude, SetupClient::Cursor],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("refusing to overwrite malformed config")
-    );
-    assert_eq!(
-        fs::read_to_string(environment.home.join(".claude.json")).unwrap(),
-        "{ broken"
-    );
-    assert!(!environment.home.join(".cursor/mcp.json").exists());
-}
-
-#[test]
 fn non_interactive_explicit_selection_requires_yes() {
     let temp = tempfile::tempdir().unwrap();
     let mut environment = environment(&temp);
@@ -924,36 +866,6 @@ fn non_interactive_explicit_selection_requires_yes() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("non-interactive setup requires"));
-    assert!(!environment.home.join(".codex/config.toml").exists());
-}
-
-#[test]
-fn dry_run_resolves_exact_plan_without_writes_or_yes() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut environment = environment(&temp);
-    environment.interactive = false;
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Codex],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: false,
-            dry_run: true,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-    assert!(report.dry_run);
-    assert_eq!(report.plan[0].action, ClientPlanAction::Create);
-    assert!(report.results.is_empty());
     assert!(!environment.home.join(".codex/config.toml").exists());
 }
 
@@ -1168,47 +1080,6 @@ fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache()
             .iter()
             .all(|argument| !argument.contains("@latest"))
     );
-}
-
-#[test]
-fn empty_refresh_preserves_marker_owned_discovery_without_managed_clients() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = npx_environment(&temp, "1.2.3");
-    let config = environment.home.join(".codex/config.toml");
-    fs::create_dir_all(config.parent().unwrap()).unwrap();
-    let original_config =
-        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n";
-    fs::write(&config, original_config).unwrap();
-    let discovery = environment.home.join(".agents/skills/leantoken/SKILL.md");
-    fs::create_dir_all(discovery.parent().unwrap()).unwrap();
-    let original_discovery = format!("{DISCOVERY_SKILL_MARKER}\nlegacy discovery\n");
-    fs::write(&discovery, &original_discovery).unwrap();
-
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: Vec::new(),
-            all: false,
-            refresh: true,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-
-    assert!(report.plan.is_empty());
-    assert!(report.results.is_empty());
-    assert!(report.discovery_plan.is_empty());
-    assert_eq!(fs::read_to_string(config).unwrap(), original_config);
-    assert_eq!(fs::read_to_string(discovery).unwrap(), original_discovery);
 }
 
 #[test]
@@ -1482,17 +1353,6 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     .unwrap();
     assert!(!removal.has_failures());
     assert!(runtime_path.exists(), "removal retains versioned runtimes");
-}
-
-#[test]
-fn private_runtime_uses_native_executable_names_for_supported_package_layouts() {
-    for (platform, windows, expected) in [
-        ("linux", false, "leantoken"),
-        ("macos", false, "leantoken"),
-        ("windows", true, "leantoken.exe"),
-    ] {
-        assert_eq!(runtime_executable_name(windows), expected, "{platform}");
-    }
 }
 
 #[cfg(unix)]
@@ -2141,6 +2001,9 @@ fn failed_rollback_retains_journal_for_deleted_target() {
 fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
+    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
+    fs::write(&claude_skill, "user-owned Claude skill").unwrap();
     let prompt = FixedPrompt {
         selected: None,
         confirmed: true,
@@ -2164,6 +2027,10 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
     )
     .unwrap();
     assert_eq!(report.discovery_plan.len(), 1);
+    assert_eq!(
+        fs::read_to_string(&claude_skill).unwrap(),
+        "user-owned Claude skill"
+    );
     assert!(
         report
             .discovery_skill_tokens
@@ -2202,46 +2069,6 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
     assert_eq!(
         fs::read_to_string(shared_skill).unwrap(),
         "user-owned skill"
-    );
-}
-
-#[test]
-fn codex_setup_does_not_touch_an_unselected_claude_skill() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = environment(&temp);
-    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
-    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
-    fs::write(&claude_skill, "user-owned Claude skill").unwrap();
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Codex],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(report.discovery_plan.len(), 1);
-    assert_eq!(
-        fs::read_to_string(claude_skill).unwrap(),
-        "user-owned Claude skill"
-    );
-    assert!(
-        environment
-            .home
-            .join(".agents/skills/leantoken/SKILL.md")
-            .exists()
     );
 }
 

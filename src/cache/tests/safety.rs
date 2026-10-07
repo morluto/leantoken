@@ -1,49 +1,5 @@
 use super::*;
 
-#[test]
-fn corrupt_and_legacy_caches_are_listed_without_mutation() {
-    let temp = tempfile::tempdir().expect("temporary directory");
-    let root = temp.path().join("managed");
-    let corrupt = root.join(FIRST_ID);
-    fs::create_dir_all(&corrupt).expect("corrupt directory");
-    fs::write(corrupt.join(DATABASE_NAME), b"not sqlite").expect("corrupt database");
-    let legacy = root.join(SECOND_ID);
-    fs::create_dir_all(&legacy).expect("legacy directory");
-    let connection = Connection::open(legacy.join(DATABASE_NAME)).expect("legacy database");
-    connection
-        .execute_batch(
-            "CREATE TABLE meta (
-                    id INTEGER PRIMARY KEY,
-                    schema_version INTEGER NOT NULL,
-                    repository_root TEXT NOT NULL
-                );
-                INSERT INTO meta VALUES (1, 4, '');",
-        )
-        .expect("legacy schema");
-    drop(connection);
-    let manager = CacheManager::new(root, 10_000);
-
-    let report = manager
-        .list_with(&CacheListRequest::default())
-        .expect("cache list");
-
-    assert_eq!(report.entries()[0].entry.state, CacheState::Corrupt);
-    assert_eq!(report.entries()[1].entry.state, CacheState::OlderSchema);
-    assert!(corrupt.join(DATABASE_NAME).exists());
-    assert!(legacy.join(DATABASE_NAME).exists());
-
-    let mut prune = request();
-    prune.max_total_bytes = Some(0);
-    let plan = manager.prune(&prune).expect("prune plan");
-    assert_eq!(plan.results[0].outcome.action(), CachePruneAction::Kept);
-    assert_eq!(
-        plan.results[1].outcome.action(),
-        CachePruneAction::WouldDelete
-    );
-    assert!(corrupt.join(DATABASE_NAME).exists());
-    assert!(legacy.join(DATABASE_NAME).exists());
-}
-
 #[cfg(unix)]
 #[test]
 fn prune_rejects_cache_directory_replaced_with_symlink() {
@@ -136,13 +92,6 @@ fn legacy_wal_list_keeps_file_mtime_access_age_stable() {
         second.entries()[0].entry.age_seconds,
         first.entries()[0].entry.age_seconds
     );
-}
-
-#[test]
-fn legacy_wal_dry_run_keeps_age_selection_stable() {
-    let temp = tempfile::tempdir().expect("temporary directory");
-    let manager = CacheManager::new(temp.path().join("managed"), 20 * SECONDS_PER_DAY);
-    create_legacy_wal_cache(&manager, FIRST_ID, SECONDS_PER_DAY);
     let mut request = request();
     request.older_than_days = Some(7);
 

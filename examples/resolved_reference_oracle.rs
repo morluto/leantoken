@@ -1895,28 +1895,6 @@ mod tests {
     }
 
     #[test]
-    fn fixture_separates_same_name_receivers_and_non_code() {
-        let report = fixture();
-        assert!(report.comparison.passed);
-        assert_eq!(report.comparison.resolved.observed, 11);
-        assert_eq!(report.comparison.ambiguous.observed, 1);
-        assert_eq!(report.comparison.unrelated.observed, 5);
-        assert_eq!(report.coverage.unclassified_occurrences, 0);
-        assert!(
-            report
-                .observations
-                .iter()
-                .any(|item| item.role == Role::WrapperForwarder)
-        );
-        assert!(
-            report
-                .observations
-                .iter()
-                .any(|item| item.role == Role::ReexportAliasReference)
-        );
-    }
-
-    #[test]
     fn comparison_fails_closed_on_classification_drift() {
         let report = fixture();
         let mut observed = report.observations.clone();

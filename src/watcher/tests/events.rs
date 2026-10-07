@@ -67,6 +67,40 @@ fn generated_events_are_filtered_before_the_raw_queue() {
 }
 
 #[test]
+fn access_events_are_ignored_and_changed_paths_are_normalized_and_coalesced() {
+    let root = tempfile::tempdir().unwrap();
+    let nested = root.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let file = nested.join("a.txt");
+    std::fs::write(&file, "contents").unwrap();
+
+    let mut pending = PendingReconciliation::empty();
+    process_raw_event(
+        Ok(Event::new(EventKind::Access(notify::event::AccessKind::Read)).add_path(file.clone())),
+        root.path(),
+        &DiscoveryPolicy::default(),
+        &mut pending,
+    );
+    assert!(
+        pending.is_empty(),
+        "access-only events must not be delivered"
+    );
+
+    for _ in 0..2 {
+        process_raw_event(
+            Ok(Event::new(EventKind::Any).add_path(file.clone())),
+            root.path(),
+            &DiscoveryPolicy::default(),
+            &mut pending,
+        );
+    }
+    let PendingReconciliation::Paths(paths) = pending else {
+        panic!("repeated filesystem events must retain changed paths");
+    };
+    assert_eq!(paths, BTreeSet::from(["nested/a.txt".to_string()]));
+}
+
+#[test]
 fn removed_generated_directory_is_filtered_after_it_disappears() {
     let root = tempfile::tempdir().unwrap();
     let generated = root.path().join("node_modules");

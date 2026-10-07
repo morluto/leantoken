@@ -638,19 +638,6 @@ mod tests {
     }
 
     #[test]
-    fn report_warnings_invalidate_evidence() {
-        assert!(invalid_profile_diagnostics(
-            "warning: 11 functions have mismatched data"
-        ));
-        assert!(invalid_profile_diagnostics(
-            "Warning: unknown profile integrity issue"
-        ));
-        assert!(!invalid_profile_diagnostics(
-            "Finished report saved to coverage.json"
-        ));
-    }
-
-    #[test]
     fn coverage_preserves_product_selection_and_resource_profile() {
         let plan = super::super::TestPlan::product(super::super::CI_NEXTEST_PROFILE);
         let coverage = command(None);

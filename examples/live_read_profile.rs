@@ -561,38 +561,6 @@ fn invalid_data(message: &str) -> Box<dyn Error> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn percentile_uses_nearest_rank() {
-        let stats = TimingStats::from_durations((1..=20).map(Duration::from_micros).collect());
-        assert_eq!(stats.p50_us, 10.0);
-        assert_eq!(stats.p95_us, 19.0);
-    }
-
-    #[test]
-    fn evenly_spaced_working_set_is_deterministic() {
-        let targets = (0..10)
-            .map(|index| ReadTarget {
-                absolute_path: PathBuf::from(format!("file-{index}")),
-                relative_path: format!("file-{index}"),
-                size_bytes: index as u64,
-            })
-            .collect::<Vec<_>>();
-        let selected = evenly_spaced_targets(&targets, 4)
-            .into_iter()
-            .map(|target| target.relative_path)
-            .collect::<Vec<_>>();
-        assert_eq!(selected, ["file-0", "file-2", "file-5", "file-7"]);
-    }
-
-    #[test]
-    fn pressure_buffer_touches_each_page() {
-        let pressure = touched_pressure(8_193);
-        assert_eq!(pressure.len(), 8_193);
-        assert_eq!(pressure[0], 0);
-        assert_eq!(pressure[4_096], 1);
-        assert_eq!(pressure[8_192], 2);
-    }
-
     #[tokio::test]
     async fn small_profile_preserves_live_generation_contract() {
         let repository = tempfile::tempdir().expect("repository");

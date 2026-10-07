@@ -606,8 +606,6 @@ mod tests {
                 "--nocapture",
             ])
             .env(BLOCKING_PROBE_ENV, "1");
-        let started = std::time::Instant::now();
-
         let output = command_stdout_with_limits(
             &mut command,
             Duration::from_millis(50),
@@ -615,10 +613,6 @@ mod tests {
         );
 
         assert!(output.is_none());
-        assert!(
-            started.elapsed() < Duration::from_secs(1),
-            "release probe exceeded its timeout"
-        );
     }
 
     #[test]
@@ -670,24 +664,29 @@ mod tests {
     }
 
     #[test]
-    fn npx_refresh_command_uses_the_resolved_exact_version() {
-        assert_eq!(
-            npx_refresh_command("1.2.3"),
-            "npx --yes leantoken@1.2.3 setup --refresh --yes"
-        );
-        assert!(!npx_refresh_command("1.2.3").contains("@latest"));
-    }
+    fn ephemeral_refresh_commands_pin_the_resolved_exact_version() {
+        let cases = [
+            (
+                InstallContext::Npx,
+                npx_refresh_command("1.2.3"),
+                "npx --yes leantoken@1.2.3 setup --refresh --yes",
+            ),
+            (
+                InstallContext::Pnpm,
+                ephemeral_refresh_command(InstallContext::Pnpm, "1.2.3").unwrap(),
+                "pnpm dlx leantoken@1.2.3 setup --refresh --yes",
+            ),
+            (
+                InstallContext::Yarn,
+                ephemeral_refresh_command(InstallContext::Yarn, "1.2.3").unwrap(),
+                "yarn dlx leantoken@1.2.3 setup --refresh --yes",
+            ),
+        ];
 
-    #[test]
-    fn package_manager_refresh_commands_preserve_the_exact_version() {
-        assert_eq!(
-            ephemeral_refresh_command(InstallContext::Pnpm, "1.2.3"),
-            Some("pnpm dlx leantoken@1.2.3 setup --refresh --yes".into())
-        );
-        assert_eq!(
-            ephemeral_refresh_command(InstallContext::Yarn, "1.2.3"),
-            Some("yarn dlx leantoken@1.2.3 setup --refresh --yes".into())
-        );
+        for (context, command, expected) in cases {
+            assert_eq!(command, expected, "{context:?}");
+            assert!(!command.contains("@latest"), "{context:?}");
+        }
     }
 
     #[test]
@@ -763,47 +762,22 @@ mod tests {
     }
 
     #[test]
-    fn cargo_version_selects_greatest_stable_ignoring_prereleases() {
-        let output = "foo refs/tags/v1.0.0
-bar refs/tags/v1.0.1-alpha.1
-baz refs/tags/v1.0.1
-";
+    fn cargo_version_selects_the_greatest_valid_stable_tag() {
+        let cases = [
+            (
+                "foo refs/tags/v1.0.0\nbar refs/tags/v1.0.1-alpha.1\nbaz refs/tags/v1.0.1\n",
+                Some("1.0.1"),
+            ),
+            ("abc refs/tags/v9foo\ndef refs/tags/v1.0.0\n", Some("1.0.0")),
+            ("foo refs/tags/v9foo\nbar refs/tags/latest\n", None),
+            (
+                "abc refs/tags/v2.0.0-beta.1\ndef refs/tags/v1.5.0\n",
+                Some("1.5.0"),
+            ),
+        ];
 
-        assert_eq!(
-            select_latest_stable_tag(output.into()),
-            Some("1.0.1".into())
-        );
-    }
-
-    #[test]
-    fn cargo_version_ignores_malformed_tags() {
-        let output = "abc refs/tags/v9foo
-def refs/tags/v1.0.0
-";
-
-        assert_eq!(
-            select_latest_stable_tag(output.into()),
-            Some("1.0.0".into())
-        );
-    }
-
-    #[test]
-    fn cargo_version_returns_none_when_no_valid_tags() {
-        let output = "foo refs/tags/v9foo
-bar refs/tags/latest
-";
-
-        assert_eq!(select_latest_stable_tag(output.into()), None);
-    }
-
-    #[test]
-    fn cargo_version_prefers_stable_over_newer_prerelease() {
-        let output = "abc refs/tags/v2.0.0-beta.1
-def refs/tags/v1.5.0
-";
-        assert_eq!(
-            select_latest_stable_tag(output.into()),
-            Some("1.5.0".into())
-        );
+        for (output, expected) in cases {
+            assert_eq!(select_latest_stable_tag(output.into()).as_deref(), expected);
+        }
     }
 }

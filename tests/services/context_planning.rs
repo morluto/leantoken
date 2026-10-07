@@ -47,6 +47,54 @@ async fn typed_workflow_evidence_is_bounded_and_reaches_candidate_provenance() {
 }
 
 #[tokio::test]
+async fn natural_language_task_phrases_route_to_relevant_context() {
+    let (root, services) = indexed_fixture().await;
+    std::fs::write(
+        root.path().join("src/cache.rs"),
+        "pub const CACHE_MODE: &str = \"safe\";\n\
+         pub fn retry_cache_refresh() -> bool {\n\
+             // Retry after cache refresh fails; keep the committed snapshot unchanged.\n\
+             true\n\
+         }\n",
+    )
+    .expect("cache implementation");
+    std::fs::create_dir_all(root.path().join("tests")).expect("tests directory");
+    std::fs::write(
+        root.path().join("tests/cache_retry.rs"),
+        "#[test]\nfn retry_cache_refresh_keeps_snapshot() {}\n",
+    )
+    .expect("cache regression test");
+    services
+        .index(leantoken::IndexingMode::Reconcile)
+        .await
+        .expect("index task-routing fixture");
+
+    let mut natural_request = context_limit_request(1_000);
+    natural_request.task = "Fix cache. Preserve the committed snapshot unchanged while readers \
+        continue safely. Add regression coverage."
+        .into();
+    let natural = services
+        .context_evaluation(natural_request)
+        .await
+        .expect("evaluate natural-language context");
+    assert!(natural.generated_candidates.iter().any(|candidate| {
+        candidate
+            .match_kinds
+            .iter()
+            .any(|kind| kind.starts_with("facet:behavior:"))
+    }));
+    assert!(
+        natural
+            .response
+            .fragments
+            .iter()
+            .any(|fragment| fragment.path == "src/cache.rs"),
+        "natural-language retry task should return the cache owner: {:?}",
+        natural.response.fragments
+    );
+}
+
+#[tokio::test]
 async fn context_plan_routes_mcp_catalog_questions_to_mcp_sources() {
     let (root, services) = indexed_fixture().await;
     std::fs::create_dir_all(root.path().join("src/mcp")).expect("create MCP source directory");
@@ -705,6 +753,15 @@ async fn context_plan_only_respects_the_serialized_response_budget() {
         .context(request.clone())
         .await
         .expect("unrestricted plan");
+    assert!(
+        !unrestricted
+            .plan
+            .as_ref()
+            .expect("unrestricted query plan")
+            .candidates
+            .is_empty(),
+        "indexed fixture must produce candidates before applying the response bound"
+    );
     let max_response_tokens = unrestricted.meta.total_response_tokens.saturating_sub(1);
 
     let bounded = services

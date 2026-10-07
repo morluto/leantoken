@@ -1009,7 +1009,7 @@ fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
 
     for test_name in [
         "services::tests::concurrent_consistency_requests_share_one_waiting_wave",
-        "services::tests::index_search_read_and_hash_delta",
+        "services::tests::adaptive_context_ranges_keep_the_match_and_complete_small_declarations",
     ] {
         check_nextest_group_assignment(root, "cold-index-sqlite", test_name)?;
     }

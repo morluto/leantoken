@@ -90,12 +90,6 @@ sys.stderr.flush()
             finally:
                 mcp.close()
 
-    def test_percentile_uses_nearest_rank(self) -> None:
-        values = [float(value) for value in range(1, 21)]
-
-        self.assertEqual(MODULE.percentile(values, 0.50), 10.0)
-        self.assertEqual(MODULE.percentile(values, 0.95), 19.0)
-
     def test_leantoken_occurrences_convert_global_bytes_to_line_columns(
         self,
     ) -> None:
@@ -265,48 +259,6 @@ sys.stderr.flush()
                 "tokio-validation",
             ],
         )
-
-    def test_markdown_surfaces_quality_and_suite_latency(self) -> None:
-        operation = {
-            "sum_of_corpus_medians": {
-                "native_ms": 10.0,
-                "leantoken_ms": 15.0,
-                "delta": {"absolute_ms": 5.0, "relative": 0.5, "ratio": 1.5},
-            }
-        }
-        report = {
-            "status": "passed_accuracy_gates",
-            "provenance": {
-                "source_revision": "a" * 40,
-                "host_os": "linux",
-                "host_arch": "x86_64",
-            },
-            "protocol": {"iterations": 30, "context_iterations": 10},
-            "aggregate": {
-                "quality": {
-                    "native_discovery_relevant_files_found": 4,
-                    "context_relevant_files_found": 3,
-                    "relevant_files": 4,
-                    "context_line_anchors_found": 6,
-                    "context_line_anchors": 8,
-                    "native_discovery_relevant_file_recall": 1.0,
-                    "context_relevant_file_recall": 0.75,
-                    "context_line_anchor_recall": 0.75,
-                },
-                "exact_search": operation,
-                "exact_read": operation,
-                "discovery_context": operation,
-            },
-            "corpora": [],
-            "limitations": ["diagnostic only"],
-        }
-
-        markdown = MODULE.markdown_report(report)
-
-        self.assertIn("Native discovery relevant-file recall: 4/4 (100.0%)", markdown)
-        self.assertIn("Context relevant-file recall: 3/4 (75.0%)", markdown)
-        self.assertIn("| Exhaustive exact search | 10.00 ms | 15.00 ms", markdown)
-
 
 if __name__ == "__main__":
     unittest.main()

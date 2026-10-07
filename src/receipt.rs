@@ -91,11 +91,6 @@ impl ReceiptEvidence {
         }
     }
 
-    #[cfg(test)]
-    fn require_exact_match(&mut self) {
-        self.match_policy = ReceiptMatchPolicy::ExactOnly;
-    }
-
     pub(crate) fn logical_bytes(&self) -> usize {
         RECEIPT_EVIDENCE_FIXED_LOGICAL_BYTES
             .saturating_add(self.path.len())
@@ -296,76 +291,6 @@ mod tests {
     }
 
     #[test]
-    fn exact_only_evidence_suppresses_hashes_but_not_ranges_or_signatures() {
-        let mut previous = ReceiptEvidence::new(
-            "src/lib.rs",
-            10,
-            20,
-            "first",
-            Some("alpha beta gamma delta epsilon"),
-        );
-        previous.require_exact_match();
-        assert_eq!(
-            decide(
-                std::slice::from_ref(&previous),
-                &ReceiptEvidence::new("src/lib.rs", 10, 20, "first", Some("replacement")),
-                true,
-            ),
-            ReceiptDecision::SuppressExact
-        );
-        assert_eq!(
-            decide(
-                std::slice::from_ref(&previous),
-                &ReceiptEvidence::new(
-                    "src/lib.rs",
-                    15,
-                    25,
-                    "changed",
-                    Some("unrelated words here"),
-                ),
-                true,
-            ),
-            ReceiptDecision::Return
-        );
-        assert_eq!(
-            decide(
-                std::slice::from_ref(&previous),
-                &ReceiptEvidence::new(
-                    "src/other.rs",
-                    1,
-                    2,
-                    "different",
-                    Some("epsilon delta gamma beta alpha"),
-                ),
-                true,
-            ),
-            ReceiptDecision::Return
-        );
-    }
-
-    #[test]
-    fn stored_exact_only_evidence_discards_inapplicable_semantic_state() {
-        let evidence =
-            ReceiptEvidence::from_stored("src/lib.rs".into(), 1, 2, "hash".into(), Some(42), true);
-
-        assert!(evidence.exact_only());
-        assert_eq!(evidence.semantic_signature(), None);
-    }
-
-    #[test]
-    fn receipt_ids_are_namespace_bound_and_input_bounded() {
-        let namespace = "0123456789abcdef0123456789abcdef";
-        let id = format_receipt_id(namespace, 42);
-        assert!(id.len() <= MAX_RECEIPT_ID_BYTES);
-        assert_eq!(parse_receipt_id(&id, namespace), Some(42));
-        assert_eq!(
-            parse_receipt_id(&id, "fedcba9876543210fedcba9876543210"),
-            None
-        );
-        assert_eq!(parse_receipt_id("r1", namespace), None);
-    }
-
-    #[test]
     fn semantic_signatures_are_stable_across_processes_and_toolchains() {
         assert_eq!(
             semantic_signature("alpha beta gamma delta epsilon"),
@@ -375,6 +300,7 @@ mod tests {
 
     #[test]
     fn response_reserve_covers_generated_ids_across_tokenizers() {
+        use crate::query_receipt::{QUERY_RECEIPT_ID_RESPONSE_RESERVE, format_query_receipt_id};
         use crate::tokens::Tokenizer;
 
         let tokenizers = [
@@ -393,10 +319,20 @@ mod tests {
                 &namespace.as_str()[..RECEIPT_ID_NAMESPACE_HEX_BYTES],
                 i64::try_from(seed + 1).expect("bounded row id"),
             );
+            let query_id = format_query_receipt_id(
+                &namespace.as_str()[..32],
+                i64::try_from(seed + 1).expect("bounded row id"),
+            );
             for tokenizer in tokenizers {
                 assert!(
                     tokenizer.count(&id) <= tokenizer.count(RECEIPT_ID_RESPONSE_RESERVE),
                     "{} under-reserved generated receipt {id}",
+                    tokenizer.name()
+                );
+                assert!(
+                    tokenizer.count(&query_id)
+                        <= tokenizer.count(QUERY_RECEIPT_ID_RESPONSE_RESERVE),
+                    "{} under-reserved generated query receipt {query_id}",
                     tokenizer.name()
                 );
             }

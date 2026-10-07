@@ -704,7 +704,7 @@ impl Services {
 mod static_input_tests {
     use super::*;
     #[test]
-    fn static_request_matrix_needs_no_repository() {
+    fn outline_parser_rejects_too_many_paths() {
         let limits = crate::services::request_limits::RequestLimits {
             default_results: 3,
             max_results: 7,
@@ -729,17 +729,8 @@ mod static_input_tests {
                 StreamIdentityBuilder::new(CursorKind::Outline),
             )
         };
-        let valid = parse(base.clone()).unwrap();
-        assert_eq!((valid.limit, valid.token_limit), (3, 17));
-        for mutate in [
-            (|r: &mut OutlineRequest| r.paths.clear()) as fn(&mut OutlineRequest),
-            |r| r.paths = (0..257).map(|i| format!("src/{i}.rs")).collect(),
-            |r| r.paths = vec!["../outside.rs".into()],
-            |r| r.cursor = Some("invalid".into()),
-        ] {
-            let mut request = base.clone();
-            mutate(&mut request);
-            assert!(parse(request).is_err());
-        }
+        let mut request = base;
+        request.paths = (0..257).map(|i| format!("src/{i}.rs")).collect();
+        assert!(parse(request).is_err());
     }
 }

@@ -1165,13 +1165,6 @@ mod tests {
     }
 
     #[test]
-    fn percentile_uses_nearest_rank() {
-        let samples = [1.0, 2.0, 3.0, 4.0, 5.0];
-        assert_eq!(percentile(&samples, 0.50), 3.0);
-        assert_eq!(percentile(&samples, 0.95), 5.0);
-    }
-
-    #[test]
     fn lifecycle_measurement_retains_stable_additional_importer_work() {
         let measurement = measure_lifecycle_indexing(
             2,

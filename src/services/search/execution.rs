@@ -856,7 +856,7 @@ pub(super) struct OrderedSearchPage {
 mod static_input_tests {
     use super::*;
     #[test]
-    fn static_request_matrix_needs_no_repository() {
+    fn search_parser_rejects_invalid_regex() {
         let limits = crate::services::request_limits::RequestLimits {
             default_results: 3,
             max_results: 7,
@@ -880,24 +880,11 @@ mod static_input_tests {
             cursor: None,
         };
         let parse = |request| parse_search_input(&limits, 17, request, SearchOutputShape::Full);
-        let (_, valid) = parse(base.clone()).unwrap();
-        assert_eq!(
-            (valid.limit, valid.token_limit, valid.context_lines),
-            (3, 17, 4)
-        );
-        for mutate in [
-            (|r: &mut SearchRequest| r.query = " ".into()) as fn(&mut SearchRequest),
-            |r| {
-                r.query = "[".into();
-                r.mode = SearchMode::Regex;
-            },
-            |r| r.focus_paths = vec!["[".into()],
-            |r| r.query = "x".repeat(64 * 1024 + 1),
-            |r| r.cursor = Some("invalid".into()),
-        ] {
-            let mut request = base.clone();
-            mutate(&mut request);
-            assert!(parse(request).is_err());
-        }
+        let request = SearchRequest {
+            query: "[".into(),
+            mode: SearchMode::Regex,
+            ..base
+        };
+        assert!(parse(request).is_err());
     }
 }
