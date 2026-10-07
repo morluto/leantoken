@@ -518,7 +518,9 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let mut leader = McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     leader.initialize();
     leader.send_initialized();
-    wait_until(Duration::from_secs(5), || {
+    // Fixture setup waits for background leader ownership, using the shared
+    // indexing liveness budget; initialize and terminal failover keep theirs.
+    wait_until(INDEX_READY_TIMEOUT, || {
         coordination
             .try_acquire_leadership()
             .expect("probe leadership")
