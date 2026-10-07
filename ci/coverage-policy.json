@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "rationale": "Linux Rust 1.95 cargo-llvm-cov 0.9.1 product nextest baseline: 1234 passed, 2026-09-08; no profile warnings. Each metric ratchets at floor(observed percent) minus five percentage points; non-exception line floors remain above 30%. No production exclusions. New measured files require budgets; low line coverage requires an explicit gap. Baseline updates require review, never automatic acceptance. Selective-compaction file budgets ratchet from instrumented manual CI run 37570155921 at source 679302efee02941d4e7e702f3d97a008e36a15da (2026-10-07). The shared-volume extension and additional diagnostic/ownership regressions require a fresh full manual run before merge. Existing file budgets are unchanged.",
+  "rationale": "Linux Rust 1.95 cargo-llvm-cov 0.9.1 product nextest baseline: 1234 passed, 2026-09-08; no profile warnings. Each metric ratchets at floor(observed percent) minus five percentage points; non-exception line floors remain above 30%. No production exclusions. New measured files require budgets; low line coverage requires an explicit gap. Baseline updates require review, never automatic acceptance. Selective-compaction file budgets ratchet from instrumented manual CI run 37571752364 at source 37130d7bc25519942eb3d4b7bf32e03fa0e850ea (2026-10-07), including shared-volume headroom, complete diagnostic consistency, and missing-root ownership regressions. Existing file budgets are unchanged.",
   "files": {
     "src/cache/api.rs": {
       "owner": "src/cache",
@@ -16,21 +16,21 @@
     },
     "src/cache/compact.rs": {
       "owner": "src/cache",
-      "minimum_lines": 82,
-      "minimum_functions": 75,
-      "minimum_regions": 85
+      "minimum_lines": 84,
+      "minimum_functions": 95,
+      "minimum_regions": 86
     },
     "src/cache/compact_models.rs": {
       "owner": "src/cache",
-      "minimum_lines": 64,
+      "minimum_lines": 95,
       "minimum_functions": 95,
-      "minimum_regions": 50
+      "minimum_regions": 95
     },
     "src/cache/compact_sqlite.rs": {
       "owner": "src/cache",
-      "minimum_lines": 78,
-      "minimum_functions": 78,
-      "minimum_regions": 76
+      "minimum_lines": 81,
+      "minimum_functions": 79,
+      "minimum_regions": 77
     },
     "src/cache/cursor.rs": {
       "owner": "src/cache",
