@@ -22,8 +22,220 @@ pub(super) fn open(path: &Path, preview: bool) -> Result<Connection> {
     Ok(connection)
 }
 
+pub(super) fn pin_database(directory: &cap_std::fs::Dir, path: &Path) -> Result<same_file::Handle> {
+    #[cfg(unix)]
+    let file = {
+        let _ = path;
+        directory.open(DATABASE_NAME)?.into_std()
+    };
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        let _ = directory;
+        // Deny delete/rename while SQLite opens this exact file. Reparse points
+        // are opened themselves, then rejected by the identity/type checks.
+        const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x00200000;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?
+    };
+    Ok(same_file::Handle::from_file(file)?)
+}
+
+pub(super) fn open_pinned(
+    expected: &same_file::Handle,
+    path: &Path,
+    preview: bool,
+) -> Result<Option<Connection>> {
+    open_pinned_with(expected, path, preview, open)
+}
+
+pub(super) fn open_pinned_with(
+    expected: &same_file::Handle,
+    path: &Path,
+    preview: bool,
+    opener: impl FnOnce(&Path, bool) -> Result<Connection>,
+) -> Result<Option<Connection>> {
+    if !database_matches(expected, path)? {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    let before = if preview {
+        None
+    } else {
+        Some(open_file_identities()?)
+    };
+    #[cfg(unix)]
+    if let Some(before) = &before {
+        let mut allowed = sqlite_file_identities(expected, path)?;
+        let lease = coordination_sidecar_path(path, LEASE_LOCK_SUFFIX);
+        match fs::symlink_metadata(lease) {
+            Ok(metadata) if metadata.is_file() && metadata.len() == 0 => {
+                use std::os::unix::fs::MetadataExt;
+                allowed.insert((metadata.dev(), metadata.ino()));
+            }
+            Ok(_) => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if before
+            .iter()
+            .any(|(number, identity)| *number > 2 && !allowed.contains(identity))
+        {
+            // SQLite can reuse a deferred descriptor. Unknown pre-existing
+            // regular files make a before/after proof ambiguous too.
+            return Ok(None);
+        }
+    }
+    let connection = opener(path, preview)?;
+    #[cfg(unix)]
+    if let Some(before) = before
+        && !sqlite_opened_expected_file(expected, path, &before)?
+    {
+        return Ok(None);
+    }
+    if !database_matches(expected, path)? {
+        return Ok(None);
+    }
+    Ok(Some(connection))
+}
+
+#[cfg(unix)]
+type FileIdentity = (u64, u64);
+
+#[cfg(unix)]
+fn open_file_identities() -> Result<BTreeMap<u32, FileIdentity>> {
+    use std::os::unix::fs::MetadataExt;
+    let root = if Path::new("/proc/self/fd").is_dir() {
+        Path::new("/proc/self/fd")
+    } else {
+        Path::new("/dev/fd")
+    };
+    let mut files = BTreeMap::new();
+    for (count, entry) in fs::read_dir(root)?.enumerate() {
+        if count >= 1024 {
+            return Err(Error::InvalidConfiguration(
+                "too many open descriptors to verify SQLite's database identity".into(),
+            ));
+        }
+        let entry = entry?;
+        let Some(number) = entry
+            .file_name()
+            .to_str()
+            .and_then(|v| v.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let metadata = match fs::metadata(entry.path()) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.is_file() {
+            files.insert(number, (metadata.dev(), metadata.ino()));
+        }
+    }
+    Ok(files)
+}
+
+#[cfg(unix)]
+fn sqlite_opened_expected_file(
+    expected: &same_file::Handle,
+    path: &Path,
+    before: &BTreeMap<u32, FileIdentity>,
+) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = expected.as_file().metadata()?;
+    let main = (metadata.dev(), metadata.ino());
+    let allowed = sqlite_file_identities(expected, path)?;
+    let mut found_main = false;
+    for (descriptor, identity) in open_file_identities()? {
+        if before.get(&descriptor) == Some(&identity) {
+            continue;
+        }
+        if !allowed.contains(&identity) {
+            // Concurrent unrelated regular-file opens also fail closed; no
+            // inference from mutable path names can authorize an unknown FD.
+            return Ok(false);
+        }
+        found_main |= identity == main;
+    }
+    Ok(found_main)
+}
+
+#[cfg(unix)]
+fn sqlite_file_identities(
+    expected: &same_file::Handle,
+    path: &Path,
+) -> Result<BTreeSet<FileIdentity>> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = expected.as_file().metadata()?;
+    let main = (metadata.dev(), metadata.ino());
+    let mut allowed = BTreeSet::from([main]);
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = PathBuf::from(format!("{}{suffix}", path.display()));
+        match fs::symlink_metadata(sidecar) {
+            Ok(metadata) if metadata.is_file() && metadata.nlink() == 1 => {
+                allowed.insert((metadata.dev(), metadata.ino()));
+            }
+            Ok(_) => {
+                return Err(Error::InvalidConfiguration(
+                    "unsafe SQLite sidecar identity".into(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(allowed)
+}
+
+pub(super) fn opened_path_matches(
+    connection: &Connection,
+    directory: &same_file::Handle,
+    path: &Path,
+) -> Result<bool> {
+    if connection
+        .path()
+        .and_then(|p| fs::canonicalize(p).ok())
+        .as_deref()
+        != Some(path)
+    {
+        return Ok(false);
+    }
+    directory_matches(directory, path.parent().expect("database parent"))
+}
+
 pub(super) fn directory_matches(expected: &same_file::Handle, path: &Path) -> Result<bool> {
     Ok(expected == &same_file::Handle::from_path(path)?)
+}
+
+pub(super) fn database_matches(expected: &same_file::Handle, path: &Path) -> Result<bool> {
+    // Check the held file, not just metadata obtained from a mutable pathname.
+    if file_link_count(expected.as_file())? != 1
+        || !fs::symlink_metadata(path)?.file_type().is_file()
+    {
+        return Ok(false);
+    }
+    let current = same_file::Handle::from_path(path)?;
+    Ok(expected == &current && file_link_count(current.as_file())? == 1)
+}
+
+fn file_link_count(file: &fs::File) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(file.metadata()?.nlink())
+    }
+    #[cfg(windows)]
+    {
+        Ok(u64::from(
+            winapi_util::file::information(file)?.number_of_links(),
+        ))
+    }
 }
 
 pub(super) fn linked_artifact(directory: &Path) -> Result<Option<String>> {
@@ -66,17 +278,18 @@ pub(super) fn page_space(connection: &Connection) -> Result<(u64, u64)> {
     result
 }
 
-/// Match SQLite's bundled Unix VFS candidate order without changing globals.
+/// Match the bundled VFS selection before testing writability; never substitute
+/// another Windows volume when its first configured candidate is unusable.
 fn temporary_directory(connection: &Connection) -> Result<PathBuf> {
     let configured: Option<String> = connection
         .query_row("PRAGMA temp_store_directory", [], |row| row.get(0))
         .optional()?;
-    let mut candidates = Vec::new();
-    if let Some(directory) = configured.filter(|v| !v.is_empty()) {
-        candidates.push(PathBuf::from(directory));
-    }
     #[cfg(unix)]
     {
+        let mut candidates = Vec::new();
+        if let Some(directory) = configured.filter(|v| !v.is_empty()) {
+            candidates.push(PathBuf::from(directory));
+        }
         candidates.extend(
             ["SQLITE_TMPDIR", "TMPDIR"]
                 .into_iter()
@@ -84,26 +297,48 @@ fn temporary_directory(connection: &Connection) -> Result<PathBuf> {
                 .map(PathBuf::from),
         );
         candidates.extend(["/var/tmp", "/usr/tmp", "/tmp", "."].map(PathBuf::from));
+        for directory in candidates {
+            if directory.is_dir() && tempfile::NamedTempFile::new_in(&directory).is_ok() {
+                return Ok(fs::canonicalize(directory)?);
+            }
+        }
+        Err(Error::InvalidConfiguration(
+            "cannot determine a writable SQLite temporary directory".into(),
+        ))
     }
     #[cfg(windows)]
     {
-        // GetTempPathW uses TMP before TEMP. Avoid guessing service-account paths
-        // when neither environment variable names the actual SQLite directory.
-        candidates.extend(
-            ["TMP", "TEMP"]
-                .into_iter()
-                .filter_map(std::env::var_os)
-                .map(PathBuf::from),
-        );
+        let directory = windows_temporary_candidate(configured, |name| std::env::var_os(name))?;
+        writable_temporary_directory(&directory)
     }
-    for directory in candidates {
-        if directory.is_dir() && tempfile::NamedTempFile::new_in(&directory).is_ok() {
-            return Ok(fs::canonicalize(directory)?);
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn windows_temporary_candidate(
+    configured: Option<String>,
+    lookup: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    if let Some(directory) = configured.filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(directory));
+    }
+    // GetTempPathW selects the first nonempty value without existence/access
+    // checks. SQLite uses that API, not GetTempPath2W (Rust's temp_dir fallback).
+    for name in ["TMP", "TEMP", "USERPROFILE"] {
+        if let Some(value) = lookup(name).filter(|v| !v.is_empty()) {
+            return Ok(PathBuf::from(value));
         }
     }
+    // Without a known environment candidate, fail closed instead of guessing
+    // Windows' system directory or changing SQLite/process global settings.
     Err(Error::InvalidConfiguration(
-        "cannot determine a writable SQLite temporary directory".into(),
+        "cannot identify SQLite's Windows temporary directory".into(),
     ))
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn writable_temporary_directory(directory: &Path) -> Result<PathBuf> {
+    let _probe = tempfile::NamedTempFile::new_in(directory)?;
+    Ok(fs::canonicalize(directory)?)
 }
 
 pub(super) fn space_shortage(

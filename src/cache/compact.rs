@@ -63,22 +63,13 @@ impl CacheManager {
                 detail: "cache lease is held by a running process".into(),
             });
         };
+        // Pin the validated inode before any path-based SQLite open.
+        let expected_database =
+            compact_sqlite::pin_database(&directory, &row.path.join(DATABASE_NAME))?;
         let inspected = self.inspect_managed_cache(id, identity, false)?;
         row.size_bytes_before = Some(inspected.entry.size_bytes);
-        if !inspected.safe_to_prune || inspected.entry.repository_root.is_none() {
-            return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: inspected.entry.detail.unwrap_or_else(|| {
-                    "cache metadata or repository ownership is not safe to compact".into()
-                }),
-            });
-        }
-        if inspected.entry.access_time_source != Some(AccessTimeSource::Database) {
-            return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: "cache access age comes from artifact mtimes; compaction would change retention order".into(),
-            });
-        }
-        if inspected.entry.size_bytes > request.max_database_bytes {
-            return Ok(CacheCompactOutcome::SkippedTooLarge);
+        if let Some(outcome) = compact_eligibility(inspected, request.max_database_bytes) {
+            return Ok(outcome);
         }
         let path = fs::canonicalize(&row.path)?.join(DATABASE_NAME);
         let expected = same_file::Handle::from_file(directory.into_std_file())?;
@@ -90,20 +81,17 @@ impl CacheManager {
         if let Some(detail) = compact_sqlite::linked_artifact(&row.path)? {
             return Ok(CacheCompactOutcome::SkippedUnsafe { detail });
         }
-        let connection = compact_sqlite::open(&path, mode.is_dry_run())?;
-        if connection
-            .path()
-            .and_then(|p| fs::canonicalize(p).ok())
-            .as_deref()
-            != Some(path.as_path())
-        {
+        let Some(connection) =
+            compact_sqlite::open_pinned(&expected_database, &path, mode.is_dry_run())?
+        else {
             return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: "SQLite resolved an unexpected database path".into(),
+                detail: "cache database identity or link count could not be verified while opening SQLite".into(),
             });
-        }
-        if !compact_sqlite::directory_matches(&expected, path.parent().expect("database parent"))? {
+        };
+        if !compact_sqlite::opened_path_matches(&connection, &expected, &path)? {
             return Ok(CacheCompactOutcome::SkippedUnsafe {
-                detail: "cache directory identity changed while opening SQLite".into(),
+                detail: "SQLite database path or cache directory identity could not be verified"
+                    .into(),
             });
         }
         let (bytes, reusable) = compact_sqlite::page_space(&connection)?;
@@ -127,6 +115,11 @@ impl CacheManager {
             bytes,
         )? {
             return Ok(CacheCompactOutcome::SkippedInsufficientSpace { detail });
+        }
+        if !compact_sqlite::database_matches(&expected_database, &path)? {
+            return Ok(CacheCompactOutcome::SkippedUnsafe {
+                detail: "cache database identity or link count changed before VACUUM".into(),
+            });
         }
         let result =
             compact_sqlite::vacuum(&connection, request.max_seconds, &mut row.vacuum_committed);
@@ -164,4 +157,26 @@ fn validate_compact_request(request: &CacheCompactRequest) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn compact_eligibility(
+    inspected: InspectedCache,
+    max_database_bytes: u64,
+) -> Option<CacheCompactOutcome> {
+    if !inspected.safe_to_prune || inspected.entry.repository_root.is_none() {
+        return Some(CacheCompactOutcome::SkippedUnsafe {
+            detail: inspected.entry.detail.unwrap_or_else(|| {
+                "cache metadata or repository ownership is not safe to compact".into()
+            }),
+        });
+    }
+    if inspected.entry.access_time_source != Some(AccessTimeSource::Database) {
+        return Some(CacheCompactOutcome::SkippedUnsafe {
+                detail: "cache access age comes from artifact mtimes; compaction would change retention order".into(),
+            });
+    }
+    if inspected.entry.size_bytes > max_database_bytes {
+        return Some(CacheCompactOutcome::SkippedTooLarge);
+    }
+    None
 }

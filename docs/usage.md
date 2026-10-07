@@ -457,8 +457,11 @@ disk location; no SQLite global or process environment is changed by the command
 SQLITE_TMPDIR=/path/on/disk leantoken cache compact --id v15-0123456789abcdef --yes
 ```
 
-On Windows the configured `TMP`/`TEMP` directory must be writable and have
-sufficient space. A small RAM-backed temporary volume can prevent compaction
+On Windows SQLite selects the first nonempty `TMP`, `TEMP`, or `USERPROFILE`
+value without checking access. The selected directory must be writable and have
+sufficient space; an unusable `TMP` never falls through to a writable `TEMP`.
+If no environment candidate is known, maintenance refuses to guess the system
+directory. A small RAM-backed temporary volume can prevent compaction
 although the database volume has ample space. Temporary-file failures interrupt
 SQLite maintenance rather than causing a source reindex or schema upgrade.
 

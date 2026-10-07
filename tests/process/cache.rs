@@ -90,6 +90,22 @@ pub(super) fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
     assert_eq!(preview["results"][0]["action"], "would_compact");
     assert_eq!(preview["reclaimed_bytes"], 0);
     assert_eq!(fs::read(&database).unwrap(), before);
+    #[cfg(windows)]
+    {
+        let failed = command()
+            .env("TMP", temp.path().join("missing-tmp"))
+            .env("TEMP", temp.path())
+            .arg("--json")
+            .args(arguments)
+            .arg("--yes")
+            .output()
+            .unwrap();
+        assert!(!failed.status.success());
+        let report: serde_json::Value = serde_json::from_slice(&failed.stdout).unwrap();
+        assert_eq!(report["results"][0]["action"], "failed");
+        assert_eq!(report["results"][0]["vacuum_committed"], false);
+        assert_eq!(fs::read(&database).unwrap(), before);
+    }
     let reader = rusqlite::Connection::open(&database).unwrap();
     reader.execute_batch("BEGIN").unwrap();
     assert_eq!(

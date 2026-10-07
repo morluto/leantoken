@@ -808,6 +808,17 @@ so VACUUM cannot refresh legacy retention/LRU order. Empty WAL sidecars created
 by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
 handles, SQLite no-follow opening, canonical filename checks, and rejection of
 multiply linked artifacts prevent ordinary aliasing outside the chosen cache.
+The validated main file remains pinned throughout maintenance. Unix verifies
+SQLite's actual newly opened regular-file identities for apply using `/proc/self/fd` or
+`/dev/fd`, with two observations of at most 1024 descriptors each per cache.
+Unknown existing regular descriptors outside standard streams, selected SQLite
+artifacts, and the zero-byte lease lock are refused before opening, since SQLite
+can reuse deferred descriptors. Unidentified new regular descriptors, missing
+enumeration, and inability to identify the main file also fail closed. Unrelated
+open regular files can therefore make maintenance ineligible. Windows pins with read/write sharing but
+without delete sharing, preventing replacement before SQLite opens the file.
+Identity and held-file link count are rechecked before VACUUM. This adds no
+retrieval-time descriptor scan or process-global configuration change.
 SQLite exclusive locking also refuses connections outside the lease protocol.
 Previews use read-only connections and neither VACUUM nor checkpoint.
 
@@ -820,8 +831,11 @@ volume identity conservatively uses the combined requirement. Unix device IDs
 and Windows volume serial numbers identify the volumes. The Unix
 candidate order matches the bundled VFS: configured SQLite temp directory,
 `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp`, `/tmp`, then the working
-directory; Windows uses configured `TMP`/`TEMP`. Writability is checked with an
-owned disposable probe. Neither SQLite globals nor process environment are
+directory. Windows selects a configured SQLite directory or the first nonempty
+`TMP`, `TEMP`, then `USERPROFILE` value before checking access, matching
+GetTempPathW precedence; an unusable selected path never falls through. Unknown
+system-directory fallback is refused. Writability is checked with an owned
+disposable probe. Neither SQLite globals nor process environment are
 mutated. Available-space checks do not reserve space or cover every quota.
 
 In-place SQLite VACUUM preserves atomic transaction behavior and avoids a new

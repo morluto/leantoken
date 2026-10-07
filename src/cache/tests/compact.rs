@@ -591,3 +591,164 @@ fn compact_human_diagnostics_match_machine_actions() {
         assert_eq!(diagnostic, outcome.diagnostic());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn compact_rejects_database_replacement_between_validation_and_sqlite_open() {
+    use crate::cache::compact_sqlite::{open, open_pinned_with};
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (_, database) = fixture(&manager, temp.path());
+    let external = temp.path().join("external.sqlite");
+    fs::copy(&database, &external).unwrap();
+    let external_before = fs::read(&external).unwrap();
+    let original_before = fs::read(&database).unwrap();
+    let expected = same_file::Handle::from_path(&database).unwrap();
+    let moved = temp.path().join("original.sqlite");
+    let connection = open_pinned_with(&expected, &database, false, |path, preview| {
+        fs::rename(path, &moved).unwrap();
+        fs::hard_link(&external, path).unwrap();
+        open(path, preview)
+    })
+    .unwrap();
+    assert!(connection.is_none(), "replacement must never reach VACUUM");
+    assert_eq!(fs::read(&external).unwrap(), external_before);
+    assert_eq!(fs::read(&moved).unwrap(), original_before);
+}
+
+#[test]
+fn compact_held_database_rejects_new_alias_and_new_single_link_identity() {
+    use crate::cache::compact_sqlite::database_matches;
+    let temp = tempfile::tempdir().unwrap();
+    let database = temp.path().join("index.sqlite");
+    fs::write(&database, "original").unwrap();
+    let expected = same_file::Handle::from_path(&database).unwrap();
+    assert!(database_matches(&expected, &database).unwrap());
+    let alias = temp.path().join("alias.sqlite");
+    fs::hard_link(&database, &alias).unwrap();
+    assert!(!database_matches(&expected, &database).unwrap());
+    fs::remove_file(&alias).unwrap();
+    fs::rename(&database, &alias).unwrap();
+    fs::write(&database, "replacement").unwrap();
+    assert!(!database_matches(&expected, &database).unwrap());
+}
+
+#[test]
+fn compact_windows_temp_selection_never_falls_through_unusable_first_path() {
+    use crate::cache::compact_sqlite::{windows_temporary_candidate, writable_temporary_directory};
+    let temp = tempfile::tempdir().unwrap();
+    let missing = temp.path().join("missing");
+    let valid = temp.path().join("valid");
+    fs::create_dir(&valid).unwrap();
+    let select = |tmp: Option<&Path>| {
+        windows_temporary_candidate(None, |name| match name {
+            "TMP" => tmp.map(|p| p.as_os_str().to_owned()),
+            "TEMP" | "USERPROFILE" => Some(valid.as_os_str().to_owned()),
+            _ => None,
+        })
+        .unwrap()
+    };
+    assert_eq!(select(Some(&missing)), missing);
+    assert!(writable_temporary_directory(&missing).is_err());
+    assert_eq!(select(None), valid);
+    assert_eq!(
+        writable_temporary_directory(&valid).unwrap(),
+        fs::canonicalize(&valid).unwrap()
+    );
+    assert_eq!(
+        windows_temporary_candidate(Some(missing.to_string_lossy().into()), |_| Some(
+            valid.as_os_str().to_owned()
+        ))
+        .unwrap(),
+        missing
+    );
+    assert!(windows_temporary_candidate(None, |_| None).is_err());
+    assert_eq!(
+        windows_temporary_candidate(None, |name| (name == "USERPROFILE")
+            .then(|| valid.as_os_str().to_owned()))
+        .unwrap(),
+        valid
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn compact_rejects_restored_path_when_sqlite_opened_inode_was_replaced() {
+    use crate::cache::compact_sqlite::{open, open_pinned_with};
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (_, database) = fixture(&manager, temp.path());
+    let external = temp.path().join("external.sqlite");
+    fs::copy(&database, &external).unwrap();
+    let before = fs::read(&external).unwrap();
+    let expected = same_file::Handle::from_path(&database).unwrap();
+    let moved = temp.path().join("original.sqlite");
+    let connection = open_pinned_with(&expected, &database, false, |path, preview| {
+        fs::rename(path, &moved).unwrap();
+        fs::hard_link(&external, path).unwrap();
+        let connection = open(path, preview)?;
+        fs::remove_file(path).unwrap();
+        fs::rename(&moved, path).unwrap();
+        Ok(connection)
+    })
+    .unwrap();
+    assert!(
+        connection.is_none(),
+        "opened replacement must never reach VACUUM"
+    );
+    assert_eq!(fs::read(&external).unwrap(), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn compact_windows_pin_prevents_database_rename_during_sqlite_open() {
+    use crate::cache::compact_sqlite::pin_database;
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (_, database) = fixture(&manager, temp.path());
+    let before = fs::read(&database).unwrap();
+    let (directory, _) = open_managed_artifacts(database.parent().unwrap()).unwrap();
+    let pinned = pin_database(&directory, &database).unwrap();
+    let moved = temp.path().join("moved.sqlite");
+    assert!(fs::rename(&database, &moved).is_err());
+    assert_eq!(fs::read(&database).unwrap(), before);
+    drop(pinned);
+    fs::rename(&database, &moved).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn compact_refuses_unidentified_concurrent_file_open() {
+    use crate::cache::compact_sqlite::{open, open_pinned_with};
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (_, database) = fixture(&manager, temp.path());
+    let before = fs::read(&database).unwrap();
+    let expected = same_file::Handle::from_path(&database).unwrap();
+    let mut unrelated = None;
+    let connection = open_pinned_with(&expected, &database, false, |path, preview| {
+        unrelated = Some(fs::File::create(temp.path().join("unrelated.txt")).unwrap());
+        open(path, preview)
+    })
+    .unwrap();
+    assert!(connection.is_none());
+    assert_eq!(fs::read(&database).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn compact_refuses_unidentified_existing_descriptor_before_sqlite_open() {
+    use crate::cache::compact_sqlite::open_pinned_with;
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 100);
+    let (_, database) = fixture(&manager, temp.path());
+    let before = fs::read(&database).unwrap();
+    let expected = same_file::Handle::from_path(&database).unwrap();
+    let _unrelated = fs::File::create(temp.path().join("unrelated.txt")).unwrap();
+    let connection = open_pinned_with(&expected, &database, false, |_, _| {
+        panic!("ambiguous existing descriptors must be refused before SQLite opens")
+    })
+    .unwrap();
+    assert!(connection.is_none());
+    assert_eq!(fs::read(&database).unwrap(), before);
+}
