@@ -461,7 +461,7 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
         }));
     }
 
-    wait_until(Duration::from_secs(15), || {
+    wait_until(INDEX_READY_TIMEOUT, || {
         database_state(&database)
             .is_some_and(|(generation, files, _)| generation == 1 && files == 20)
     });
