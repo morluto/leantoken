@@ -397,6 +397,7 @@ leantoken cache list
 leantoken cache list --summary
 leantoken cache list --incompatible-with-current
 leantoken cache prune --incompatible-with-current
+leantoken cache compact --id v15-0123456789abcdef --dry-run
 leantoken cache prune --older-than 30 --dry-run
 leantoken cache prune --max-total-bytes 1073741824 --yes
 ```

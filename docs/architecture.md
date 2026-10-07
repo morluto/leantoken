@@ -791,6 +791,90 @@ criterion after acquiring the exclusive lease. Corrupt/unknown, future,
 unexpected, identity-mismatched, and lease-unavailable entries are never
 automatically deleted.
 
+Explicit cache compaction is owned by the cache manager, not retrieval or
+service initialization. Requests require one to eight unique, strictly parsed
+managed identities; they inspect only those directories, never inventory all
+repositories. Results are emitted in stable identity order. Both freelist
+thresholds must pass (64 MiB and 10% by default); logical database and artifact
+work is capped at a configurable 1 GiB by default. Processing is serial, with a
+120-second cooperative SQLite progress deadline per cache (configurable up to
+3600 seconds) and a 1 ms pause per 10,000 VM instructions. This pacing is not a
+hard CPU quota and filesystem/commit work can overrun the callback deadline.
+
+Apply acquires the exclusive cache lifetime lease and re-inspects ownership and
+compatibility without opening `Services`, binding access metadata, or migrating
+schemas. Entries whose access age falls back to artifact mtimes are skipped,
+so VACUUM cannot refresh legacy retention/LRU order. A bounded 20-byte read
+from the pinned main file requires an existing WAL header before metadata or
+SQLite inspection; rollback-mode databases are skipped without creating,
+recovering, or opening their journals. Older readable WAL metadata remains
+eligible without migration. Empty WAL sidecars created
+by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
+handles, SQLite no-follow opening, canonical filename checks, and rejection of
+multiply linked artifacts reject filesystem aliases observed during validation.
+Before pinning on Unix, a descriptor snapshot refuses a main database already
+open in the calling process, including preview and rollback-mode skips. This
+avoids open/close side effects on an existing connection's POSIX locks.
+The validated main file remains pinned throughout maintenance. Unix verifies
+SQLite's actual newly opened regular-file identities for apply using `/proc/self/fd` or
+`/dev/fd`, with at most three observations of 1024 descriptors each per cache.
+Each numeric descriptor is inspected with the safe `nix::sys::stat::fstat`
+wrapper, obtaining the underlying device/inode on all Unix platforms without
+duplicating or closing SQLite descriptors (which could release POSIX locks).
+Unknown existing regular descriptors outside standard streams, selected SQLite
+artifacts, and the zero-byte lease lock are refused before opening, since SQLite
+can reuse deferred descriptors. Unidentified new regular descriptors, missing
+enumeration, and inability to identify the main file also fail closed. Unrelated
+open regular files can therefore make maintenance ineligible. Windows pins with read/write sharing but
+without delete sharing, preventing replacement before SQLite opens the file.
+Identity and held-file link count are rechecked before VACUUM. Unix path
+identity checks use metadata rather than opening/closing another database
+handle; header reads borrow the pinned handle so neither check releases
+process-wide POSIX locks. This adds no
+retrieval-time descriptor scan or process-global configuration change.
+SQLite exclusive locking also refuses connections outside the lease protocol.
+Previews use read-only connections and neither VACUUM nor checkpoint. An
+outside SQLite connection in another process can still preview; a connection
+already open in the calling Unix process makes maintenance active/ineligible.
+
+Filesystem ownership is a trust boundary: in-place maintenance requires an
+owner-controlled cache root and quiescent filesystem tools, with cache clients
+cooperating through the lifetime lease. Identity/link checks are observations;
+held handles and advisory leases cannot prevent another process with the same
+filesystem permissions from creating links or replacing files afterward. Such
+uncoordinated mutations can affect new aliases during VACUUM/checkpoint. This
+operation does not provide isolation from arbitrary same-owner filesystem writes.
+Detached compaction would require a separate atomic publication design for the
+database/WAL pair, lease identity, and outside-reader snapshots.
+
+
+Maintenance connections disable mmap, use an 8 MiB page-cache target and
+file-backed SQLite temporary work, and wait at most 100 ms for SQLite locks.
+Free-space preflight checks the database volume (twice logical page bytes plus
+32 MiB) and SQLite temporary volume (logical page bytes plus 32 MiB). When they
+share a volume, require their combined headroom from both observations; unknown
+volume identity conservatively uses the combined requirement. Unix device IDs
+and Windows volume serial numbers identify the volumes. The Unix
+candidate order matches the bundled VFS: configured SQLite temp directory,
+`SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp`, `/tmp`, then the working
+directory. Windows selects a configured SQLite directory or the first nonempty
+`TMP`, `TEMP`, then `USERPROFILE` value before checking access, matching
+GetTempPathW precedence; an unusable selected path never falls through. Unknown
+system-directory fallback is refused. Writability is checked with an owned
+disposable probe. Neither SQLite globals nor process environment are
+mutated. Available-space checks do not reserve space or cover every quota.
+
+In-place SQLite VACUUM preserves atomic transaction behavior and avoids a new
+file-generation swap protocol. Pre/post quick checks and bounded metadata/schema
+fingerprints verify retained ownership, generation, schema, and migration state;
+no source scan, index publication, FTS rebuild, or content-version change occurs.
+Fingerprints retain at most 32 metadata columns (16 KiB per text/blob value) and
+256 schema objects (16 KiB per text field). SQLite itself and OS file cache are not hard heap-capped by
+the page-cache setting. Differential fixtures verify data and FTS preservation.
+The report records actual artifact size before/after close, zero actual savings
+for previews, and whether VACUUM committed before any later checkpoint failure.
+Stable cache lease identities are retained throughout.
+
 An explicit database path preserves the caller-selected identity and is not
 rewritten by the managed-cache policy. Callers must not concurrently share one
 explicit database across incompatible index-content versions.

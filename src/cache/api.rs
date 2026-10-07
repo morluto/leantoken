@@ -9,3 +9,8 @@ pub fn list_with(request: &CacheListRequest) -> Result<CacheListReport> {
 pub fn prune(request: &CachePruneRequest) -> Result<CachePruneReport> {
     CacheManager::for_current_user()?.prune(request)
 }
+
+/// Compact explicitly selected inactive caches without migrating their schemas.
+pub fn compact(request: &CacheCompactRequest) -> Result<CacheCompactReport> {
+    CacheManager::for_current_user()?.compact(request)
+}

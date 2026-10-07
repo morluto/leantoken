@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "rationale": "Linux Rust 1.95 cargo-llvm-cov 0.9.1 product nextest baseline: 1234 passed, 2026-09-08; no profile warnings. Each metric ratchets at floor(observed percent) minus five percentage points; non-exception line floors remain above 30%. No production exclusions. New measured files require budgets; low line coverage requires an explicit gap. Baseline updates require review, never automatic acceptance.",
+  "rationale": "Linux Rust 1.95 cargo-llvm-cov 0.9.1 product nextest baseline: 1234 passed, 2026-09-08; no profile warnings. Each metric ratchets at floor(observed percent) minus five percentage points; non-exception line floors remain above 30%. No production exclusions. New measured files require budgets; low line coverage requires an explicit gap. Baseline updates require review, never automatic acceptance. Selective-compaction file budgets ratchet from instrumented manual CI run 37571752364 at source 37130d7bc25519942eb3d4b7bf32e03fa0e850ea (2026-10-07), including shared-volume headroom, complete diagnostic consistency, and missing-root ownership regressions. Existing file budgets are unchanged. Final admission-source measurement: manual CI 37590032325 at f23f8f278697e2a9d52cbe37a7a9c82e85630133 (2026-10-07), including WAL-only admission, safe fstat identity, public same-process lock preservation, and native external-reader preview. compact_sqlite floors increase to 82/85/78; all other floors remain unchanged.",
   "files": {
     "src/cache/api.rs": {
       "owner": "src/cache",
@@ -13,6 +13,24 @@
       "minimum_lines": 87,
       "minimum_functions": 95,
       "minimum_regions": 87
+    },
+    "src/cache/compact.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 84,
+      "minimum_functions": 95,
+      "minimum_regions": 86
+    },
+    "src/cache/compact_models.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 95,
+      "minimum_functions": 95,
+      "minimum_regions": 95
+    },
+    "src/cache/compact_sqlite.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 82,
+      "minimum_functions": 85,
+      "minimum_regions": 78
     },
     "src/cache/cursor.rs": {
       "owner": "src/cache",

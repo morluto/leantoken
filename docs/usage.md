@@ -49,6 +49,9 @@ leantoken remove [--claude] [--cursor] [--opencode] [--codex] [--gemini]
                  [--antigravity] [--all] [--yes] [--dry-run] [--force-unmanaged]
 leantoken runtime list
 leantoken runtime prune [--keep-latest COUNT] [--dry-run] [--yes]
+leantoken cache compact --id CACHE_ID [--dry-run | --yes]
+                        [--min-reclaim-bytes BYTES] [--min-reclaim-percent PERCENT]
+                        [--max-database-bytes BYTES] [--max-seconds SECONDS]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
                      [--compatibility CLASS] [--index-content-version VERSION]
                      [--incompatible-with-current] [--limit COUNT] [--cursor CURSOR]
@@ -403,6 +406,81 @@ identity so a returning repository cannot race a new process through a replaced
 lock file. Explicit `--database` files outside the managed directory are never
 enumerated. Stop older LeanToken versions that predate cache leases before
 pruning during a mixed-version rollout.
+
+## Selective cache compaction
+
+`cache compact` shrinks a retained SQLite index without rebuilding source or
+migrating its schema. It is an explicit maintenance operation; retrieval and
+service startup never run it automatically. Specify one to eight exact cache
+identities from `cache list`, rather than selecting every cache by version.
+Different pinned CLI/MCP versions can still legitimately use different caches.
+
+```bash
+leantoken cache list
+leantoken cache compact --id v15-0123456789abcdef
+leantoken cache compact --id v15-0123456789abcdef --yes
+```
+
+Without `--yes`, the command previews benefit and eligibility. `--dry-run`
+always wins, including when combined with `--yes`. Preview does not VACUUM or
+checkpoint; inspection can still touch coordination/SQLite SHM sidecars.
+`reusable_bytes` is an estimate from a consistent SQLite read transaction;
+`reclaimed_bytes` reports actual artifact reduction and is zero in previews.
+
+Both minimum thresholds must pass: by default, at least **64 MiB** of free pages
+and **10%** of logical database pages. Default work bounds are **1 GiB** for
+either logical database pages or database-plus-sidecar footprint, and a
+**120-second cooperative deadline** per cache. Override these with
+`--min-reclaim-bytes`, `--min-reclaim-percent`, `--max-database-bytes`, and
+`--max-seconds` (1–3600). Caches are processed sequentially in identity order.
+The deadline uses SQLite progress callbacks; a blocked filesystem call or final
+commit can overrun it. Callbacks also yield briefly to reduce sustained work;
+use OS quotas when a hard CPU or memory ceiling is required.
+
+Apply requires the same exclusive lifetime lease used by pruning, plus a SQLite
+exclusive locking mode. Active leaders/followers, unsupported ownership,
+unexpected artifacts, symlinks, and multiply linked artifacts are skipped.
+Only existing WAL databases are eligible. Rollback-mode databases are skipped
+before SQLite inspection; their journal mode and journal contents remain untouched.
+On Unix, a database already open in the calling process is skipped as active
+before opening another handle, including preview; this preserves existing
+SQLite process locks. CLI preview can still inspect outside connections in
+other processes. Connections outside the lease protocol can block maintenance and produce a
+failure; their snapshots are never forcibly released. Explicit databases outside
+the managed cache root are not eligible. Keep backup/linking/file-move tools
+quiescent during maintenance. The cache root must be controlled by its owner;
+leases and link checks cannot prevent another same-account process from creating
+new aliases after inspection. In-place VACUUM can modify those new aliases.
+
+Apply checks free space on **both** the database filesystem and SQLite's actual
+temporary directory, requiring twice the logical database size plus 32 MiB on
+the database volume and one database size plus 32 MiB on the temporary volume.
+If both directories share a volume, their requirements are added (three database
+sizes plus 64 MiB). An unknown volume identity also uses the combined requirement.
+The preflight is conservative, not a reservation against other writers or disk
+quotas. On Unix, configure `SQLITE_TMPDIR` before launching to select a suitable
+disk location; no SQLite global or process environment is changed by the command:
+
+```bash
+SQLITE_TMPDIR=/path/on/disk leantoken cache compact --id v15-0123456789abcdef --yes
+```
+
+On Windows SQLite selects the first nonempty `TMP`, `TEMP`, or `USERPROFILE`
+value without checking access. The selected directory must be writable and have
+sufficient space; an unusable `TMP` never falls through to a writable `TEMP`.
+If no environment candidate is known, maintenance refuses to guess the system
+directory. A small RAM-backed temporary volume can prevent compaction
+although the database volume has ample space. Temporary-file failures interrupt
+SQLite maintenance rather than causing a source reindex or schema upgrade.
+
+Apply validates SQLite integrity and retained schema/metadata, VACUUMs in place,
+and checkpoints under the held lease. Reports distinguish `vacuum_committed`
+from the final outcome: a later validation/checkpoint failure does not imply
+VACUUM was rolled back. Older supported WAL metadata layouts with a persisted access timestamp and repository
+generations remain unchanged. Caches whose access age comes from database/WAL
+mtimes are skipped, so maintenance cannot make them appear recently accessed. Stop clients predating cache leases before any
+maintenance. Compaction is not source-text compression; dense databases may
+save very little and are normally skipped by the benefit thresholds.
 
 ## First-run doctor
 
@@ -1630,6 +1708,7 @@ Current category values are:
 | `retryable_conflict` | Concurrent repository state requires a retry |
 | `serialization_failure` | A response or persisted value could not be serialized |
 | `response_accounting_invariant` | Response token accounting failed to converge |
+| `cache_compact_failure` | Explicit cache compaction failed |
 | `cache_prune_failure` | Cache maintenance could not prune an artifact |
 | `setup_failure` | Setup or installation state violated an invariant |
 | `operation_failure` | A product operation reached an unexpected state |

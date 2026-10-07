@@ -403,6 +403,8 @@ run them in parallel rather than starting one executable per file.
   compatibility plus cross-component budget, scope, known-hash omission, and
   receipt composition; detailed tokenizer and ranking behavior stays with the
   owning production modules;
+- `src/cache/tests/compact.rs` and `tests/cli.rs`: selective maintenance eligibility,
+  leases, preservation, cancellation, and CLI consent/preview contracts;
 - `crates/test-suite/src/domains/platform.rs`: public configuration path,
   cache identity, safety, and limit boundaries plus native watcher delivery
   and shutdown;
@@ -596,3 +598,10 @@ timing workflow runs only by manual dispatch.
 
 Keep negative results. Do not tune prompts, labels, or budgets after seeing a
 result without recording a new manifest version.
+
+Selective-compaction inode-proof tests observe process-wide Unix descriptors.
+Run their module through nextest, which isolates each test process, or use
+`cargo test-focused` with an exact test name. A shared-process Cargo module run
+can legitimately reject maintenance when another fixture opens an unrelated
+regular file during the proof window. Keep the production fail-closed guard and
+all maintenance assertions intact when selecting this isolation.

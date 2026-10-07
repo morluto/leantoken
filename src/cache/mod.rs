@@ -1,4 +1,4 @@
-//! Explicit inspection and pruning of centrally managed repository caches.
+//! Explicit inspection, pruning, and compaction of managed repository caches.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -28,6 +28,9 @@ use crate::{Error, Result};
 
 mod api;
 mod artifacts;
+mod compact;
+mod compact_models;
+mod compact_sqlite;
 mod cursor;
 mod inspection;
 mod list;
@@ -36,6 +39,7 @@ mod output;
 
 pub use api::*;
 use artifacts::*;
+pub use compact_models::*;
 use cursor::*;
 pub use models::*;
 pub use output::*;

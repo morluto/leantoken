@@ -73,6 +73,52 @@ fn cli_cache_help_snapshot() {
 }
 
 #[test]
+fn cli_cache_compact_is_explicit_and_previews_by_default() {
+    assert!(Cli::try_parse_from(["leantoken", "cache", "compact"]).is_err());
+    let AppRequest::CacheCompact(preview) =
+        parse(&["cache", "compact", "--id", "v15-0000000000000001"]).app_request()
+    else {
+        panic!("expected compact request");
+    };
+    assert!(preview.dry_run);
+    assert!(!preview.yes);
+    assert_eq!(preview.min_reclaim_bytes, 64 * 1024 * 1024);
+    assert_eq!(preview.min_reclaim_percent, 10);
+    let AppRequest::CacheCompact(apply) = parse(&[
+        "cache",
+        "compact",
+        "--id",
+        "v15-0000000000000001",
+        "--yes",
+        "--max-seconds",
+        "30",
+    ])
+    .app_request() else {
+        panic!("expected compact request");
+    };
+    assert!(!apply.dry_run);
+    assert!(apply.yes);
+    assert_eq!(apply.max_seconds, 30);
+    let AppRequest::CacheCompact(override_preview) = parse(&[
+        "cache",
+        "compact",
+        "--id",
+        "v15-0000000000000001",
+        "--yes",
+        "--dry-run",
+    ])
+    .app_request() else {
+        panic!("expected compact request");
+    };
+    assert!(override_preview.dry_run);
+}
+
+#[test]
+fn cli_cache_compact_help_snapshot() {
+    insta::assert_snapshot!("cache_compact_help", help(&["cache", "compact"]));
+}
+
+#[test]
 fn usage_guide_tracks_runtime_cli_surface() {
     let command = Cli::command();
     let runtime_commands = command
