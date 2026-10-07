@@ -811,7 +811,7 @@ recovering, or opening their journals. Older readable WAL metadata remains
 eligible without migration. Empty WAL sidecars created
 by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
 handles, SQLite no-follow opening, canonical filename checks, and rejection of
-multiply linked artifacts prevent ordinary aliasing outside the chosen cache.
+multiply linked artifacts reject filesystem aliases observed during validation.
 The validated main file remains pinned throughout maintenance. Unix verifies
 SQLite's actual newly opened regular-file identities for apply using `/proc/self/fd` or
 `/dev/fd`, with two observations of at most 1024 descriptors each per cache.
@@ -831,6 +831,17 @@ process-wide POSIX locks. This adds no
 retrieval-time descriptor scan or process-global configuration change.
 SQLite exclusive locking also refuses connections outside the lease protocol.
 Previews use read-only connections and neither VACUUM nor checkpoint.
+
+Filesystem ownership is a trust boundary: in-place maintenance requires an
+owner-controlled cache root and quiescent filesystem tools, with cache clients
+cooperating through the lifetime lease. Identity/link checks are observations;
+held handles and advisory leases cannot prevent another process with the same
+filesystem permissions from creating links or replacing files afterward. Such
+uncoordinated mutations can affect new aliases during VACUUM/checkpoint. This
+operation does not provide isolation from arbitrary same-owner filesystem writes.
+Detached compaction would require a separate atomic publication design for the
+database/WAL pair, lease identity, and outside-reader snapshots.
+
 
 Maintenance connections disable mmap, use an 8 MiB page-cache target and
 file-backed SQLite temporary work, and wait at most 100 ms for SQLite locks.

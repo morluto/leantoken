@@ -599,6 +599,7 @@ fn compact_rejects_database_replacement_between_validation_and_sqlite_open() {
     let temp = tempfile::tempdir().unwrap();
     let manager = CacheManager::new(temp.path().join("managed"), 100);
     let (_, database) = fixture(&manager, temp.path());
+    let database = fs::canonicalize(database).unwrap();
     let external = temp.path().join("external.sqlite");
     fs::copy(&database, &external).unwrap();
     let external_before = fs::read(&external).unwrap();
@@ -678,6 +679,7 @@ fn compact_rejects_restored_path_when_sqlite_opened_inode_was_replaced() {
     let temp = tempfile::tempdir().unwrap();
     let manager = CacheManager::new(temp.path().join("managed"), 100);
     let (_, database) = fixture(&manager, temp.path());
+    let database = fs::canonicalize(database).unwrap();
     let external = temp.path().join("external.sqlite");
     fs::copy(&database, &external).unwrap();
     let before = fs::read(&external).unwrap();
@@ -724,6 +726,7 @@ fn compact_refuses_unidentified_concurrent_file_open() {
     let temp = tempfile::tempdir().unwrap();
     let manager = CacheManager::new(temp.path().join("managed"), 100);
     let (_, database) = fixture(&manager, temp.path());
+    let database = fs::canonicalize(database).unwrap();
     let before = fs::read(&database).unwrap();
     let expected = same_file::Handle::from_path(&database).unwrap();
     let mut unrelated = None;

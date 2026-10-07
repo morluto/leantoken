@@ -444,7 +444,10 @@ Only existing WAL databases are eligible. Rollback-mode databases are skipped
 before SQLite inspection; their journal mode and journal contents remain untouched.
 Connections outside the lease protocol can block maintenance and produce a
 failure; their snapshots are never forcibly released. Explicit databases outside
-the managed cache root are not eligible.
+the managed cache root are not eligible. Keep backup/linking/file-move tools
+quiescent during maintenance. The cache root must be controlled by its owner;
+leases and link checks cannot prevent another same-account process from creating
+new aliases after inspection. In-place VACUUM can modify those new aliases.
 
 Apply checks free space on **both** the database filesystem and SQLite's actual
 temporary directory, requiring twice the logical database size plus 32 MiB on
