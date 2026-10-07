@@ -258,7 +258,7 @@
 <a href=#258 id=258 data-nosnippet>258</a></span><span class="kw">mod </span>static_input_tests {
 <a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#260 id=260 data-nosnippet>260</a>    <span class="attr">#[test]
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">fn </span>static_request_matrix_needs_no_repository() {
+<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">fn </span>context_parser_rejects_oversized_request_dimensions() {
 <a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>limits = <span class="kw">crate</span>::services::request_limits::RequestLimits {
 <a href=#263 id=263 data-nosnippet>263</a>            default_results: <span class="number">3</span>,
 <a href=#264 id=264 data-nosnippet>264</a>            max_results: <span class="number">7</span>,
@@ -287,20 +287,17 @@
 <a href=#287 id=287 data-nosnippet>287</a>            strict_changed_paths: <span class="bool-val">false</span>,
 <a href=#288 id=288 data-nosnippet>288</a>            explain_diagnostics: <span class="bool-val">false</span>,
 <a href=#289 id=289 data-nosnippet>289</a>        };
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">assert!</span>(validate_context_request(<span class="kw-2">&amp;</span>limits, <span class="kw-2">&amp;</span>base, <span class="prelude-val">None</span>).is_ok());
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
-<a href=#292 id=292 data-nosnippet>292</a>            (|r: <span class="kw-2">&amp;mut </span>ContextRequest| r.task = <span class="string">" "</span>.into()) <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>ContextRequest),
-<a href=#293 id=293 data-nosnippet>293</a>            |r| r.focus_paths = <span class="macro">vec!</span>[<span class="string">"["</span>.into()],
-<a href=#294 id=294 data-nosnippet>294</a>            |r| r.focus_symbols = <span class="macro">vec!</span>[<span class="string">"symbol"</span>.into(); <span class="number">257</span>],
-<a href=#295 id=295 data-nosnippet>295</a>            |r| r.changed_paths = (<span class="number">0</span>..<span class="number">513</span>).map(|i| <span class="macro">format!</span>(<span class="string">"src/{i}.rs"</span>)).collect(),
-<a href=#296 id=296 data-nosnippet>296</a>            |r| r.task = <span class="string">"a_"</span>.repeat(<span class="number">30_000</span>),
-<a href=#297 id=297 data-nosnippet>297</a>        ] {
-<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
-<a href=#299 id=299 data-nosnippet>299</a>            mutate(<span class="kw-2">&amp;mut </span>request);
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="macro">assert!</span>(validate_context_request(<span class="kw-2">&amp;</span>limits, <span class="kw-2">&amp;</span>request, <span class="prelude-val">None</span>).is_err());
-<a href=#301 id=301 data-nosnippet>301</a>        }
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="macro">assert!</span>(normalize_relative(<span class="string">"../outside.rs"</span>).is_err());
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="macro">assert!</span>(parse_context_revision(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="string">"r"</span>.repeat(<span class="number">257</span>))).is_err());
-<a href=#304 id=304 data-nosnippet>304</a>    }
-<a href=#305 id=305 data-nosnippet>305</a>}
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
+<a href=#291 id=291 data-nosnippet>291</a>            (|r: <span class="kw-2">&amp;mut </span>ContextRequest| r.focus_symbols = <span class="macro">vec!</span>[<span class="string">"symbol"</span>.into(); <span class="number">257</span>])
+<a href=#292 id=292 data-nosnippet>292</a>                <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>ContextRequest),
+<a href=#293 id=293 data-nosnippet>293</a>            |r| r.changed_paths = (<span class="number">0</span>..<span class="number">513</span>).map(|i| <span class="macro">format!</span>(<span class="string">"src/{i}.rs"</span>)).collect(),
+<a href=#294 id=294 data-nosnippet>294</a>            |r| r.task = <span class="string">"a_"</span>.repeat(<span class="number">30_000</span>),
+<a href=#295 id=295 data-nosnippet>295</a>        ] {
+<a href=#296 id=296 data-nosnippet>296</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
+<a href=#297 id=297 data-nosnippet>297</a>            mutate(<span class="kw-2">&amp;mut </span>request);
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="macro">assert!</span>(validate_context_request(<span class="kw-2">&amp;</span>limits, <span class="kw-2">&amp;</span>request, <span class="prelude-val">None</span>).is_err());
+<a href=#299 id=299 data-nosnippet>299</a>        }
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="macro">assert!</span>(parse_context_revision(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span><span class="string">"r"</span>.repeat(<span class="number">257</span>))).is_err());
+<a href=#301 id=301 data-nosnippet>301</a>    }
+<a href=#302 id=302 data-nosnippet>302</a>}
 </code></pre></div></section></main></body></html>

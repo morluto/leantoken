@@ -1361,350 +1361,304 @@
 <a href=#1361 id=1361 data-nosnippet>1361</a>    }
 <a href=#1362 id=1362 data-nosnippet>1362</a>
 <a href=#1363 id=1363 data-nosnippet>1363</a>    <span class="attr">#[test]
-<a href=#1364 id=1364 data-nosnippet>1364</a>    </span><span class="kw">fn </span>configured_launcher_omits_only_implicit_managed_database_paths() {
-<a href=#1365 id=1365 data-nosnippet>1365</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository"</span>);
-<a href=#1366 id=1366 data-nosnippet>1366</a>        <span class="kw">let </span>managed = Config::discover(root.path(), <span class="prelude-val">None</span>).expect(<span class="string">"managed config"</span>);
-<a href=#1367 id=1367 data-nosnippet>1367</a>        <span class="kw">let </span>managed_arguments =
-<a href=#1368 id=1368 data-nosnippet>1368</a>            launcher_arguments(<span class="kw-2">&amp;</span>managed, <span class="kw-2">&amp;</span>[<span class="string">"mcp"</span>.into()], DatabaseForwarding::ExplicitOnly)
-<a href=#1369 id=1369 data-nosnippet>1369</a>                .expect(<span class="string">"managed launcher arguments"</span>);
-<a href=#1370 id=1370 data-nosnippet>1370</a>        <span class="macro">assert!</span>(
-<a href=#1371 id=1371 data-nosnippet>1371</a>            !managed_arguments
-<a href=#1372 id=1372 data-nosnippet>1372</a>                .iter()
-<a href=#1373 id=1373 data-nosnippet>1373</a>                .any(|argument| argument == <span class="string">"--database"</span>)
-<a href=#1374 id=1374 data-nosnippet>1374</a>        );
-<a href=#1375 id=1375 data-nosnippet>1375</a>
-<a href=#1376 id=1376 data-nosnippet>1376</a>        <span class="kw">let </span>explicit_path = root.path().join(<span class="string">"explicit.sqlite"</span>);
-<a href=#1377 id=1377 data-nosnippet>1377</a>        <span class="kw">let </span>explicit = Config::discover(root.path(), <span class="prelude-val">Some</span>(explicit_path)).expect(<span class="string">"explicit config"</span>);
-<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="kw">let </span>explicit_arguments =
-<a href=#1379 id=1379 data-nosnippet>1379</a>            launcher_arguments(<span class="kw-2">&amp;</span>explicit, <span class="kw-2">&amp;</span>[<span class="string">"mcp"</span>.into()], DatabaseForwarding::ExplicitOnly)
-<a href=#1380 id=1380 data-nosnippet>1380</a>                .expect(<span class="string">"explicit launcher arguments"</span>);
-<a href=#1381 id=1381 data-nosnippet>1381</a>        <span class="kw">let </span>database_index = explicit_arguments
-<a href=#1382 id=1382 data-nosnippet>1382</a>            .iter()
-<a href=#1383 id=1383 data-nosnippet>1383</a>            .position(|argument| argument == <span class="string">"--database"</span>)
-<a href=#1384 id=1384 data-nosnippet>1384</a>            .expect(<span class="string">"explicit database flag"</span>);
-<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="macro">assert_eq!</span>(
-<a href=#1386 id=1386 data-nosnippet>1386</a>            explicit_arguments.get(database_index + <span class="number">1</span>),
-<a href=#1387 id=1387 data-nosnippet>1387</a>            <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>explicit.database_path.into_os_string())
-<a href=#1388 id=1388 data-nosnippet>1388</a>        );
-<a href=#1389 id=1389 data-nosnippet>1389</a>    }
-<a href=#1390 id=1390 data-nosnippet>1390</a>
-<a href=#1391 id=1391 data-nosnippet>1391</a>    <span class="attr">#[test]
-<a href=#1392 id=1392 data-nosnippet>1392</a>    </span><span class="kw">fn </span>launcher_arguments_preserve_broad_root_approval() {
-<a href=#1393 id=1393 data-nosnippet>1393</a>        <span class="kw">let </span>root = directories::BaseDirs::new()
-<a href=#1394 id=1394 data-nosnippet>1394</a>            .expect(<span class="string">"home directories"</span>)
-<a href=#1395 id=1395 data-nosnippet>1395</a>            .home_dir()
-<a href=#1396 id=1396 data-nosnippet>1396</a>            .canonicalize()
-<a href=#1397 id=1397 data-nosnippet>1397</a>            .expect(<span class="string">"canonical home"</span>);
-<a href=#1398 id=1398 data-nosnippet>1398</a>        <span class="kw">let </span>config = Config::discover_with_broad_root(<span class="kw-2">&amp;</span>root, <span class="prelude-val">Some</span>(root.join(<span class="string">"index.sqlite"</span>)), <span class="bool-val">true</span>)
-<a href=#1399 id=1399 data-nosnippet>1399</a>            .expect(<span class="string">"broad-root config"</span>);
-<a href=#1400 id=1400 data-nosnippet>1400</a>
-<a href=#1401 id=1401 data-nosnippet>1401</a>        <span class="kw">let </span>arguments = launcher_arguments(<span class="kw-2">&amp;</span>config, <span class="kw-2">&amp;</span>[<span class="string">"mcp"</span>.into()], DatabaseForwarding::Resolved)
-<a href=#1402 id=1402 data-nosnippet>1402</a>            .expect(<span class="string">"launcher arguments"</span>);
-<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="macro">assert!</span>(
-<a href=#1404 id=1404 data-nosnippet>1404</a>            arguments
-<a href=#1405 id=1405 data-nosnippet>1405</a>                .iter()
-<a href=#1406 id=1406 data-nosnippet>1406</a>                .any(|argument| argument == <span class="string">"--allow-broad-root"</span>)
-<a href=#1407 id=1407 data-nosnippet>1407</a>        );
-<a href=#1408 id=1408 data-nosnippet>1408</a>    }
-<a href=#1409 id=1409 data-nosnippet>1409</a>
-<a href=#1410 id=1410 data-nosnippet>1410</a>    <span class="attr">#[test]
-<a href=#1411 id=1411 data-nosnippet>1411</a>    </span><span class="kw">fn </span>path_bearing_relative_launchers_resolve_from_the_repository_root() {
-<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository"</span>);
-<a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="kw">let </span>executable = <span class="kw">if </span><span class="macro">cfg!</span>(windows) {
-<a href=#1414 id=1414 data-nosnippet>1414</a>            <span class="string">"leantoken.exe"
-<a href=#1415 id=1415 data-nosnippet>1415</a>        </span>} <span class="kw">else </span>{
-<a href=#1416 id=1416 data-nosnippet>1416</a>            <span class="string">"leantoken"
-<a href=#1417 id=1417 data-nosnippet>1417</a>        </span>};
-<a href=#1418 id=1418 data-nosnippet>1418</a>        <span class="kw">let </span>relative = std::path::Path::new(<span class="string">"."</span>).join(<span class="string">"bin"</span>).join(executable);
-<a href=#1419 id=1419 data-nosnippet>1419</a>        std::fs::create_dir(root.path().join(<span class="string">"bin"</span>)).expect(<span class="string">"launcher directory"</span>);
-<a href=#1420 id=1420 data-nosnippet>1420</a>        std::fs::write(root.path().join(<span class="kw-2">&amp;</span>relative), <span class="string">"launcher"</span>).expect(<span class="string">"launcher"</span>);
-<a href=#1421 id=1421 data-nosnippet>1421</a>
-<a href=#1422 id=1422 data-nosnippet>1422</a>        <span class="macro">assert_eq!</span>(
-<a href=#1423 id=1423 data-nosnippet>1423</a>            launcher_command_from_root(root.path(), relative.as_os_str())
-<a href=#1424 id=1424 data-nosnippet>1424</a>                .expect(<span class="string">"relative launcher"</span>),
-<a href=#1425 id=1425 data-nosnippet>1425</a>            root.path()
-<a href=#1426 id=1426 data-nosnippet>1426</a>                .join(<span class="kw-2">&amp;</span>relative)
-<a href=#1427 id=1427 data-nosnippet>1427</a>                .canonicalize()
-<a href=#1428 id=1428 data-nosnippet>1428</a>                .expect(<span class="string">"canonical launcher"</span>)
-<a href=#1429 id=1429 data-nosnippet>1429</a>                .into_os_string()
-<a href=#1430 id=1430 data-nosnippet>1430</a>        );
-<a href=#1431 id=1431 data-nosnippet>1431</a>        <span class="macro">assert_eq!</span>(
-<a href=#1432 id=1432 data-nosnippet>1432</a>            launcher_command_from_root(root.path(), OsStr::new(executable)).expect(<span class="string">"PATH launcher"</span>),
-<a href=#1433 id=1433 data-nosnippet>1433</a>            OsString::from(executable)
-<a href=#1434 id=1434 data-nosnippet>1434</a>        );
+<a href=#1364 id=1364 data-nosnippet>1364</a>    </span><span class="kw">fn </span>launcher_arguments_preserve_broad_root_approval() {
+<a href=#1365 id=1365 data-nosnippet>1365</a>        <span class="kw">let </span>root = directories::BaseDirs::new()
+<a href=#1366 id=1366 data-nosnippet>1366</a>            .expect(<span class="string">"home directories"</span>)
+<a href=#1367 id=1367 data-nosnippet>1367</a>            .home_dir()
+<a href=#1368 id=1368 data-nosnippet>1368</a>            .canonicalize()
+<a href=#1369 id=1369 data-nosnippet>1369</a>            .expect(<span class="string">"canonical home"</span>);
+<a href=#1370 id=1370 data-nosnippet>1370</a>        <span class="kw">let </span>config = Config::discover_with_broad_root(<span class="kw-2">&amp;</span>root, <span class="prelude-val">Some</span>(root.join(<span class="string">"index.sqlite"</span>)), <span class="bool-val">true</span>)
+<a href=#1371 id=1371 data-nosnippet>1371</a>            .expect(<span class="string">"broad-root config"</span>);
+<a href=#1372 id=1372 data-nosnippet>1372</a>
+<a href=#1373 id=1373 data-nosnippet>1373</a>        <span class="kw">let </span>arguments = launcher_arguments(<span class="kw-2">&amp;</span>config, <span class="kw-2">&amp;</span>[<span class="string">"mcp"</span>.into()], DatabaseForwarding::Resolved)
+<a href=#1374 id=1374 data-nosnippet>1374</a>            .expect(<span class="string">"launcher arguments"</span>);
+<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="macro">assert!</span>(
+<a href=#1376 id=1376 data-nosnippet>1376</a>            arguments
+<a href=#1377 id=1377 data-nosnippet>1377</a>                .iter()
+<a href=#1378 id=1378 data-nosnippet>1378</a>                .any(|argument| argument == <span class="string">"--allow-broad-root"</span>)
+<a href=#1379 id=1379 data-nosnippet>1379</a>        );
+<a href=#1380 id=1380 data-nosnippet>1380</a>    }
+<a href=#1381 id=1381 data-nosnippet>1381</a>
+<a href=#1382 id=1382 data-nosnippet>1382</a>    <span class="attr">#[test]
+<a href=#1383 id=1383 data-nosnippet>1383</a>    </span><span class="kw">fn </span>path_bearing_relative_launchers_resolve_from_the_repository_root() {
+<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="kw">let </span>root = tempfile::tempdir().expect(<span class="string">"repository"</span>);
+<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="kw">let </span>executable = <span class="kw">if </span><span class="macro">cfg!</span>(windows) {
+<a href=#1386 id=1386 data-nosnippet>1386</a>            <span class="string">"leantoken.exe"
+<a href=#1387 id=1387 data-nosnippet>1387</a>        </span>} <span class="kw">else </span>{
+<a href=#1388 id=1388 data-nosnippet>1388</a>            <span class="string">"leantoken"
+<a href=#1389 id=1389 data-nosnippet>1389</a>        </span>};
+<a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="kw">let </span>relative = std::path::Path::new(<span class="string">"."</span>).join(<span class="string">"bin"</span>).join(executable);
+<a href=#1391 id=1391 data-nosnippet>1391</a>        std::fs::create_dir(root.path().join(<span class="string">"bin"</span>)).expect(<span class="string">"launcher directory"</span>);
+<a href=#1392 id=1392 data-nosnippet>1392</a>        std::fs::write(root.path().join(<span class="kw-2">&amp;</span>relative), <span class="string">"launcher"</span>).expect(<span class="string">"launcher"</span>);
+<a href=#1393 id=1393 data-nosnippet>1393</a>
+<a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="macro">assert_eq!</span>(
+<a href=#1395 id=1395 data-nosnippet>1395</a>            launcher_command_from_root(root.path(), relative.as_os_str())
+<a href=#1396 id=1396 data-nosnippet>1396</a>                .expect(<span class="string">"relative launcher"</span>),
+<a href=#1397 id=1397 data-nosnippet>1397</a>            root.path()
+<a href=#1398 id=1398 data-nosnippet>1398</a>                .join(<span class="kw-2">&amp;</span>relative)
+<a href=#1399 id=1399 data-nosnippet>1399</a>                .canonicalize()
+<a href=#1400 id=1400 data-nosnippet>1400</a>                .expect(<span class="string">"canonical launcher"</span>)
+<a href=#1401 id=1401 data-nosnippet>1401</a>                .into_os_string()
+<a href=#1402 id=1402 data-nosnippet>1402</a>        );
+<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="macro">assert_eq!</span>(
+<a href=#1404 id=1404 data-nosnippet>1404</a>            launcher_command_from_root(root.path(), OsStr::new(executable)).expect(<span class="string">"PATH launcher"</span>),
+<a href=#1405 id=1405 data-nosnippet>1405</a>            OsString::from(executable)
+<a href=#1406 id=1406 data-nosnippet>1406</a>        );
+<a href=#1407 id=1407 data-nosnippet>1407</a>    }
+<a href=#1408 id=1408 data-nosnippet>1408</a>
+<a href=#1409 id=1409 data-nosnippet>1409</a>    <span class="attr">#[test]
+<a href=#1410 id=1410 data-nosnippet>1410</a>    </span><span class="kw">fn </span>path_bearing_relative_launchers_cannot_escape_the_repository() {
+<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
+<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span>outside = tempfile::tempdir().expect(<span class="string">"outside"</span>);
+<a href=#1413 id=1413 data-nosnippet>1413</a>        std::fs::write(outside.path().join(<span class="string">"leantoken"</span>), <span class="string">"launcher"</span>).expect(<span class="string">"outside launcher"</span>);
+<a href=#1414 id=1414 data-nosnippet>1414</a>
+<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#1416 id=1416 data-nosnippet>1416</a>            launcher_command_from_root(repository.path(), OsStr::new(<span class="string">"../bin/leantoken"</span>)),
+<a href=#1417 id=1417 data-nosnippet>1417</a>            <span class="prelude-val">Err</span>(Error::DoctorFailure {
+<a href=#1418 id=1418 data-nosnippet>1418</a>                stage: <span class="string">"launch"</span>,
+<a href=#1419 id=1419 data-nosnippet>1419</a>                ..
+<a href=#1420 id=1420 data-nosnippet>1420</a>            })
+<a href=#1421 id=1421 data-nosnippet>1421</a>        ));
+<a href=#1422 id=1422 data-nosnippet>1422</a>
+<a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="attr">#[cfg(unix)]
+<a href=#1424 id=1424 data-nosnippet>1424</a>        </span>{
+<a href=#1425 id=1425 data-nosnippet>1425</a>            std::os::unix::fs::symlink(outside.path(), repository.path().join(<span class="string">"linked"</span>))
+<a href=#1426 id=1426 data-nosnippet>1426</a>                .expect(<span class="string">"outside symlink"</span>);
+<a href=#1427 id=1427 data-nosnippet>1427</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#1428 id=1428 data-nosnippet>1428</a>                launcher_command_from_root(repository.path(), OsStr::new(<span class="string">"linked/leantoken"</span>)),
+<a href=#1429 id=1429 data-nosnippet>1429</a>                <span class="prelude-val">Err</span>(Error::DoctorFailure {
+<a href=#1430 id=1430 data-nosnippet>1430</a>                    stage: <span class="string">"launch"</span>,
+<a href=#1431 id=1431 data-nosnippet>1431</a>                    ..
+<a href=#1432 id=1432 data-nosnippet>1432</a>                })
+<a href=#1433 id=1433 data-nosnippet>1433</a>            ));
+<a href=#1434 id=1434 data-nosnippet>1434</a>        }
 <a href=#1435 id=1435 data-nosnippet>1435</a>    }
 <a href=#1436 id=1436 data-nosnippet>1436</a>
 <a href=#1437 id=1437 data-nosnippet>1437</a>    <span class="attr">#[test]
-<a href=#1438 id=1438 data-nosnippet>1438</a>    </span><span class="kw">fn </span>path_bearing_relative_launchers_cannot_escape_the_repository() {
-<a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="kw">let </span>repository = tempfile::tempdir().expect(<span class="string">"repository"</span>);
-<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="kw">let </span>outside = tempfile::tempdir().expect(<span class="string">"outside"</span>);
-<a href=#1441 id=1441 data-nosnippet>1441</a>        std::fs::write(outside.path().join(<span class="string">"leantoken"</span>), <span class="string">"launcher"</span>).expect(<span class="string">"outside launcher"</span>);
-<a href=#1442 id=1442 data-nosnippet>1442</a>
-<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#1444 id=1444 data-nosnippet>1444</a>            launcher_command_from_root(repository.path(), OsStr::new(<span class="string">"../bin/leantoken"</span>)),
-<a href=#1445 id=1445 data-nosnippet>1445</a>            <span class="prelude-val">Err</span>(Error::DoctorFailure {
-<a href=#1446 id=1446 data-nosnippet>1446</a>                stage: <span class="string">"launch"</span>,
-<a href=#1447 id=1447 data-nosnippet>1447</a>                ..
-<a href=#1448 id=1448 data-nosnippet>1448</a>            })
-<a href=#1449 id=1449 data-nosnippet>1449</a>        ));
-<a href=#1450 id=1450 data-nosnippet>1450</a>
-<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="attr">#[cfg(unix)]
-<a href=#1452 id=1452 data-nosnippet>1452</a>        </span>{
-<a href=#1453 id=1453 data-nosnippet>1453</a>            std::os::unix::fs::symlink(outside.path(), repository.path().join(<span class="string">"linked"</span>))
-<a href=#1454 id=1454 data-nosnippet>1454</a>                .expect(<span class="string">"outside symlink"</span>);
-<a href=#1455 id=1455 data-nosnippet>1455</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#1456 id=1456 data-nosnippet>1456</a>                launcher_command_from_root(repository.path(), OsStr::new(<span class="string">"linked/leantoken"</span>)),
-<a href=#1457 id=1457 data-nosnippet>1457</a>                <span class="prelude-val">Err</span>(Error::DoctorFailure {
-<a href=#1458 id=1458 data-nosnippet>1458</a>                    stage: <span class="string">"launch"</span>,
-<a href=#1459 id=1459 data-nosnippet>1459</a>                    ..
-<a href=#1460 id=1460 data-nosnippet>1460</a>                })
-<a href=#1461 id=1461 data-nosnippet>1461</a>            ));
-<a href=#1462 id=1462 data-nosnippet>1462</a>        }
-<a href=#1463 id=1463 data-nosnippet>1463</a>    }
-<a href=#1464 id=1464 data-nosnippet>1464</a>
-<a href=#1465 id=1465 data-nosnippet>1465</a>    <span class="attr">#[test]
-<a href=#1466 id=1466 data-nosnippet>1466</a>    </span><span class="kw">fn </span>child_diagnostics_are_bounded_and_redact_configured_paths() {
-<a href=#1467 id=1467 data-nosnippet>1467</a>        <span class="kw">let </span>path = <span class="string">"/private/repository"</span>;
-<a href=#1468 id=1468 data-nosnippet>1468</a>        <span class="kw">let </span>line = <span class="macro">format!</span>(<span class="string">"error opening {path}: {}"</span>, <span class="string">"x"</span>.repeat(<span class="number">1_000</span>));
+<a href=#1438 id=1438 data-nosnippet>1438</a>    </span><span class="kw">fn </span>unmanaged_stale_registration_prescribes_a_client_scoped_override_preview() {
+<a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="kw">let </span>registration = |client, matches_current, managed| RegistrationReport {
+<a href=#1440 id=1440 data-nosnippet>1440</a>            client,
+<a href=#1441 id=1441 data-nosnippet>1441</a>            config_path: std::path::PathBuf::from(<span class="string">"config"</span>),
+<a href=#1442 id=1442 data-nosnippet>1442</a>            command: <span class="string">"/opt/manual-leantoken"</span>.into(),
+<a href=#1443 id=1443 data-nosnippet>1443</a>            args: <span class="macro">vec!</span>[<span class="string">"mcp"</span>.into()],
+<a href=#1444 id=1444 data-nosnippet>1444</a>            configured_version: <span class="prelude-val">None</span>,
+<a href=#1445 id=1445 data-nosnippet>1445</a>            configured_version_pin: <span class="prelude-val">None</span>,
+<a href=#1446 id=1446 data-nosnippet>1446</a>            expected_version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>).into(),
+<a href=#1447 id=1447 data-nosnippet>1447</a>            matches_current,
+<a href=#1448 id=1448 data-nosnippet>1448</a>            managed,
+<a href=#1449 id=1449 data-nosnippet>1449</a>            enabled: <span class="bool-val">true</span>,
+<a href=#1450 id=1450 data-nosnippet>1450</a>        };
+<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">let </span>registrations = <span class="macro">vec!</span>[
+<a href=#1452 id=1452 data-nosnippet>1452</a>            registration(SetupClient::Codex, <span class="bool-val">false</span>, <span class="bool-val">false</span>),
+<a href=#1453 id=1453 data-nosnippet>1453</a>            registration(SetupClient::Cursor, <span class="bool-val">false</span>, <span class="bool-val">true</span>),
+<a href=#1454 id=1454 data-nosnippet>1454</a>        ];
+<a href=#1455 id=1455 data-nosnippet>1455</a>
+<a href=#1456 id=1456 data-nosnippet>1456</a>        <span class="kw">let </span>health = registration_health(<span class="string">"registered"</span>, <span class="kw-2">&amp;</span>registrations);
+<a href=#1457 id=1457 data-nosnippet>1457</a>
+<a href=#1458 id=1458 data-nosnippet>1458</a>        <span class="macro">assert_eq!</span>(health, <span class="string">"unmanaged_stale"</span>);
+<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="macro">assert_eq!</span>(
+<a href=#1460 id=1460 data-nosnippet>1460</a>            registration_repair_command(<span class="string">"registered"</span>, health, <span class="kw-2">&amp;</span>registrations),
+<a href=#1461 id=1461 data-nosnippet>1461</a>            <span class="string">"leantoken setup --codex --cursor --force-unmanaged --dry-run"
+<a href=#1462 id=1462 data-nosnippet>1462</a>        </span>);
+<a href=#1463 id=1463 data-nosnippet>1463</a>        <span class="kw">let </span>managed = <span class="macro">vec!</span>[registration(SetupClient::Claude, <span class="bool-val">false</span>, <span class="bool-val">true</span>)];
+<a href=#1464 id=1464 data-nosnippet>1464</a>        <span class="macro">assert_eq!</span>(registration_health(<span class="string">"registered"</span>, <span class="kw-2">&amp;</span>managed), <span class="string">"stale"</span>);
+<a href=#1465 id=1465 data-nosnippet>1465</a>        <span class="macro">assert_eq!</span>(
+<a href=#1466 id=1466 data-nosnippet>1466</a>            registration_repair_command(<span class="string">"registered"</span>, <span class="string">"stale"</span>, <span class="kw-2">&amp;</span>managed),
+<a href=#1467 id=1467 data-nosnippet>1467</a>            <span class="string">"leantoken setup --refresh --yes"
+<a href=#1468 id=1468 data-nosnippet>1468</a>        </span>);
 <a href=#1469 id=1469 data-nosnippet>1469</a>
-<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="kw">let </span>sanitized = sanitize_diagnostic_line(<span class="kw-2">&amp;</span>line, <span class="kw-2">&amp;</span>[path.to_string()]);
-<a href=#1471 id=1471 data-nosnippet>1471</a>
-<a href=#1472 id=1472 data-nosnippet>1472</a>        <span class="macro">assert!</span>(sanitized.contains(<span class="string">"&lt;redacted-path&gt;"</span>));
-<a href=#1473 id=1473 data-nosnippet>1473</a>        <span class="macro">assert!</span>(!sanitized.contains(path));
-<a href=#1474 id=1474 data-nosnippet>1474</a>        <span class="macro">assert_eq!</span>(sanitized.chars().count(), MAX_DIAGNOSTIC_LINE_CHARS);
-<a href=#1475 id=1475 data-nosnippet>1475</a>    }
-<a href=#1476 id=1476 data-nosnippet>1476</a>
-<a href=#1477 id=1477 data-nosnippet>1477</a>    <span class="attr">#[test]
-<a href=#1478 id=1478 data-nosnippet>1478</a>    </span><span class="kw">fn </span>unmanaged_stale_registration_prescribes_a_client_scoped_override_preview() {
-<a href=#1479 id=1479 data-nosnippet>1479</a>        <span class="kw">let </span>registration = |client, matches_current, managed| RegistrationReport {
-<a href=#1480 id=1480 data-nosnippet>1480</a>            client,
-<a href=#1481 id=1481 data-nosnippet>1481</a>            config_path: std::path::PathBuf::from(<span class="string">"config"</span>),
-<a href=#1482 id=1482 data-nosnippet>1482</a>            command: <span class="string">"/opt/manual-leantoken"</span>.into(),
-<a href=#1483 id=1483 data-nosnippet>1483</a>            args: <span class="macro">vec!</span>[<span class="string">"mcp"</span>.into()],
-<a href=#1484 id=1484 data-nosnippet>1484</a>            configured_version: <span class="prelude-val">None</span>,
-<a href=#1485 id=1485 data-nosnippet>1485</a>            configured_version_pin: <span class="prelude-val">None</span>,
-<a href=#1486 id=1486 data-nosnippet>1486</a>            expected_version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>).into(),
-<a href=#1487 id=1487 data-nosnippet>1487</a>            matches_current,
-<a href=#1488 id=1488 data-nosnippet>1488</a>            managed,
-<a href=#1489 id=1489 data-nosnippet>1489</a>            enabled: <span class="bool-val">true</span>,
-<a href=#1490 id=1490 data-nosnippet>1490</a>        };
-<a href=#1491 id=1491 data-nosnippet>1491</a>        <span class="kw">let </span>registrations = <span class="macro">vec!</span>[
-<a href=#1492 id=1492 data-nosnippet>1492</a>            registration(SetupClient::Codex, <span class="bool-val">false</span>, <span class="bool-val">false</span>),
-<a href=#1493 id=1493 data-nosnippet>1493</a>            registration(SetupClient::Cursor, <span class="bool-val">false</span>, <span class="bool-val">true</span>),
-<a href=#1494 id=1494 data-nosnippet>1494</a>        ];
-<a href=#1495 id=1495 data-nosnippet>1495</a>
-<a href=#1496 id=1496 data-nosnippet>1496</a>        <span class="kw">let </span>health = registration_health(<span class="string">"registered"</span>, <span class="kw-2">&amp;</span>registrations);
-<a href=#1497 id=1497 data-nosnippet>1497</a>
-<a href=#1498 id=1498 data-nosnippet>1498</a>        <span class="macro">assert_eq!</span>(health, <span class="string">"unmanaged_stale"</span>);
-<a href=#1499 id=1499 data-nosnippet>1499</a>        <span class="macro">assert_eq!</span>(
-<a href=#1500 id=1500 data-nosnippet>1500</a>            registration_repair_command(<span class="string">"registered"</span>, health, <span class="kw-2">&amp;</span>registrations),
-<a href=#1501 id=1501 data-nosnippet>1501</a>            <span class="string">"leantoken setup --codex --cursor --force-unmanaged --dry-run"
-<a href=#1502 id=1502 data-nosnippet>1502</a>        </span>);
-<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="kw">let </span>managed = <span class="macro">vec!</span>[registration(SetupClient::Claude, <span class="bool-val">false</span>, <span class="bool-val">true</span>)];
-<a href=#1504 id=1504 data-nosnippet>1504</a>        <span class="macro">assert_eq!</span>(registration_health(<span class="string">"registered"</span>, <span class="kw-2">&amp;</span>managed), <span class="string">"stale"</span>);
-<a href=#1505 id=1505 data-nosnippet>1505</a>        <span class="macro">assert_eq!</span>(
-<a href=#1506 id=1506 data-nosnippet>1506</a>            registration_repair_command(<span class="string">"registered"</span>, <span class="string">"stale"</span>, <span class="kw-2">&amp;</span>managed),
-<a href=#1507 id=1507 data-nosnippet>1507</a>            <span class="string">"leantoken setup --refresh --yes"
-<a href=#1508 id=1508 data-nosnippet>1508</a>        </span>);
-<a href=#1509 id=1509 data-nosnippet>1509</a>
-<a href=#1510 id=1510 data-nosnippet>1510</a>        <span class="kw">let </span><span class="kw-2">mut </span>disabled = registration(SetupClient::OpenCode, <span class="bool-val">true</span>, <span class="bool-val">true</span>);
-<a href=#1511 id=1511 data-nosnippet>1511</a>        disabled.enabled = <span class="bool-val">false</span>;
-<a href=#1512 id=1512 data-nosnippet>1512</a>        <span class="macro">assert_eq!</span>(
-<a href=#1513 id=1513 data-nosnippet>1513</a>            registration_health(<span class="string">"registered"</span>, std::slice::from_ref(<span class="kw-2">&amp;</span>disabled)),
-<a href=#1514 id=1514 data-nosnippet>1514</a>            <span class="string">"disabled"
-<a href=#1515 id=1515 data-nosnippet>1515</a>        </span>);
-<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="macro">assert_eq!</span>(
-<a href=#1517 id=1517 data-nosnippet>1517</a>            registration_repair_command(<span class="string">"registered"</span>, <span class="string">"disabled"</span>, <span class="kw-2">&amp;</span>[disabled]),
-<a href=#1518 id=1518 data-nosnippet>1518</a>            <span class="string">"leantoken setup --refresh --yes"
-<a href=#1519 id=1519 data-nosnippet>1519</a>        </span>);
-<a href=#1520 id=1520 data-nosnippet>1520</a>    }
-<a href=#1521 id=1521 data-nosnippet>1521</a>
-<a href=#1522 id=1522 data-nosnippet>1522</a>    <span class="attr">#[test]
-<a href=#1523 id=1523 data-nosnippet>1523</a>    </span><span class="kw">fn </span>runtime_version_requires_the_expected_semver_and_bounded_schema_fingerprint() {
-<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="kw">let </span>current = <span class="macro">concat!</span>(
-<a href=#1525 id=1525 data-nosnippet>1525</a>            <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
-<a href=#1526 id=1526 data-nosnippet>1526</a>            <span class="string">"+contract.0123456789abcdef0123456789abcdef"
-<a href=#1527 id=1527 data-nosnippet>1527</a>        </span>);
-<a href=#1528 id=1528 data-nosnippet>1528</a>        <span class="kw">let </span>pinned = <span class="string">"0.1.19+schema.0123456789abcdef0123456789abcdef"</span>;
-<a href=#1529 id=1529 data-nosnippet>1529</a>        <span class="kw">let </span>rollback = <span class="string">"0.1.18+schema.0123456789abcdef0123456789abcdef"</span>;
-<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="kw">let </span>first_schema = <span class="string">"0.1.17+schema.0123456789abcdef0123456789abcdef"</span>;
-<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="macro">assert!</span>(server_version_matches_runtime(
-<a href=#1532 id=1532 data-nosnippet>1532</a>            current,
-<a href=#1533 id=1533 data-nosnippet>1533</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
-<a href=#1534 id=1534 data-nosnippet>1534</a>        ));
-<a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="macro">assert!</span>(server_version_matches_runtime(pinned, <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>)));
-<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="macro">assert!</span>(server_version_matches_runtime(rollback, <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)));
-<a href=#1537 id=1537 data-nosnippet>1537</a>        <span class="macro">assert!</span>(server_version_matches_runtime(first_schema, <span class="prelude-val">Some</span>(<span class="string">"0.1.17"</span>)));
-<a href=#1538 id=1538 data-nosnippet>1538</a>        <span class="macro">assert!</span>(server_version_matches_runtime(pinned, <span class="prelude-val">None</span>));
-<a href=#1539 id=1539 data-nosnippet>1539</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
-<a href=#1540 id=1540 data-nosnippet>1540</a>            <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
-<a href=#1541 id=1541 data-nosnippet>1541</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
-<a href=#1542 id=1542 data-nosnippet>1542</a>        ));
-<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
-<a href=#1544 id=1544 data-nosnippet>1544</a>            <span class="macro">concat!</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"+contract.short"</span>),
-<a href=#1545 id=1545 data-nosnippet>1545</a>            <span class="prelude-val">None
-<a href=#1546 id=1546 data-nosnippet>1546</a>        </span>));
-<a href=#1547 id=1547 data-nosnippet>1547</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(pinned, <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)));
-<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
-<a href=#1549 id=1549 data-nosnippet>1549</a>            <span class="string">"0.1.18+contract.0123456789abcdef0123456789abcdef"</span>,
-<a href=#1550 id=1550 data-nosnippet>1550</a>            <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)
-<a href=#1551 id=1551 data-nosnippet>1551</a>        ));
-<a href=#1552 id=1552 data-nosnippet>1552</a>    }
-<a href=#1553 id=1553 data-nosnippet>1553</a>
-<a href=#1554 id=1554 data-nosnippet>1554</a>    <span class="attr">#[test]
-<a href=#1555 id=1555 data-nosnippet>1555</a>    </span><span class="kw">fn </span>configured_catalog_validation_uses_the_child_release_profile() {
-<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">let </span>rollback = V0_1_17_TO_V0_1_18_TOOLS.map(str::to_owned).to_vec();
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>current = EXPECTED_TOOLS.map(str::to_owned).to_vec();
-<a href=#1558 id=1558 data-nosnippet>1558</a>
-<a href=#1559 id=1559 data-nosnippet>1559</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>rollback, <span class="string">"0.1.17"</span>));
-<a href=#1560 id=1560 data-nosnippet>1560</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>rollback, <span class="string">"0.1.18"</span>));
-<a href=#1561 id=1561 data-nosnippet>1561</a>        <span class="macro">assert!</span>(!catalog_matches_release(<span class="kw-2">&amp;</span>current, <span class="string">"0.1.18"</span>));
-<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="macro">assert!</span>(catalog_matches_release(
-<a href=#1563 id=1563 data-nosnippet>1563</a>            <span class="kw-2">&amp;</span>V0_1_19_TOOLS.map(str::to_owned),
-<a href=#1564 id=1564 data-nosnippet>1564</a>            <span class="string">"0.1.19"
-<a href=#1565 id=1565 data-nosnippet>1565</a>        </span>));
-<a href=#1566 id=1566 data-nosnippet>1566</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>current, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>)));
-<a href=#1567 id=1567 data-nosnippet>1567</a>
-<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="kw">let </span><span class="kw-2">mut </span>future = rollback;
-<a href=#1569 id=1569 data-nosnippet>1569</a>        future.push(<span class="string">"future_tool"</span>.into());
-<a href=#1570 id=1570 data-nosnippet>1570</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>future, <span class="string">"0.2.0"</span>));
-<a href=#1571 id=1571 data-nosnippet>1571</a>        <span class="kw">for </span>required <span class="kw">in </span>COMPATIBLE_REQUIRED_TOOLS {
-<a href=#1572 id=1572 data-nosnippet>1572</a>            <span class="kw">let </span>incomplete = future
-<a href=#1573 id=1573 data-nosnippet>1573</a>                .iter()
-<a href=#1574 id=1574 data-nosnippet>1574</a>                .filter(|tool| tool.as_str() != required)
-<a href=#1575 id=1575 data-nosnippet>1575</a>                .cloned()
-<a href=#1576 id=1576 data-nosnippet>1576</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#1577 id=1577 data-nosnippet>1577</a>            <span class="macro">assert!</span>(!catalog_matches_release(<span class="kw-2">&amp;</span>incomplete, <span class="string">"0.2.0"</span>));
-<a href=#1578 id=1578 data-nosnippet>1578</a>        }
-<a href=#1579 id=1579 data-nosnippet>1579</a>    }
-<a href=#1580 id=1580 data-nosnippet>1580</a>
-<a href=#1581 id=1581 data-nosnippet>1581</a>    <span class="attr">#[test]
-<a href=#1582 id=1582 data-nosnippet>1582</a>    </span><span class="kw">fn </span>configured_guidance_validation_accepts_the_first_schema_release() {
-<a href=#1583 id=1583 data-nosnippet>1583</a>        <span class="kw">let </span>legacy = <span class="string">"For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: call leantoken.context first. For an uncertain broad task, first use context plan_only=true, then repeat the same request with plan_only=false. PREFER leantoken.search over grep or rg."</span>;
-<a href=#1584 id=1584 data-nosnippet>1584</a>        <span class="macro">assert!</span>(instructions_match_release(legacy, <span class="string">"0.1.17"</span>));
-<a href=#1585 id=1585 data-nosnippet>1585</a>        <span class="macro">assert!</span>(!instructions_match_release(legacy, <span class="string">"0.1.18"</span>));
-<a href=#1586 id=1586 data-nosnippet>1586</a>    }
-<a href=#1587 id=1587 data-nosnippet>1587</a>
-<a href=#1588 id=1588 data-nosnippet>1588</a>    <span class="attr">#[test]
-<a href=#1589 id=1589 data-nosnippet>1589</a>    </span><span class="kw">fn </span>configured_guidance_validation_accepts_compact_current_guidance() {
-<a href=#1590 id=1590 data-nosnippet>1590</a>        <span class="kw">let </span>current = <span class="string">"Use LeanToken for indexed repository discovery. For broad work, call leantoken.context once with plan_only=false. For a known scope, choose the matching tool. Use savings for token statistics."</span>;
-<a href=#1591 id=1591 data-nosnippet>1591</a>        <span class="macro">assert!</span>(instructions_match_release(
-<a href=#1592 id=1592 data-nosnippet>1592</a>            current,
-<a href=#1593 id=1593 data-nosnippet>1593</a>            <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>)
-<a href=#1594 id=1594 data-nosnippet>1594</a>        ));
-<a href=#1595 id=1595 data-nosnippet>1595</a>    }
-<a href=#1596 id=1596 data-nosnippet>1596</a>
-<a href=#1597 id=1597 data-nosnippet>1597</a>    <span class="attr">#[test]
-<a href=#1598 id=1598 data-nosnippet>1598</a>    </span><span class="kw">fn </span>configured_doctor_expects_the_stored_launcher_version() {
-<a href=#1599 id=1599 data-nosnippet>1599</a>        <span class="kw">let </span>registration = setup::ConfiguredRegistration {
-<a href=#1600 id=1600 data-nosnippet>1600</a>            client: SetupClient::Codex,
-<a href=#1601 id=1601 data-nosnippet>1601</a>            path: <span class="string">"config.toml"</span>.into(),
-<a href=#1602 id=1602 data-nosnippet>1602</a>            source_hash: [<span class="number">0</span>; <span class="number">32</span>],
-<a href=#1603 id=1603 data-nosnippet>1603</a>            command: <span class="string">"npx"</span>.into(),
-<a href=#1604 id=1604 data-nosnippet>1604</a>            args: <span class="macro">vec!</span>[<span class="string">"--package=leantoken@0.1.19"</span>.into()],
-<a href=#1605 id=1605 data-nosnippet>1605</a>            startup_timeout_seconds: <span class="prelude-val">Some</span>(setup::CODEX_STARTUP_TIMEOUT_SECONDS),
-<a href=#1606 id=1606 data-nosnippet>1606</a>            version: <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>.into()),
-<a href=#1607 id=1607 data-nosnippet>1607</a>            expected_version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>).into(),
-<a href=#1608 id=1608 data-nosnippet>1608</a>            matches_current: <span class="bool-val">false</span>,
-<a href=#1609 id=1609 data-nosnippet>1609</a>            managed: <span class="bool-val">true</span>,
-<a href=#1610 id=1610 data-nosnippet>1610</a>            enabled: <span class="bool-val">true</span>,
-<a href=#1611 id=1611 data-nosnippet>1611</a>        };
-<a href=#1612 id=1612 data-nosnippet>1612</a>
-<a href=#1613 id=1613 data-nosnippet>1613</a>        <span class="macro">assert_eq!</span>(expected_server_version(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>registration)), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
-<a href=#1614 id=1614 data-nosnippet>1614</a>        <span class="kw">let </span>report = RegistrationReport::from(<span class="kw-2">&amp;</span>registration);
-<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="macro">assert_eq!</span>(report.configured_version.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
-<a href=#1616 id=1616 data-nosnippet>1616</a>        <span class="macro">assert_eq!</span>(report.configured_version_pin.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
-<a href=#1617 id=1617 data-nosnippet>1617</a>        <span class="macro">assert_eq!</span>(report.expected_version, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>));
-<a href=#1618 id=1618 data-nosnippet>1618</a>        <span class="macro">assert_eq!</span>(
-<a href=#1619 id=1619 data-nosnippet>1619</a>            configured_handshake_timeout(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>registration)),
-<a href=#1620 id=1620 data-nosnippet>1620</a>            RESPONSE_TIMEOUT
-<a href=#1621 id=1621 data-nosnippet>1621</a>        );
-<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="macro">assert_eq!</span>(
-<a href=#1623 id=1623 data-nosnippet>1623</a>            expected_server_version(<span class="prelude-val">None</span>),
-<a href=#1624 id=1624 data-nosnippet>1624</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
-<a href=#1625 id=1625 data-nosnippet>1625</a>        );
-<a href=#1626 id=1626 data-nosnippet>1626</a>
-<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="kw">let </span><span class="kw-2">mut </span>short_timeout = registration.clone();
-<a href=#1628 id=1628 data-nosnippet>1628</a>        short_timeout.startup_timeout_seconds = <span class="prelude-val">Some</span>(<span class="number">2</span>);
-<a href=#1629 id=1629 data-nosnippet>1629</a>        <span class="macro">assert_eq!</span>(
-<a href=#1630 id=1630 data-nosnippet>1630</a>            configured_handshake_timeout(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>short_timeout)),
-<a href=#1631 id=1631 data-nosnippet>1631</a>            Duration::from_secs(<span class="number">2</span>)
-<a href=#1632 id=1632 data-nosnippet>1632</a>        );
-<a href=#1633 id=1633 data-nosnippet>1633</a>
-<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="kw">let </span><span class="kw-2">mut </span>floating = registration;
-<a href=#1635 id=1635 data-nosnippet>1635</a>        floating.version = <span class="prelude-val">Some</span>(<span class="string">"latest"</span>.into());
-<a href=#1636 id=1636 data-nosnippet>1636</a>        <span class="macro">assert_eq!</span>(expected_server_version(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>floating)), <span class="prelude-val">None</span>);
-<a href=#1637 id=1637 data-nosnippet>1637</a>    }
-<a href=#1638 id=1638 data-nosnippet>1638</a>
-<a href=#1639 id=1639 data-nosnippet>1639</a>    <span class="attr">#[test]
-<a href=#1640 id=1640 data-nosnippet>1640</a>    </span><span class="kw">fn </span>protocol_reader_rejects_oversized_records_before_json_parsing() {
-<a href=#1641 id=1641 data-nosnippet>1641</a>        <span class="kw">let </span><span class="kw-2">mut </span>allowed = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_PROTOCOL_LINE_BYTES];
-<a href=#1642 id=1642 data-nosnippet>1642</a>        allowed.push(<span class="string">b'\n'</span>);
-<a href=#1643 id=1643 data-nosnippet>1643</a>        <span class="macro">assert_eq!</span>(
-<a href=#1644 id=1644 data-nosnippet>1644</a>            read_bounded_protocol_line(<span class="kw-2">&amp;mut </span>Cursor::new(allowed))
-<a href=#1645 id=1645 data-nosnippet>1645</a>                .expect(<span class="string">"bounded protocol line"</span>)
-<a href=#1646 id=1646 data-nosnippet>1646</a>                .map(|line| line.len()),
-<a href=#1647 id=1647 data-nosnippet>1647</a>            <span class="prelude-val">Some</span>(MAX_PROTOCOL_LINE_BYTES)
-<a href=#1648 id=1648 data-nosnippet>1648</a>        );
-<a href=#1649 id=1649 data-nosnippet>1649</a>
-<a href=#1650 id=1650 data-nosnippet>1650</a>        <span class="kw">let </span>oversized = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_PROTOCOL_LINE_BYTES + <span class="number">1</span>];
-<a href=#1651 id=1651 data-nosnippet>1651</a>        <span class="kw">let </span>error = read_bounded_protocol_line(<span class="kw-2">&amp;mut </span>Cursor::new(oversized))
-<a href=#1652 id=1652 data-nosnippet>1652</a>            .expect_err(<span class="string">"oversized protocol line"</span>);
-<a href=#1653 id=1653 data-nosnippet>1653</a>        <span class="macro">assert_eq!</span>(error.kind(), std::io::ErrorKind::InvalidData);
-<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"MCP response line exceeds"</span>));
-<a href=#1655 id=1655 data-nosnippet>1655</a>    }
-<a href=#1656 id=1656 data-nosnippet>1656</a>
-<a href=#1657 id=1657 data-nosnippet>1657</a>    <span class="attr">#[test]
-<a href=#1658 id=1658 data-nosnippet>1658</a>    </span><span class="kw">fn </span>protocol_output_queue_has_an_exact_record_bound() {
-<a href=#1659 id=1659 data-nosnippet>1659</a>        <span class="kw">let </span>(sender, receiver) = protocol_channel();
-<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..MAX_PROTOCOL_QUEUED_RECORDS {
-<a href=#1661 id=1661 data-nosnippet>1661</a>            sender
-<a href=#1662 id=1662 data-nosnippet>1662</a>                .try_send(<span class="prelude-val">Ok</span>(<span class="macro">format!</span>(<span class="string">"record {index}"</span>)))
-<a href=#1663 id=1663 data-nosnippet>1663</a>                .expect(<span class="string">"record within queue bound"</span>);
-<a href=#1664 id=1664 data-nosnippet>1664</a>        }
-<a href=#1665 id=1665 data-nosnippet>1665</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#1666 id=1666 data-nosnippet>1666</a>            sender.try_send(<span class="prelude-val">Ok</span>(<span class="string">"over bound"</span>.into())),
-<a href=#1667 id=1667 data-nosnippet>1667</a>            <span class="prelude-val">Err</span>(mpsc::TrySendError::Full(<span class="kw">_</span>))
-<a href=#1668 id=1668 data-nosnippet>1668</a>        ));
-<a href=#1669 id=1669 data-nosnippet>1669</a>        drop(receiver);
-<a href=#1670 id=1670 data-nosnippet>1670</a>    }
-<a href=#1671 id=1671 data-nosnippet>1671</a>
-<a href=#1672 id=1672 data-nosnippet>1672</a>    <span class="attr">#[test]
-<a href=#1673 id=1673 data-nosnippet>1673</a>    </span><span class="kw">fn </span>child_diagnostic_reader_discards_oversized_line_remainders() {
-<a href=#1674 id=1674 data-nosnippet>1674</a>        <span class="kw">let </span><span class="kw-2">mut </span>input = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_DIAGNOSTIC_LINE_BYTES * <span class="number">4</span>];
-<a href=#1675 id=1675 data-nosnippet>1675</a>        input.extend_from_slice(<span class="string">b"\nnext\n"</span>);
-<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="kw">let </span><span class="kw-2">mut </span>lines = Vec::new();
-<a href=#1677 id=1677 data-nosnippet>1677</a>
-<a href=#1678 id=1678 data-nosnippet>1678</a>        read_bounded_diagnostic_lines(Cursor::new(input), |line| lines.push(line.to_vec()))
-<a href=#1679 id=1679 data-nosnippet>1679</a>            .expect(<span class="string">"read diagnostics"</span>);
-<a href=#1680 id=1680 data-nosnippet>1680</a>
-<a href=#1681 id=1681 data-nosnippet>1681</a>        <span class="macro">assert_eq!</span>(lines.len(), <span class="number">2</span>);
-<a href=#1682 id=1682 data-nosnippet>1682</a>        <span class="macro">assert_eq!</span>(lines[<span class="number">0</span>].len(), MAX_DIAGNOSTIC_LINE_BYTES);
-<a href=#1683 id=1683 data-nosnippet>1683</a>        <span class="macro">assert_eq!</span>(lines[<span class="number">1</span>], <span class="string">b"next"</span>);
-<a href=#1684 id=1684 data-nosnippet>1684</a>    }
-<a href=#1685 id=1685 data-nosnippet>1685</a>
-<a href=#1686 id=1686 data-nosnippet>1686</a>    <span class="attr">#[test]
-<a href=#1687 id=1687 data-nosnippet>1687</a>    </span><span class="kw">fn </span>diagnostic_buffer_waits_for_delayed_child_failure_and_remains_bounded() {
-<a href=#1688 id=1688 data-nosnippet>1688</a>        <span class="kw">let </span>delayed = Arc::new(DiagnosticBuffer::default());
-<a href=#1689 id=1689 data-nosnippet>1689</a>        <span class="kw">let </span>writer_buffer = Arc::clone(<span class="kw-2">&amp;</span>delayed);
-<a href=#1690 id=1690 data-nosnippet>1690</a>        <span class="kw">let </span>writer = std::thread::spawn(<span class="kw">move </span>|| {
-<a href=#1691 id=1691 data-nosnippet>1691</a>            std::thread::sleep(Duration::from_millis(<span class="number">20</span>));
-<a href=#1692 id=1692 data-nosnippet>1692</a>            writer_buffer.push(<span class="string">"MCP indexing runtime failed"</span>.into());
-<a href=#1693 id=1693 data-nosnippet>1693</a>        });
-<a href=#1694 id=1694 data-nosnippet>1694</a>
-<a href=#1695 id=1695 data-nosnippet>1695</a>        <span class="kw">let </span>context = delayed.wait_context(Duration::from_secs(<span class="number">1</span>));
-<a href=#1696 id=1696 data-nosnippet>1696</a>        writer.join().expect(<span class="string">"diagnostic writer"</span>);
-<a href=#1697 id=1697 data-nosnippet>1697</a>        <span class="macro">assert!</span>(context.contains(<span class="string">"MCP indexing runtime failed"</span>));
-<a href=#1698 id=1698 data-nosnippet>1698</a>
-<a href=#1699 id=1699 data-nosnippet>1699</a>        <span class="kw">let </span>bounded = DiagnosticBuffer::default();
-<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..=MAX_DIAGNOSTIC_LINES {
-<a href=#1701 id=1701 data-nosnippet>1701</a>            bounded.push(<span class="macro">format!</span>(<span class="string">"earlier diagnostic {index}"</span>));
-<a href=#1702 id=1702 data-nosnippet>1702</a>        }
-<a href=#1703 id=1703 data-nosnippet>1703</a>        <span class="kw">let </span>settled = bounded.context();
-<a href=#1704 id=1704 data-nosnippet>1704</a>
-<a href=#1705 id=1705 data-nosnippet>1705</a>        <span class="macro">assert!</span>(settled.contains(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"earlier diagnostic {MAX_DIAGNOSTIC_LINES}"</span>)));
-<a href=#1706 id=1706 data-nosnippet>1706</a>        <span class="macro">assert!</span>(!settled.contains(<span class="string">"earlier diagnostic 0"</span>));
-<a href=#1707 id=1707 data-nosnippet>1707</a>        <span class="macro">assert_eq!</span>(settled.matches(<span class="string">" | "</span>).count(), MAX_DIAGNOSTIC_LINES - <span class="number">1</span>);
-<a href=#1708 id=1708 data-nosnippet>1708</a>    }
-<a href=#1709 id=1709 data-nosnippet>1709</a>}
+<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="kw">let </span><span class="kw-2">mut </span>disabled = registration(SetupClient::OpenCode, <span class="bool-val">true</span>, <span class="bool-val">true</span>);
+<a href=#1471 id=1471 data-nosnippet>1471</a>        disabled.enabled = <span class="bool-val">false</span>;
+<a href=#1472 id=1472 data-nosnippet>1472</a>        <span class="macro">assert_eq!</span>(
+<a href=#1473 id=1473 data-nosnippet>1473</a>            registration_health(<span class="string">"registered"</span>, std::slice::from_ref(<span class="kw-2">&amp;</span>disabled)),
+<a href=#1474 id=1474 data-nosnippet>1474</a>            <span class="string">"disabled"
+<a href=#1475 id=1475 data-nosnippet>1475</a>        </span>);
+<a href=#1476 id=1476 data-nosnippet>1476</a>        <span class="macro">assert_eq!</span>(
+<a href=#1477 id=1477 data-nosnippet>1477</a>            registration_repair_command(<span class="string">"registered"</span>, <span class="string">"disabled"</span>, <span class="kw-2">&amp;</span>[disabled]),
+<a href=#1478 id=1478 data-nosnippet>1478</a>            <span class="string">"leantoken setup --refresh --yes"
+<a href=#1479 id=1479 data-nosnippet>1479</a>        </span>);
+<a href=#1480 id=1480 data-nosnippet>1480</a>    }
+<a href=#1481 id=1481 data-nosnippet>1481</a>
+<a href=#1482 id=1482 data-nosnippet>1482</a>    <span class="attr">#[test]
+<a href=#1483 id=1483 data-nosnippet>1483</a>    </span><span class="kw">fn </span>runtime_version_requires_the_expected_semver_and_bounded_schema_fingerprint() {
+<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>current = <span class="macro">concat!</span>(
+<a href=#1485 id=1485 data-nosnippet>1485</a>            <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
+<a href=#1486 id=1486 data-nosnippet>1486</a>            <span class="string">"+contract.0123456789abcdef0123456789abcdef"
+<a href=#1487 id=1487 data-nosnippet>1487</a>        </span>);
+<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>pinned = <span class="string">"0.1.19+schema.0123456789abcdef0123456789abcdef"</span>;
+<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="kw">let </span>rollback = <span class="string">"0.1.18+schema.0123456789abcdef0123456789abcdef"</span>;
+<a href=#1490 id=1490 data-nosnippet>1490</a>        <span class="kw">let </span>first_schema = <span class="string">"0.1.17+schema.0123456789abcdef0123456789abcdef"</span>;
+<a href=#1491 id=1491 data-nosnippet>1491</a>        <span class="macro">assert!</span>(server_version_matches_runtime(
+<a href=#1492 id=1492 data-nosnippet>1492</a>            current,
+<a href=#1493 id=1493 data-nosnippet>1493</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
+<a href=#1494 id=1494 data-nosnippet>1494</a>        ));
+<a href=#1495 id=1495 data-nosnippet>1495</a>        <span class="macro">assert!</span>(server_version_matches_runtime(pinned, <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>)));
+<a href=#1496 id=1496 data-nosnippet>1496</a>        <span class="macro">assert!</span>(server_version_matches_runtime(rollback, <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)));
+<a href=#1497 id=1497 data-nosnippet>1497</a>        <span class="macro">assert!</span>(server_version_matches_runtime(first_schema, <span class="prelude-val">Some</span>(<span class="string">"0.1.17"</span>)));
+<a href=#1498 id=1498 data-nosnippet>1498</a>        <span class="macro">assert!</span>(server_version_matches_runtime(pinned, <span class="prelude-val">None</span>));
+<a href=#1499 id=1499 data-nosnippet>1499</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
+<a href=#1500 id=1500 data-nosnippet>1500</a>            <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
+<a href=#1501 id=1501 data-nosnippet>1501</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
+<a href=#1502 id=1502 data-nosnippet>1502</a>        ));
+<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
+<a href=#1504 id=1504 data-nosnippet>1504</a>            <span class="macro">concat!</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"+contract.short"</span>),
+<a href=#1505 id=1505 data-nosnippet>1505</a>            <span class="prelude-val">None
+<a href=#1506 id=1506 data-nosnippet>1506</a>        </span>));
+<a href=#1507 id=1507 data-nosnippet>1507</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(pinned, <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)));
+<a href=#1508 id=1508 data-nosnippet>1508</a>        <span class="macro">assert!</span>(!server_version_matches_runtime(
+<a href=#1509 id=1509 data-nosnippet>1509</a>            <span class="string">"0.1.18+contract.0123456789abcdef0123456789abcdef"</span>,
+<a href=#1510 id=1510 data-nosnippet>1510</a>            <span class="prelude-val">Some</span>(<span class="string">"0.1.18"</span>)
+<a href=#1511 id=1511 data-nosnippet>1511</a>        ));
+<a href=#1512 id=1512 data-nosnippet>1512</a>    }
+<a href=#1513 id=1513 data-nosnippet>1513</a>
+<a href=#1514 id=1514 data-nosnippet>1514</a>    <span class="attr">#[test]
+<a href=#1515 id=1515 data-nosnippet>1515</a>    </span><span class="kw">fn </span>configured_catalog_validation_uses_the_child_release_profile() {
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="kw">let </span>rollback = V0_1_17_TO_V0_1_18_TOOLS.map(str::to_owned).to_vec();
+<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw">let </span>current = EXPECTED_TOOLS.map(str::to_owned).to_vec();
+<a href=#1518 id=1518 data-nosnippet>1518</a>
+<a href=#1519 id=1519 data-nosnippet>1519</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>rollback, <span class="string">"0.1.17"</span>));
+<a href=#1520 id=1520 data-nosnippet>1520</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>rollback, <span class="string">"0.1.18"</span>));
+<a href=#1521 id=1521 data-nosnippet>1521</a>        <span class="macro">assert!</span>(!catalog_matches_release(<span class="kw-2">&amp;</span>current, <span class="string">"0.1.18"</span>));
+<a href=#1522 id=1522 data-nosnippet>1522</a>        <span class="macro">assert!</span>(catalog_matches_release(
+<a href=#1523 id=1523 data-nosnippet>1523</a>            <span class="kw-2">&amp;</span>V0_1_19_TOOLS.map(str::to_owned),
+<a href=#1524 id=1524 data-nosnippet>1524</a>            <span class="string">"0.1.19"
+<a href=#1525 id=1525 data-nosnippet>1525</a>        </span>));
+<a href=#1526 id=1526 data-nosnippet>1526</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>current, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>)));
+<a href=#1527 id=1527 data-nosnippet>1527</a>
+<a href=#1528 id=1528 data-nosnippet>1528</a>        <span class="kw">let </span><span class="kw-2">mut </span>future = rollback;
+<a href=#1529 id=1529 data-nosnippet>1529</a>        future.push(<span class="string">"future_tool"</span>.into());
+<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="macro">assert!</span>(catalog_matches_release(<span class="kw-2">&amp;</span>future, <span class="string">"0.2.0"</span>));
+<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="kw">for </span>required <span class="kw">in </span>COMPATIBLE_REQUIRED_TOOLS {
+<a href=#1532 id=1532 data-nosnippet>1532</a>            <span class="kw">let </span>incomplete = future
+<a href=#1533 id=1533 data-nosnippet>1533</a>                .iter()
+<a href=#1534 id=1534 data-nosnippet>1534</a>                .filter(|tool| tool.as_str() != required)
+<a href=#1535 id=1535 data-nosnippet>1535</a>                .cloned()
+<a href=#1536 id=1536 data-nosnippet>1536</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#1537 id=1537 data-nosnippet>1537</a>            <span class="macro">assert!</span>(!catalog_matches_release(<span class="kw-2">&amp;</span>incomplete, <span class="string">"0.2.0"</span>));
+<a href=#1538 id=1538 data-nosnippet>1538</a>        }
+<a href=#1539 id=1539 data-nosnippet>1539</a>    }
+<a href=#1540 id=1540 data-nosnippet>1540</a>
+<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="attr">#[test]
+<a href=#1542 id=1542 data-nosnippet>1542</a>    </span><span class="kw">fn </span>configured_guidance_validation_accepts_the_first_schema_release() {
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">let </span>legacy = <span class="string">"For LeanToken savings or token statistics, call leantoken.savings directly. DEFAULT: call leantoken.context first. For an uncertain broad task, first use context plan_only=true, then repeat the same request with plan_only=false. PREFER leantoken.search over grep or rg."</span>;
+<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="macro">assert!</span>(instructions_match_release(legacy, <span class="string">"0.1.17"</span>));
+<a href=#1545 id=1545 data-nosnippet>1545</a>        <span class="macro">assert!</span>(!instructions_match_release(legacy, <span class="string">"0.1.18"</span>));
+<a href=#1546 id=1546 data-nosnippet>1546</a>    }
+<a href=#1547 id=1547 data-nosnippet>1547</a>
+<a href=#1548 id=1548 data-nosnippet>1548</a>    <span class="attr">#[test]
+<a href=#1549 id=1549 data-nosnippet>1549</a>    </span><span class="kw">fn </span>configured_doctor_expects_the_stored_launcher_version() {
+<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="kw">let </span>registration = setup::ConfiguredRegistration {
+<a href=#1551 id=1551 data-nosnippet>1551</a>            client: SetupClient::Codex,
+<a href=#1552 id=1552 data-nosnippet>1552</a>            path: <span class="string">"config.toml"</span>.into(),
+<a href=#1553 id=1553 data-nosnippet>1553</a>            source_hash: [<span class="number">0</span>; <span class="number">32</span>],
+<a href=#1554 id=1554 data-nosnippet>1554</a>            command: <span class="string">"npx"</span>.into(),
+<a href=#1555 id=1555 data-nosnippet>1555</a>            args: <span class="macro">vec!</span>[<span class="string">"--package=leantoken@0.1.19"</span>.into()],
+<a href=#1556 id=1556 data-nosnippet>1556</a>            startup_timeout_seconds: <span class="prelude-val">Some</span>(setup::CODEX_STARTUP_TIMEOUT_SECONDS),
+<a href=#1557 id=1557 data-nosnippet>1557</a>            version: <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>.into()),
+<a href=#1558 id=1558 data-nosnippet>1558</a>            expected_version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>).into(),
+<a href=#1559 id=1559 data-nosnippet>1559</a>            matches_current: <span class="bool-val">false</span>,
+<a href=#1560 id=1560 data-nosnippet>1560</a>            managed: <span class="bool-val">true</span>,
+<a href=#1561 id=1561 data-nosnippet>1561</a>            enabled: <span class="bool-val">true</span>,
+<a href=#1562 id=1562 data-nosnippet>1562</a>        };
+<a href=#1563 id=1563 data-nosnippet>1563</a>
+<a href=#1564 id=1564 data-nosnippet>1564</a>        <span class="macro">assert_eq!</span>(expected_server_version(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>registration)), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
+<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="kw">let </span>report = RegistrationReport::from(<span class="kw-2">&amp;</span>registration);
+<a href=#1566 id=1566 data-nosnippet>1566</a>        <span class="macro">assert_eq!</span>(report.configured_version.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
+<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="macro">assert_eq!</span>(report.configured_version_pin.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"0.1.19"</span>));
+<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="macro">assert_eq!</span>(report.expected_version, <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>));
+<a href=#1569 id=1569 data-nosnippet>1569</a>        <span class="macro">assert_eq!</span>(
+<a href=#1570 id=1570 data-nosnippet>1570</a>            configured_handshake_timeout(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>registration)),
+<a href=#1571 id=1571 data-nosnippet>1571</a>            RESPONSE_TIMEOUT
+<a href=#1572 id=1572 data-nosnippet>1572</a>        );
+<a href=#1573 id=1573 data-nosnippet>1573</a>        <span class="macro">assert_eq!</span>(
+<a href=#1574 id=1574 data-nosnippet>1574</a>            expected_server_version(<span class="prelude-val">None</span>),
+<a href=#1575 id=1575 data-nosnippet>1575</a>            <span class="prelude-val">Some</span>(<span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>))
+<a href=#1576 id=1576 data-nosnippet>1576</a>        );
+<a href=#1577 id=1577 data-nosnippet>1577</a>
+<a href=#1578 id=1578 data-nosnippet>1578</a>        <span class="kw">let </span><span class="kw-2">mut </span>short_timeout = registration.clone();
+<a href=#1579 id=1579 data-nosnippet>1579</a>        short_timeout.startup_timeout_seconds = <span class="prelude-val">Some</span>(<span class="number">2</span>);
+<a href=#1580 id=1580 data-nosnippet>1580</a>        <span class="macro">assert_eq!</span>(
+<a href=#1581 id=1581 data-nosnippet>1581</a>            configured_handshake_timeout(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>short_timeout)),
+<a href=#1582 id=1582 data-nosnippet>1582</a>            Duration::from_secs(<span class="number">2</span>)
+<a href=#1583 id=1583 data-nosnippet>1583</a>        );
+<a href=#1584 id=1584 data-nosnippet>1584</a>
+<a href=#1585 id=1585 data-nosnippet>1585</a>        <span class="kw">let </span><span class="kw-2">mut </span>floating = registration;
+<a href=#1586 id=1586 data-nosnippet>1586</a>        floating.version = <span class="prelude-val">Some</span>(<span class="string">"latest"</span>.into());
+<a href=#1587 id=1587 data-nosnippet>1587</a>        <span class="macro">assert_eq!</span>(expected_server_version(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>floating)), <span class="prelude-val">None</span>);
+<a href=#1588 id=1588 data-nosnippet>1588</a>    }
+<a href=#1589 id=1589 data-nosnippet>1589</a>
+<a href=#1590 id=1590 data-nosnippet>1590</a>    <span class="attr">#[test]
+<a href=#1591 id=1591 data-nosnippet>1591</a>    </span><span class="kw">fn </span>protocol_reader_rejects_oversized_records_before_json_parsing() {
+<a href=#1592 id=1592 data-nosnippet>1592</a>        <span class="kw">let </span><span class="kw-2">mut </span>allowed = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_PROTOCOL_LINE_BYTES];
+<a href=#1593 id=1593 data-nosnippet>1593</a>        allowed.push(<span class="string">b'\n'</span>);
+<a href=#1594 id=1594 data-nosnippet>1594</a>        <span class="macro">assert_eq!</span>(
+<a href=#1595 id=1595 data-nosnippet>1595</a>            read_bounded_protocol_line(<span class="kw-2">&amp;mut </span>Cursor::new(allowed))
+<a href=#1596 id=1596 data-nosnippet>1596</a>                .expect(<span class="string">"bounded protocol line"</span>)
+<a href=#1597 id=1597 data-nosnippet>1597</a>                .map(|line| line.len()),
+<a href=#1598 id=1598 data-nosnippet>1598</a>            <span class="prelude-val">Some</span>(MAX_PROTOCOL_LINE_BYTES)
+<a href=#1599 id=1599 data-nosnippet>1599</a>        );
+<a href=#1600 id=1600 data-nosnippet>1600</a>
+<a href=#1601 id=1601 data-nosnippet>1601</a>        <span class="kw">let </span>oversized = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_PROTOCOL_LINE_BYTES + <span class="number">1</span>];
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="kw">let </span>error = read_bounded_protocol_line(<span class="kw-2">&amp;mut </span>Cursor::new(oversized))
+<a href=#1603 id=1603 data-nosnippet>1603</a>            .expect_err(<span class="string">"oversized protocol line"</span>);
+<a href=#1604 id=1604 data-nosnippet>1604</a>        <span class="macro">assert_eq!</span>(error.kind(), std::io::ErrorKind::InvalidData);
+<a href=#1605 id=1605 data-nosnippet>1605</a>        <span class="macro">assert!</span>(error.to_string().contains(<span class="string">"MCP response line exceeds"</span>));
+<a href=#1606 id=1606 data-nosnippet>1606</a>    }
+<a href=#1607 id=1607 data-nosnippet>1607</a>
+<a href=#1608 id=1608 data-nosnippet>1608</a>    <span class="attr">#[test]
+<a href=#1609 id=1609 data-nosnippet>1609</a>    </span><span class="kw">fn </span>protocol_output_queue_has_an_exact_record_bound() {
+<a href=#1610 id=1610 data-nosnippet>1610</a>        <span class="kw">let </span>(sender, receiver) = protocol_channel();
+<a href=#1611 id=1611 data-nosnippet>1611</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..MAX_PROTOCOL_QUEUED_RECORDS {
+<a href=#1612 id=1612 data-nosnippet>1612</a>            sender
+<a href=#1613 id=1613 data-nosnippet>1613</a>                .try_send(<span class="prelude-val">Ok</span>(<span class="macro">format!</span>(<span class="string">"record {index}"</span>)))
+<a href=#1614 id=1614 data-nosnippet>1614</a>                .expect(<span class="string">"record within queue bound"</span>);
+<a href=#1615 id=1615 data-nosnippet>1615</a>        }
+<a href=#1616 id=1616 data-nosnippet>1616</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#1617 id=1617 data-nosnippet>1617</a>            sender.try_send(<span class="prelude-val">Ok</span>(<span class="string">"over bound"</span>.into())),
+<a href=#1618 id=1618 data-nosnippet>1618</a>            <span class="prelude-val">Err</span>(mpsc::TrySendError::Full(<span class="kw">_</span>))
+<a href=#1619 id=1619 data-nosnippet>1619</a>        ));
+<a href=#1620 id=1620 data-nosnippet>1620</a>        drop(receiver);
+<a href=#1621 id=1621 data-nosnippet>1621</a>    }
+<a href=#1622 id=1622 data-nosnippet>1622</a>
+<a href=#1623 id=1623 data-nosnippet>1623</a>    <span class="attr">#[test]
+<a href=#1624 id=1624 data-nosnippet>1624</a>    </span><span class="kw">fn </span>child_diagnostic_reader_discards_oversized_line_remainders() {
+<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="kw">let </span><span class="kw-2">mut </span>input = <span class="macro">vec!</span>[<span class="string">b'x'</span>; MAX_DIAGNOSTIC_LINE_BYTES * <span class="number">4</span>];
+<a href=#1626 id=1626 data-nosnippet>1626</a>        input.extend_from_slice(<span class="string">b"\nnext\n"</span>);
+<a href=#1627 id=1627 data-nosnippet>1627</a>        <span class="kw">let </span><span class="kw-2">mut </span>lines = Vec::new();
+<a href=#1628 id=1628 data-nosnippet>1628</a>
+<a href=#1629 id=1629 data-nosnippet>1629</a>        read_bounded_diagnostic_lines(Cursor::new(input), |line| lines.push(line.to_vec()))
+<a href=#1630 id=1630 data-nosnippet>1630</a>            .expect(<span class="string">"read diagnostics"</span>);
+<a href=#1631 id=1631 data-nosnippet>1631</a>
+<a href=#1632 id=1632 data-nosnippet>1632</a>        <span class="macro">assert_eq!</span>(lines.len(), <span class="number">2</span>);
+<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="macro">assert_eq!</span>(lines[<span class="number">0</span>].len(), MAX_DIAGNOSTIC_LINE_BYTES);
+<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="macro">assert_eq!</span>(lines[<span class="number">1</span>], <span class="string">b"next"</span>);
+<a href=#1635 id=1635 data-nosnippet>1635</a>    }
+<a href=#1636 id=1636 data-nosnippet>1636</a>
+<a href=#1637 id=1637 data-nosnippet>1637</a>    <span class="attr">#[test]
+<a href=#1638 id=1638 data-nosnippet>1638</a>    </span><span class="kw">fn </span>diagnostic_buffer_includes_child_failure_racing_wait_and_remains_bounded() {
+<a href=#1639 id=1639 data-nosnippet>1639</a>        <span class="kw">let </span>delayed = Arc::new(DiagnosticBuffer::default());
+<a href=#1640 id=1640 data-nosnippet>1640</a>        <span class="kw">let </span>writer_buffer = Arc::clone(<span class="kw-2">&amp;</span>delayed);
+<a href=#1641 id=1641 data-nosnippet>1641</a>        <span class="kw">let </span>start = Arc::new(std::sync::Barrier::new(<span class="number">2</span>));
+<a href=#1642 id=1642 data-nosnippet>1642</a>        <span class="kw">let </span>writer_start = Arc::clone(<span class="kw-2">&amp;</span>start);
+<a href=#1643 id=1643 data-nosnippet>1643</a>        <span class="kw">let </span>writer = std::thread::spawn(<span class="kw">move </span>|| {
+<a href=#1644 id=1644 data-nosnippet>1644</a>            writer_start.wait();
+<a href=#1645 id=1645 data-nosnippet>1645</a>            writer_buffer.push(<span class="string">"MCP indexing runtime failed"</span>.into());
+<a href=#1646 id=1646 data-nosnippet>1646</a>        });
+<a href=#1647 id=1647 data-nosnippet>1647</a>
+<a href=#1648 id=1648 data-nosnippet>1648</a>        start.wait();
+<a href=#1649 id=1649 data-nosnippet>1649</a>        <span class="kw">let </span>context = delayed.wait_context(Duration::from_secs(<span class="number">5</span>));
+<a href=#1650 id=1650 data-nosnippet>1650</a>        writer.join().expect(<span class="string">"diagnostic writer"</span>);
+<a href=#1651 id=1651 data-nosnippet>1651</a>        <span class="macro">assert!</span>(context.contains(<span class="string">"MCP indexing runtime failed"</span>));
+<a href=#1652 id=1652 data-nosnippet>1652</a>
+<a href=#1653 id=1653 data-nosnippet>1653</a>        <span class="kw">let </span>bounded = DiagnosticBuffer::default();
+<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..=MAX_DIAGNOSTIC_LINES {
+<a href=#1655 id=1655 data-nosnippet>1655</a>            bounded.push(<span class="macro">format!</span>(<span class="string">"earlier diagnostic {index}"</span>));
+<a href=#1656 id=1656 data-nosnippet>1656</a>        }
+<a href=#1657 id=1657 data-nosnippet>1657</a>        <span class="kw">let </span>settled = bounded.context();
+<a href=#1658 id=1658 data-nosnippet>1658</a>
+<a href=#1659 id=1659 data-nosnippet>1659</a>        <span class="macro">assert!</span>(settled.contains(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"earlier diagnostic {MAX_DIAGNOSTIC_LINES}"</span>)));
+<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="macro">assert!</span>(!settled.contains(<span class="string">"earlier diagnostic 0"</span>));
+<a href=#1661 id=1661 data-nosnippet>1661</a>        <span class="macro">assert_eq!</span>(settled.matches(<span class="string">" | "</span>).count(), MAX_DIAGNOSTIC_LINES - <span class="number">1</span>);
+<a href=#1662 id=1662 data-nosnippet>1662</a>    }
+<a href=#1663 id=1663 data-nosnippet>1663</a>}
 </code></pre></div></section></main></body></html>

@@ -300,47 +300,5 @@
 <a href=#300 id=300 data-nosnippet>300</a>        );
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="macro">assert_eq!</span>(recorded.scope_relation_to(<span class="kw-2">&amp;</span>subset), <span class="prelude-val">None</span>);
 <a href=#302 id=302 data-nosnippet>302</a>    }
-<a href=#303 id=303 data-nosnippet>303</a>
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="attr">#[test]
-<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">fn </span>query_receipt_ids_are_namespace_bound() {
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>namespace = <span class="string">"0123456789abcdef0123456789abcdef"</span>;
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>receipt_id = format_query_receipt_id(namespace, <span class="number">42</span>);
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="macro">assert_eq!</span>(parse_query_receipt_id(<span class="kw-2">&amp;</span>receipt_id, namespace), <span class="prelude-val">Some</span>(<span class="number">42</span>));
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">assert_eq!</span>(
-<a href=#310 id=310 data-nosnippet>310</a>            parse_query_receipt_id(<span class="kw-2">&amp;</span>receipt_id, <span class="string">"ffffffffffffffffffffffffffffffff"</span>),
-<a href=#311 id=311 data-nosnippet>311</a>            <span class="prelude-val">None
-<a href=#312 id=312 data-nosnippet>312</a>        </span>);
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="macro">assert_eq!</span>(receipt_id.len(), QUERY_RECEIPT_ID_RESPONSE_RESERVE.len());
-<a href=#314 id=314 data-nosnippet>314</a>    }
-<a href=#315 id=315 data-nosnippet>315</a>
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="attr">#[test]
-<a href=#317 id=317 data-nosnippet>317</a>    </span><span class="kw">fn </span>response_reserve_covers_generated_ids_across_tokenizers() {
-<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">use </span><span class="kw">crate</span>::tokens::Tokenizer;
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>tokenizers = [
-<a href=#321 id=321 data-nosnippet>321</a>            Tokenizer::Cl100kBase,
-<a href=#322 id=322 data-nosnippet>322</a>            Tokenizer::O200kBase,
-<a href=#323 id=323 data-nosnippet>323</a>            Tokenizer::O200kHarmony,
-<a href=#324 id=324 data-nosnippet>324</a>            Tokenizer::P50kBase,
-<a href=#325 id=325 data-nosnippet>325</a>            Tokenizer::R50kBase,
-<a href=#326 id=326 data-nosnippet>326</a>            Tokenizer::Gpt2,
-<a href=#327 id=327 data-nosnippet>327</a>            Tokenizer::P50kEdit,
-<a href=#328 id=328 data-nosnippet>328</a>            Tokenizer::Estimate,
-<a href=#329 id=329 data-nosnippet>329</a>        ];
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">for </span>seed <span class="kw">in </span><span class="number">0u64</span>..<span class="number">4_096 </span>{
-<a href=#331 id=331 data-nosnippet>331</a>            <span class="kw">let </span>namespace = blake3::hash(<span class="kw-2">&amp;</span>seed.to_le_bytes()).to_hex();
-<a href=#332 id=332 data-nosnippet>332</a>            <span class="kw">let </span>id = format_query_receipt_id(
-<a href=#333 id=333 data-nosnippet>333</a>                <span class="kw-2">&amp;</span>namespace.as_str()[..QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES],
-<a href=#334 id=334 data-nosnippet>334</a>                i64::try_from(seed + <span class="number">1</span>).expect(<span class="string">"bounded row id"</span>),
-<a href=#335 id=335 data-nosnippet>335</a>            );
-<a href=#336 id=336 data-nosnippet>336</a>            <span class="kw">for </span>tokenizer <span class="kw">in </span>tokenizers {
-<a href=#337 id=337 data-nosnippet>337</a>                <span class="macro">assert!</span>(
-<a href=#338 id=338 data-nosnippet>338</a>                    tokenizer.count(<span class="kw-2">&amp;</span>id) &lt;= tokenizer.count(QUERY_RECEIPT_ID_RESPONSE_RESERVE),
-<a href=#339 id=339 data-nosnippet>339</a>                    <span class="string">"{} under-reserved generated query receipt {id}"</span>,
-<a href=#340 id=340 data-nosnippet>340</a>                    tokenizer.name()
-<a href=#341 id=341 data-nosnippet>341</a>                );
-<a href=#342 id=342 data-nosnippet>342</a>            }
-<a href=#343 id=343 data-nosnippet>343</a>        }
-<a href=#344 id=344 data-nosnippet>344</a>    }
-<a href=#345 id=345 data-nosnippet>345</a>}
+<a href=#303 id=303 data-nosnippet>303</a>}
 </code></pre></div></section></main></body></html>

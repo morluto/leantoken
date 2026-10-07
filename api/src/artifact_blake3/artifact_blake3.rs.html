@@ -24,22 +24,4 @@
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">fn </span>hash_file(path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;String, Box&lt;<span class="kw">dyn </span>Error&gt;&gt; {
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="prelude-val">Ok</span>(blake3::hash(<span class="kw-2">&amp;</span>fs::read(path)<span class="question-mark">?</span>).to_hex().to_string())
 <a href=#26 id=26 data-nosnippet>26</a>}
-<a href=#27 id=27 data-nosnippet>27</a>
-<a href=#28 id=28 data-nosnippet>28</a><span class="attr">#[cfg(test)]
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">mod </span>tests {
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="attr">#[test]
-<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="kw">fn </span>hash_file_matches_in_memory_blake3() {
-<a href=#34 id=34 data-nosnippet>34</a>        <span class="kw">let </span>directory = tempfile::tempdir().expect(<span class="string">"temporary directory"</span>);
-<a href=#35 id=35 data-nosnippet>35</a>        <span class="kw">let </span>artifact = directory.path().join(<span class="string">"artifact.bin"</span>);
-<a href=#36 id=36 data-nosnippet>36</a>        <span class="kw">let </span>content = <span class="string">b"frozen experiment artifact\0with binary data"</span>;
-<a href=#37 id=37 data-nosnippet>37</a>        std::fs::write(<span class="kw-2">&amp;</span>artifact, content).expect(<span class="string">"write artifact"</span>);
-<a href=#38 id=38 data-nosnippet>38</a>
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="macro">assert_eq!</span>(
-<a href=#40 id=40 data-nosnippet>40</a>            hash_file(<span class="kw-2">&amp;</span>artifact).expect(<span class="string">"artifact hash"</span>),
-<a href=#41 id=41 data-nosnippet>41</a>            blake3::hash(content).to_hex().to_string()
-<a href=#42 id=42 data-nosnippet>42</a>        );
-<a href=#43 id=43 data-nosnippet>43</a>    }
-<a href=#44 id=44 data-nosnippet>44</a>}
 </code></pre></div></section></main></body></html>

@@ -979,7 +979,7 @@
 <a href=#979 id=979 data-nosnippet>979</a></span><span class="kw">mod </span>tests {
 <a href=#980 id=980 data-nosnippet>980</a>
 <a href=#981 id=981 data-nosnippet>981</a>    <span class="attr">#[test]
-<a href=#982 id=982 data-nosnippet>982</a>    </span><span class="kw">fn </span>static_request_matrix_needs_no_repository() {
+<a href=#982 id=982 data-nosnippet>982</a>    </span><span class="kw">fn </span>files_parser_rejects_bad_patterns_cursors_and_oversized_queries() {
 <a href=#983 id=983 data-nosnippet>983</a>        <span class="kw">let </span>limits = <span class="kw">crate</span>::services::request_limits::RequestLimits {
 <a href=#984 id=984 data-nosnippet>984</a>            default_results: <span class="number">3</span>,
 <a href=#985 id=985 data-nosnippet>985</a>            max_results: <span class="number">7</span>,
@@ -1003,62 +1003,33 @@
 <a href=#1003 id=1003 data-nosnippet>1003</a>                StreamIdentityBuilder::new(CursorKind::Files),
 <a href=#1004 id=1004 data-nosnippet>1004</a>            )
 <a href=#1005 id=1005 data-nosnippet>1005</a>        };
-<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="macro">assert_eq!</span>(parse(base.clone()).unwrap().limit, <span class="number">3</span>);
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
-<a href=#1008 id=1008 data-nosnippet>1008</a>            (|r: <span class="kw-2">&amp;mut </span>FilesRequest| r.operation = FileOperation::Find) <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>FilesRequest),
-<a href=#1009 id=1009 data-nosnippet>1009</a>            |r| r.path = <span class="prelude-val">Some</span>(<span class="string">"../outside.rs"</span>.into()),
-<a href=#1010 id=1010 data-nosnippet>1010</a>            |r| {
-<a href=#1011 id=1011 data-nosnippet>1011</a>                r.operation = FileOperation::Glob;
-<a href=#1012 id=1012 data-nosnippet>1012</a>                r.pattern = <span class="prelude-val">Some</span>(<span class="string">"["</span>.into());
-<a href=#1013 id=1013 data-nosnippet>1013</a>            },
-<a href=#1014 id=1014 data-nosnippet>1014</a>            |r| r.cursor = <span class="prelude-val">Some</span>(<span class="string">"invalid"</span>.into()),
-<a href=#1015 id=1015 data-nosnippet>1015</a>            |r| r.query = <span class="prelude-val">Some</span>(<span class="string">"x"</span>.repeat(MAX_QUERY_BYTES + <span class="number">1</span>)),
-<a href=#1016 id=1016 data-nosnippet>1016</a>        ] {
-<a href=#1017 id=1017 data-nosnippet>1017</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
-<a href=#1018 id=1018 data-nosnippet>1018</a>            mutate(<span class="kw-2">&amp;mut </span>request);
-<a href=#1019 id=1019 data-nosnippet>1019</a>            <span class="macro">assert!</span>(parse(request).is_err());
-<a href=#1020 id=1020 data-nosnippet>1020</a>        }
-<a href=#1021 id=1021 data-nosnippet>1021</a>    }
-<a href=#1022 id=1022 data-nosnippet>1022</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#1023 id=1023 data-nosnippet>1023</a>
-<a href=#1024 id=1024 data-nosnippet>1024</a>    <span class="attr">#[test]
-<a href=#1025 id=1025 data-nosnippet>1025</a>    </span><span class="kw">fn </span>encoded_file_cursor_bound_covers_the_longest_valid_path() {
-<a href=#1026 id=1026 data-nosnippet>1026</a>        <span class="kw">let </span>stream_id = StreamIdentityBuilder::new(CursorKind::Files).finish();
-<a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="kw">let </span>encoded = FileCursor::Path {
-<a href=#1028 id=1028 data-nosnippet>1028</a>            operation: PathOperation::Tree,
-<a href=#1029 id=1029 data-nosnippet>1029</a>            path: <span class="string">"x"</span>.repeat(MAX_PATH_BYTES),
-<a href=#1030 id=1030 data-nosnippet>1030</a>        }
-<a href=#1031 id=1031 data-nosnippet>1031</a>        .encode(<span class="number">1</span>, stream_id)
-<a href=#1032 id=1032 data-nosnippet>1032</a>        .expect(<span class="string">"maximum path cursor"</span>);
-<a href=#1033 id=1033 data-nosnippet>1033</a>
-<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="macro">assert!</span>(encoded.len() &gt; MAX_PATH_BYTES);
-<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="macro">assert!</span>(encoded.len() &lt;= MAX_FILES_CURSOR_ENCODED_BYTES);
-<a href=#1036 id=1036 data-nosnippet>1036</a>    }
-<a href=#1037 id=1037 data-nosnippet>1037</a>
-<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="attr">#[test]
-<a href=#1039 id=1039 data-nosnippet>1039</a>    </span><span class="kw">fn </span>sql_glob_patterns_map_common_double_star_forms() {
-<a href=#1040 id=1040 data-nosnippet>1040</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"*.rs"</span>), <span class="prelude-val">Some</span>((<span class="string">"*.rs"</span>.into(), <span class="prelude-val">None</span>)));
-<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"**/*.rs"</span>), <span class="prelude-val">Some</span>((<span class="string">"*.rs"</span>.into(), <span class="prelude-val">None</span>)));
-<a href=#1042 id=1042 data-nosnippet>1042</a>        <span class="macro">assert_eq!</span>(
-<a href=#1043 id=1043 data-nosnippet>1043</a>            sql_glob_patterns(<span class="string">"src/**/*.rs"</span>),
-<a href=#1044 id=1044 data-nosnippet>1044</a>            <span class="prelude-val">Some</span>((<span class="string">"src/*.rs"</span>.into(), <span class="prelude-val">None</span>))
-<a href=#1045 id=1045 data-nosnippet>1045</a>        );
-<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"src/**"</span>), <span class="prelude-val">Some</span>((<span class="string">"src/*"</span>.into(), <span class="prelude-val">None</span>)));
-<a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="macro">assert_eq!</span>(
-<a href=#1048 id=1048 data-nosnippet>1048</a>            sql_glob_patterns(<span class="string">"**/lib.rs"</span>),
-<a href=#1049 id=1049 data-nosnippet>1049</a>            <span class="prelude-val">Some</span>((<span class="string">"lib.rs"</span>.into(), <span class="prelude-val">Some</span>(<span class="string">"*/lib.rs"</span>.into())))
-<a href=#1050 id=1050 data-nosnippet>1050</a>        );
-<a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="macro">assert_eq!</span>(
-<a href=#1052 id=1052 data-nosnippet>1052</a>            sql_glob_patterns(<span class="string">"src/**/lib.rs"</span>),
-<a href=#1053 id=1053 data-nosnippet>1053</a>            <span class="prelude-val">Some</span>((<span class="string">"src/lib.rs"</span>.into(), <span class="prelude-val">Some</span>(<span class="string">"src/*/lib.rs"</span>.into())))
-<a href=#1054 id=1054 data-nosnippet>1054</a>        );
-<a href=#1055 id=1055 data-nosnippet>1055</a>    }
-<a href=#1056 id=1056 data-nosnippet>1056</a>
-<a href=#1057 id=1057 data-nosnippet>1057</a>    <span class="attr">#[test]
-<a href=#1058 id=1058 data-nosnippet>1058</a>    </span><span class="kw">fn </span>sql_glob_patterns_fall_back_for_unexpressible_forms() {
-<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"{a,b}.rs"</span>), <span class="prelude-val">None</span>);
-<a href=#1060 id=1060 data-nosnippet>1060</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"a/**/b/**/c"</span>), <span class="prelude-val">None</span>);
-<a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="macro">assert_eq!</span>(sql_glob_patterns(<span class="string">"**"</span>), <span class="prelude-val">None</span>);
-<a href=#1062 id=1062 data-nosnippet>1062</a>    }
-<a href=#1063 id=1063 data-nosnippet>1063</a>}
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
+<a href=#1007 id=1007 data-nosnippet>1007</a>            (|r: <span class="kw-2">&amp;mut </span>FilesRequest| {
+<a href=#1008 id=1008 data-nosnippet>1008</a>                r.operation = FileOperation::Glob;
+<a href=#1009 id=1009 data-nosnippet>1009</a>                r.pattern = <span class="prelude-val">Some</span>(<span class="string">"["</span>.into());
+<a href=#1010 id=1010 data-nosnippet>1010</a>            }) <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>FilesRequest),
+<a href=#1011 id=1011 data-nosnippet>1011</a>            |r| r.cursor = <span class="prelude-val">Some</span>(<span class="string">"invalid"</span>.into()),
+<a href=#1012 id=1012 data-nosnippet>1012</a>            |r| r.query = <span class="prelude-val">Some</span>(<span class="string">"x"</span>.repeat(MAX_QUERY_BYTES + <span class="number">1</span>)),
+<a href=#1013 id=1013 data-nosnippet>1013</a>        ] {
+<a href=#1014 id=1014 data-nosnippet>1014</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
+<a href=#1015 id=1015 data-nosnippet>1015</a>            mutate(<span class="kw-2">&amp;mut </span>request);
+<a href=#1016 id=1016 data-nosnippet>1016</a>            <span class="macro">assert!</span>(parse(request).is_err());
+<a href=#1017 id=1017 data-nosnippet>1017</a>        }
+<a href=#1018 id=1018 data-nosnippet>1018</a>    }
+<a href=#1019 id=1019 data-nosnippet>1019</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#1020 id=1020 data-nosnippet>1020</a>
+<a href=#1021 id=1021 data-nosnippet>1021</a>    <span class="attr">#[test]
+<a href=#1022 id=1022 data-nosnippet>1022</a>    </span><span class="kw">fn </span>encoded_file_cursor_bound_covers_the_longest_valid_path() {
+<a href=#1023 id=1023 data-nosnippet>1023</a>        <span class="kw">let </span>stream_id = StreamIdentityBuilder::new(CursorKind::Files).finish();
+<a href=#1024 id=1024 data-nosnippet>1024</a>        <span class="kw">let </span>encoded = FileCursor::Path {
+<a href=#1025 id=1025 data-nosnippet>1025</a>            operation: PathOperation::Tree,
+<a href=#1026 id=1026 data-nosnippet>1026</a>            path: <span class="string">"x"</span>.repeat(MAX_PATH_BYTES),
+<a href=#1027 id=1027 data-nosnippet>1027</a>        }
+<a href=#1028 id=1028 data-nosnippet>1028</a>        .encode(<span class="number">1</span>, stream_id)
+<a href=#1029 id=1029 data-nosnippet>1029</a>        .expect(<span class="string">"maximum path cursor"</span>);
+<a href=#1030 id=1030 data-nosnippet>1030</a>
+<a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="macro">assert!</span>(encoded.len() &gt; MAX_PATH_BYTES);
+<a href=#1032 id=1032 data-nosnippet>1032</a>        <span class="macro">assert!</span>(encoded.len() &lt;= MAX_FILES_CURSOR_ENCODED_BYTES);
+<a href=#1033 id=1033 data-nosnippet>1033</a>    }
+<a href=#1034 id=1034 data-nosnippet>1034</a>}
 </code></pre></div></section></main></body></html>

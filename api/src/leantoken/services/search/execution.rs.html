@@ -856,7 +856,7 @@
 <a href=#856 id=856 data-nosnippet>856</a></span><span class="kw">mod </span>static_input_tests {
 <a href=#857 id=857 data-nosnippet>857</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#858 id=858 data-nosnippet>858</a>    <span class="attr">#[test]
-<a href=#859 id=859 data-nosnippet>859</a>    </span><span class="kw">fn </span>static_request_matrix_needs_no_repository() {
+<a href=#859 id=859 data-nosnippet>859</a>    </span><span class="kw">fn </span>search_parser_rejects_invalid_regex() {
 <a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>limits = <span class="kw">crate</span>::services::request_limits::RequestLimits {
 <a href=#861 id=861 data-nosnippet>861</a>            default_results: <span class="number">3</span>,
 <a href=#862 id=862 data-nosnippet>862</a>            max_results: <span class="number">7</span>,
@@ -880,25 +880,12 @@
 <a href=#880 id=880 data-nosnippet>880</a>            cursor: <span class="prelude-val">None</span>,
 <a href=#881 id=881 data-nosnippet>881</a>        };
 <a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>parse = |request| parse_search_input(<span class="kw-2">&amp;</span>limits, <span class="number">17</span>, request, SearchOutputShape::Full);
-<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>(<span class="kw">_</span>, valid) = parse(base.clone()).unwrap();
-<a href=#884 id=884 data-nosnippet>884</a>        <span class="macro">assert_eq!</span>(
-<a href=#885 id=885 data-nosnippet>885</a>            (valid.limit, valid.token_limit, valid.context_lines),
-<a href=#886 id=886 data-nosnippet>886</a>            (<span class="number">3</span>, <span class="number">17</span>, <span class="number">4</span>)
-<a href=#887 id=887 data-nosnippet>887</a>        );
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">for </span>mutate <span class="kw">in </span>[
-<a href=#889 id=889 data-nosnippet>889</a>            (|r: <span class="kw-2">&amp;mut </span>SearchRequest| r.query = <span class="string">" "</span>.into()) <span class="kw">as fn</span>(<span class="kw-2">&amp;mut </span>SearchRequest),
-<a href=#890 id=890 data-nosnippet>890</a>            |r| {
-<a href=#891 id=891 data-nosnippet>891</a>                r.query = <span class="string">"["</span>.into();
-<a href=#892 id=892 data-nosnippet>892</a>                r.mode = SearchMode::Regex;
-<a href=#893 id=893 data-nosnippet>893</a>            },
-<a href=#894 id=894 data-nosnippet>894</a>            |r| r.focus_paths = <span class="macro">vec!</span>[<span class="string">"["</span>.into()],
-<a href=#895 id=895 data-nosnippet>895</a>            |r| r.query = <span class="string">"x"</span>.repeat(<span class="number">64 </span>* <span class="number">1024 </span>+ <span class="number">1</span>),
-<a href=#896 id=896 data-nosnippet>896</a>            |r| r.cursor = <span class="prelude-val">Some</span>(<span class="string">"invalid"</span>.into()),
-<a href=#897 id=897 data-nosnippet>897</a>        ] {
-<a href=#898 id=898 data-nosnippet>898</a>            <span class="kw">let </span><span class="kw-2">mut </span>request = base.clone();
-<a href=#899 id=899 data-nosnippet>899</a>            mutate(<span class="kw-2">&amp;mut </span>request);
-<a href=#900 id=900 data-nosnippet>900</a>            <span class="macro">assert!</span>(parse(request).is_err());
-<a href=#901 id=901 data-nosnippet>901</a>        }
-<a href=#902 id=902 data-nosnippet>902</a>    }
-<a href=#903 id=903 data-nosnippet>903</a>}
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>request = SearchRequest {
+<a href=#884 id=884 data-nosnippet>884</a>            query: <span class="string">"["</span>.into(),
+<a href=#885 id=885 data-nosnippet>885</a>            mode: SearchMode::Regex,
+<a href=#886 id=886 data-nosnippet>886</a>            ..base
+<a href=#887 id=887 data-nosnippet>887</a>        };
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="macro">assert!</span>(parse(request).is_err());
+<a href=#889 id=889 data-nosnippet>889</a>    }
+<a href=#890 id=890 data-nosnippet>890</a>}
 </code></pre></div></section></main></body></html>

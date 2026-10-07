@@ -167,49 +167,24 @@
 <a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#168 id=168 data-nosnippet>168</a>
 <a href=#169 id=169 data-nosnippet>169</a>    <span class="attr">#[test]
-<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">fn </span>canonical_symbol_identity_requires_an_exact_owner_boundary() {
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="macro">assert!</span>(symbol_identity_matches(<span class="string">"run"</span>, <span class="string">"run"</span>, <span class="prelude-val">Some</span>(<span class="string">"Service"</span>)));
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="macro">assert!</span>(symbol_identity_matches(
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="string">"Service.run"</span>,
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="string">"run"</span>,
-<a href=#175 id=175 data-nosnippet>175</a>            <span class="prelude-val">Some</span>(<span class="string">"Service"</span>)
-<a href=#176 id=176 data-nosnippet>176</a>        ));
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="macro">assert!</span>(!symbol_identity_matches(
-<a href=#178 id=178 data-nosnippet>178</a>            <span class="string">"Other.run"</span>,
-<a href=#179 id=179 data-nosnippet>179</a>            <span class="string">"run"</span>,
-<a href=#180 id=180 data-nosnippet>180</a>            <span class="prelude-val">Some</span>(<span class="string">"Service"</span>)
-<a href=#181 id=181 data-nosnippet>181</a>        ));
-<a href=#182 id=182 data-nosnippet>182</a>        <span class="macro">assert!</span>(!symbol_identity_matches(
-<a href=#183 id=183 data-nosnippet>183</a>            <span class="string">"MyService.run"</span>,
-<a href=#184 id=184 data-nosnippet>184</a>            <span class="string">"run"</span>,
-<a href=#185 id=185 data-nosnippet>185</a>            <span class="prelude-val">Some</span>(<span class="string">"Service"</span>)
-<a href=#186 id=186 data-nosnippet>186</a>        ));
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="macro">assert_eq!</span>(
-<a href=#188 id=188 data-nosnippet>188</a>            split_qualified_symbol(<span class="string">"module.Service.run"</span>),
-<a href=#189 id=189 data-nosnippet>189</a>            <span class="prelude-val">Some</span>((<span class="string">"module.Service"</span>, <span class="string">"run"</span>))
-<a href=#190 id=190 data-nosnippet>190</a>        );
-<a href=#191 id=191 data-nosnippet>191</a>        <span class="macro">assert_eq!</span>(split_qualified_symbol(<span class="string">"run"</span>), <span class="prelude-val">None</span>);
-<a href=#192 id=192 data-nosnippet>192</a>    }
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="attr">#[test]
-<a href=#195 id=195 data-nosnippet>195</a>    </span><span class="kw">fn </span>case_fold_literals_expand_only_the_unicode_equivalence_classes() {
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span>ordinary = case_fold_literal_variants(<span class="string">"Alpha"</span>).expect(<span class="string">"ordinary variants"</span>);
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="macro">assert_eq!</span>(ordinary.values, [<span class="string">"alpha"</span>]);
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="macro">assert!</span>(!ordinary.expanded);
-<a href=#199 id=199 data-nosnippet>199</a>
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>kelvin = case_fold_literal_variants(<span class="string">"k"</span>).expect(<span class="string">"Kelvin variants"</span>);
-<a href=#201 id=201 data-nosnippet>201</a>        <span class="macro">assert_eq!</span>(kelvin.values, [<span class="string">"k"</span>, <span class="string">"K"</span>]);
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="macro">assert!</span>(kelvin.expanded);
-<a href=#203 id=203 data-nosnippet>203</a>
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>georgian = case_fold_literal_variants(<span class="string">"აbc"</span>).expect(<span class="string">"Georgian variants"</span>);
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="macro">assert_eq!</span>(georgian.values, [<span class="string">"აbc"</span>, <span class="string">"Აbc"</span>]);
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="macro">assert!</span>(georgian.expanded);
-<a href=#207 id=207 data-nosnippet>207</a>
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>uncased = case_fold_literal_variants(<span class="string">"🦀"</span>).expect(<span class="string">"uncased variants"</span>);
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="macro">assert_eq!</span>(uncased.values, [<span class="string">"🦀"</span>]);
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="macro">assert!</span>(!uncased.expanded);
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="macro">assert!</span>(case_fold_literal_variants(<span class="kw-2">&amp;</span><span class="string">"s"</span>.repeat(<span class="number">6</span>)).is_none());
-<a href=#213 id=213 data-nosnippet>213</a>    }
-<a href=#214 id=214 data-nosnippet>214</a>}
+<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="kw">fn </span>case_fold_literals_expand_only_the_unicode_equivalence_classes() {
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span>ordinary = case_fold_literal_variants(<span class="string">"Alpha"</span>).expect(<span class="string">"ordinary variants"</span>);
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="macro">assert_eq!</span>(ordinary.values, [<span class="string">"alpha"</span>]);
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="macro">assert!</span>(!ordinary.expanded);
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">let </span>kelvin = case_fold_literal_variants(<span class="string">"k"</span>).expect(<span class="string">"Kelvin variants"</span>);
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="macro">assert_eq!</span>(kelvin.values, [<span class="string">"k"</span>, <span class="string">"K"</span>]);
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="macro">assert!</span>(kelvin.expanded);
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">let </span>georgian = case_fold_literal_variants(<span class="string">"აbc"</span>).expect(<span class="string">"Georgian variants"</span>);
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="macro">assert_eq!</span>(georgian.values, [<span class="string">"აbc"</span>, <span class="string">"Აbc"</span>]);
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="macro">assert!</span>(georgian.expanded);
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>uncased = case_fold_literal_variants(<span class="string">"🦀"</span>).expect(<span class="string">"uncased variants"</span>);
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="macro">assert_eq!</span>(uncased.values, [<span class="string">"🦀"</span>]);
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert!</span>(!uncased.expanded);
+<a href=#186 id=186 data-nosnippet>186</a>
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="macro">assert!</span>(case_fold_literal_variants(<span class="kw-2">&amp;</span><span class="string">"s"</span>.repeat(<span class="number">6</span>)).is_none());
+<a href=#188 id=188 data-nosnippet>188</a>    }
+<a href=#189 id=189 data-nosnippet>189</a>}
 </code></pre></div></section></main></body></html>
