@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -18,6 +19,133 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AgentWalltimeAbTests(unittest.TestCase):
+    def start_readiness_peer(self, mode: str) -> tuple[object, Path]:
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        root = Path(workspace.name)
+        requests = root / "requests.jsonl"
+        server = root / "readiness-mcp"
+        server.write_text(
+            f"#!{sys.executable}\n"
+            + """import json
+import sys
+import time
+from pathlib import Path
+
+mode = MODE
+requests = Path(REQUESTS)
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    with requests.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(request) + "\\n")
+    request_id = request["id"]
+    if request_id == 0:
+        result = {}
+    else:
+        if mode == "silent":
+            time.sleep(10)
+            continue
+        if mode == "partial":
+            sys.stdout.write('{"jsonrpc":"2.0","id":')
+            sys.stdout.flush()
+            time.sleep(10)
+            continue
+        if mode == "delayed":
+            time.sleep(0.2)
+        if mode == "notification":
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress"}), flush=True)
+        if mode == "flood":
+            while True:
+                print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress"}), flush=True)
+        result = {"structuredContent": {"status": "retryable" if mode == "retryable" else "ready", "paths": []}}
+    print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}), flush=True)
+    if request_id and mode == "delayed":
+        requests.with_suffix(".reply").write_text("sent", encoding="utf-8")
+""".replace(
+                "MODE", repr(mode)
+            ).replace(
+                "REQUESTS", repr(str(requests))
+            ),
+            encoding="utf-8",
+        )
+        server.chmod(0o755)
+        prior_threads = {thread.ident for thread in threading.enumerate()}
+        mcp = MODULE.McpProcess(server, root, root / "index.sqlite3")
+
+        def close() -> None:
+            mcp.close()
+            self.assertIsNotNone(mcp.process.poll())
+            leaked = [
+                thread.name
+                for thread in threading.enumerate()
+                if thread.ident not in prior_threads
+                and thread.name.startswith("leantoken-benchmark-")
+            ]
+            self.assertEqual(leaked, [])
+
+        self.addCleanup(close)
+        mcp.initialize()
+        return mcp, requests
+
+    def readiness_outcome(self, mcp: object) -> tuple[object, threading.Thread]:
+        results: list[object] = []
+
+        def wait() -> None:
+            try:
+                results.append(mcp.wait_ready(timeout_seconds=0.025))
+            except BaseException as error:
+                results.append(error)
+
+        worker = threading.Thread(target=wait, daemon=True)
+        worker.start()
+        worker.join(timeout=0.6)
+        if worker.is_alive():
+            mcp.close()
+            worker.join(timeout=1)
+            self.fail("readiness remained blocked past its deadline and watchdog")
+        self.assertEqual(len(results), 1)
+        return results[0], worker
+
+    def test_mcp_readiness_deadline_covers_silent_and_partial_peers(self) -> None:
+        for mode in ("silent", "partial"):
+            with self.subTest(mode=mode):
+                mcp, _ = self.start_readiness_peer(mode)
+                result, _ = self.readiness_outcome(mcp)
+                self.assertIsInstance(result, MODULE.InvalidEvidence)
+                self.assertRegex(str(result), "deadline|timed out")
+                mcp.close()
+                self.assertIsNotNone(mcp.process.poll())
+
+    def test_mcp_readiness_rejects_delayed_reply_and_prevents_reuse(self) -> None:
+        mcp, requests = self.start_readiness_peer("delayed")
+        result, _ = self.readiness_outcome(mcp)
+        self.assertIsInstance(result, MODULE.InvalidEvidence)
+        self.assertRegex(str(result), "deadline|timed out")
+        reply_sent = requests.with_suffix(".reply")
+        deadline = time.monotonic() + 1
+        while not reply_sent.exists() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(reply_sent.exists(), "peer did not send its late reply")
+        with self.assertRaisesRegex(MODULE.InvalidEvidence, "unusable|closed"):
+            mcp.call("files", {"operation": {"kind": "tree"}, "max_results": 1})
+        mcp.close()
+        sent = [json.loads(line) for line in requests.read_text().splitlines()]
+        self.assertEqual([request["id"] for request in sent], [0, 1])
+
+    def test_mcp_readiness_accepts_matching_reply_after_notification(self) -> None:
+        mcp, _ = self.start_readiness_peer("notification")
+        self.assertIsInstance(mcp.wait_ready(timeout_seconds=1), float)
+
+    def test_mcp_readiness_budget_survives_retries_and_notifications(self) -> None:
+        for mode in ("retryable", "flood"):
+            with self.subTest(mode=mode):
+                mcp, _ = self.start_readiness_peer(mode)
+                result, _ = self.readiness_outcome(mcp)
+                self.assertIsInstance(result, MODULE.InvalidEvidence)
+                self.assertRegex(str(result), "deadline|timed out")
+
     def test_mcp_process_drains_and_bounds_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -147,9 +275,7 @@ sys.stderr.flush()
     def test_grouped_leantoken_occurrences_preserve_every_coordinate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "source.rs").write_text(
-                "target target\n", encoding="utf-8"
-            )
+            (root / "source.rs").write_text("target target\n", encoding="utf-8")
             response = {
                 "groups": [
                     {
@@ -259,6 +385,7 @@ sys.stderr.flush()
                 "tokio-validation",
             ],
         )
+
 
 if __name__ == "__main__":
     unittest.main()
