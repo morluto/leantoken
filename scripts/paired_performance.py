@@ -337,6 +337,8 @@ def gate(args: argparse.Namespace) -> bool:
             raise InvalidEvidence(
                 f"{name}: max_regression_percent must not be negative"
             )
+        if not math.isfinite(maximum):
+            raise InvalidEvidence(f"{name}: max_regression_percent must be finite")
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
             raise InvalidEvidence(
                 f"{name}: min_absolute_regression_ns must be a non-negative integer"
