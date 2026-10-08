@@ -314,6 +314,35 @@ class PairedPerformanceCliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 2)
             self.assertIn("invalid Benchstat comparison", completed.stderr)
 
+    def test_gate_rejects_non_finite_regression_thresholds(self) -> None:
+        # 1e999 is valid JSON syntax but overflows the Python float range.
+        for literal in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
+            with self.subTest(
+                maximum=literal
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                manifest, _ = write_collect_fixture(root)
+                contents = manifest.read_text(encoding="utf-8")
+                self.assertEqual(contents.count('"max_regression_percent": 10.0'), 1)
+                manifest.write_text(
+                    contents.replace(
+                        '"max_regression_percent": 10.0',
+                        '"max_regression_percent": ' + literal,
+                    ),
+                    encoding="utf-8",
+                )
+                benchstat_csv = write_benchstat_csv(
+                    root, head_seconds=0.003, comparison="+50.00%"
+                )
+                completed, markdown, report_json = gate_command(
+                    manifest, benchstat_csv, root
+                )
+
+                self.assertEqual(completed.returncode, 2, completed.stderr)
+                self.assertIn("max_regression_percent must", completed.stderr)
+                self.assertFalse(markdown.exists())
+                self.assertFalse(report_json.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
