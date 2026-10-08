@@ -971,6 +971,16 @@ each colored-line copy is no larger than its input. Missing counters remain
 unobserved, and unrelated or incomplete control sequences remain intact. This
 adds no process fan-out or production watcher work.
 
+The agent wall-time measurement client owns one stdout reader per MCP child,
+a queue retaining at most one complete frame, and at most one additional frame
+waiting for delivery. Queue backpressure checks the stop flag every 20 ms;
+the existing stderr reader retains at most 65,536 characters. Readiness uses
+one absolute deadline (30 seconds by default) across response waits and retries,
+and a timed-out response invalidates the client. Cleanup stops queue delivery,
+terminates and waits for the child, then joins both readers before closing their
+streams. These are measurement-client bounds; see the
+[agent wall-time methodology](measurement.md#agent-wall-time-microbenchmark).
+
 MCP response-parity comparison makes at most two passes over the existing result
 content array. It inspects structured content and parses one text payload at a
 time, retaining only a 49-byte receipt identifier, then normalizes valid v1

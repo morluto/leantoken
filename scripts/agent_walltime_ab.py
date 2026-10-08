@@ -10,6 +10,7 @@ import json
 import math
 import os
 import platform
+import queue
 import shutil
 import statistics
 import subprocess
@@ -71,8 +72,20 @@ class McpProcess:
         )
         self._stderr_thread.start()
         self.next_id = 1
+        self._closed = False
+        self._transport_error: str | None = None
+        self._stdout_stop = threading.Event()
+        self._stdout_lines: queue.Queue[str | Exception] = queue.Queue(maxsize=1)
+        self._stdout_thread = threading.Thread(
+            target=self._drain_stdout,
+            name="leantoken-benchmark-stdout",
+            daemon=True,
+        )
+        self._stdout_thread.start()
 
     def close(self) -> None:
+        self._closed = True
+        self._stdout_stop.set()
         if self.process.stdin:
             self.process.stdin.close()
         if self.process.poll() is None:
@@ -82,10 +95,37 @@ class McpProcess:
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.process.wait(timeout=5)
+        self._stdout_thread.join(timeout=1)
         self._stderr_thread.join(timeout=1)
         for stream in (self.process.stdout, self.process.stderr):
             if stream is not None:
                 stream.close()
+
+    def _publish_stdout(self, value: str | Exception) -> bool:
+        while not self._stdout_stop.is_set():
+            try:
+                self._stdout_lines.put(value, timeout=0.02)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def _drain_stdout(self) -> None:
+        stream = self.process.stdout
+        if stream is None:
+            return
+        while not self._stdout_stop.is_set():
+            try:
+                line = stream.readline()
+            except (OSError, UnicodeError) as error:
+                self._publish_stdout(error)
+                return
+            if not self._publish_stdout(line) or not line:
+                return
+
+    def _fail_transport(self, message: str) -> InvalidEvidence:
+        self._transport_error = message
+        return InvalidEvidence(message)
 
     def _drain_stderr(self) -> None:
         stream = self.process.stderr
@@ -98,9 +138,7 @@ class McpProcess:
             with self._stderr_lock:
                 if len(chunk) >= self.STDERR_CAPTURE_CHARS:
                     self._stderr_chunks.clear()
-                    self._stderr_chunks.append(
-                        chunk[-self.STDERR_CAPTURE_CHARS :]
-                    )
+                    self._stderr_chunks.append(chunk[-self.STDERR_CAPTURE_CHARS :])
                     self._stderr_chars = self.STDERR_CAPTURE_CHARS
                     continue
                 self._stderr_chunks.append(chunk)
@@ -120,6 +158,10 @@ class McpProcess:
             return "".join(self._stderr_chunks)
 
     def _send(self, value: dict[str, Any]) -> None:
+        if self._closed:
+            raise InvalidEvidence("MCP transport is closed")
+        if self._transport_error is not None:
+            raise InvalidEvidence(f"MCP transport is unusable: {self._transport_error}")
         if self.process.stdin is None:
             raise InvalidEvidence("MCP stdin is unavailable")
         self.process.stdin.write(
@@ -127,11 +169,23 @@ class McpProcess:
         )
         self.process.stdin.flush()
 
-    def _response(self, request_id: int) -> dict[str, Any]:
-        if self.process.stdout is None:
-            raise InvalidEvidence("MCP stdout is unavailable")
+    def _response(
+        self, request_id: int, deadline: float | None = None
+    ) -> dict[str, Any]:
         while True:
-            line = self.process.stdout.readline()
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise self._fail_transport("MCP response timed out before the deadline")
+            try:
+                line = self._stdout_lines.get(timeout=remaining)
+            except queue.Empty:
+                raise self._fail_transport(
+                    "MCP response timed out before the deadline"
+                ) from None
+            if deadline is not None and time.monotonic() >= deadline:
+                raise self._fail_transport("MCP response timed out before the deadline")
+            if isinstance(line, Exception):
+                raise InvalidEvidence(f"cannot read MCP stdout: {line}") from line
             if not line:
                 self._stderr_thread.join(timeout=0.1)
                 stderr = self._captured_stderr().strip()
@@ -143,6 +197,10 @@ class McpProcess:
             except json.JSONDecodeError as error:
                 raise InvalidEvidence(f"MCP emitted invalid JSON: {line!r}") from error
             if value.get("id") == request_id:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise self._fail_transport(
+                        "MCP response timed out before the deadline"
+                    )
                 return value
 
     def initialize(self) -> float:
@@ -174,7 +232,13 @@ class McpProcess:
         )
         return elapsed
 
-    def call(self, name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    def call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        deadline: float | None = None,
+    ) -> tuple[dict[str, Any], int]:
         request_id = self.next_id
         self.next_id += 1
         self._send(
@@ -185,11 +249,11 @@ class McpProcess:
                 "params": {"name": name, "arguments": arguments},
             }
         )
-        response = self._response(request_id)
+        response = self._response(request_id, deadline)
         encoded_bytes = len(
-            json.dumps(
-                response, separators=(",", ":"), ensure_ascii=False
-            ).encode("utf-8")
+            json.dumps(response, separators=(",", ":"), ensure_ascii=False).encode(
+                "utf-8"
+            )
         )
         result = response.get("result")
         if not isinstance(result, dict):
@@ -211,12 +275,17 @@ class McpProcess:
                 self.call(
                     "files",
                     {"operation": {"kind": "tree"}, "max_results": 1},
+                    deadline=deadline,
                 )
+                if time.monotonic() >= deadline:
+                    raise self._fail_transport(
+                        "MCP response timed out before the deadline"
+                    )
                 return elapsed_ms(started)
             except InvalidEvidence as error:
                 if "retryable" not in str(error):
                     raise
-            time.sleep(0.02)
+            time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
         raise InvalidEvidence("MCP server did not become ready before the deadline")
 
 
