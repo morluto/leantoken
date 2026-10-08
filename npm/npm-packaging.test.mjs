@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
+import { once } from "node:events";
 
 import { PLATFORMS, buildNpmPackages } from "../scripts/build-npm-packages.mjs";
 
@@ -172,5 +173,73 @@ test("builds one script-free package containing every native binary", async () =
     }
   } finally {
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("forwards a later termination signal while the native child remains alive", {
+  skip: process.platform === "win32",
+  timeout: 10_000,
+}, async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-signals-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  const libc = process.platform === "linux"
+    ? process.report?.getReport?.().header?.glibcVersionRuntime ? "glibc" : "musl"
+    : undefined;
+  const platform = PLATFORMS.find(({ os, cpu, libc: requiredLibc }) =>
+    os === process.platform && cpu === process.arch &&
+    (requiredLibc === undefined || requiredLibc === libc)
+  );
+  assert.ok(platform, "host platform must be present in the npm manifest");
+  const native = join(workspace, "bin", "native", platform.target, platform.binary);
+  await mkdir(join(workspace, "bin", "native", platform.target), { recursive: true });
+  await writeFile(native, [
+    `#!${process.execPath}`,
+    'process.on("SIGINT", () => console.log("first-signal"));',
+    'process.on("SIGTERM", () => process.exit(0));',
+    'console.log("ready:" + process.pid);',
+    'setInterval(() => {}, 1000);',
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const launcher = join(workspace, "bin", "leantoken.cjs");
+  await writeFile(launcher, await readFile(new URL("./leantoken.cjs", import.meta.url)));
+  await writeFile(join(workspace, "platforms.json"), JSON.stringify(PLATFORMS));
+
+  // The direct child is the control: the fixture handles both signals itself.
+  for (const command of [[native], [launcher]]) {
+    const child = spawn(process.execPath, command, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    let nativePid;
+    child.stdout.on("data", chunk => {
+      output += chunk;
+      const match = /ready:(\d+)/.exec(output);
+      if (match) nativePid = Number(match[1]);
+    });
+    const closed = once(child, "close");
+    async function waitFor(value) {
+      const deadline = Date.now() + 2_000;
+      while (!output.includes(value) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(output.includes(value), `missing ${value}: ${output}`);
+    }
+    try {
+      await waitFor("ready:");
+      child.kill("SIGINT");
+      await waitFor("first-signal");
+      child.kill("SIGTERM");
+      const exit = await Promise.race([
+        closed,
+        new Promise(resolve => setTimeout(() => resolve(null), 2_000)),
+      ]);
+      assert.deepEqual(exit, [0, null], "SIGTERM must reach the still-running native child");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      if (nativePid) {
+        try { process.kill(nativePid, "SIGKILL"); } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      }
+      await closed;
+    }
   }
 });

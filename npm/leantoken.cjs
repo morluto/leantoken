@@ -37,7 +37,7 @@ const signalHandlers = new Map(
   signals.map((signal) => [
     signal,
     () => {
-      if (!child.killed) child.kill(signal);
+      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
     },
   ]),
 );
