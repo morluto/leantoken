@@ -341,7 +341,7 @@
 <a href=#341 id=341 data-nosnippet>341</a>        <span class="self">self</span>.initialized.notify_waiters();
 <a href=#342 id=342 data-nosnippet>342</a>    }
 <a href=#343 id=343 data-nosnippet>343</a>
-<a href=#344 id=344 data-nosnippet>344</a>    <span class="doccomment">/// Wait until the client completes the MCP initialization phase.
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="doccomment">/// Wait until the MCP transport accepts a session or initialization completes.
 <a href=#345 id=345 data-nosnippet>345</a>    </span><span class="kw">pub async fn </span>wait_initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) {
 <a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">loop </span>{
 <a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">let </span>notified = <span class="self">self</span>.initialized.notified();
