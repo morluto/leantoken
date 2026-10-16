@@ -969,7 +969,7 @@ fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
                 "indexer::",
                 "domains::(indexing_repository|storage)",
                 "services::tests",
-                "read|query_receipts|receipts|lifecycle|repository|reconciliation",
+                "budgets|consistency|read|query_receipts|receipts|lifecycle|repository|reconciliation",
             ],
         ),
         ("cheap", &["all()"]),
@@ -1027,6 +1027,8 @@ fn check_nextest_policy(root: &Path) -> Result<(), XtaskError> {
     for test_name in [
         "services::tests::concurrent_consistency_requests_share_one_waiting_wave",
         "services::tests::adaptive_context_ranges_keep_the_match_and_complete_small_declarations",
+        "services::budgets::read_response_budget_reduces_source_without_skipping_continuation",
+        "services::consistency::context_declaration_excerpt_retains_long_body_across_chunks",
     ] {
         check_nextest_group_assignment(root, "cold-index-sqlite", test_name)?;
     }
