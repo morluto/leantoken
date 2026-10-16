@@ -1,3 +1,17 @@
+hot_query!(
+    AFFECTED_IMPORTERS,
+    "affected_importers",
+    &["candidate_paths: JSON text[]"],
+    "distinct importer paths ordered by path; input and matching import edges govern work",
+    &["import_candidates_path_idx"],
+    "SELECT DISTINCT files.path
+             FROM json_each(?1) AS changed
+             JOIN import_candidates ON import_candidates.candidate_path = changed.value
+             JOIN imports ON imports.id = import_candidates.import_id
+             JOIN files ON files.id = imports.file_id
+             ORDER BY files.path"
+);
+
 impl ReadSession {
     pub fn find_file(&self, path: &str) -> Result<Option<FileRecord>> {
         let mut stmt = self.conn.prepare_cached(
@@ -13,14 +27,7 @@ impl ReadSession {
             return Ok(Vec::new());
         }
         let input = serde_json::to_string(candidate_paths)?;
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT files.path
-             FROM json_each(?1) AS changed
-             JOIN import_candidates ON import_candidates.candidate_path = changed.value
-             JOIN imports ON imports.id = import_candidates.import_id
-             JOIN files ON files.id = imports.file_id
-             ORDER BY files.path",
-        )?;
+        let mut stmt = self.conn.prepare_cached(AFFECTED_IMPORTERS.sql)?;
         let rows = stmt.query_map(params![input], |row| row.get(0))?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }

@@ -23,14 +23,16 @@ mod accounting;
 mod api;
 mod diagnostics;
 mod helpers;
+mod hot_query;
 mod mapping;
 mod models;
 mod open;
 #[cfg(test)]
 use open::{AutoCheckpointCompletion, with_auto_checkpoint_suspended};
+#[macro_use]
 mod projections;
 #[cfg(test)]
-use projections::{IMPORT_CANDIDATE_RESOLUTION_SQL, path_projection_is_current};
+use projections::path_projection_is_current;
 mod publication;
 mod query_receipts;
 #[path = "read/counts.rs"]
@@ -75,5 +77,7 @@ pub use models::{
     SymbolRecord,
 };
 pub use snapshot::StorageSnapshot;
+#[cfg(test)]
+mod query_plans;
 #[cfg(test)]
 mod tests;

@@ -534,6 +534,57 @@ Add a custom data structure only after a release-mode profile identifies a
 remaining bottleneck and the replacement preserves snapshot, ordering, and
 limit semantics.
 
+### Production SQL plan evidence
+
+Storage statements with contractual query plans have private `HotQuery`
+declarations beside their production owners. Each declaration supplies the SQL,
+bind shape, semantic operation, result/order contract, and schema indexes.
+Production prepares that declaration's SQL directly through rusqlite;
+`storage::query_plans` explains and measures the same text. Scoped-regex fallback
+uses one production-owned template and path-clause builder for execution and
+inspection. SQL remains private, and these declarations add no execution or
+caching framework.
+
+Plan diagnostics retain every raw node ID, parent ID, and detail, then normalize
+accesses, named/primary/virtual indexes, covering indexes, and FTS5 MATCH
+constraints. Contracts reject unexpected scans, automatic indexes,
+materialization, and temporary B-trees, require approved indexes in both
+qualified-symbol union branches, and reject a full virtual-table scan that lacks
+the required MATCH constraint. Explicit allowances cover JSON inputs, FTS
+candidates, ordered path filtering, streaming partition digests, quota-bounded
+oldest-base lookup, and scoped-regex fallback. A depth-index tree search may use
+one ordering sort; an ordered path-index tree access and glob pagination permit
+none. Neither tree alternative guarantees that scanned work is bounded by the
+returned page size.
+
+Planner policy uses the bundled SQLite build recorded by the lockfile and
+version/source-ID evidence. QPSG remains disabled on writers and readers;
+LeanToken does not run `ANALYZE` or `PRAGMA optimize`, and the diagnostic fixture
+checks that no statistics tables exist. SQLite/schema changes require review of
+the resulting plans. Complete human-readable EQP text is diagnostic output,
+not a stable snapshot or a latency guarantee.
+
+The independently selectable plan owner pairs its 25 statements with real
+storage-API behavior. Its disposable fixture contains 256 irrelevant files plus
+a target and two importers, four chunks/imports per file, tied symbols, all 128
+read-delta base slots, 24 retrieval receipts, 24 query receipts, and 32 irrelevant
+accounting tokenizers. It covers absent/selective/high-cardinality matches,
+duplicate inputs, union branches, output caps, pagination, structural-candidate
+overflow, cancellation, LRU/expiry, exact-only receipt rebasing, and snapshots
+across publication. Per-statement materialized-row and fullscan limits, zero
+automatic-index rows, and a 250,000 VM-step ceiling bound this fixed fixture;
+all named failures and raw plans are collected before failing the owner.
+
+A separate paired fixture compares unchanged production tree SQL with derived
+diagnostic path-index and depth-index variants on 64/256-file flat/deep shapes.
+Results must match the storage API; work must stay within the fixture projection
+size for fullscan steps and `80 * projected_rows + 256` VM steps. These are
+cardinality-dependent work checks, not universal per-request limits or hosted
+runner timing thresholds. The checked descriptor inventory requires plan/API
+pairing, production use, bind/index validity, and an explicit disposition when
+storage SQL owners or keyword counts change. That source inventory is a review
+tripwire, rather than a general SQL parser.
+
 Index-backed MCP and CLI retrievals expose an explicit consistency boundary.
 For long-lived MCP clients, `indexed_generation` is the default and opens the
 latest completed snapshot immediately without implying Git HEAD. One-shot CLI
@@ -1283,8 +1334,11 @@ Tree and glob pages use the indexed
 SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
 bounded globset scan). Find still scans indexed files with a lean path-only
 projection (`id`, `path`, `language`, `size_bytes`) because fuzzy nucleo scoring
-does not map to SQL. The numbers are safety limits, not monorepo performance
-claims.
+does not map to SQL. Tree `LIMIT` caps returned rows, not entries visited: SQLite
+may filter an ordered path-index scan or search the depth index and sort the
+eligible matches. Shallow requests can favor the latter, while early pages in
+flat trees can favor path order. The numbers are safety limits, not monorepo
+performance claims.
 
 Git revision resolution uses the shared process-group capture owner with a
 128-byte stdout cap and the caller's timeout. Symbol history pins subsequent

@@ -1377,6 +1377,7 @@
     "src/services/context/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
     "src/services/index_read.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
     "src/setup/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
+    "src/storage/hot_query.rs": "Private HotQuery and test-only QueryContract type declarations only; the constant-declaration macro lives in the already-budgeted projections owner. Syntax checks reject executable functions and item macros. Review when implementation is added.",
     "src/storage/mod.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
     "src/storage/models.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",
     "src/storage/schema.rs": "Declarations, constants or reexports only; syntax checks reject executable functions and item macros. Review when implementation is added.",

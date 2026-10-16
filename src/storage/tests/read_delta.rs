@@ -317,57 +317,6 @@ fn read_delta_corruption_and_insert_failures_are_fail_loud_and_atomic() {
 }
 
 #[test]
-fn read_delta_queries_use_bounded_indexes() {
-    let directory = tempfile::tempdir().expect("directory");
-    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
-    let connection = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for (sql, expected) in [
-        (
-            "SELECT content FROM read_delta_bases
-             WHERE target_key = 'target' AND content_hash = 'hash'",
-            "sqlite_autoindex_read_delta_bases_1",
-        ),
-        (
-            "SELECT content_hash FROM read_delta_bases
-             WHERE target_key = 'target'
-             ORDER BY repository_generation DESC, access_sequence DESC, content_hash
-             LIMIT 1",
-            "read_delta_bases_target_latest_idx",
-        ),
-        (
-            "DELETE FROM read_delta_bases WHERE expires_unix_millis <= 1",
-            "read_delta_bases_expiry_idx",
-        ),
-        (
-            "SELECT target_key, content_hash FROM read_delta_bases
-             ORDER BY access_sequence, target_key, content_hash LIMIT 1",
-            "read_delta_bases_lru_idx",
-        ),
-    ] {
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("query plan");
-        let details = statement
-            .query_map([], |row| row.get::<_, String>(3))
-            .expect("plan rows")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("plan details")
-            .join(" | ");
-        assert!(
-            details.contains(expected),
-            "expected {expected:?} in query plan {details:?} for {sql}"
-        );
-        assert!(
-            !details.contains("USE TEMP B-TREE"),
-            "query plan did not preserve index ordering: {details}"
-        );
-    }
-}
-
-#[test]
 fn read_delta_migration_preserves_index_and_failed_migration_rolls_back() {
     let directory = tempfile::tempdir().expect("directory");
     let database = directory.path().join("index.sqlite");
