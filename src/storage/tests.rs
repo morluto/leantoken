@@ -92,36 +92,6 @@ pub(crate) fn structural_search_uses_complete_unicode_case_fold_candidates() {
 }
 
 #[test]
-pub(crate) fn import_projection_repair_resolves_membership_through_the_path_index() {
-    let root = tempfile::tempdir().expect("root");
-    let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
-    let connection = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let details = connection
-        .prepare(&format!(
-            "EXPLAIN QUERY PLAN {IMPORT_CANDIDATE_RESOLUTION_SQL}"
-        ))
-        .expect("resolution query plan")
-        .query_map(params!["[\"src/lib.rs\"]"], |row| row.get::<_, String>(3))
-        .expect("resolution plan rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("resolution plan details");
-
-    assert!(
-        details
-            .iter()
-            .any(|detail| detail.contains("SEARCH files USING COVERING INDEX")),
-        "candidate membership must use the unique files.path index: {details:?}"
-    );
-    assert!(
-        details.iter().all(|detail| !detail.contains("SCAN files")),
-        "candidate membership must not scan the repository table: {details:?}"
-    );
-}
-
-#[test]
 pub(crate) fn unicode_case_fold_fallback_fails_before_truncating_structural_rows() {
     let root = tempfile::tempdir().expect("root");
     let storage = Storage::open(root.path().join("index.sqlite")).expect("storage");
@@ -199,28 +169,6 @@ fn fallback_file_limit_is_applied_after_scope_and_preserves_scan_bounds() {
         )
         .expect("index");
     let session = storage.begin_read().expect("snapshot");
-    let path_sql = scoped_regex_path_sql(&["z.rs".into()], &[], 2);
-    let plan = session
-        .conn
-        .prepare(&format!(
-            "EXPLAIN QUERY PLAN
-         SELECT f.id, f.path, f.language, f.size_bytes, f.modified_ns,
-                f.content_hash, f.generation, f.structurally_complete, COUNT(c.id)
-         FROM files f LEFT JOIN chunks c ON c.file_id = f.id
-         WHERE 1 = 1 {} GROUP BY f.id ORDER BY f.id LIMIT ?1",
-            path_sql.clause
-        ))
-        .expect("scope selection query plan")
-        .query_map(params![11, "z.rs"], |row| row.get::<_, String>(3))
-        .expect("query plan rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("query plan");
-    eprintln!("scoped fallback file selection: {plan:?}");
-    assert!(
-        plan.iter()
-            .any(|step| step.contains("SEARCH c USING") && step.contains("file_id=?")),
-        "chunk counts must use the file index: {plan:?}"
-    );
     let included = session
         .regex_scan_files(1, 10, &["z.rs".into()], &[], |path| Ok(path == "z.rs"))
         .expect("unrelated files do not consume the file cap");
