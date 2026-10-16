@@ -587,6 +587,7 @@ fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
 
 #[test]
 fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
+    const DIAGNOSTIC_FILTER: &str = "warn,leantoken::services::receipt_rebase=debug,leantoken::services::reconciliation=debug,leantoken::indexer=debug";
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -628,7 +629,8 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
 
     std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
         .expect("write unrelated source");
-    let mut second = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
+    let mut second =
+        McpProcess::spawn_with_diagnostic_stderr(root.path(), &database, DIAGNOSTIC_FILTER);
     second.initialize();
     second.send_initialized();
     second.wait_until_ready(Duration::from_secs(30));
@@ -660,6 +662,30 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
         .expect("rebased receipt")
         .to_owned();
     second.stop();
+    let diagnostics = String::from_utf8(second.take_stderr()).expect("UTF-8 diagnostics");
+    let mut progress = diagnostics
+        .lines()
+        .filter(|line| line.contains("receipt rebase progress"));
+    for phase in [
+        "consistency",
+        "worker_admission",
+        "load_source",
+        "classify",
+        "response_budget",
+        "persist_receipt",
+        "finalize_response",
+        "record_savings",
+        "complete",
+    ] {
+        assert!(
+            progress.next().is_some_and(|line| line.contains(phase)),
+            "missing or out-of-order {phase}: {diagnostics}"
+        );
+    }
+    assert!(
+        !diagnostics.contains("pub fn cross_process_rebase_answer"),
+        "diagnostics must not include source text"
+    );
 
     let mut third = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     third.initialize();

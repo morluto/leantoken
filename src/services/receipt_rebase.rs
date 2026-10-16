@@ -78,6 +78,7 @@ impl Services {
         self.observe_service_result(operation, self.validate_call_options(options))?;
         let request = self.observe_service_result(operation, parse_rebase_request(request))?;
         if let Some(consistency) = consistency {
+            tracing::debug!(phase = "consistency", "receipt rebase progress");
             let consistency_result = self
                 .apply_consistency_with_initial_deadline(
                     consistency,
@@ -87,6 +88,7 @@ impl Services {
                 .await;
             self.observe_service_result(operation, consistency_result)?;
         }
+        tracing::debug!(phase = "worker_admission", "receipt rebase progress");
         let this = self.clone();
         let result = self
             .runtime
@@ -105,9 +107,11 @@ impl Services {
         cancellation: &CancellationToken,
     ) -> Result<ReceiptRebaseResponse> {
         check_cancelled(cancellation)?;
+        tracing::debug!(phase = "load_source", "receipt rebase progress");
         let source = self
             .storage
             .load_receipt_rebase_source(&request.receipt_id)?;
+        tracing::debug!(phase = "classify", "receipt rebase progress");
         let classification = self.consistent(|session| {
             let generation = session.generation();
             if source.repository_generation >= generation {
@@ -118,6 +122,7 @@ impl Services {
             }
             classify_receipt(self, session, generation, &source, cancellation)
         })?;
+        tracing::debug!(phase = "response_budget", "receipt rebase progress");
         let requested_samples = request.samples_per_outcome;
         let mut selected = None;
         for sample_limit in (0..=requested_samples).rev() {
@@ -139,19 +144,23 @@ impl Services {
             );
         };
         check_cancelled(cancellation)?;
+        tracing::debug!(phase = "persist_receipt", "receipt rebase progress");
         let receipt_id = self.storage.persist_rebased_receipt(
             &source,
             classification.generation,
             &classification.carried,
         )?;
         response.meta.receipt_id = Some(receipt_id);
+        tracing::debug!(phase = "finalize_response", "receipt rebase progress");
         self.finalize_bounded_response(&mut response, options)?;
+        tracing::debug!(phase = "record_savings", "receipt rebase progress");
         self.record_token_savings_classified(
             TokenAccountingOperation::ReceiptRebase,
             None,
             &response.meta,
             TokenSavingsRequestClass::Useful,
         );
+        tracing::debug!(phase = "complete", "receipt rebase progress");
         Ok(response)
     }
 }
