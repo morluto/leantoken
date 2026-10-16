@@ -102,7 +102,7 @@ threads-required = 1
 slow-timeout = { period = "20s", terminate-after = 6 }
 
 [[profile.default.overrides]]
-filter = 'test(/^storage::/) or test(/^indexer::/) or test(/^cache::/) or test(/^query_receipt::/) or test(/^domains::(indexing_repository|storage)::/) or test(/^services::tests::/) or test(/^services::(read|query_receipts|receipts|lifecycle|repository|reconciliation)::/)'
+filter = 'test(/^storage::/) or test(/^indexer::/) or test(/^cache::/) or test(/^query_receipt::/) or test(/^domains::(indexing_repository|storage)::/) or test(/^services::tests::/) or test(/^services::(budgets|consistency|read|query_receipts|receipts|lifecycle|repository|reconciliation)::/)'
 test-group = "cold-index-sqlite"
 threads-required = 1
 slow-timeout = { period = "20s", terminate-after = 6 }

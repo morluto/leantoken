@@ -124,6 +124,12 @@ for package-cache or artifact locks. Local runs select the `local` profile; CI
 passes `--profile ci`. Both produce owner- and test-level JUnit metadata under
 `target/nextest/`. Doctests stay on their explicit Cargo command.
 
+The `services::budgets` and `services::consistency` integration owners build
+fresh SQLite indexes. They use the cold-index/SQLite group's two-test admission
+and two-minute hang bound, rather than the cheap group's thirty-second bound.
+The architecture check resolves representative compiled tests from both owners
+through nextest, so a missed module selector fails the check.
+
 The runner prints elapsed time and preserves the scheduler's exit code. It also
 owns the opt-in profile and stress commands. Checked-in corpora and benchmark
 reports execute through their explicit domain, contract, or example owner
