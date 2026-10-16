@@ -1,3 +1,54 @@
+hot_query!(
+    READ_DELTA_OLDEST,
+    "read_delta_oldest",
+    &[],
+    "zero or one oldest key ordered by access_sequence,target_key,hash",
+    &["read_delta_bases_lru_idx"],
+    "SELECT target_key, content_hash
+             FROM read_delta_bases
+             ORDER BY access_sequence, target_key, content_hash
+             LIMIT 1"
+);
+
+hot_query!(
+    READ_DELTA_PRUNE,
+    "read_delta_prune",
+    &["now_unix_millis: integer"],
+    "delete expired bases only; persistent quota bounds table size",
+    &["read_delta_bases_expiry_idx"],
+    "DELETE FROM read_delta_bases WHERE expires_unix_millis <= ?1"
+);
+
+hot_query!(
+    READ_DELTA_LATEST,
+    "read_delta_latest",
+    &["target_key: text"],
+    "zero or one base ordered by generation desc,access desc,hash",
+    &["read_delta_bases_target_latest_idx"],
+    "SELECT content_hash, repository_generation,
+                        target_start_line, target_end_line,
+                        returned_start_line, returned_end_line, content,
+                        created_unix_millis, last_access_unix_millis
+                 FROM read_delta_bases
+                 WHERE target_key = ?1
+                 ORDER BY repository_generation DESC, access_sequence DESC, content_hash
+                 LIMIT 1"
+);
+
+hot_query!(
+    READ_DELTA_EXACT,
+    "read_delta_exact",
+    &["target_key: text", "content_hash: text"],
+    "zero or one stored content base",
+    &["sqlite_autoindex_read_delta_bases_1"],
+    "SELECT content_hash, repository_generation,
+                        target_start_line, target_end_line,
+                        returned_start_line, returned_end_line, content,
+                        created_unix_millis, last_access_unix_millis
+                 FROM read_delta_bases
+                 WHERE target_key = ?1 AND content_hash = ?2"
+);
+
 use crate::read_delta::{
     MAX_READ_DELTA_BASE_BYTES, MAX_READ_DELTA_BASES, MAX_TOTAL_READ_DELTA_BASE_BYTES,
     READ_DELTA_BASE_TTL_MILLIS, ReadDeltaBase,
@@ -328,31 +379,11 @@ pub(crate) fn load_read_delta_base(
     };
     match content_hash {
         Some(content_hash) => transaction
-            .query_row(
-                "SELECT content_hash, repository_generation,
-                        target_start_line, target_end_line,
-                        returned_start_line, returned_end_line, content,
-                        created_unix_millis, last_access_unix_millis
-                 FROM read_delta_bases
-                 WHERE target_key = ?1 AND content_hash = ?2",
-                params![target_key, content_hash],
-                map,
-            )
+            .query_row(READ_DELTA_EXACT.sql, params![target_key, content_hash], map)
             .optional()
             .map_err(Into::into),
         None => transaction
-            .query_row(
-                "SELECT content_hash, repository_generation,
-                        target_start_line, target_end_line,
-                        returned_start_line, returned_end_line, content,
-                        created_unix_millis, last_access_unix_millis
-                 FROM read_delta_bases
-                 WHERE target_key = ?1
-                 ORDER BY repository_generation DESC, access_sequence DESC, content_hash
-                 LIMIT 1",
-                [target_key],
-                map,
-            )
+            .query_row(READ_DELTA_LATEST.sql, [target_key], map)
             .optional()
             .map_err(Into::into),
     }
@@ -393,23 +424,15 @@ pub(crate) fn prune_read_delta_bases(
     transaction: &Transaction<'_>,
     now_unix_millis: i64,
 ) -> Result<()> {
-    transaction.execute(
-        "DELETE FROM read_delta_bases WHERE expires_unix_millis <= ?1",
-        [now_unix_millis],
-    )?;
+    transaction.execute(READ_DELTA_PRUNE.sql, [now_unix_millis])?;
     Ok(())
 }
 
 pub(crate) fn evict_oldest_read_delta_base(transaction: &Transaction<'_>) -> Result<bool> {
     let candidate = transaction
-        .query_row(
-            "SELECT target_key, content_hash
-             FROM read_delta_bases
-             ORDER BY access_sequence, target_key, content_hash
-             LIMIT 1",
-            [],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
+        .query_row(READ_DELTA_OLDEST.sql, [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .optional()?;
     let Some((target_key, content_hash)) = candidate else {
         return Ok(false);

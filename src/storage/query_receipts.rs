@@ -1,3 +1,45 @@
+hot_query!(
+    QUERY_PARTITION,
+    "query_partition",
+    &[],
+    "stream repository paths in order; callback cancellation per row",
+    &["sqlite_autoindex_files_1"],
+    "SELECT path, content_hash FROM files ORDER BY path"
+);
+
+hot_query!(
+    QUERY_RECEIPT_LOOKUP,
+    "query_receipt_lookup",
+    &[
+        "repository_identity: text",
+        "generation: integer",
+        "config_hash: text",
+        "semantics_version: integer",
+        "predicate_json: text",
+        "predicate_blake3: text",
+        "partition_blake3: text",
+        "partition_file_count: integer",
+        "match_count: integer",
+        "result_blake3: text"
+    ],
+    "zero or one equivalent receipt ordered by id",
+    &["query_coverage_receipts_predicate_idx"],
+    "SELECT id, last_access_unix_millis
+                 FROM query_coverage_receipts
+                 WHERE repository_identity = ?1
+                   AND repository_generation = ?2
+                   AND config_hash = ?3
+                   AND semantics_version = ?4
+                   AND predicate_json = ?5
+                   AND predicate_blake3 = ?6
+                   AND partition_blake3 = ?7
+                   AND partition_file_count = ?8
+                   AND match_count = ?9
+                   AND result_blake3 = ?10
+                 ORDER BY id
+                 LIMIT 1"
+);
+
 use crate::error::RetryableOperation;
 use crate::query_receipt::{
     ExactQueryPredicate, MAX_QUERY_RECEIPT_ID_BYTES, MAX_QUERY_RECEIPTS,
@@ -136,20 +178,7 @@ impl Storage {
         let mut usage = query_receipt_usage(&tx)?;
         let existing = tx
             .query_row(
-                "SELECT id, last_access_unix_millis
-                 FROM query_coverage_receipts
-                 WHERE repository_identity = ?1
-                   AND repository_generation = ?2
-                   AND config_hash = ?3
-                   AND semantics_version = ?4
-                   AND predicate_json = ?5
-                   AND predicate_blake3 = ?6
-                   AND partition_blake3 = ?7
-                   AND partition_file_count = ?8
-                   AND match_count = ?9
-                   AND result_blake3 = ?10
-                 ORDER BY id
-                 LIMIT 1",
+                QUERY_RECEIPT_LOOKUP.sql,
                 params![
                     repository_identity,
                     u64_to_i64(record.repository_generation)?,
@@ -364,9 +393,7 @@ impl ReadSession {
         mut allows_path: impl FnMut(&str) -> bool,
         mut check: impl FnMut() -> Result<()>,
     ) -> Result<QueryPartition> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT path, content_hash FROM files ORDER BY path")?;
+        let mut statement = self.conn.prepare(QUERY_PARTITION.sql)?;
         let mut rows = statement.query([])?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"leantoken-exact-query-partition-v1\0");

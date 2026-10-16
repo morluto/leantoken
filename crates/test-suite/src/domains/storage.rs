@@ -54,20 +54,6 @@ fn sample_file(path: &str, content: &str) -> IndexedFile {
     }
 }
 
-fn query_plan(
-    connection: &rusqlite::Connection,
-    sql: &str,
-    parameters: &[&dyn rusqlite::ToSql],
-) -> String {
-    let mut statement = connection.prepare(sql).expect("prepare query plan");
-    statement
-        .query_map(parameters, |row| row.get::<_, String>(3))
-        .expect("query plan")
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .expect("query plan rows")
-        .join("\n")
-}
-
 #[test]
 fn storage_public_lifecycle_preserves_projections_search_and_atomic_generations() {
     let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
@@ -414,26 +400,6 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
             .expect("accounting column");
         assert_eq!(present, 1, "missing {column}");
     }
-    let savings_plan = connection
-        .prepare(
-            "EXPLAIN QUERY PLAN
-             SELECT operation, useful_requests, incomplete_requests,
-                    unsupported_requests, hash_suppressed_requests
-             FROM token_savings
-             WHERE tokenizer = ?1
-             ORDER BY operation",
-        )
-        .expect("prepare savings query plan")
-        .query_map(["cl100k_base"], |row| row.get::<_, String>(3))
-        .expect("query savings plan")
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .expect("collect savings plan");
-    assert!(
-        savings_plan.iter().any(|detail| {
-            detail.contains("SEARCH token_savings USING INDEX") && detail.contains("tokenizer=?")
-        }),
-        "unexpected savings query plan: {savings_plan:?}"
-    );
     let legacy: (i64, i64, i64, i64, i64, i64) = connection
         .query_row(
             "SELECT tracked_requests, baseline_source_tokens,
@@ -465,30 +431,6 @@ fn storage_adds_full_response_accounting_to_existing_savings_table() {
         )
         .expect("service failures table");
     assert_eq!(failures_table, 1);
-}
-
-#[test]
-fn service_failure_report_uses_the_bounded_primary_key_range() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let db = dir.root().join("index.sqlite");
-    drop(Storage::open(&db).expect("storage"));
-    let connection = rusqlite::Connection::open(&db).expect("inspect storage");
-
-    let plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         SELECT operation, error_category, failed_requests
-         FROM service_failures
-         WHERE tokenizer = ?1
-         ORDER BY operation, error_category",
-        &[&"cl100k_base"],
-    );
-    assert!(
-        plan.contains("sqlite_autoindex_service_failures_1")
-            && plan.contains("tokenizer=?")
-            && !plan.contains("USE TEMP B-TREE"),
-        "unexpected service failure query plan:\n{plan}"
-    );
 }
 
 #[test]
@@ -608,168 +550,6 @@ fn structural_search_migration_rebuilds_existing_rows() {
             .reference
             .name,
         "println"
-    );
-}
-
-#[test]
-fn hot_relational_projections_use_their_indexes() {
-    let dir = Sandbox::new(module_path!(), "storage_case").expect("sandbox");
-    let db = dir.root().join("index.sqlite");
-    let storage = Storage::open(&db).expect("open");
-    let mut importer = sample_file("src/app.rs", "fn app() {}\n");
-    importer.imports[0].candidate_paths = vec!["src/lib.rs".into()];
-    importer.imports[0].resolved_path = Some("src/lib.rs".into());
-    storage
-        .full_reconcile(
-            "hash",
-            vec![importer, sample_file("src/lib.rs", "fn library() {}\n")],
-        )
-        .expect("reconcile");
-
-    let connection = rusqlite::Connection::open(&db).expect("inspect");
-    let changed = serde_json::to_string(&["src/lib.rs"]).expect("json");
-    let import_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         SELECT DISTINCT files.path
-         FROM json_each(?1) AS changed
-         JOIN import_candidates ON import_candidates.candidate_path = changed.value
-         JOIN imports ON imports.id = import_candidates.import_id
-         JOIN files ON files.id = imports.file_id",
-        &[&changed],
-    );
-    assert!(
-        import_plan.contains("import_candidates_path_idx"),
-        "unexpected reverse-import plan: {import_plan}"
-    );
-
-    let ranges = serde_json::json!([{"file_id": 1, "start_line": 1, "end_line": 2}]);
-    let range_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         WITH requested AS (
-             SELECT CAST(value ->> 'file_id' AS INTEGER) AS file_id,
-                    CAST(value ->> 'start_line' AS INTEGER) AS start_line,
-                    CAST(value ->> 'end_line' AS INTEGER) AS end_line
-             FROM json_each(?1)
-         )
-         SELECT chunks.id FROM requested
-         JOIN chunks ON chunks.file_id = requested.file_id
-                    AND chunks.end_line >= requested.start_line
-                    AND chunks.start_line <= requested.end_line",
-        &[&ranges.to_string()],
-    );
-    assert!(
-        range_plan.contains("chunks_file_line_idx"),
-        "unexpected batched-range plan: {range_plan}"
-    );
-
-    let symbols = serde_json::to_string(&["main", "library"]).expect("symbols");
-    let exact_symbol_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         WITH requested AS (
-             SELECT CAST(key AS INTEGER) AS request_index,
-                    CAST(value AS TEXT) AS name
-             FROM json_each(?1)
-         )
-         SELECT s.id
-         FROM requested
-         JOIN symbols AS s ON s.id IN (
-             SELECT exact.id
-             FROM symbols AS exact INDEXED BY symbols_name_idx
-             JOIN files AS exact_file ON exact_file.id = exact.file_id
-             WHERE exact.name = requested.name COLLATE NOCASE
-               AND exact.name = requested.name COLLATE BINARY
-             ORDER BY exact_file.path, exact.start_byte
-             LIMIT ?2
-         )",
-        &[&symbols, &128_i64],
-    );
-    assert!(
-        exact_symbol_plan.contains("symbols_name_idx"),
-        "unexpected exact-symbol plan: {exact_symbol_plan}"
-    );
-
-    let qualified_symbol_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         WITH matches AS (
-             SELECT id, file_id, name, kind, parent, signature,
-                    start_line, end_line, start_byte, end_byte
-             FROM symbols INDEXED BY symbols_name_idx
-             WHERE file_id = ?1
-               AND name = ?2 COLLATE NOCASE
-               AND name = ?2 COLLATE BINARY
-             UNION ALL
-             SELECT id, file_id, name, kind, parent, signature,
-                    start_line, end_line, start_byte, end_byte
-             FROM symbols INDEXED BY symbols_name_idx
-             WHERE file_id = ?1
-               AND name = ?4 COLLATE NOCASE
-               AND name = ?4 COLLATE BINARY
-               AND parent = ?3
-         )
-         SELECT id FROM matches
-         ORDER BY start_byte, id
-         LIMIT 2",
-        &[&1_i64, &"Services.main", &"Services", &"main"],
-    );
-    assert!(
-        qualified_symbol_plan.matches("symbols_name_idx").count() >= 2,
-        "unexpected qualified-symbol plan: {qualified_symbol_plan}"
-    );
-
-    let qualified_search_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         SELECT s.id
-         FROM symbols_fts_trigram
-         JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
-         WHERE symbols_fts_trigram MATCH ?1
-           AND s.parent IS NOT NULL
-           AND instr(s.parent || '.' || s.name, ?2) > 0",
-        &[&"\"main\"", &"Services.main"],
-    );
-    assert!(
-        qualified_search_plan.contains("VIRTUAL TABLE INDEX"),
-        "unexpected qualified symbol-search plan: {qualified_search_plan}"
-    );
-
-    let tree_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         SELECT path FROM path_entries
-         WHERE path > ?1 ORDER BY path LIMIT ?2",
-        &[&"src", &10_i64],
-    );
-    assert!(
-        tree_plan.contains("sqlite_autoindex_path_entries_1"),
-        "unexpected tree keyset plan: {tree_plan}"
-    );
-
-    let glob_plan = query_plan(
-        &connection,
-        "EXPLAIN QUERY PLAN
-         SELECT path_entries.path, files.language, files.size_bytes
-         FROM path_entries
-         JOIN files ON files.id = path_entries.file_id
-         WHERE path_entries.kind = 1
-           AND (path_entries.path GLOB ?1
-                OR (?2 IS NOT NULL AND path_entries.path GLOB ?2))
-           AND (?3 IS NULL OR path_entries.path > ?3)
-         ORDER BY path_entries.path
-         LIMIT ?4",
-        &[
-            &"*.rs",
-            &Option::<&str>::None,
-            &Option::<&str>::None,
-            &10_i64,
-        ],
-    );
-    assert!(
-        glob_plan.contains("path_entries"),
-        "unexpected glob keyset plan: {glob_plan}"
     );
 }
 

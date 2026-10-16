@@ -1,14 +1,72 @@
-impl ReadSession {
-    pub(crate) fn receipt_structural_hash_matches(
-        &self,
-        file_id: i64,
-        start_line: usize,
-        end_line: usize,
-        content_hash: &str,
-    ) -> Result<Option<bool>> {
-        let limit = crate::receipt::MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE;
-        let mut statement = self.conn.prepare_cached(
-            "SELECT content
+hot_query!(
+    FIND_SYMBOL,
+    "find_symbol",
+    &[
+        "file_id: integer",
+        "name: text",
+        "parent: null",
+        "leaf_name: null"
+    ],
+    "at most two matches ordered by start_byte,id",
+    &["symbols_name_idx"],
+    "SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM symbols INDEXED BY symbols_name_idx
+             WHERE file_id = ?1
+               AND name = ?2 COLLATE NOCASE
+               AND name = ?2 COLLATE BINARY
+               AND ?3 IS NULL
+               AND ?4 IS NULL
+             ORDER BY start_byte, id
+             LIMIT 2"
+);
+
+hot_query!(
+    FIND_QUALIFIED_SYMBOL,
+    "find_qualified_symbol",
+    &[
+        "file_id: integer",
+        "full_name: text",
+        "parent: text",
+        "leaf_name: text"
+    ],
+    "at most two matches ordered by start_byte,id; both union branches indexed",
+    &["symbols_name_idx"],
+    "WITH matches AS (
+                 SELECT id, file_id, name, kind, parent, signature,
+                        start_line, end_line, start_byte, end_byte
+                 FROM symbols INDEXED BY symbols_name_idx
+                 WHERE file_id = ?1
+                   AND name = ?2 COLLATE NOCASE
+                   AND name = ?2 COLLATE BINARY
+                 UNION ALL
+                 SELECT id, file_id, name, kind, parent, signature,
+                        start_line, end_line, start_byte, end_byte
+                 FROM symbols INDEXED BY symbols_name_idx
+                 WHERE file_id = ?1
+                   AND name = ?4 COLLATE NOCASE
+                   AND name = ?4 COLLATE BINARY
+                   AND parent = ?3
+             )
+             SELECT id, file_id, name, kind, parent, signature,
+                    start_line, end_line, start_byte, end_byte
+             FROM matches
+             ORDER BY start_byte, id
+             LIMIT 2"
+);
+
+hot_query!(
+    RECEIPT_STRUCTURAL_MATCHES,
+    "receipt_structural_matches",
+    &[
+        "file_id: integer",
+        "start_line: integer",
+        "end_line: integer",
+        "candidate_limit_plus_one: integer"
+    ],
+    "at most structural candidate limit + 1; symbols then imports by stable id",
+    &["symbols_file_start_idx", "imports_file_line_idx"],
+    "SELECT content
              FROM (
                  SELECT COALESCE(signature, name) AS content, rowid AS stable_id, 0 AS kind
                  FROM symbols
@@ -19,8 +77,44 @@ impl ReadSession {
                  WHERE file_id = ?1 AND line = ?2 AND line = ?3
              )
              ORDER BY kind, stable_id
-             LIMIT ?4",
-        )?;
+             LIMIT ?4"
+);
+
+hot_query!(
+    CHUNKS_OVERLAPPING_BATCH,
+    "chunks_overlapping_batch",
+    &["ranges: JSON {file_id,start_line,end_line}[]"],
+    "one group per input range; overlapping chunks ordered by start_line",
+    &["chunks_file_line_idx"],
+    "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value ->> 'file_id' AS INTEGER) AS file_id,
+                        CAST(value ->> 'start_line' AS INTEGER) AS start_line,
+                        CAST(value ->> 'end_line' AS INTEGER) AS end_line
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    chunks.id, chunks.file_id, chunks.content,
+                    chunks.start_line, chunks.end_line,
+                    chunks.start_byte, chunks.end_byte, chunks.token_count
+             FROM requested
+             JOIN chunks
+               ON chunks.file_id = requested.file_id
+              AND chunks.end_line >= requested.start_line
+              AND chunks.start_line <= requested.end_line
+             ORDER BY requested.request_index, chunks.start_line"
+);
+
+impl ReadSession {
+    pub(crate) fn receipt_structural_hash_matches(
+        &self,
+        file_id: i64,
+        start_line: usize,
+        end_line: usize,
+        content_hash: &str,
+    ) -> Result<Option<bool>> {
+        let limit = crate::receipt::MAX_REBASE_STRUCTURAL_CANDIDATES_PER_EVIDENCE;
+        let mut statement = self.conn.prepare_cached(RECEIPT_STRUCTURAL_MATCHES.sql)?;
         let mut rows = statement.query(params![
             file_id,
             usize_to_i64(start_line)?,
@@ -113,25 +207,7 @@ impl ReadSession {
             })
             .collect::<Vec<_>>();
         let input = serde_json::to_string(&input)?;
-        let mut stmt = self.conn.prepare_cached(
-            "WITH requested AS (
-                 SELECT CAST(key AS INTEGER) AS request_index,
-                        CAST(value ->> 'file_id' AS INTEGER) AS file_id,
-                        CAST(value ->> 'start_line' AS INTEGER) AS start_line,
-                        CAST(value ->> 'end_line' AS INTEGER) AS end_line
-                 FROM json_each(?1)
-             )
-             SELECT requested.request_index,
-                    chunks.id, chunks.file_id, chunks.content,
-                    chunks.start_line, chunks.end_line,
-                    chunks.start_byte, chunks.end_byte, chunks.token_count
-             FROM requested
-             JOIN chunks
-               ON chunks.file_id = requested.file_id
-              AND chunks.end_line >= requested.start_line
-              AND chunks.start_line <= requested.end_line
-             ORDER BY requested.request_index, chunks.start_line",
-        )?;
+        let mut stmt = self.conn.prepare_cached(CHUNKS_OVERLAPPING_BATCH.sql)?;
         let rows = stmt.query_map(params![input], |row| {
             let request_index = i64_to_usize(row.get(0)?)?;
             let chunk = ChunkRecord {
@@ -243,38 +319,9 @@ impl ReadSession {
     ) -> Result<crate::symbol_identity::SymbolResolution<SymbolRecord>> {
         let qualified = crate::symbol_identity::split_qualified_symbol(name);
         let sql = if qualified.is_some() {
-            "WITH matches AS (
-                 SELECT id, file_id, name, kind, parent, signature,
-                        start_line, end_line, start_byte, end_byte
-                 FROM symbols INDEXED BY symbols_name_idx
-                 WHERE file_id = ?1
-                   AND name = ?2 COLLATE NOCASE
-                   AND name = ?2 COLLATE BINARY
-                 UNION ALL
-                 SELECT id, file_id, name, kind, parent, signature,
-                        start_line, end_line, start_byte, end_byte
-                 FROM symbols INDEXED BY symbols_name_idx
-                 WHERE file_id = ?1
-                   AND name = ?4 COLLATE NOCASE
-                   AND name = ?4 COLLATE BINARY
-                   AND parent = ?3
-             )
-             SELECT id, file_id, name, kind, parent, signature,
-                    start_line, end_line, start_byte, end_byte
-             FROM matches
-             ORDER BY start_byte, id
-             LIMIT 2"
+            FIND_QUALIFIED_SYMBOL.sql
         } else {
-            "SELECT id, file_id, name, kind, parent, signature,
-                    start_line, end_line, start_byte, end_byte
-             FROM symbols INDEXED BY symbols_name_idx
-             WHERE file_id = ?1
-               AND name = ?2 COLLATE NOCASE
-               AND name = ?2 COLLATE BINARY
-               AND ?3 IS NULL
-               AND ?4 IS NULL
-             ORDER BY start_byte, id
-             LIMIT 2"
+            FIND_SYMBOL.sql
         };
         let (parent, leaf_name) = qualified.unzip();
         let mut stmt = self.conn.prepare_cached(sql)?;
