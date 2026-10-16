@@ -98,6 +98,10 @@ impl ReadDeltaRegistry {
             full_tokens,
             tokenizer,
         } = input;
+        // Delta reads require full verification, which always observes EOF.
+        let target_end_line = response.target_end_line.ok_or_else(|| {
+            Error::OperationFailure("read delta requires a complete target end".into())
+        })?;
         let target_key = target_key(repository_id, path, target);
         let mut base_hash = expected_hash.map(str::to_owned);
         let mut base_generation = None;
@@ -222,7 +226,7 @@ impl ReadDeltaRegistry {
             content: current_content.to_owned(),
             generation: response.meta.repository_generation,
             target_start_line: response.target_start_line,
-            target_end_line: response.target_end_line,
+            target_end_line,
             returned_start_line: response.returned_start_line,
             returned_end_line: response.returned_end_line,
         };
@@ -236,7 +240,7 @@ impl ReadDeltaRegistry {
                     content: current_content.to_owned(),
                     generation: response.meta.repository_generation,
                     target_start_line: response.target_start_line,
-                    target_end_line: response.target_end_line,
+                    target_end_line,
                     returned_start_line: response.returned_start_line,
                     returned_end_line: response.returned_end_line,
                     inserted_at: Instant::now(),
@@ -447,7 +451,7 @@ fn target_key(repository_id: &str, path: &str, target: &NewReadTarget) -> String
 
 fn target_coordinates_changed(base: &CacheEntry, head: &ReadResponse) -> bool {
     base.target_start_line != head.target_start_line
-        || base.target_end_line != head.target_end_line
+        || Some(base.target_end_line) != head.target_end_line
         || base.returned_start_line != head.returned_start_line
         || base.returned_end_line != head.returned_end_line
 }
@@ -722,7 +726,8 @@ mod tests {
             path: "oversized.rs".into(),
             status: crate::model::ReadStatus::Content,
             target_start_line: 1,
-            target_end_line: 1,
+            target_end_line: Some(1),
+            observed_end_line: 1,
             returned_start_line: 1,
             returned_end_line: 1,
             truncated: false,

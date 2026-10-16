@@ -618,6 +618,11 @@ impl Services {
             .target_end_line
             .unwrap_or(snapshot.end_line)
             .min(snapshot.end_line);
+        let target_end_line = if snapshot.eof_observed {
+            Some(observed_target_end_line)
+        } else {
+            target.target_end_line
+        };
         if target.target_start_line > observed_target_end_line
             || target.page_start_line > observed_target_end_line
         {
@@ -731,7 +736,8 @@ impl Services {
                 path: request.path.clone(),
                 status,
                 target_start_line: target.target_start_line,
-                target_end_line: observed_target_end_line,
+                target_end_line,
+                observed_end_line: snapshot.end_line,
                 returned_start_line,
                 returned_end_line,
                 truncated,

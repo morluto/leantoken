@@ -396,6 +396,15 @@ other paths, or create an additional request. Full-policy reads that verify the
 indexed file report exact live guidance; bounded reads label it as an indexed-
 generation estimate.
 
+Read target coordinates do not claim that a bounded scan frontier is a complete
+end. `target_end_line` preserves a finite line, symbol, or heading boundary until
+an observed live EOF shortens it; an open-ended bounded target reports `null`
+until EOF is observed. `observed_end_line` reports the live scan frontier, while
+`returned_start_line`/`returned_end_line` describe only emitted source. Full-policy
+verification may observe lines beyond a finite target. This metadata requires
+no extra scan, retained source, worker, or cursor state: the existing 64 KiB token
+check cadence, 8 MiB selected-source cap, and continuation guarantees are unchanged.
+
 Fuzzy file discovery retains a bounded `max_results + 1` ranking map while it
 scans the already bounded indexed file set. Path classification adds one linear
 segment pass per fuzzy-matching path, no extra filesystem or database scan, and

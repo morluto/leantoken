@@ -123,9 +123,11 @@ pub(super) struct LiveReadRange {
 }
 
 pub(super) struct LiveFileSnapshot {
-    /// `None` for bounded reads that stop before EOF; `Some` for full reads.
+    /// `None` for bounded reads; `Some` for full reads.
     pub(super) content_hash: Option<String>,
     pub(super) end_line: usize,
+    /// Only an empty read buffer proves EOF, independently of the file's metadata.
+    pub(super) eof_observed: bool,
     pub(super) bytes_read: usize,
     pub(super) file_size: usize,
     pub(super) modified_ns: Option<u128>,

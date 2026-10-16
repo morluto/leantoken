@@ -1090,8 +1090,14 @@ Reads an exact source range.
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
 indexed version (for example after an edit that has not been reindexed yet).
-`target_start_line` and `target_end_line` describe the complete resolved target;
-`returned_start_line` and `returned_end_line` describe the current page.
+`target_start_line` identifies the first line of the resolved target.
+`target_end_line` preserves an explicit range, symbol, or heading end until an
+observed live EOF proves a shorter target. For an open-ended bounded read that
+stops before EOF, `target_end_line` is `null`; clients must accept an unknown end.
+`observed_end_line` is the live scan frontier, which can extend beyond a finite
+target during full-policy verification. It is not evidence that the target ends
+there. `returned_start_line` and `returned_end_line` describe only the source
+emitted in the current page.
 `status: "truncated"`, `truncated: true`, `next_start_line`, and
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and requested verification

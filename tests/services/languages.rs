@@ -702,7 +702,7 @@ Setext
             .expect("Markdown heading read");
         assert_eq!(
             (read.target_start_line, read.target_end_line),
-            expected_range
+            (expected_range.0, Some(expected_range.1))
         );
         assert_eq!(
             read.content.as_deref().map(str::trim_end),
@@ -892,7 +892,7 @@ async fn latex_outline_and_read_share_exact_section_label_and_bibliography_struc
             .expect("LaTeX structured read");
         assert_eq!(
             (read.target_start_line, read.target_end_line),
-            expected_range
+            (expected_range.0, Some(expected_range.1))
         );
         assert_eq!(
             read.content.as_deref().map(str::trim_end),
