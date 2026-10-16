@@ -333,6 +333,78 @@ The connection is configured with:
 - file/range, reverse-import, and path lookup indexes added through versioned
   migrations so existing databases receive the same query plan as new databases.
 
+`src/storage/schema.rs` owns the ordered migration chain. The independently
+selectable `storage_migrations` test owner compiles those exact declarations
+through a test-only `#[path]` module and applies their authoritative prefixes;
+the database under test then opens through the normal product `Storage::open`.
+There is no product test feature or public fixture API. Historical fixtures
+never start at latest and remove newer objects or rewrite `user_version`.
+The matrix includes the empty prefix and every current migration entry, with
+direct upgrades and adjacent forward steps. It checks canonical schema and
+FTS virtual/shadow objects, representative records, usage counters, constraints,
+foreign keys, idempotent reopen, and normal reconciliation afterward. Failure
+cases cover transaction rollback after migration writes and conflicting DDL
+through the normal opener, preserving both version markers and historical data.
+
+The fixture compatibility manifest freezes each released migration's BLAKE3
+identity, including exact SQL and migration-library check settings. An appended
+migration automatically expands the matrix and requires explicit migration,
+schema-identity, and release-fixture compatibility review in that manifest.
+Existing entries cannot be edited or reordered as an implicit compatibility
+change. Removing a supported predecessor requires a compatibility decision and
+changelog entry. Canonical comparison permits only the manifest's reviewed
+physical column-order differences in `meta` and `token_savings`: runtime identity
+and additive accounting fields historically arrived between numbered migrations.
+Their complete column declarations, defaults, checks, keys, and index ordering
+remain checked; other table column order remains significant.
+
+Immutable release anchors additionally retain databases actually indexed by the
+published v0.1.15, v0.1.27, and v0.1.28 executables. Each provenance record binds
+the tag commit, published archive and executable checksums, schema source and
+Cargo.lock checksums, dependency identities, creation command, source scenario,
+SQLite writer identity, schema digest, and exact main/WAL bytes. The previous
+package release is v0.1.27; the v0.1.28 anchor independently covers shipped bytes
+even while the working package retains that version. Committed WAL is preserved
+with its main file and copied before opening; Python never checkpoints or
+rewrites these release artifacts. SHM is a derived index. The compatibility
+manifest also freezes each provenance record's digest. Before any download,
+the generator validates the fixed version/tag/commit against its checked-in
+provenance record and uses that record's archive and executable SHA256 digests
+as execution pins. The adjacent endpoint checksum is a consistency check;
+replacing both an archive and its endpoint checksum cannot replace these pins.
+Pin changes require explicit provenance and compatibility-manifest review.
+
+Release preparation uses a fresh private workspace and independent per-release
+limits: a 16 KiB trusted provenance record, a 4 KiB checksum response, a 16 MiB
+compressed archive, 64 tar members,
+96 MiB of total declared member bytes, a 128 MiB expanded tar, and a 64 MiB
+executable. Downloads and executable extraction count actual streamed bytes;
+the executable's declared size is checked separately. Copies and SHA256 hashing
+use fixed 64 KiB chunks, tar metadata reads are limited to that buffer, and the
+XZ decoder has a 128 MiB memory limit. Tar entries are iterated under the member
+cap, with one matching regular executable required before extraction. These
+limits apply without trusting Content-Length, declared executable size alone,
+or Python assertions. The three pinned archives have six members each; their
+largest compressed archive and executable are 8,295,356 and 45,890,808 bytes.
+The workspace retains at most 208 MiB of preparation files per release
+(archive, expanded tar, and executable), plus fixture/log evidence; success
+removes the workspace and failure preserves the available bounded files.
+
+Release generation indexes one small source file with one worker, isolated home,
+configuration, data, and temporary directories, a 60-second process timeout, and
+a 4 MiB per-file output limit. Stdout and stderr go directly to private regular
+log files opened before the child, so the same kernel limit bounds each log.
+Successful stdout is read back in 64 KiB chunks with a separate 4 MiB cap before
+JSON parsing; failure leaves both bounded logs in the workspace. Checked-in
+anchors allow at most 1 MiB of main database and 4 MiB of WAL each. Prefix cases
+run sequentially within the matrix,
+retain one historical and one fresh database per case, and limit each database
+to 256 default 4096-byte pages. Schema inventories allow at most 256 objects and
+1024 rows per query. Case metadata and schema inventories accompany the sandbox
+database on failure; failed release generation retains its disposable workspace
+and logs. Ordinary compatibility tests require no network, historical binary,
+Python runtime, or production data.
+
 Repository-aware service startup binds each database to its canonical
 repository root and complete normalized index-scope digest. Default cache paths
 are already repository-and-scope-specific; an explicit database path claimed

@@ -1,0 +1,92 @@
+{
+  "format": 1,
+  "latest_migration": 13,
+  "latest_schema_version": 12,
+  "released_through": 13,
+  "release_anchors": [
+    {
+      "version": "0.1.15",
+      "metadata_blake3": "566d221816e9581d049090e6e09fd36113fdca50d328030901f5ca279e402e40"
+    },
+    {
+      "version": "0.1.27",
+      "metadata_blake3": "4f0571003515799a3e98e1e95e6a815986d6dd01890b2a32de7c3f56e1d7c6a6"
+    },
+    {
+      "version": "0.1.28",
+      "metadata_blake3": "b79e25532d894e41c4aa3f5924d86c88be91d35b11fed226354890569f37fdf6"
+    }
+  ],
+  "allowed_schema_differences": [
+    "token_savings column order: historical ALTER TABLE appends accounting columns; column definitions and key/index order remain checked",
+    "meta column order: runtime database_identity precedes scope columns in v0.1.27; all declarations, defaults, checks and key/index order remain checked"
+  ],
+  "migrations": [
+    {
+      "version": 1,
+      "name": "SCHEMA_SQL",
+      "blake3": "254cecad5b78fcc2a1084211d2ec150781ea5e53d2f2d40b4f3eb47c496c8197"
+    },
+    {
+      "version": 2,
+      "name": "LOOKUP_INDEXES_SQL",
+      "blake3": "45a00433b655b0de0e0596a661b23bf375aba79bf353b4d44a1d4877cce6cb93"
+    },
+    {
+      "version": 3,
+      "name": "REPOSITORY_OWNERSHIP_SQL",
+      "blake3": "8eedf01529e145cd1a5118866e1e5bd5af165655c9158fadd120714eb015eac1"
+    },
+    {
+      "version": 4,
+      "name": "IMPORT_CANDIDATES_SQL",
+      "blake3": "ee65e3784988fbcb3fcd68b9b4c25b1745d9b10ddcd2cc2e1c3ab55229e7ada0"
+    },
+    {
+      "version": 5,
+      "name": "PATH_PROJECTION_SQL",
+      "blake3": "12037b370f53c81ed9f77048b9598b6ed66c71cfebe222f55fbc3fe85724154f"
+    },
+    {
+      "version": 6,
+      "name": "CACHE_ACCESS_SQL",
+      "blake3": "5432de233212cd91f8f4c4e149b37a2dc8f7fce19cd9b6160a29bf1627734d7e"
+    },
+    {
+      "version": 7,
+      "name": "STRUCTURAL_SEARCH_SQL",
+      "blake3": "7408b57c754126115dc1e493dc3a96ebad2548ebce4e4094c52ffca754b90b09"
+    },
+    {
+      "version": 8,
+      "name": "RETRIEVAL_RECEIPTS_SQL",
+      "blake3": "277e65897e23bfda2f4a15d4c65b62acd0c6b40f8f1d3d4439f0acb6cce77762"
+    },
+    {
+      "version": 9,
+      "name": "READ_DELTA_BASES_SQL",
+      "blake3": "4adaf5c2021944a94af8cf27763dd1a9286392508deaa0981793ab82206491d9"
+    },
+    {
+      "version": 10,
+      "name": "RECEIPT_EXACT_ONLY_SQL",
+      "blake3": "1611038f81218f60e58322171136b31377b59d36516b99d9cc3f20c210648f95"
+    },
+    {
+      "version": 11,
+      "name": "QUERY_COVERAGE_RECEIPTS_SQL",
+      "blake3": "c1bc327e7dcd16a616304ad0efc49ea108fd3882c788a706418ab426dd35e0d1"
+    },
+    {
+      "version": 12,
+      "name": "INDEX_DERIVATION_IDENTITY_SQL",
+      "blake3": "b2e297d542a2ba608bd0e68fbb75b04abc629ce5a48ed39548d260c8a0415c00"
+    },
+    {
+      "version": 13,
+      "name": "INDEX_SCOPE_METADATA_SQL",
+      "blake3": "b62393fcf80b7ec434194f70edbc0fade4d8b5ee047c71ee1644a2824ebaaf83"
+    }
+  ],
+  "release_fixtures_reviewed_through": 13
+}

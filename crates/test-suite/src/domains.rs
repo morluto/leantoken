@@ -4,3 +4,4 @@ mod platform;
 mod protocol;
 mod retrieval;
 mod storage;
+mod storage_migrations;
