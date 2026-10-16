@@ -1,5 +1,24 @@
 use super::*;
 
+async fn run_cache_operation<T, F>(operation: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(CancellationToken) -> Result<T> + Send + 'static,
+{
+    let cancellation = CancellationToken::new();
+    let _guard = cancellation.clone().drop_guard();
+    let worker_cancellation = cancellation.clone();
+    let mut task = tokio::task::spawn_blocking(move || operation(worker_cancellation));
+    tokio::select! {
+        result = &mut task => result?,
+        signal = tokio::signal::ctrl_c() => {
+            signal?;
+            cancellation.cancel();
+            task.await?
+        }
+    }
+}
+
 #[allow(clippy::cognitive_complexity)]
 pub(super) async fn run(cli: Cli) -> Result<()> {
     let json = cli.json;
@@ -8,11 +27,17 @@ pub(super) async fn run(cli: Cli) -> Result<()> {
             upgrade::run(upgrade::UpgradeOptions { check, yes, json })
         }
         AppRequest::CacheList(request) => {
-            let report = cache::list_with(&request)?;
+            let report = run_cache_operation(move |cancellation| {
+                cache::list_with_cancellation(&request, &cancellation)
+            })
+            .await?;
             cache::print_list(&report, json)
         }
         AppRequest::CachePrune(request) => {
-            let report = cache::prune(&request)?;
+            let report = run_cache_operation(move |cancellation| {
+                cache::prune_with_cancellation(&request, &cancellation)
+            })
+            .await?;
             cache::print_prune(&report, json)?;
             ensure_cache_prune_succeeded(&report)
         }
