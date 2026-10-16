@@ -682,6 +682,23 @@ fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
             "missing or out-of-order {phase}: {diagnostics}"
         );
     }
+    let mut reconciliation = diagnostics
+        .lines()
+        .filter(|line| line.contains("reconciliation progress"));
+    for phase in ["admission", "operation_lock", "release_operation"] {
+        assert!(
+            reconciliation
+                .next()
+                .is_some_and(|line| line.contains(phase)),
+            "missing or out-of-order reconciliation {phase}: {diagnostics}"
+        );
+    }
+    assert!(
+        diagnostics.lines().any(|line| {
+            line.contains("repository reconciliation profile") && line.contains("total_ms")
+        }),
+        "missing indexer timings: {diagnostics}"
+    );
     assert!(
         !diagnostics.contains("pub fn cross_process_rebase_answer"),
         "diagnostics must not include source text"
