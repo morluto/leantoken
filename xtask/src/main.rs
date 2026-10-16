@@ -82,22 +82,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             "cargo test-focused requires exactly one domain or test selector".to_owned(),
         ));
     }
-    let suite_domain = [
-        "indexing_repository",
-        "storage",
-        "storage_migrations",
-        "retrieval",
-        "protocol",
-        "platform",
-        "contracts",
-    ]
-    .into_iter()
-    .find(|domain| {
-        *domain == selector
-            || selector.strip_prefix("domains::") == Some(*domain)
-            || selector.starts_with(&format!("{domain}::"))
-            || selector.starts_with(&format!("domains::{domain}::"))
-    });
+    let suite_filter = suite_domain_filter(selector);
     let explicit_target = selector
         .strip_prefix("product::")
         .map(|filter| (FocusedTestTarget::Product, filter))
@@ -116,14 +101,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             return Err(XtaskError::NoTestsMatched(selector.clone()));
         }
         build_focused_test_command(target, filter, false)
-    } else if let Some(domain) = suite_domain {
-        let filter = if selector == domain {
-            format!("domains::{domain}")
-        } else if selector.starts_with("domains::") {
-            selector.clone()
-        } else {
-            format!("domains::{selector}")
-        };
+    } else if let Some(filter) = suite_filter {
         if !focused_target_has_test(root, FocusedTestTarget::Suite, &filter)? {
             return Err(XtaskError::NoTestsMatched(selector.clone()));
         }
@@ -157,6 +135,34 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
             code: status.code(),
         })
     }
+}
+
+fn suite_domain_filter(selector: &str) -> Option<String> {
+    let domain = [
+        "indexing_repository",
+        "storage",
+        "storage_migrations",
+        "retrieval",
+        "protocol",
+        "platform",
+        "contracts",
+    ]
+    .into_iter()
+    .find(|domain| {
+        *domain == selector
+            || selector.strip_prefix("domains::") == Some(*domain)
+            || selector.starts_with(&format!("{domain}::"))
+            || selector.starts_with(&format!("domains::{domain}::"))
+    })?;
+    let mut filter = if selector.starts_with("domains::") {
+        selector.to_owned()
+    } else {
+        format!("domains::{selector}")
+    };
+    if selector == domain || selector.strip_prefix("domains::") == Some(domain) {
+        filter.push_str("::");
+    }
+    Some(filter)
 }
 
 fn build_focused_test_command(
@@ -1574,6 +1580,38 @@ mod tests {
                 assert!(code.is_some());
             }
             error => panic!("unexpected error: {error}"),
+        }
+    }
+
+    #[test]
+    fn focused_suite_owner_filters_exclude_siblings_and_preserve_partial_tests() {
+        let inventory = [
+            "domains::storage::quota_preserves_rows",
+            "domains::storage::reopen_preserves_rows",
+            "domains::storage_migrations::immutable_released_databases_upgrade",
+        ];
+        for (selector, expected) in [
+            ("storage", &inventory[..2]),
+            ("domains::storage", &inventory[..2]),
+            ("storage::", &inventory[..2]),
+            ("domains::storage::", &inventory[..2]),
+            ("storage::quota", &inventory[..1]),
+            ("domains::storage::quota", &inventory[..1]),
+            ("storage_migrations", &inventory[2..]),
+            ("domains::storage_migrations", &inventory[2..]),
+            ("storage_migrations::immutable", &inventory[2..]),
+        ] {
+            let filter = super::suite_domain_filter(selector).expect("suite owner");
+            let selected = inventory
+                .iter()
+                .copied()
+                .filter(|name| name.contains(&filter))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selected.as_slice(),
+                expected,
+                "focused selector: {selector}"
+            );
         }
     }
 

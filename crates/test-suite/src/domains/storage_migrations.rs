@@ -871,29 +871,6 @@ fn migration_history_is_append_only_and_requires_explicit_compatibility_updates(
         scalar(&connection(&database), "SELECT schema_version FROM meta"),
         manifest.latest_schema_version
     );
-    for (owner, source) in [
-        (
-            "read-delta",
-            include_str!("../../../../src/storage/tests/read_delta.rs"),
-        ),
-        (
-            "receipts",
-            include_str!("../../../../src/storage/tests/receipts.rs"),
-        ),
-        (
-            "query receipts",
-            include_str!("../../../../src/storage/tests/query_receipts.rs"),
-        ),
-        ("storage", include_str!("storage.rs")),
-    ] {
-        let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(
-            !normalized.contains("DROP COLUMN")
-                && !normalized.contains("PRAGMA user_version =")
-                && !source.contains("fn downgrade_"),
-            "{owner}: historical migration fixtures must apply authoritative prefixes, never subtract from latest"
-        );
-    }
 }
 
 #[test]

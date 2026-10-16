@@ -515,7 +515,12 @@ Intentional fixture regeneration runs `generate.py` from that directory on
 Linux with Python 3.11 or newer and the generator-only `blake3==1.0.11` package
 in a disposable virtual environment. `--prepare` downloads and verifies the
 pinned release archives without executing them; running without that option
-indexes one small source file per official executable. Home/configuration/data
+indexes one small source file per official executable. Each invocation uses a
+fresh atomically created private workspace (0700) for downloads, extraction, and
+execution. Successful `--prepare` runs discard their verified downloads;
+generation redownloads and verifies without reusing an executable cache. Failures
+preserve that private workspace and the available fixture/log evidence.
+Home/configuration/data
 and temporary paths are isolated, each process has a 60-second timeout and a
 4 MiB output-file limit, and failure preserves its workspace and logs. Review
 the resulting artifacts and provenance, then explicitly update each

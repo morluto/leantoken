@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Explicitly refresh immutable release anchors using published Linux binaries.
 
-Run --prepare to download/verify without executing Rust. Run without arguments
-to create the tiny repository and databases. Tests never run this generator,
-download artifacts, or need historical binaries. Review fixture/manifest diffs,
-then explicitly update release_anchors[*].metadata_blake3 in compatibility.json.
-Generator-only Python requirement: blake3==1.0.11.
+Run --prepare to download/verify without executing Rust. Every invocation
+atomically creates a fresh private (0700) workspace for downloads, extraction,
+and execution; no executable is trusted or reused from a shared cache.
+Successful --prepare runs discard their verified downloads, so generation
+redownloads and verifies in its own workspace. A failure preserves that whole
+private workspace, including available fixture/log evidence, and reports its
+path. Tests never run this generator, download artifacts, or need historical
+binaries. Review fixture/manifest diffs, then explicitly update
+release_anchors[*].metadata_blake3 in compatibility.json.
+Generation-only Python requirement: blake3==1.0.11; --prepare uses the standard
+library only.
 """
 
 import hashlib
@@ -23,11 +29,8 @@ import tempfile
 import tomllib
 import urllib.request
 
-from blake3 import blake3  # Generator-only dependency: blake3==1.0.11.
-
 HERE = pathlib.Path(__file__).resolve().parent
 WORKSPACE = HERE.parents[3]
-CACHE = pathlib.Path(tempfile.gettempdir()) / "leantoken-release-migration-generators"
 ARCHIVE = "leantoken-x86_64-unknown-linux-gnu.tar.xz"
 RELEASES = {
     "0.1.15": "6934ba9ff0c93e565d556f6f35750f8fe5a91faa",
@@ -45,21 +48,21 @@ def git_bytes(revision, path):
     return subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=WORKSPACE)
 
 
-def prepare(version, commit):
-    destination = CACHE / version
-    destination.mkdir(parents=True, exist_ok=True)
+def prepare(version, commit, workspace):
+    destination = workspace / version / "generator"
+    destination.mkdir(parents=True)
     url = f"https://github.com/morluto/leantoken/releases/download/v{version}/{ARCHIVE}"
     checksum = urllib.request.urlopen(url + ".sha256").read().decode().split()[0]
     archive = destination / ARCHIVE
-    if not archive.exists():
-        with urllib.request.urlopen(url) as source, archive.open("wb") as output:
-            shutil.copyfileobj(source, output)
+    with urllib.request.urlopen(url) as source, archive.open("xb") as output:
+        shutil.copyfileobj(source, output)
     assert sha256(archive.read_bytes()) == checksum, "published archive checksum mismatch"
     with tarfile.open(archive, "r:xz") as bundle:
         members = [item for item in bundle.getmembers() if pathlib.PurePosixPath(item.name).name == "leantoken"]
         assert len(members) == 1
         binary = destination / "leantoken"
-        binary.write_bytes(bundle.extractfile(members[0]).read())
+        with binary.open("xb") as output:
+            output.write(bundle.extractfile(members[0]).read())
         binary.chmod(0o755)
     resolved = subprocess.check_output(["git", "rev-parse", f"v{version}^{{}}"], cwd=WORKSPACE).decode().strip()
     assert resolved == commit, "release tag moved; compatibility decision required"
@@ -93,8 +96,11 @@ def prepare(version, commit):
     return binary, metadata
 
 
-def generate(version, binary, metadata):
-    root = pathlib.Path(tempfile.mkdtemp(prefix=f"leantoken-release-{version}-"))
+def generate(version, binary, metadata, workspace):
+    from blake3 import blake3  # Generation-only dependency: blake3==1.0.11.
+
+    root = workspace / version / "fixture"
+    root.mkdir()
     try:
         repository = root / "repo"
         (repository / "src").mkdir(parents=True)
@@ -152,8 +158,6 @@ def generate(version, binary, metadata):
                 (root / f"generator.{stream}").write_text(output if isinstance(output, str) else output.decode(errors="replace"))
         print(f"Release generation failed; disposable main/WAL/source/log evidence preserved: {root}", file=sys.stderr)
         raise
-    else:
-        shutil.rmtree(root)
 
 
 def bound_output_files():
@@ -181,9 +185,22 @@ def writer_version(database, wal):
     return struct.unpack(">I", page_one[96:100])[0]
 
 
+def main(prepare_only):
+    # mkdtemp creates this unpredictable directory atomically with mode 0700.
+    # All executable bytes stay under it until this invocation has finished.
+    workspace = pathlib.Path(tempfile.mkdtemp(prefix="leantoken-release-migration-"))
+    try:
+        for version, commit in RELEASES.items():
+            binary, metadata = prepare(version, commit, workspace)
+            if not prepare_only:
+                generate(version, binary, metadata, workspace)
+            print(f"{version}: {'prepared' if prepare_only else 'generated'} {metadata['fixture']}")
+    except BaseException:
+        print(f"Release preparation/generation failed; private workspace and available evidence preserved: {workspace}", file=sys.stderr)
+        raise
+    else:
+        shutil.rmtree(workspace)
+
+
 if __name__ == "__main__":
-    for version, commit in RELEASES.items():
-        binary, metadata = prepare(version, commit)
-        if "--prepare" not in sys.argv:
-            generate(version, binary, metadata)
-        print(f"{version}: {'prepared' if '--prepare' in sys.argv else 'generated'} {metadata['fixture']}")
+    main(prepare_only="--prepare" in sys.argv)
