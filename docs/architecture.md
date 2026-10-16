@@ -849,9 +849,29 @@ are queued between the stdout reader and doctor consumer. A full queue backpress
 bounding queued protocol content to 32 MiB; an over-limit unterminated record
 terminates the probe without unbounded allocation.
 
-Private-runtime inventory is repository-free and bounded to 512 entries below
-the application runtime root and eight entries within any recognized semantic
-version directory. Setup and inventory reads are capped at 8 MiB per client
+Private-runtime artifact identity combines a semantic version with the complete
+BLAKE3 digest of the executable bytes. New installations use
+`<runtime_root>/<version>_<64 lowercase digest characters>/leantoken[.exe]`.
+The underscore cannot occur in semantic versions, so parsing remains unambiguous
+for legacy prerelease versions. Installation verifies the complete digest before
+no-clobber hard-link publication and again before accepting an existing artifact;
+it never overwrites a different executable. Identical new-layout artifacts
+share one path, while different source builds of one version coexist. Selected
+client registrations pin that exact path. Legacy `<version>/leantoken[.exe]`
+directories remain readable and are neither renamed nor overwritten; setup may
+install an identical digest-addressed sibling before transactionally updating
+selected registrations.
+
+Inventory is repository-free and bounded to 512 runtime-root entries, including
+coordination entries, and eight entries within each recognized artifact
+directory. Each executable is hashed serially with a 64 KiB buffer; aggregate
+hash I/O is the sum of recognized executable sizes, without whole-binary memory
+allocation or recursive fan-out. List and prune report version, full actual
+digest, exact path, and legacy layout. Inventory order is descending semantic
+version, then ascending digest and path. Retention counts unreferenced artifacts
+in that order; it does not collapse same-version variants into one slot. A
+runtime whose bytes disagree with its digest-addressed name is retained as an
+unrecognized artifact. Setup and inventory reads are capped at 8 MiB per client
 configuration or discovery file before parsing, and generated replacements are
 validated against that same bound before a plan can apply. Planning retains at
 most nine bounded configuration snapshots: one for five fixed-path clients and
@@ -872,28 +892,80 @@ retains every completed decision and the exact remaining-byte count, exposes a
 transaction-wide apply error, and stops before the next deletion. Pruning
 defaults to a non-mutating plan, rejects a symlinked or
 non-directory runtime root before locking, inventory, and each applied
-deletion, serializes applied deletion with setup, retains the active executable
-and every referenced runtime, and deletes only a version directory whose exact
+deletion, serializes applied deletion with setup, retains the current executable
+and every referenced artifact, and deletes only an artifact directory whose exact
 contents are its one expected native executable. Private installation applies
 the same runtime-root validation. A successful new install retains its pinned
-runtime-root and version-directory handles until the setup transaction commits;
+runtime-root and artifact-directory handles until the setup transaction commits;
 rollback revalidates both ambient identities and unlinks only through the pinned
-version handle. A retry removes only exact setup staging names
-within the existing eight-entry version-directory bound before accepting an
-already-published executable, so an interrupted staging cleanup cannot make the
-runtime permanently unprunable. Applied deletion compares the current runtime
-root path with the pinned root-handle identity before every removal,
-snapshot-matches the version directory handle, then unlinks the executable
-relative to that handle so a concurrent path swap cannot redirect deletion.
-The setup lock owns the same root handle used for every applied deletion, so
-serialization and mutation cannot be redirected to separate runtime roots. At
-most one version handle is open at a time.
+artifact handle. A retry removes only exact setup staging names within the
+eight-entry artifact-directory bound before accepting an already-published
+executable, so an interrupted staging cleanup cannot make the runtime permanently
+unprunable. Applied deletion compares the current runtime root path with the
+pinned root-handle identity before every removal, snapshot-matches the artifact
+directory handle, and rechecks the complete executable digest before unlinking
+relative to that handle. A concurrent path swap therefore cannot redirect
+deletion. The setup lock owns the same root handle used for every applied
+deletion, so serialization and mutation cannot be redirected to separate runtime
+roots. Each install, rollback, or prune step opens at most one artifact handle.
 If unlinking succeeds but a concurrent directory change prevents the final
 directory removal, the report uses a distinct partial-removal action, subtracts
 the removed executable bytes, and returns the cleanup error. Unknown root
 entries, malformed client configuration, unexpected directory contents, and
 interrupted setup journals fail closed or remain untouched. The retention
-request is capped at 64 versions.
+request is capped at 64 unreferenced artifacts.
+
+A lease-aware process running a verified managed artifact holds one shared OS
+lease through command execution. Inventory probes existing lease files without
+creating them; prune and rollback require a nonblocking exclusive lease held
+across post-lease identity/digest revalidation and removal. A live holder retains
+its artifact even after client refresh removes the last reference. Process exit,
+including a crash, releases the OS lock. Startup may wait for an in-progress
+exclusive deletion and must revalidate the artifact after obtaining shared
+ownership before serving requests. Startup does not acquire the setup lock, so
+a verification child cannot deadlock with its setup parent.
+Setup's native launchers carry the parsed `--managed-by-setup` marker. Marked
+startup recognizes only a canonical native executable directly inside a
+validated legacy or digest-addressed artifact directory whose parent is named
+`runtimes`. It derives the installation root from that path, so a host need not
+inherit installation-time `HOME` or data-directory variables to lease the exact
+artifact. The marker opts into this lifecycle protocol; it does not bypass
+release/digest, capability, or sidecar identity checks. Marked legacy layouts
+retain the same full-file digest and post-acquisition revalidation as before.
+Unmarked manual startup instead requires a setup home resolved through `HOME`,
+Windows `USERPROFILE`, or platform directories and an exact match with the
+configured runtime root. Without a resolvable home, an unmarked version-shaped
+executable path does not establish ownership and acquires no lease.
+Successful executable-path canonicalization still resolves symlinks before
+ownership checks. A missing standalone path outside the runtime artifact layout
+needs no lease, while a potentially managed missing path retains its error,
+including Linux's ` (deleted)` image suffix. Other path-resolution errors also
+fail closed; this fallback creates no sidecars and performs no home lookup.
+
+Stable sidecars live outside artifact directories at
+`<runtime_root>/.leases/<BLAKE3(complete artifact directory name)>.lock`.
+Each basename has 64 digest characters plus `.lock`, and each file has zero
+payload bytes. These identities survive pruning and reinstall; deleting a lock
+file could split ownership between old and new handles. Inventory performs at
+most one direct lease lookup/probe per recognized artifact, while startup and
+each applied deletion open one lease file. The lease directory is never
+enumerated, so stale sidecars add no scan fan-out. Persistent sidecar count grows
+by at most one per distinct artifact directory identity ever leased or pruned;
+there is no sidecar garbage collection or fixed lifetime inode-count bound.
+Unexpected lease-directory content is untouched. Targeted nonempty, symlinked,
+or identity-changed leases fail closed; Unix additionally requires one link and
+opens with `O_NOFOLLOW`. Windows uses type/path/handle revalidation and the
+existing creation/write-time identity checks without the Unix-only link-count
+check. Root, lease-directory, and lease-file handles are revalidated after lock
+acquisition before authorizing an operation.
+
+Older, noncooperating binaries cannot advertise their lifetime to another
+inventory command. The current-executable fallback and client-reference
+protection remain, but no PID or process-table scan discovers an unreferenced
+older process. Lease-aware executables also acquire leases from the legacy
+version-only layout; this does not retrofit an already-running older binary.
+List/prune byte totals count recognized executable pathnames, exclude lease and
+directory metadata, and do not claim physical filesystem block reclamation.
 
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable
