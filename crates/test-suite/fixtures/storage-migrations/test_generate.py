@@ -26,14 +26,7 @@ class PrivateGeneratorWorkspaceTests(unittest.TestCase):
             attacker, target_is_directory=True
         )
         self.binary_bytes = b"verified synthetic executable; never executed"
-        stream = io.BytesIO()
-        with tarfile.open(fileobj=stream, mode="w:xz") as bundle:
-            member = tarfile.TarInfo("leantoken")
-            member.size = len(self.binary_bytes)
-            member.mode = 0o755
-            bundle.addfile(member, io.BytesIO(self.binary_bytes))
-        self.archive = stream.getvalue()
-        self.checksum = hashlib.sha256(self.archive).hexdigest()
+        self.set_archive_members(["leantoken"])
         self.version = "0.1.28"
         self.commit = generate.RELEASES[self.version]
         self.workspaces = []
@@ -74,10 +67,26 @@ version = "2.6.0"
         patches.enter_context(mock.patch.object(generate, "RELEASES", {self.version: self.commit}))
         patches.enter_context(mock.patch.object(generate.urllib.request, "urlopen", download))
         patches.enter_context(mock.patch.object(generate, "git_bytes", git_source))
-        patches.enter_context(
+        self.git_resolve = patches.enter_context(
             mock.patch.object(generate.subprocess, "check_output", return_value=f"{self.commit}\n".encode())
         )
         self.generate = patches.enter_context(mock.patch.object(generate, "generate"))
+
+    def set_archive_members(self, names, kind=tarfile.REGTYPE):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w:xz") as bundle:
+            for name in names:
+                member = tarfile.TarInfo(name)
+                member.type = kind
+                member.mode = 0o755
+                if member.isfile():
+                    member.size = len(self.binary_bytes)
+                    bundle.addfile(member, io.BytesIO(self.binary_bytes))
+                else:
+                    member.linkname = "other-executable"
+                    bundle.addfile(member)
+        self.archive = stream.getvalue()
+        self.checksum = hashlib.sha256(self.archive).hexdigest()
 
     def assert_private_workspace(self, workspace):
         self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
@@ -130,13 +139,42 @@ version = "2.6.0"
 
     def test_checksum_failure_preserves_private_download_without_extraction_or_execution(self):
         self.checksum = "0" * 64
-        with self.assertRaisesRegex(AssertionError, "published archive checksum mismatch"):
+        with self.assertRaisesRegex(ValueError, "published archive checksum mismatch"):
             generate.main(prepare_only=False)
         workspace = self.workspaces[0]
         self.assert_private_workspace(workspace)
         destination = workspace / self.version / "generator"
         self.assertEqual((destination / generate.ARCHIVE).read_bytes(), self.archive)
         self.assertFalse((destination / "leantoken").exists())
+        self.generate.assert_not_called()
+        self.assertIn(str(workspace), self.stderr.getvalue())
+
+    def test_missing_duplicate_and_nonregular_archive_members_refuse_execution(self):
+        for names, kind in [
+            (["README"], tarfile.REGTYPE),
+            (["leantoken", "nested/leantoken"], tarfile.REGTYPE),
+            (["leantoken"], tarfile.SYMTYPE),
+        ]:
+            with self.subTest(names=names, kind=kind):
+                self.set_archive_members(names, kind)
+                with self.assertRaisesRegex(ValueError, "exactly one regular leantoken executable"):
+                    generate.main(prepare_only=False)
+                workspace = self.workspaces[-1]
+                self.assert_private_workspace(workspace)
+                self.assertFalse((workspace / self.version / "generator" / "leantoken").exists())
+                self.generate.assert_not_called()
+                self.assertIn(str(workspace), self.stderr.getvalue())
+
+    def test_moved_pinned_tag_refuses_execution_and_preserves_verified_artifact(self):
+        self.git_resolve.return_value = b"0000000000000000000000000000000000000000\n"
+        with self.assertRaisesRegex(ValueError, "release tag moved; compatibility decision required"):
+            generate.main(prepare_only=False)
+        workspace = self.workspaces[0]
+        self.assert_private_workspace(workspace)
+        self.assertEqual(
+            (workspace / self.version / "generator" / "leantoken").read_bytes(),
+            self.binary_bytes,
+        )
         self.generate.assert_not_called()
         self.assertIn(str(workspace), self.stderr.getvalue())
 

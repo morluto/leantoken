@@ -261,6 +261,8 @@ jobs:
           python3 -m unittest \
             scripts/test_report_target_footprint.py \
             scripts/test_validate_agents_md.py
+          python3 -m unittest discover -s crates/test-suite/fixtures/storage-migrations -p test_generate.py
+          python3 -O -m unittest discover -s crates/test-suite/fixtures/storage-migrations -p test_generate.py
           bash scripts/test-ci-secret-scan-range.sh
           bash scripts/validate-agents-md.sh
           mkdir -p target && touch target/ci-command-completed

@@ -56,16 +56,19 @@ def prepare(version, commit, workspace):
     archive = destination / ARCHIVE
     with urllib.request.urlopen(url) as source, archive.open("xb") as output:
         shutil.copyfileobj(source, output)
-    assert sha256(archive.read_bytes()) == checksum, "published archive checksum mismatch"
+    if sha256(archive.read_bytes()) != checksum:
+        raise ValueError("published archive checksum mismatch")
     with tarfile.open(archive, "r:xz") as bundle:
         members = [item for item in bundle.getmembers() if pathlib.PurePosixPath(item.name).name == "leantoken"]
-        assert len(members) == 1
+        if len(members) != 1 or not members[0].isfile():
+            raise ValueError("release archive must contain exactly one regular leantoken executable")
         binary = destination / "leantoken"
         with binary.open("xb") as output:
             output.write(bundle.extractfile(members[0]).read())
         binary.chmod(0o755)
     resolved = subprocess.check_output(["git", "rev-parse", f"v{version}^{{}}"], cwd=WORKSPACE).decode().strip()
-    assert resolved == commit, "release tag moved; compatibility decision required"
+    if resolved != commit:
+        raise ValueError("release tag moved; compatibility decision required")
     schema_path = "src/storage.rs" if version == "0.1.15" else "src/storage/schema.rs"
     lock = git_bytes(commit, "Cargo.lock")
     packages = {package["name"]: package["version"] for package in tomllib.loads(lock.decode())["package"]}
@@ -120,12 +123,15 @@ def generate(version, binary, metadata, workspace):
         (root / "generator.stdout").write_text(result.stdout)
         (root / "generator.stderr").write_text(result.stderr)
         metadata["generator_stdout"] = json.loads(result.stdout)
-        assert database.exists(), result
+        if not database.exists():
+            raise ValueError("released generator did not create its database")
         payload = database.read_bytes()
         wal_path = pathlib.Path(str(database) + "-wal")
         wal = wal_path.read_bytes() if wal_path.exists() else b""
-        assert len(payload) <= 1024 * 1024, "release fixture exceeded 1 MiB"
-        assert len(wal) <= 4 * 1024 * 1024, "release WAL exceeded 4 MiB"
+        if len(payload) > 1024 * 1024:
+            raise ValueError("release fixture exceeded 1 MiB")
+        if len(wal) > 4 * 1024 * 1024:
+            raise ValueError("release WAL exceeded 4 MiB")
         # A completed released process may leave a committed WAL. Preserve both
         # durable byte streams verbatim instead of checkpointing with Python's
         # different SQLite build. SHM is a derived, non-durable WAL index.
@@ -142,8 +148,10 @@ def generate(version, binary, metadata, workspace):
             metadata["schema_version"] = connection.execute("SELECT schema_version FROM meta").fetchone()[0]
             schema = connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").fetchall()
             metadata["schema_sha256"] = sha256(json.dumps(schema, ensure_ascii=False, separators=(",", ":")).encode())
-            assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
-            assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 1
+            if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+                raise ValueError("released fixture failed integrity_check")
+            if connection.execute("SELECT count(*) FROM files").fetchone()[0] != 1:
+                raise ValueError("released fixture must contain one indexed file")
         metadata["fixture_sha256"] = sha256(payload)
         metadata["fixture_blake3"] = blake3(payload).hexdigest()
         metadata["fixture_bytes"] = len(payload)
@@ -170,18 +178,22 @@ def writer_version(database, wal):
     """Read SQLite's writer identity from page1 of the committed WAL snapshot."""
     page_one = database[:100]
     if wal:
-        assert len(wal) >= 32, "truncated WAL header"
+        if len(wal) < 32:
+            raise ValueError("truncated WAL header")
         page_size = struct.unpack(">I", wal[8:12])[0]
-        assert 512 <= page_size <= 65536
+        if not 512 <= page_size <= 65536:
+            raise ValueError("invalid WAL page size")
         frame_size = 24 + page_size
-        assert (len(wal) - 32) % frame_size == 0, "truncated WAL frame"
+        if (len(wal) - 32) % frame_size != 0:
+            raise ValueError("truncated WAL frame")
         frames = [wal[offset:offset + frame_size] for offset in range(32, len(wal), frame_size)]
         committed = [index for index, frame in enumerate(frames) if struct.unpack(">I", frame[4:8])[0] != 0]
         if committed:
             for frame in frames[:committed[-1] + 1]:
                 if struct.unpack(">I", frame[:4])[0] == 1:
                     page_one = frame[24:124]
-    assert page_one[:16] == b"SQLite format 3\0", "missing committed database header"
+    if page_one[:16] != b"SQLite format 3\0":
+        raise ValueError("missing committed database header")
     return struct.unpack(">I", page_one[96:100])[0]
 
 
