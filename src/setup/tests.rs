@@ -631,6 +631,38 @@ fn registered_version_recognizes_direct_package_manager_pins() {
 }
 
 #[test]
+fn registered_version_validates_runtime_namespace_and_returns_semantic_release() {
+    let digest = "ab".repeat(32);
+    for (directory, expected) in [
+        ("1.2.3".to_owned(), Some("1.2.3")),
+        (format!("1.2.3_{digest}"), Some("1.2.3")),
+        (
+            format!("1.2.3-rc.1+source.5_{digest}"),
+            Some("1.2.3-rc.1+source.5"),
+        ),
+        (
+            "1.2.3-rc.1+source.5".to_owned(),
+            Some("1.2.3-rc.1+source.5"),
+        ),
+        ("1.2.3_short".to_owned(), None),
+        (format!("1.2.3_{}", digest.to_ascii_uppercase()), None),
+        (format!("1.2.3_{digest}_extra"), None),
+        (format!("invalid_{digest}"), None),
+    ] {
+        let command = Path::new("runtimes")
+            .join(directory)
+            .join(runtime_executable_name(cfg!(windows)));
+        assert_eq!(
+            registered_version(command.to_str().unwrap(), &[]).as_deref(),
+            expected,
+            "{}",
+            command.display()
+        );
+    }
+    assert_eq!(registered_version("leantoken", &["mcp".into()]), None);
+}
+
+#[test]
 fn runtime_reference_snapshots_detect_configuration_changes_before_prune() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);

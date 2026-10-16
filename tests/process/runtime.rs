@@ -254,6 +254,8 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
                 .expect("database UTF-8"),
             "--json",
             "doctor",
+            "--client",
+            "codex",
         ])
         .output()
         .expect("run installed runtime doctor");
@@ -264,6 +266,21 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     );
     let doctor_report: serde_json::Value =
         serde_json::from_slice(&doctor.stdout).expect("doctor report");
+    assert_eq!(doctor_report["integration"]["verified_client"], "codex");
+    let codex_registration = doctor_report["integration"]["registrations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|registration| registration["client"] == "codex")
+        .expect("private runtime Codex registration");
+    assert_eq!(
+        codex_registration["configured_version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        codex_registration["configured_version_pin"],
+        env!("CARGO_PKG_VERSION")
+    );
     assert_eq!(
         doctor_report["tools"],
         serde_json::json!([

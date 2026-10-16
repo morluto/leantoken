@@ -1562,6 +1562,17 @@ mod tests {
         };
 
         assert_eq!(expected_server_version(Some(&registration)), Some("0.1.19"));
+        assert!(server_version_matches_runtime(
+            "0.1.19+schema.0123456789abcdef0123456789abcdef",
+            expected_server_version(Some(&registration))
+        ));
+        assert!(!server_version_matches_runtime(
+            concat!(
+                env!("CARGO_PKG_VERSION"),
+                "+contract.0123456789abcdef0123456789abcdef"
+            ),
+            expected_server_version(Some(&registration))
+        ));
         let report = RegistrationReport::from(&registration);
         assert_eq!(report.configured_version.as_deref(), Some("0.1.19"));
         assert_eq!(report.configured_version_pin.as_deref(), Some("0.1.19"));

@@ -1138,7 +1138,7 @@
       "minimum_functions": 77,
       "minimum_regions": 70
     },
-    "src/setup/runtime_lease.rs": {
+    "src/setup/runtime/lease.rs": {
       "owner": "src/setup",
       "minimum_lines": 67,
       "minimum_functions": 77,

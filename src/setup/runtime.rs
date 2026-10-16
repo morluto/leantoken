@@ -7,7 +7,6 @@ pub const MAX_RUNTIME_RETENTION: usize = 64;
 const MAX_RUNTIME_ROOT_ENTRIES: usize = 512;
 const MAX_RUNTIME_DIRECTORY_ENTRIES: usize = 8;
 
-#[path = "runtime_lease.rs"]
 mod lease;
 pub use lease::{RuntimeLease, acquire_current_runtime_lease};
 use lease::{runtime_lease_is_active, try_acquire_runtime_prune_lease};
@@ -16,7 +15,7 @@ fn runtime_directory_name(version: &str, digest: &str) -> String {
     format!("{version}_{digest}")
 }
 
-fn parse_runtime_directory_name(name: &str) -> Option<(semver::Version, Option<&str>)> {
+pub(super) fn parse_runtime_directory_name(name: &str) -> Option<(semver::Version, Option<&str>)> {
     let (version, digest) = match name.split_once('_') {
         Some((version, digest))
             if digest.len() == 64
