@@ -218,6 +218,10 @@ fn source_inventory(root: &Path) -> Result<BTreeMap<String, bool>, String> {
         }
         Ok(())
     }
+    // External module resolution returns canonical paths, including through an
+    // aliased temporary root or a root containing parent-directory components.
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = canonical_root.as_path();
     let mut inventory = BTreeMap::new();
     for name in ["src/lib.rs", "src/main.rs"] {
         let path = root.join(name);
@@ -240,6 +244,7 @@ fn source_inventory(root: &Path) -> Result<BTreeMap<String, bool>, String> {
 
 fn assess(root: &Path, report: &Path) -> Result<(), String> {
     let (policy, inventory) = policy(root)?;
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(report).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -257,7 +262,11 @@ fn assess(root: &Path, report: &Path) -> Result<(), String> {
         let filename = file["filename"]
             .as_str()
             .ok_or("missing coverage filename")?;
-        let Ok(relative) = Path::new(filename).strip_prefix(root) else {
+        let filename = Path::new(filename);
+        let Ok(relative) = filename
+            .strip_prefix(root)
+            .or_else(|_| filename.strip_prefix(&canonical_root))
+        else {
             continue;
         };
         let path = relative.to_string_lossy().replace('\\', "/");
@@ -764,6 +773,20 @@ mod tests {
         fs::write(&report_path, report.to_string()).unwrap();
         assess(root.path(), &report_path).unwrap();
 
+        // Reproduce a noncanonical root on every platform, without symlinks.
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        let aliased_root = child.join("..");
+        let canonical_root = root.path().canonicalize().unwrap();
+        for report_root in [&aliased_root, &canonical_root] {
+            report["data"][0]["files"][0]["filename"] =
+                serde_json::json!(report_root.join("src/critical.rs"));
+            report["data"][0]["files"][1]["filename"] =
+                serde_json::json!(report_root.join("src/query_plans.rs"));
+            fs::write(&report_path, report.to_string()).unwrap();
+            assess(&aliased_root, &report_path).unwrap();
+        }
+
         // The same reported file requires a budget when production can reach it.
         fs::write(&library, "pub mod critical;\nmod query_plans;\n").unwrap();
         assert!(
@@ -775,13 +798,15 @@ mod tests {
         // A report entry absent from the AST inventory must still fail closed.
         fs::write(&library, test_module).unwrap();
         report["data"][0]["files"][1]["filename"] =
-            serde_json::json!(root.path().join("src/unknown.rs"));
+            serde_json::json!(canonical_root.join("src/unknown.rs"));
         fs::write(&report_path, report.to_string()).unwrap();
-        assert!(
-            assess(root.path(), &report_path)
-                .unwrap_err()
-                .contains("new production file needs an explicit coverage budget: src/unknown.rs")
-        );
+        for assessment_root in [root.path(), aliased_root.as_path()] {
+            assert!(
+                assess(assessment_root, &report_path).unwrap_err().contains(
+                    "new production file needs an explicit coverage budget: src/unknown.rs"
+                )
+            );
+        }
     }
 
     #[test]
