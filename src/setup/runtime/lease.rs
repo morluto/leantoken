@@ -14,8 +14,17 @@ pub struct RuntimeLease {
 ///
 /// Direct executables outside the configured runtime root need no lease. Older
 /// executables that do not call this function cannot advertise their lifetime.
+/// A resolvable setup home is required to recognize managed ownership; without
+/// one, no lease is acquired.
 pub fn acquire_current_runtime_lease() -> Result<Option<RuntimeLease>> {
     let executable = std::env::current_exe()?.canonicalize()?;
+    acquire_executable_runtime_lease(&executable, home_directory)
+}
+
+fn acquire_executable_runtime_lease(
+    executable: &Path,
+    resolve_home: impl FnOnce() -> Option<PathBuf>,
+) -> Result<Option<RuntimeLease>> {
     let Some(directory) = executable.parent() else {
         return Ok(None);
     };
@@ -31,8 +40,10 @@ pub fn acquire_current_runtime_lease() -> Result<Option<RuntimeLease>> {
     };
     // Match setup when Windows known folders are unavailable but HOME or
     // USERPROFILE still identifies the configured fallback runtime root.
-    let home = home_directory()
-        .ok_or_else(|| Error::SetupFailure("could not locate the home directory".into()))?;
+    let Some(home) = resolve_home() else {
+        // A version-shaped parent alone does not establish managed ownership.
+        return Ok(None);
+    };
     let runtime_root = setup_runtime_root(&home);
     let canonical_root = match runtime_root.canonicalize() {
         Ok(root) => root,
@@ -55,7 +66,7 @@ pub fn acquire_current_runtime_lease() -> Result<Option<RuntimeLease>> {
         ));
     }
     let directory_identity = capability_directory_identity(&directory_metadata);
-    let digest = file_digest(&executable)?;
+    let digest = file_digest(executable)?;
     if named_digest.is_some_and(|expected| expected != digest) {
         return Err(Error::SetupFailure(
             "private runtime artifact digest mismatch".into(),
@@ -267,5 +278,30 @@ fn safe_lease_metadata(metadata: &cap_std::fs::Metadata) -> bool {
     #[cfg(not(unix))]
     {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_versioned_executable_needs_no_home_before_managed_ownership() {
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().join("1.2.3");
+        fs::create_dir(&directory).unwrap();
+        let executable = directory.join(runtime_executable_name(cfg!(windows)));
+        fs::write(&executable, b"standalone executable fixture").unwrap();
+
+        let lease = acquire_executable_runtime_lease(&executable.canonicalize().unwrap(), || None)
+            .expect("an unavailable setup home cannot establish managed ownership");
+
+        assert!(lease.is_none());
+        assert_eq!(
+            fs::read(&executable).unwrap(),
+            b"standalone executable fixture"
+        );
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
     }
 }

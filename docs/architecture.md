@@ -852,6 +852,11 @@ including a crash, releases the OS lock. Startup may wait for an in-progress
 exclusive deletion and must revalidate the artifact after obtaining shared
 ownership before serving requests. Startup does not acquire the setup lock, so
 a verification child cannot deadlock with its setup parent.
+Managed startup recognition requires a setup home resolved through `HOME`,
+Windows `USERPROFILE`, or platform directories, and an exact match with that
+home's configured runtime root. Without a resolvable home, a version-shaped
+executable path does not establish ownership and startup acquires no lease.
+Managed hosts must preserve a resolvable setup home for lifetime protection.
 
 Stable sidecars live outside artifact directories at
 `<runtime_root>/.leases/<BLAKE3(complete artifact directory name)>.lock`.

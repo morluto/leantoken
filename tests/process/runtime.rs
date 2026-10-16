@@ -467,7 +467,7 @@ fn assert_private_runtime_process_lifetime(
     // phase uses the existing five-second initialize and bounded exit helpers.
     // The second launch also exercises Windows' USERPROFILE home fallback when
     // HOME is absent; its platform directory discovery can still be unavailable.
-    for (crash, omit_home) in [(false, false), (true, true)] {
+    for (crash, omit_home) in [(false, false), (true, cfg!(windows))] {
         let mut process = fixture.spawn(omit_home);
         let initialized = process.initialize();
         assert_eq!(
