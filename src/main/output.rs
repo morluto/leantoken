@@ -162,6 +162,11 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
             requested,
             limit,
         } => (None, Some(*field), Some(*requested), Some(*limit)),
+        leantoken::Error::CacheInventoryIncomplete {
+            dimension,
+            observed,
+            limit,
+        } => (None, Some(*dimension), Some(*observed), Some(*limit)),
         leantoken::Error::RetrievalLimitExceeded {
             observed, limit, ..
         } => (None, None, Some(*observed), Some(*limit)),
@@ -269,6 +274,7 @@ pub(super) fn cli_error_response(error: &leantoken::Error) -> CliErrorResponse {
         _ => (None, None, None, None),
     };
     let (complete, candidate_files, candidate_chunks, candidate_bytes) = match error {
+        leantoken::Error::CacheInventoryIncomplete { .. } => (Some(false), None, None, None),
         leantoken::Error::RegexWorkBudgetExceeded {
             candidate_files,
             candidate_chunks,

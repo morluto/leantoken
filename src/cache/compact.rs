@@ -123,7 +123,7 @@ impl CacheManager {
             compact_sqlite::vacuum(&connection, request.max_seconds, &mut row.vacuum_committed);
         drop(connection);
         // Observe artifacts after SQLite closes, including removed/recycled WALs.
-        let after = scan_artifacts(&row.path)?.size_bytes;
+        let after = scan_artifacts(&row.path, &mut InventoryBudget::new(self))?.size_bytes;
         row.size_bytes_after = Some(after);
         row.reclaimed_bytes = row.size_bytes_before.unwrap_or(after).saturating_sub(after);
         result?;

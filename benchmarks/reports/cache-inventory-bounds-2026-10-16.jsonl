@@ -1,0 +1,5 @@
+{"record": "environment", "binary": "/tmp/leantoken-540-measured-bin", "binary_sha256": "cada63006beae37d29f6cd344ac54dfcdfddff48fcd3ec3a0c90bc229ca8dc57", "build_profile": "debug", "platform": "Linux-6.1.0-53-cloud-amd64-x86_64-with-glibc2.36", "cpus": 16, "fixture": "one 31-byte Rust source per cache; estimate tokenizer", "order": "ascending 1/16/64; one sequential warm observation each"}
+{"caches": 1, "page_limit": 1, "database_file_opens": 1, "peak_rss_kib": 26756, "wall_seconds": 0.0178, "gnu_time_seconds": 0.01}
+{"caches": 16, "page_limit": 1, "database_file_opens": 16, "peak_rss_kib": 26812, "wall_seconds": 0.0427, "gnu_time_seconds": 0.04}
+{"caches": 64, "page_limit": 1, "database_file_opens": 64, "peak_rss_kib": 27304, "wall_seconds": 0.1204, "gnu_time_seconds": 0.11}
+{"root_entries": 4097, "boundary_error": {"category": "incomplete_inventory", "complete": false, "error": "cache inventory incomplete: root_entries reached at least 4097, limit 4096; no complete inventory is available", "field": "root_entries", "limit": 4096, "requested": 4097}}
