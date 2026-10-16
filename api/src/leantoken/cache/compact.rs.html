@@ -123,7 +123,7 @@
 <a href=#123 id=123 data-nosnippet>123</a>            compact_sqlite::vacuum(<span class="kw-2">&amp;</span>connection, request.max_seconds, <span class="kw-2">&amp;mut </span>row.vacuum_committed);
 <a href=#124 id=124 data-nosnippet>124</a>        drop(connection);
 <a href=#125 id=125 data-nosnippet>125</a>        <span class="comment">// Observe artifacts after SQLite closes, including removed/recycled WALs.
-<a href=#126 id=126 data-nosnippet>126</a>        </span><span class="kw">let </span>after = scan_artifacts(<span class="kw-2">&amp;</span>row.path)<span class="question-mark">?</span>.size_bytes;
+<a href=#126 id=126 data-nosnippet>126</a>        </span><span class="kw">let </span>after = scan_artifacts(<span class="kw-2">&amp;</span>row.path, <span class="kw-2">&amp;mut </span>InventoryBudget::new(<span class="self">self</span>))<span class="question-mark">?</span>.size_bytes;
 <a href=#127 id=127 data-nosnippet>127</a>        row.size_bytes_after = <span class="prelude-val">Some</span>(after);
 <a href=#128 id=128 data-nosnippet>128</a>        row.reclaimed_bytes = row.size_bytes_before.unwrap_or(after).saturating_sub(after);
 <a href=#129 id=129 data-nosnippet>129</a>        result<span class="question-mark">?</span>;
