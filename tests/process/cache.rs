@@ -371,10 +371,17 @@ fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
         "{}",
         String::from_utf8_lossy(&indexed.stderr)
     );
+    let unix_seconds = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs())
+    };
+    let list_started = unix_seconds();
     let list = command()
         .args(["--json", "cache", "list"])
         .output()
         .unwrap();
+    let list_finished = unix_seconds();
     assert!(list.status.success());
     let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
     let cache_root = std::path::Path::new(list["cache_root"].as_str().unwrap());
@@ -393,6 +400,7 @@ fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
         .unwrap()
         .to_string();
     let repository_root = repository.to_str().unwrap();
+    let filtered_started = unix_seconds();
     let filtered = command()
         .args([
             "--json",
@@ -409,9 +417,35 @@ fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
         ])
         .output()
         .unwrap();
+    let filtered_finished = unix_seconds();
     assert!(filtered.status.success());
     let filtered: serde_json::Value = serde_json::from_slice(&filtered.stdout).unwrap();
-    assert_eq!(filtered["entries"], list["entries"]);
+    let stable_entries = |report: &serde_json::Value, started: u64, finished: u64| {
+        let mut entries = report["entries"].as_array().unwrap().clone();
+        for entry in &mut entries {
+            let accessed = entry["last_access_unix_seconds"].as_u64().unwrap();
+            let age = entry
+                .as_object_mut()
+                .unwrap()
+                .remove("age_seconds")
+                .unwrap()
+                .as_u64()
+                .unwrap();
+            // Each inspection recomputes age. Bound it independently, including
+            // a clock rollback, before comparing the stable fields and order.
+            let earliest_age = started.min(finished).saturating_sub(accessed);
+            let latest_age = started.max(finished).saturating_sub(accessed);
+            assert!(
+                (earliest_age..=latest_age).contains(&age),
+                "age {age} is outside {earliest_age}..={latest_age} for access time {accessed}"
+            );
+        }
+        entries
+    };
+    assert_eq!(
+        stable_entries(&filtered, filtered_started, filtered_finished),
+        stable_entries(&list, list_started, list_finished)
+    );
 
     let database = cache_root.join(id).join("index.sqlite");
     let connection = rusqlite::Connection::open(&database).unwrap();
