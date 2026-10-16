@@ -299,28 +299,45 @@ npx --yes leantoken@latest setup --codex --private-runtime --dry-run
 npx --yes leantoken@latest setup --codex --private-runtime --yes
 ```
 
-Dry-run reports the exact versioned application-data path and BLAKE3 digest.
+Dry-run reports the exact application-data path and full BLAKE3 digest. New
+artifacts use `<runtime_root>/<version>_<64 lowercase digest characters>/leantoken`
+(`leantoken.exe` on Windows), so distinct source builds with the same package
+version can coexist. Reinstalling identical bytes reuses that exact path.
 Setup copies the native executable already verified by the running package,
-activates it with an atomic no-clobber rename, then updates all selected client
-registrations as one rollback-capable transaction. A process lock serializes
-setup, and a durable journal restores pre-transaction contents on the next
+verifies its complete digest, publishes it with an atomic no-clobber hard link,
+then updates all selected client registrations as one rollback-capable
+transaction. A process lock serializes setup, and a durable journal restores pre-transaction contents on the next
 setup invocation after an interruption; recovery refuses to overwrite a file
 changed independently after the interruption. The registered command launches
 that native executable directly. Removal deletes registrations but retains
-versioned runtimes for explicit rollback; it never selects `latest`. Private
-installation rejects a runtime root that is a symlink or is not a directory.
+runtime artifacts for explicit rollback; it never selects `latest`. Existing
+`<version>/leantoken[.exe]` artifacts remain readable and referenced paths are
+never renamed or overwritten. New setup installs a digest-addressed sibling and
+updates only selected registrations. Private installation rejects a runtime root
+that is a symlink or is not a directory.
 JSON reports a transaction-wide `apply_error` even when an orphan discovery
 skill was the only planned mutation and no client result rows exist.
 
-`runtime list` reports installed versions, executable bytes, active state, and
-client references. `runtime prune` is a dry-run unless `--yes` is present; it
-always retains referenced and active runtimes, keeps the newest two
-unreferenced versions by default, and refuses directories containing anything
-other than the expected native executable. Applied pruning rechecks every
-supported client configuration immediately before deletion and removes through
-snapshot-matched open directory handles, so a concurrent registration or path
-swap fails closed. Change the bounded retention window with `--keep-latest` (0
-through 64):
+`runtime list` reports each artifact's version, full digest, exact path,
+executable bytes, legacy-layout marker, active state, and client references.
+`runtime prune` is a dry-run unless `--yes` is present. It retains every
+referenced artifact and the current executable. It also retains artifacts held
+by lease-aware running processes, even after refresh removes their last client
+reference. Older processes without lease support cannot advertise activity to
+another command; keep their client references while they run.
+
+Retention keeps two additional unreferenced artifacts by default, sorted by
+semantic version descending, then digest and path ascending. Same-version
+variants count separately. Directories containing anything other than the
+expected native executable, or bytes that disagree with a digest-addressed name,
+are retained. Applied pruning takes the artifact's exclusive lease, rechecks
+every supported client configuration and the complete executable digest, and
+removes through snapshot-matched directory handles. A detected client edit or
+artifact identity change stops deletion; a live lease holder retains its
+artifact. Stable zero-byte lease sidecars stay in a separate `.leases` directory
+after removal and are reused on reinstall. Byte totals describe executable pathnames rather
+than physical disk allocation. Change the bounded retention window with
+`--keep-latest` (0 through 64):
 
 ```bash
 leantoken runtime list
@@ -328,8 +345,13 @@ leantoken runtime prune --keep-latest 2 --dry-run
 leantoken runtime prune --keep-latest 2 --yes
 ```
 
-Choose upgrades and rollbacks explicitly by running the desired version, then
-refresh only entries that already exist:
+To refresh a private runtime from a chosen native or source-built executable,
+run `leantoken setup --refresh --private-runtime --yes`. This pins existing
+registrations to that executable's exact digest-addressed artifact, including
+when its semantic version is unchanged. Other referenced variants remain usable.
+
+Choose published upgrades and rollbacks explicitly by running the desired
+version, then refresh only entries that already exist:
 
 ```bash
 npx --yes leantoken@latest setup --refresh --yes

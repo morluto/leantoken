@@ -1,11 +1,36 @@
 use super::*;
 
-/// Default number of newest unreferenced private runtimes retained by prune.
+/// Default number of unreferenced runtime artifacts retained in inventory order.
 pub const DEFAULT_RUNTIME_RETENTION: usize = 2;
 /// Maximum accepted retention window for one bounded prune request.
 pub const MAX_RUNTIME_RETENTION: usize = 64;
 const MAX_RUNTIME_ROOT_ENTRIES: usize = 512;
 const MAX_RUNTIME_DIRECTORY_ENTRIES: usize = 8;
+
+#[path = "runtime_lease.rs"]
+mod lease;
+pub use lease::{RuntimeLease, acquire_current_runtime_lease};
+use lease::{runtime_lease_is_active, try_acquire_runtime_prune_lease};
+
+fn runtime_directory_name(version: &str, digest: &str) -> String {
+    format!("{version}_{digest}")
+}
+
+fn parse_runtime_directory_name(name: &str) -> Option<(semver::Version, Option<&str>)> {
+    let (version, digest) = match name.split_once('_') {
+        Some((version, digest))
+            if digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) =>
+        {
+            (version, Some(digest))
+        }
+        Some(_) => return None,
+        None => (name, None),
+    };
+    Some((semver::Version::parse(version).ok()?, digest))
+}
 
 pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<RuntimeInstallPlan> {
     validate_runtime_root(&environment.runtime_root)?;
@@ -13,17 +38,20 @@ pub(super) fn runtime_install_plan(environment: &SetupEnvironment) -> Result<Run
     let executable_name = runtime_executable_name(cfg!(windows));
     let destination = environment
         .runtime_root
-        .join(environment.launcher.version())
+        .join(runtime_directory_name(
+            environment.launcher.version(),
+            &digest,
+        ))
         .join(executable_name);
-    let version_directory = destination
+    let artifact_directory = destination
         .parent()
-        .expect("a versioned runtime destination has a parent");
-    match fs::symlink_metadata(version_directory) {
+        .expect("a private runtime destination has a parent");
+    match fs::symlink_metadata(artifact_directory) {
         Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {}
         Ok(_) => {
             return Err(Error::SetupFailure(format!(
-                "private runtime version must be a non-symlink directory: {}",
-                version_directory.display()
+                "private runtime artifact must be a non-symlink directory: {}",
+                artifact_directory.display()
             )));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -91,19 +119,19 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
             plan.runtime_root.display()
         )));
     }
-    let (version, executable_name) = runtime_destination_components(plan)?;
+    let (directory_name, executable_name) = runtime_destination_components(plan)?;
     let runtime_root = open_runtime_root(&plan.runtime_root)?;
-    let version_directory = open_or_create_runtime_version_directory(
+    let artifact_directory = open_or_create_runtime_artifact_directory(
         &runtime_root,
-        version,
+        directory_name,
         plan.destination.parent().ok_or_else(|| {
             Error::SetupFailure("private runtime destination has no parent".into())
         })?,
     )?;
-    recover_runtime_staging_entries(&version_directory)?;
+    recover_runtime_staging_entries(&artifact_directory)?;
     if !plan.install_required {
         return if capability_runtime_file_matches(
-            &version_directory,
+            &artifact_directory,
             executable_name,
             &plan.digest,
         )? {
@@ -123,7 +151,7 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
     let mut source = fs::File::open(&plan.source)?;
     let mut options = cap_std::fs::OpenOptions::new();
     options.read(true).write(true).create_new(true);
-    let mut staged = version_directory
+    let mut staged = artifact_directory
         .open_with(&temporary_name, &options)?
         .into_std();
     let staged_result = (|| -> Result<()> {
@@ -139,11 +167,11 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
         Ok(())
     })();
     let publish_result = staged_result.and_then(|()| {
-        match version_directory.hard_link(&temporary_name, &version_directory, executable_name) {
+        match artifact_directory.hard_link(&temporary_name, &artifact_directory, executable_name) {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if capability_runtime_file_matches(
-                    &version_directory,
+                    &artifact_directory,
                     executable_name,
                     &plan.digest,
                 )? {
@@ -159,7 +187,7 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
         }
     });
     drop(staged);
-    let cleanup_result = version_directory.remove_file(&temporary_name);
+    let cleanup_result = artifact_directory.remove_file(&temporary_name);
     match publish_result {
         Ok(installed) => {
             cleanup_result.map_err(|error| {
@@ -167,15 +195,15 @@ pub(super) fn install_runtime(plan: &RuntimeInstallPlan) -> Result<RuntimeInstal
                     "published private runtime but could not remove its staging file; retry setup to recover it: {error}"
                 ))
             })?;
-            sync_capability_directory(&version_directory)?;
+            sync_capability_directory(&artifact_directory)?;
             Ok(if installed {
                 RuntimeInstallReceipt::Installed(InstalledRuntimeCapability {
                     runtime_root: plan.runtime_root.clone(),
-                    version: version.to_path_buf(),
+                    directory_name: directory_name.to_path_buf(),
                     executable_name: executable_name.to_path_buf(),
                     digest: plan.digest.clone(),
                     runtime_root_handle: runtime_root,
-                    version_directory,
+                    artifact_directory,
                 })
             } else {
                 RuntimeInstallReceipt::unchanged()
@@ -197,11 +225,11 @@ pub(super) enum RuntimeInstallReceipt {
 #[derive(Debug)]
 pub(super) struct InstalledRuntimeCapability {
     runtime_root: PathBuf,
-    version: PathBuf,
+    directory_name: PathBuf,
     executable_name: PathBuf,
     digest: String,
     runtime_root_handle: cap_std::fs::Dir,
-    version_directory: cap_std::fs::Dir,
+    artifact_directory: cap_std::fs::Dir,
 }
 
 impl RuntimeInstallReceipt {
@@ -215,22 +243,31 @@ pub(super) fn rollback_installed_runtime(receipt: RuntimeInstallReceipt) -> Resu
         return Ok(());
     };
     validate_runtime_root_handle(&installed.runtime_root, &installed.runtime_root_handle)?;
+    let _lease = try_acquire_runtime_prune_lease(
+        &installed.runtime_root,
+        &installed.runtime_root_handle,
+        &installed.directory_name,
+    )?
+    .ok_or_else(|| Error::SetupFailure("private runtime is active before rollback".into()))?;
     let current = installed
         .runtime_root_handle
-        .symlink_metadata(&installed.version)?;
+        .symlink_metadata(&installed.directory_name)?;
     let pinned_identity =
-        capability_directory_identity(&installed.version_directory.dir_metadata()?);
+        capability_directory_identity(&installed.artifact_directory.dir_metadata()?);
     if !current.file_type().is_dir()
         || current.file_type().is_symlink()
         || capability_directory_identity(&current) != pinned_identity
     {
         return Err(Error::SetupFailure(format!(
-            "private runtime version changed before rollback: {}",
-            installed.runtime_root.join(&installed.version).display()
+            "private runtime artifact changed before rollback: {}",
+            installed
+                .runtime_root
+                .join(&installed.directory_name)
+                .display()
         )));
     }
     if !capability_runtime_file_matches(
-        &installed.version_directory,
+        &installed.artifact_directory,
         &installed.executable_name,
         &installed.digest,
     )? {
@@ -238,16 +275,16 @@ pub(super) fn rollback_installed_runtime(receipt: RuntimeInstallReceipt) -> Resu
             "private runtime changed before rollback: {}",
             installed
                 .runtime_root
-                .join(&installed.version)
+                .join(&installed.directory_name)
                 .join(&installed.executable_name)
                 .display()
         )));
     }
     installed
-        .version_directory
+        .artifact_directory
         .remove_file(&installed.executable_name)?;
-    sync_capability_directory(&installed.version_directory)?;
-    installed.version_directory.remove_open_dir()?;
+    sync_capability_directory(&installed.artifact_directory)?;
+    installed.artifact_directory.remove_open_dir()?;
     sync_capability_directory(&installed.runtime_root_handle)
 }
 
@@ -256,7 +293,7 @@ fn recover_runtime_staging_entries(directory: &cap_std::fs::Dir) -> Result<()> {
     for (index, entry) in directory.entries()?.enumerate() {
         if index >= MAX_RUNTIME_DIRECTORY_ENTRIES {
             return Err(Error::SetupFailure(format!(
-                "private runtime version entry limit exceeded while recovering staging files: {MAX_RUNTIME_DIRECTORY_ENTRIES}"
+                "private runtime artifact entry limit exceeded while recovering staging files: {MAX_RUNTIME_DIRECTORY_ENTRIES}"
             )));
         }
         let entry = entry?;
@@ -304,8 +341,12 @@ fn runtime_destination_components(plan: &RuntimeInstallPlan) -> Result<(&Path, &
         .strip_prefix(&plan.runtime_root)
         .map_err(|_| Error::SetupFailure("private runtime destination left its root".into()))?;
     let components = relative.components().collect::<Vec<_>>();
+    let identity = components.first().and_then(|component| {
+        parse_runtime_directory_name(component.as_os_str().to_str().unwrap_or_default())
+    });
     if components.len() != 2
-        || semver::Version::parse(components[0].as_os_str().to_str().unwrap_or_default()).is_err()
+        || identity.is_none()
+        || identity.is_some_and(|(_, digest)| digest.is_some_and(|digest| digest != plan.digest))
         || components[1].as_os_str() != runtime_executable_name(cfg!(windows))
     {
         return Err(Error::SetupFailure(format!(
@@ -319,38 +360,38 @@ fn runtime_destination_components(plan: &RuntimeInstallPlan) -> Result<(&Path, &
     ))
 }
 
-fn open_or_create_runtime_version_directory(
+fn open_or_create_runtime_artifact_directory(
     runtime_root: &cap_std::fs::Dir,
-    version: &Path,
+    directory_name: &Path,
     display_path: &Path,
 ) -> Result<cap_std::fs::Dir> {
-    match runtime_root.create_dir(version) {
+    match runtime_root.create_dir(directory_name) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
-    let before = runtime_root.symlink_metadata(version)?;
+    let before = runtime_root.symlink_metadata(directory_name)?;
     if !before.file_type().is_dir() || before.file_type().is_symlink() {
         return Err(Error::SetupFailure(format!(
-            "private runtime version must be a non-symlink directory: {}",
+            "private runtime artifact must be a non-symlink directory: {}",
             display_path.display()
         )));
     }
     let expected_identity = capability_directory_identity(&before);
-    let directory = runtime_root.open_dir(version)?;
+    let directory = runtime_root.open_dir(directory_name)?;
     if capability_directory_identity(&directory.dir_metadata()?) != expected_identity {
         return Err(Error::SetupFailure(format!(
-            "private runtime version changed while it was opened: {}",
+            "private runtime artifact changed while it was opened: {}",
             display_path.display()
         )));
     }
-    let current = runtime_root.symlink_metadata(version)?;
+    let current = runtime_root.symlink_metadata(directory_name)?;
     if !current.file_type().is_dir()
         || current.file_type().is_symlink()
         || capability_directory_identity(&current) != expected_identity
     {
         return Err(Error::SetupFailure(format!(
-            "private runtime version changed while it was opened: {}",
+            "private runtime artifact changed while it was opened: {}",
             display_path.display()
         )));
     }
@@ -520,6 +561,8 @@ pub(super) fn prune_runtimes_at(
         if let Some(reason) = protected_reason {
             results.push(RuntimePruneResult {
                 version: entry.report.version,
+                digest: entry.report.digest,
+                legacy_layout: entry.report.legacy_layout,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
                 outcome: RuntimePruneOutcome::Retained,
@@ -531,6 +574,8 @@ pub(super) fn prune_runtimes_at(
             total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
             results.push(RuntimePruneResult {
                 version: entry.report.version,
+                digest: entry.report.digest,
+                legacy_layout: entry.report.legacy_layout,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
                 outcome: RuntimePruneOutcome::WouldRemove,
@@ -538,21 +583,56 @@ pub(super) fn prune_runtimes_at(
             });
             continue;
         }
-        if let Err(error) = preflight_configuration_snapshots(&configuration_snapshots) {
-            apply_error = Some(error.to_string());
-            break;
-        }
         let runtime_root_handle =
             runtime_root_handle.expect("applied pruning opened the runtime root");
         if let Err(error) = validate_runtime_root_handle(&runtime_root, runtime_root_handle) {
             apply_error = Some(error.to_string());
             break;
         }
+        let directory_name = entry
+            .directory
+            .file_name()
+            .expect("runtime directory has a name");
+        let _lease = match try_acquire_runtime_prune_lease(
+            &runtime_root,
+            runtime_root_handle,
+            Path::new(directory_name),
+        ) {
+            Ok(Some(lease)) => lease,
+            Ok(None) => {
+                results.push(RuntimePruneResult {
+                    version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
+                    path: entry.report.path,
+                    size_bytes: entry.report.size_bytes,
+                    outcome: RuntimePruneOutcome::Retained,
+                    reason: "active_process".into(),
+                });
+                continue;
+            }
+            Err(error) => {
+                results.push(RuntimePruneResult {
+                    version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
+                    path: entry.report.path,
+                    size_bytes: entry.report.size_bytes,
+                    outcome: RuntimePruneOutcome::Failed {
+                        error: error.to_string(),
+                    },
+                    reason: "lease_revalidation_failed".into(),
+                });
+                continue;
+            }
+        };
         let directory = match open_managed_runtime_directory(runtime_root_handle, &entry) {
             Ok(Some(directory)) => directory,
             Ok(None) => {
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
                     outcome: RuntimePruneOutcome::Retained,
@@ -563,6 +643,8 @@ pub(super) fn prune_runtimes_at(
             Err(error) => {
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
                     outcome: RuntimePruneOutcome::Failed {
@@ -573,12 +655,22 @@ pub(super) fn prune_runtimes_at(
                 continue;
             }
         };
+        // Digest verification streams the complete artifact. Revalidate client
+        // snapshots and root ownership at the deletion boundary after that work.
+        if let Err(error) = preflight_configuration_snapshots(&configuration_snapshots)
+            .and_then(|()| validate_runtime_root_handle(&runtime_root, runtime_root_handle))
+        {
+            apply_error = Some(error.to_string());
+            break;
+        }
         match remove_runtime_directory(directory) {
             RuntimeRemoval::Removed => {
                 total_bytes_after = total_bytes_after.saturating_sub(entry.report.size_bytes);
                 let sync_error = sync_parent_directory(&entry.directory).err();
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
                     outcome: RuntimePruneOutcome::Removed {
@@ -597,6 +689,8 @@ pub(super) fn prune_runtimes_at(
                 }
                 results.push(RuntimePruneResult {
                     version: entry.report.version,
+                    digest: entry.report.digest,
+                    legacy_layout: entry.report.legacy_layout,
                     path: entry.report.path,
                     size_bytes: entry.report.size_bytes,
                     outcome: RuntimePruneOutcome::PartiallyRemoved { error },
@@ -606,6 +700,8 @@ pub(super) fn prune_runtimes_at(
             }
             RuntimeRemoval::Failed(error) => results.push(RuntimePruneResult {
                 version: entry.report.version,
+                digest: entry.report.digest,
+                legacy_layout: entry.report.legacy_layout,
                 path: entry.report.path,
                 size_bytes: entry.report.size_bytes,
                 outcome: RuntimePruneOutcome::Failed {
@@ -683,14 +779,18 @@ fn runtime_inventory_at(home: &Path, runtime_root: &Path) -> Result<RuntimeInven
         }
         let item = item?;
         let directory_metadata = fs::symlink_metadata(item.path())?;
-        let Some(version_name) = item.file_name().to_str().map(str::to_owned) else {
+        let Some(directory_name) = item.file_name().to_str().map(str::to_owned) else {
             ignored_entries += 1;
             continue;
         };
-        if version_name == "setup.lock" || item.path() == transaction_path(runtime_root) {
+        if directory_name == "setup.lock"
+            || directory_name == lease::RUNTIME_LEASE_DIRECTORY
+            || item.path() == transaction_path(runtime_root)
+        {
             continue;
         }
-        let Ok(parsed_version) = semver::Version::parse(&version_name) else {
+        let Some((parsed_version, named_digest)) = parse_runtime_directory_name(&directory_name)
+        else {
             ignored_entries += 1;
             continue;
         };
@@ -710,7 +810,9 @@ fn runtime_inventory_at(home: &Path, runtime_root: &Path) -> Result<RuntimeInven
                 continue;
             }
         };
-        let safely_prunable = managed_runtime_directory_is_exact(&item.path(), &executable)?;
+        let digest = file_digest(&executable)?;
+        let safely_prunable = named_digest.is_none_or(|named_digest| named_digest == digest)
+            && managed_runtime_directory_is_exact(&item.path(), &executable)?;
         let canonical_executable = executable.canonicalize()?;
         let referenced_by = registrations
             .iter()
@@ -721,10 +823,13 @@ fn runtime_inventory_at(home: &Path, runtime_root: &Path) -> Result<RuntimeInven
             })
             .map(|registration| registration.client)
             .collect::<Vec<_>>();
-        let active = canonical_executable == current_executable;
+        let active = canonical_executable == current_executable
+            || runtime_lease_is_active(runtime_root, Path::new(&directory_name))?;
         entries.push(RuntimeInventoryEntry {
             report: RuntimeEntryReport {
-                version: version_name,
+                version: parsed_version.to_string(),
+                digest,
+                legacy_layout: named_digest.is_none(),
                 path: executable,
                 size_bytes: metadata.len(),
                 referenced_by,
@@ -740,6 +845,7 @@ fn runtime_inventory_at(home: &Path, runtime_root: &Path) -> Result<RuntimeInven
         right
             .parsed_version
             .cmp(&left.parsed_version)
+            .then_with(|| left.report.digest.cmp(&right.report.digest))
             .then_with(|| left.report.path.cmp(&right.report.path))
     });
     let total_bytes = entries
@@ -847,23 +953,33 @@ fn open_managed_runtime_directory(
     runtime_root: &cap_std::fs::Dir,
     entry: &RuntimeInventoryEntry,
 ) -> Result<Option<cap_std::fs::Dir>> {
-    let version = Path::new(&entry.report.version);
-    let before = runtime_root.symlink_metadata(version)?;
+    let directory_name = Path::new(
+        entry
+            .directory
+            .file_name()
+            .ok_or_else(|| Error::SetupFailure("private runtime directory has no name".into()))?,
+    );
+    let before = runtime_root.symlink_metadata(directory_name)?;
     if !before.file_type().is_dir()
         || before.file_type().is_symlink()
         || capability_directory_identity(&before) != entry.directory_identity
     {
         return Ok(None);
     }
-    let directory = runtime_root.open_dir(version)?;
+    let directory = runtime_root.open_dir(directory_name)?;
     if capability_directory_identity(&directory.dir_metadata()?) != entry.directory_identity {
         return Ok(None);
     }
-    let current = runtime_root.symlink_metadata(version)?;
+    let current = runtime_root.symlink_metadata(directory_name)?;
     if !current.file_type().is_dir()
         || current.file_type().is_symlink()
         || capability_directory_identity(&current) != entry.directory_identity
         || !managed_runtime_directory_handle_is_exact(&directory)?
+        || !capability_runtime_file_matches(
+            &directory,
+            Path::new(runtime_executable_name(cfg!(windows))),
+            &entry.report.digest,
+        )?
     {
         return Ok(None);
     }
@@ -955,7 +1071,7 @@ pub fn print_runtime_list(report: &RuntimeListReport, json_output: bool) -> Resu
             .join(",");
         writeln!(
             output,
-            "{}  {} bytes  {}{}  {}",
+            "{}  {} bytes  {}{}  {}  blake3={}{}  {}",
             entry.version,
             entry.size_bytes,
             if entry.active { "active" } else { "inactive" },
@@ -968,7 +1084,10 @@ pub fn print_runtime_list(report: &RuntimeListReport, json_output: bool) -> Resu
                 "unreferenced".into()
             } else {
                 format!("referenced_by={clients}")
-            }
+            },
+            entry.digest,
+            if entry.legacy_layout { " legacy" } else { "" },
+            entry.path.display()
         )?;
     }
     Ok(())
@@ -993,7 +1112,7 @@ pub fn print_runtime_prune(report: &RuntimePruneReport, json_output: bool) -> Re
     for result in &report.results {
         writeln!(
             output,
-            "{}  {}  {} bytes  {}{}",
+            "{}  {}  {} bytes  {}{}  blake3={}{}  {}",
             result.outcome.action(),
             result.version,
             result.size_bytes,
@@ -1001,7 +1120,10 @@ pub fn print_runtime_prune(report: &RuntimePruneReport, json_output: bool) -> Re
             result
                 .outcome
                 .error()
-                .map_or_else(String::new, |error| format!("  {error}"))
+                .map_or_else(String::new, |error| format!("  {error}")),
+            result.digest,
+            if result.legacy_layout { " legacy" } else { "" },
+            result.path.display()
         )?;
     }
     if let Some(error) = &report.apply_error {

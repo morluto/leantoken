@@ -108,10 +108,13 @@ npx leantoken setup --all --yes
 ```
 
 For regular use, `--private-runtime` is the recommended launcher: it copies the
-exact package-native executable into LeanToken's versioned application-data
-directory so clients launch one verified process directly, without persistent
-npm/Node wrappers. It remains opt-in so the zero-install path does not add an
-application-data write. Preview its path and digest with `--dry-run`.
+exact package-native executable into an application-data directory named by
+version and full BLAKE3 digest, so clients launch one verified process directly,
+without persistent npm/Node wrappers. Different source builds of one version
+can coexist. `setup --refresh --private-runtime` pins the current exact artifact;
+other referenced artifacts stay usable. It remains opt-in so the zero-install
+path does not add an application-data write. Preview its path and digest with
+`--dry-run`.
 
 Automation never treats detection as consent: `--yes` requires explicit client
 flags, `--all`, or `--refresh` for entries already managed by LeanToken. Preview
@@ -133,7 +136,7 @@ same-name manual entry unless you review the dry-run and pass
 npx leantoken remove
 ```
 
-After private-runtime upgrades, inspect retained versions and preview a
+After private-runtime upgrades, inspect retained artifacts and preview a
 reference-safe cleanup before applying it:
 
 ```bash

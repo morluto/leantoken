@@ -268,6 +268,17 @@ impl McpProcess {
             .arg("mcp")
             .args(mcp_arguments);
         command.stderr(stderr);
+        Self::spawn_prepared(command, process_home)
+    }
+
+    pub(crate) fn spawn_command(command: std::process::Command) -> Self {
+        Self::spawn_prepared(command, None)
+    }
+
+    fn spawn_prepared(
+        mut command: std::process::Command,
+        process_home: Option<tempfile::TempDir>,
+    ) -> Self {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

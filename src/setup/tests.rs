@@ -1166,7 +1166,10 @@ fn empty_refresh_does_not_install_an_unreferenced_private_runtime() {
     .unwrap();
     let runtime = environment
         .runtime_root
-        .join("1.2.3")
+        .join(format!(
+            "1.2.3_{}",
+            file_digest(&environment.native_executable).unwrap()
+        ))
         .join(runtime_executable_name(cfg!(windows)));
 
     let report = run_with(
@@ -1282,18 +1285,18 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     .unwrap();
     let launcher = dry_run.launcher.expect("launcher plan");
     let runtime_path = launcher.runtime_path.expect("private runtime path");
+    let expected_digest = file_digest(&environment.native_executable).unwrap();
     assert_eq!(
         runtime_path,
         environment
             .runtime_root
-            .join("1.2.3")
+            .join(format!("1.2.3_{expected_digest}"))
             .join(if cfg!(windows) {
                 "leantoken.exe"
             } else {
                 "leantoken"
             })
     );
-    let expected_digest = file_digest(&environment.native_executable).unwrap();
     assert_eq!(
         launcher.runtime_digest.as_deref(),
         Some(expected_digest.as_str())
@@ -1488,6 +1491,168 @@ fn runtime_removal_reports_when_the_executable_was_removed_but_directory_remains
     assert!(!executable.exists());
     assert!(sibling.exists());
     assert!(directory.exists());
+}
+
+#[test]
+fn private_runtime_client_edit_failure_rolls_back_only_the_new_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    fs::create_dir_all(&environment.runtime_root).unwrap();
+    fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+    fs::write(&environment.native_executable, b"original artifact").unwrap();
+    let original = runtime_install_plan(&environment).unwrap();
+    install_runtime(&original).unwrap();
+    fs::write(&environment.native_executable, b"same-release replacement").unwrap();
+    let replacement = runtime_install_plan(&environment).unwrap();
+    let replacement_path = replacement.destination.clone();
+    assert_ne!(replacement_path, original.destination);
+
+    let config = environment.home.join(".claude.json");
+    let mut plan = resolve_plan(
+        SetupOperation::Setup,
+        &[SetupClient::Claude],
+        PlanEnvironment {
+            detected: &[],
+            home: &environment.home,
+            launcher: &environment.launcher,
+            persistent_cli: false,
+            runtime: Some(replacement),
+            discovery_paths: Vec::new(),
+            discovery_cleanup_paths: Vec::new(),
+            configuration_snapshots: Vec::new(),
+            force_unmanaged: false,
+            transaction_root: &environment.runtime_root,
+        },
+    )
+    .unwrap();
+    // A stale observation after the first write forces a client-edit failure
+    // after publication and journal creation, without timing or permissions.
+    plan.edits.push(PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Claude,
+            path: config.clone(),
+            action: ClientPlanAction::AlreadyCurrent,
+            detected: false,
+        },
+        resolution: ResolvedEdit::AlreadyConfigured { original: None },
+    });
+
+    let outcome = apply_plan(&plan);
+    assert!(
+        outcome.error.as_deref().is_some_and(|error| {
+            error.contains("transaction rolled back") && error.contains("changed after preflight")
+        }),
+        "{:?}",
+        outcome.error
+    );
+    assert_eq!(
+        fs::read(&original.destination).unwrap(),
+        b"original artifact"
+    );
+    assert!(!replacement_path.exists());
+    assert!(!config.exists());
+    assert!(!transaction_path(&environment.runtime_root).exists());
+}
+
+#[test]
+fn private_runtime_digest_namespace_rejects_tampering_without_clobbering() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    fs::create_dir_all(&environment.runtime_root).unwrap();
+    fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+    fs::write(&environment.native_executable, b"verified source").unwrap();
+    let plan = runtime_install_plan(&environment).unwrap();
+    fs::create_dir_all(plan.destination.parent().unwrap()).unwrap();
+    fs::write(
+        &plan.destination,
+        b"different bytes in the digest namespace",
+    )
+    .unwrap();
+
+    let error = install_runtime(&plan).unwrap_err().to_string();
+    assert!(error.contains("identity mismatch"), "{error}");
+    assert_eq!(
+        fs::read(&plan.destination).unwrap(),
+        b"different bytes in the digest namespace"
+    );
+    let error = runtime_install_plan(&environment).unwrap_err().to_string();
+    assert!(error.contains("identity mismatch"), "{error}");
+}
+
+#[test]
+fn runtime_prune_rechecks_activity_after_inventory_and_preserves_stable_leases() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    fs::create_dir(&home).unwrap();
+    let artifact = |version: &str| {
+        let directory = runtime_root.join(version);
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join(runtime_executable_name(cfg!(windows)));
+        fs::write(&executable, version).unwrap();
+        executable
+    };
+    let newest = artifact("2.0.0");
+    let oldest = artifact("1.0.0");
+    let lease_path = runtime_root
+        .join(".leases")
+        .join(format!("{}.lock", blake3::hash(b"1.0.0").to_hex()));
+    let mut active = None;
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {},
+        || {
+            // Startup can take a lease without waiting for the setup lock.
+            // Acquire it after inventory but before the next deletion decision.
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&lease_path)
+                .unwrap();
+            file.lock_shared().unwrap();
+            active = Some(file);
+        },
+    )
+    .unwrap();
+    assert!(!newest.exists() && oldest.exists());
+    assert_eq!(report.results[1].reason, "active_process");
+    let stable = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lease_path)
+        .unwrap();
+    drop(active);
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root,
+        || {},
+        || {},
+    )
+    .unwrap();
+    assert_eq!(report.results[0].outcome.action(), "removed");
+    assert!(!oldest.exists());
+    stable.lock_shared().unwrap();
+    let probe = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lease_path)
+        .unwrap();
+    assert!(
+        matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+        "pruning must retain the same lease file identity"
+    );
 }
 
 #[cfg(unix)]
