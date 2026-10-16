@@ -15,7 +15,9 @@ library only.
 """
 
 import hashlib
+import io
 import json
+import lzma
 import os
 import pathlib
 import resource
@@ -32,6 +34,16 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 WORKSPACE = HERE.parents[3]
 ARCHIVE = "leantoken-x86_64-unknown-linux-gnu.tar.xz"
+# Largest pinned archive/executable: 8,295,356 / 45,890,808 bytes (v0.1.28).
+# Limits are independent: compressed transfer, expanded tar, metadata and binary.
+COPY_BUFFER_BYTES = 64 * 1024
+MAX_CHECKSUM_BYTES = 4 * 1024
+MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
+MAX_EXECUTABLE_BYTES = 64 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 64
+MAX_ARCHIVE_DECLARED_BYTES = 96 * 1024 * 1024
+MAX_TAR_BYTES = 128 * 1024 * 1024
+MAX_XZ_MEMORY_BYTES = 128 * 1024 * 1024
 RELEASES = {
     "0.1.15": "6934ba9ff0c93e565d556f6f35750f8fe5a91faa",
     "0.1.27": "910ed8a34fbdd60e1c25c916e9ded12c8bf439e3",
@@ -44,6 +56,47 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def copy_bounded(source, output, limit, label):
+    """Copy/hash incrementally, rejecting the first byte beyond the limit."""
+    digest = hashlib.sha256()
+    total = 0
+    while True:
+        block = source.read(min(COPY_BUFFER_BYTES, limit - total + 1))
+        if not block:
+            return digest.hexdigest(), total
+        total += len(block)
+        if total > limit:
+            raise ValueError(f"{label} exceeded {limit}-byte limit")
+        output.write(block)
+        digest.update(block)
+
+
+def expand_archive(archive, unpacked):
+    # Explicit decoder and output limits also cover highly compressed metadata.
+    decoder = lzma.LZMADecompressor(memlimit=MAX_XZ_MEMORY_BYTES)
+    total = 0
+    with archive.open("rb") as source, unpacked.open("xb") as output:
+        while not decoder.eof:
+            block = source.read(COPY_BUFFER_BYTES) if decoder.needs_input else b""
+            if decoder.needs_input and not block:
+                raise ValueError("truncated release XZ archive")
+            expanded = decoder.decompress(
+                block, max_length=min(COPY_BUFFER_BYTES, MAX_TAR_BYTES - total + 1)
+            )
+            total += len(expanded)
+            if total > MAX_TAR_BYTES:
+                raise ValueError(f"expanded archive exceeded {MAX_TAR_BYTES}-byte limit")
+            output.write(expanded)
+
+
+class BoundedTarReader(io.BufferedReader):
+    def read(self, size=-1):
+        # tarfile otherwise reads a complete PAX/GNU metadata body at once.
+        if size < 0 or size > COPY_BUFFER_BYTES:
+            raise ValueError("archive metadata read exceeded the fixed buffer")
+        return super().read(size)
+
+
 def git_bytes(revision, path):
     return subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=WORKSPACE)
 
@@ -52,19 +105,44 @@ def prepare(version, commit, workspace):
     destination = workspace / version / "generator"
     destination.mkdir(parents=True)
     url = f"https://github.com/morluto/leantoken/releases/download/v{version}/{ARCHIVE}"
-    checksum = urllib.request.urlopen(url + ".sha256").read().decode().split()[0]
+    with urllib.request.urlopen(url + ".sha256") as source, io.BytesIO() as response:
+        copy_bounded(source, response, MAX_CHECKSUM_BYTES, "checksum response")
+        fields = response.getvalue().decode().split()
+    if not fields or len(fields[0]) != 64 or any(byte not in "0123456789abcdef" for byte in fields[0]):
+        raise ValueError("invalid published archive checksum")
+    checksum = fields[0]
     archive = destination / ARCHIVE
     with urllib.request.urlopen(url) as source, archive.open("xb") as output:
-        shutil.copyfileobj(source, output)
-    if sha256(archive.read_bytes()) != checksum:
+        archive_digest, _ = copy_bounded(source, output, MAX_ARCHIVE_BYTES, "release archive")
+    if archive_digest != checksum:
         raise ValueError("published archive checksum mismatch")
-    with tarfile.open(archive, "r:xz") as bundle:
-        members = [item for item in bundle.getmembers() if pathlib.PurePosixPath(item.name).name == "leantoken"]
-        if len(members) != 1 or not members[0].isfile():
+    unpacked = destination / "release.tar"
+    expand_archive(archive, unpacked)
+    with BoundedTarReader(unpacked.open("rb", buffering=0)) as source, tarfile.open(fileobj=source, mode="r:") as bundle:
+        executable = None
+        declared_bytes = 0
+        for count, member in enumerate(bundle, 1):
+            if count > MAX_ARCHIVE_MEMBERS:
+                raise ValueError(f"archive exceeded {MAX_ARCHIVE_MEMBERS}-member limit")
+            declared_bytes += member.size
+            if member.size < 0 or declared_bytes > MAX_ARCHIVE_DECLARED_BYTES:
+                raise ValueError(f"archive declared bytes exceeded {MAX_ARCHIVE_DECLARED_BYTES}-byte limit")
+            if pathlib.PurePosixPath(member.name).name != "leantoken":
+                continue
+            if executable is not None or not member.isfile():
+                raise ValueError("release archive must contain exactly one regular leantoken executable")
+            if member.size > MAX_EXECUTABLE_BYTES:
+                raise ValueError(f"declared executable exceeded {MAX_EXECUTABLE_BYTES}-byte limit")
+            executable = member
+        if executable is None:
             raise ValueError("release archive must contain exactly one regular leantoken executable")
         binary = destination / "leantoken"
-        with binary.open("xb") as output:
-            output.write(bundle.extractfile(members[0]).read())
+        with bundle.extractfile(executable) as executable_source, binary.open("xb") as output:
+            binary_digest, binary_bytes = copy_bounded(
+                executable_source, output, MAX_EXECUTABLE_BYTES, "extracted executable"
+            )
+        if binary_bytes != executable.size:
+            raise ValueError("extracted executable size differs from its archive declaration")
         binary.chmod(0o755)
     resolved = subprocess.check_output(["git", "rev-parse", f"v{version}^{{}}"], cwd=WORKSPACE).decode().strip()
     if resolved != commit:
@@ -80,7 +158,7 @@ def prepare(version, commit, workspace):
         "commit": commit,
         "archive_url": url,
         "archive_sha256": checksum,
-        "binary_sha256": sha256(binary.read_bytes()),
+        "binary_sha256": binary_digest,
         "schema_source": schema_path,
         "schema_source_sha256": sha256(git_bytes(commit, schema_path)),
         "cargo_lock_sha256": sha256(lock),

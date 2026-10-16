@@ -13,6 +13,13 @@ from unittest import mock
 import generate
 
 
+class FixedBufferResponse(io.BytesIO):
+    def read(self, size=-1):
+        if size < 0 or size > generate.COPY_BUFFER_BYTES:
+            raise AssertionError(f"unbounded transfer read: {size}")
+        return super().read(size)
+
+
 class PrivateGeneratorWorkspaceTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="leantoken-generator-test-")
@@ -44,8 +51,8 @@ class PrivateGeneratorWorkspaceTests(unittest.TestCase):
 
         def download(url):
             if url.endswith(".sha256"):
-                return io.BytesIO(f"{self.checksum}  {generate.ARCHIVE}\n".encode())
-            return io.BytesIO(self.archive)
+                return FixedBufferResponse(f"{self.checksum}  {generate.ARCHIVE}\n".encode())
+            return FixedBufferResponse(self.archive)
 
         def git_source(_revision, path):
             if path == "Cargo.lock":
@@ -177,6 +184,69 @@ version = "2.6.0"
         )
         self.generate.assert_not_called()
         self.assertIn(str(workspace), self.stderr.getvalue())
+
+    def test_checksum_response_and_archive_transfer_enforce_actual_byte_limits(self):
+        for constant, limit, message, artifact in [
+            ("MAX_CHECKSUM_BYTES", 16, "checksum response exceeded", None),
+            ("MAX_ARCHIVE_BYTES", len(self.archive) - 1, "release archive exceeded", generate.ARCHIVE),
+        ]:
+            with self.subTest(constant=constant), mock.patch.object(generate, constant, limit):
+                with self.assertRaisesRegex(ValueError, message):
+                    generate.main(prepare_only=False)
+                destination = self.workspaces[-1] / self.version / "generator"
+                if artifact is not None:
+                    self.assertLessEqual((destination / artifact).stat().st_size, limit)
+                else:
+                    self.assertFalse((destination / generate.ARCHIVE).exists())
+                self.assertFalse((destination / "leantoken").exists())
+                self.generate.assert_not_called()
+
+    def test_declared_executable_limit_refuses_before_extraction(self):
+        with mock.patch.object(generate, "MAX_EXECUTABLE_BYTES", len(self.binary_bytes) - 1):
+            with self.assertRaisesRegex(ValueError, "declared executable exceeded"):
+                generate.main(prepare_only=False)
+        destination = self.workspaces[0] / self.version / "generator"
+        self.assertFalse((destination / "leantoken").exists())
+        self.generate.assert_not_called()
+
+    def test_extracted_stream_is_bounded_independently_of_declared_size(self):
+        for extra, limit, message in [
+            (b"oversized", len(self.binary_bytes), "extracted executable exceeded"),
+            (b"x", len(self.binary_bytes) + 8, "size differs from its archive declaration"),
+        ]:
+            with self.subTest(limit=limit), mock.patch.object(generate, "MAX_EXECUTABLE_BYTES", limit):
+                with mock.patch.object(
+                    generate.tarfile.TarFile,
+                    "extractfile",
+                    return_value=FixedBufferResponse(self.binary_bytes + extra),
+                ):
+                    with self.assertRaisesRegex(ValueError, message):
+                        generate.main(prepare_only=False)
+                binary = self.workspaces[-1] / self.version / "generator" / "leantoken"
+                self.assertLessEqual(binary.stat().st_size, limit)
+                self.generate.assert_not_called()
+
+    def test_expanded_member_count_and_declared_sum_limits_refuse_execution(self):
+        self.set_archive_members(["leantoken", "notes"])
+        for constant, limit, message in [
+            ("MAX_TAR_BYTES", 1024, "expanded archive exceeded"),
+            ("MAX_ARCHIVE_MEMBERS", 1, "archive exceeded 1-member limit"),
+            ("MAX_ARCHIVE_DECLARED_BYTES", len(self.binary_bytes), "archive declared bytes exceeded"),
+        ]:
+            with self.subTest(constant=constant), mock.patch.object(generate, constant, limit):
+                with self.assertRaisesRegex(ValueError, message):
+                    generate.main(prepare_only=False)
+                destination = self.workspaces[-1] / self.version / "generator"
+                self.assertFalse((destination / "leantoken").exists())
+                if constant == "MAX_TAR_BYTES":
+                    self.assertLessEqual((destination / "release.tar").stat().st_size, limit)
+                self.generate.assert_not_called()
+
+    def test_oversized_extended_header_refuses_before_large_metadata_allocation(self):
+        self.set_archive_members(["leantoken", "x" * (generate.COPY_BUFFER_BYTES + 1)])
+        with self.assertRaisesRegex(ValueError, "archive metadata read exceeded the fixed buffer"):
+            generate.main(prepare_only=False)
+        self.generate.assert_not_called()
 
 
 if __name__ == "__main__":

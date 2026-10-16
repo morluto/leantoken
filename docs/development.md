@@ -525,6 +525,14 @@ fresh atomically created private workspace (0700) for downloads, extraction, and
 execution. Successful `--prepare` runs discard their verified downloads;
 generation redownloads and verifies without reusing an executable cache. Failures
 preserve that private workspace and the available fixture/log evidence.
+Preparation independently caps the checksum response at 4 KiB, compressed
+archive at 16 MiB, expanded tar at 128 MiB, member count at 64, total declared
+member bytes at 96 MiB, and executable at 64 MiB. Actual download/executable
+bytes are counted in 64 KiB copy/hash chunks; the executable's declared size is
+checked before extraction. Tar metadata reads are capped at 64 KiB and XZ decoder
+memory at 128 MiB. The largest pinned official archive/executable are
+8,295,356/45,890,808 bytes, leaving reviewable headroom. Normal CI quality runs
+the offline limit/refusal tests in ordinary and optimized Python modes.
 Home/configuration/data and temporary paths are isolated, each process has a
 60-second timeout and a 4 MiB output-file limit, and failure preserves its
 workspace and logs. Review
