@@ -270,8 +270,12 @@ fn assess(root: &Path, report: &Path) -> Result<(), String> {
             continue;
         };
         let path = relative.to_string_lossy().replace('\\', "/");
-        // LLVM's filename filters do not recognize every #[cfg(test)] module.
-        if !path.starts_with("src/") || inventory.get(&path) == Some(&true) {
+        // LLVM may report test-only modules, including helpers in declaration
+        // owners whose production syntax policy() has already validated.
+        if !path.starts_with("src/")
+            || inventory.get(&path) == Some(&true)
+            || policy.declarations.contains_key(&path)
+        {
             continue;
         }
         if !seen.insert(path.clone()) {
@@ -810,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn declaration_disposition_cannot_hide_new_executable_logic() {
+    fn reported_declaration_helpers_cannot_hide_new_executable_logic() {
         let root = fixture();
         let path = root.path().join(POLICY);
         let mut policy: serde_json::Value =
@@ -820,13 +824,26 @@ mod tests {
         fs::write(path, policy.to_string()).unwrap();
         fs::write(
             root.path().join("src/facade.rs"),
-            "pub use std::path::Path;\n",
+            "pub const VERSION: u64 = 1;\n\
+             #[cfg(test)] mod helpers { pub fn probe() {} }\n",
         )
         .unwrap();
-        check_policy(root.path()).unwrap();
+        let report_path = report(root.path(), 90);
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+        let metric = serde_json::json!({"count": 100, "covered": 0});
+        report["data"][0]["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "filename": root.path().join("src/facade.rs"),
+                "summary": {"lines": metric, "functions": metric, "regions": metric}
+            }));
+        fs::write(&report_path, report.to_string()).unwrap();
+        assess(root.path(), &report_path).unwrap();
         fs::write(root.path().join("src/facade.rs"), "pub fn hidden() {}\n").unwrap();
         assert!(
-            check_policy(root.path())
+            assess(root.path(), &report_path)
                 .unwrap_err()
                 .contains("gained executable logic")
         );
