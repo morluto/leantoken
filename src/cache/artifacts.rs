@@ -83,6 +83,7 @@ pub(super) fn inspect_database(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ))?;
+    budget.sqlite_result(connection.busy_timeout(budget.limits.busy_timeout))?;
     budget.observe_sqlite(&connection)?;
     budget.sqlite_result(connection.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
@@ -93,7 +94,6 @@ pub(super) fn inspect_database(
         MAX_INVENTORY_VALUE_BYTES,
     ))?;
     budget.sqlite_result(connection.pragma_update(None, "cache_size", -256))?;
-    budget.sqlite_result(connection.busy_timeout(Duration::from_millis(100)))?;
     let migration_version =
         budget.sqlite_result(
             connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)),

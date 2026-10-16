@@ -135,6 +135,34 @@ fn inventory_sqlite_progress_interrupts_expensive_metadata() {
 }
 
 #[test]
+fn inventory_first_schema_read_obeys_its_busy_timeout() {
+    use super::super::artifacts::inspect_database;
+
+    let temp = tempfile::tempdir().unwrap();
+    let database = temp.path().join(DATABASE_NAME);
+    let holder = Connection::open(&database).unwrap();
+    holder
+        .execute_batch(
+            "PRAGMA journal_mode=DELETE;
+             CREATE TABLE meta(id INTEGER PRIMARY KEY, schema_version INTEGER);
+             BEGIN EXCLUSIVE;",
+        )
+        .unwrap();
+    let mut manager = CacheManager::new(temp.path().to_path_buf(), 0);
+    manager.inventory_limits.busy_timeout = Duration::ZERO;
+    // A generous outer quota still distinguishes SQLite's default five-second
+    // busy handler from the timeout installed before the first schema access.
+    manager.inventory_limits.elapsed = Duration::from_secs(4);
+    let error = inspect_database(&database, &mut InventoryBudget::new(&manager)).unwrap_err();
+    match error {
+        Error::Sqlite(rusqlite::Error::SqliteFailure(error, _)) => {
+            assert_eq!(error.code, rusqlite::ErrorCode::DatabaseBusy);
+        }
+        other => panic!("expected SQLITE_BUSY from the cold schema read, got {other:?}"),
+    }
+}
+
+#[test]
 fn inventory_revalidation_shares_sqlite_admission_between_caches() {
     let temp = tempfile::tempdir().unwrap();
     let mut manager = CacheManager::new(temp.path().join("managed"), 10_000);
@@ -212,4 +240,62 @@ fn cancelled_inventory_does_not_authorize_pruning() {
     prune.yes = true;
     assert!(matches!(manager.prune(&prune), Err(Error::Cancelled)));
     assert_eq!(fs::read(database).unwrap(), before);
+}
+
+#[test]
+fn cancelled_prune_preserves_completed_removal_and_leaves_later_databases_untouched() {
+    use super::super::CachePruneOutcome;
+
+    let temp = tempfile::tempdir().unwrap();
+    let manager = CacheManager::new(temp.path().join("managed"), 10_000);
+    let mut databases = Vec::new();
+    for index in 0..3 {
+        let repository = temp.path().join(format!("repository-{index}"));
+        fs::create_dir(&repository).unwrap();
+        let (id, database) = create_current_cache(&manager, &repository, 9_000);
+        let before = fs::read(&database).unwrap();
+        databases.push((id, database, before));
+    }
+    let inventory = manager.list_with(&CacheListRequest::default()).unwrap();
+    let mut prune = request();
+    prune.max_total_bytes = Some(0);
+    prune.dry_run = false;
+    prune.yes = true;
+    let cancellation = manager.cancellation.clone();
+    let mut removals = 0;
+    let report = manager
+        .prune_observing(&prune, || {
+            removals += 1;
+            cancellation.cancel();
+        })
+        .unwrap();
+
+    assert_eq!(removals, 1);
+    assert_eq!(report.results.len(), 3);
+    let deleted = report
+        .results
+        .iter()
+        .filter(|row| row.outcome.action() == CachePruneAction::Deleted)
+        .collect::<Vec<_>>();
+    assert_eq!(deleted.len(), 1);
+    assert_eq!(report.total_bytes_before, inventory.total_bytes);
+    assert_eq!(report.reclaimed_bytes, deleted[0].size_bytes);
+    assert_eq!(
+        report.total_bytes_after,
+        report.total_bytes_before - report.reclaimed_bytes
+    );
+    let mut retained_bytes = 0;
+    for (id, database, before) in databases {
+        let row = report.results.iter().find(|row| row.id == id).unwrap();
+        match &row.outcome {
+            CachePruneOutcome::Deleted => assert!(!database.exists()),
+            CachePruneOutcome::Failed { error } => {
+                assert_eq!(error, &Error::Cancelled.to_string());
+                assert_eq!(fs::read(database).unwrap(), before);
+                retained_bytes += row.size_bytes;
+            }
+            outcome => panic!("unexpected decision after cancellation: {outcome:?}"),
+        }
+    }
+    assert_eq!(report.total_bytes_after, retained_bytes);
 }

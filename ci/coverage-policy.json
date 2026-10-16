@@ -44,6 +44,12 @@
       "minimum_functions": 95,
       "minimum_regions": 89
     },
+    "src/cache/inventory.rs": {
+      "owner": "src/cache",
+      "minimum_lines": 92,
+      "minimum_functions": 95,
+      "minimum_regions": 89
+    },
     "src/cache/list.rs": {
       "owner": "src/cache",
       "minimum_lines": 90,

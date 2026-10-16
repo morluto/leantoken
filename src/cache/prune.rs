@@ -2,6 +2,14 @@ use super::*;
 
 impl CacheManager {
     pub(super) fn prune(&self, request: &CachePruneRequest) -> Result<CachePruneReport> {
+        self.prune_observing(request, || {})
+    }
+
+    pub(super) fn prune_observing(
+        &self,
+        request: &CachePruneRequest,
+        mut after_removal: impl FnMut(),
+    ) -> Result<CachePruneReport> {
         let plan = CachePrunePlan::try_from(request)?;
         let (entries, _) = self.inspect_all()?;
         let total_bytes_before = entries.iter().fold(0u64, |total, cache| {
@@ -144,6 +152,7 @@ impl CacheManager {
             match removal.error {
                 None => {
                     results.push(prune_result(&current, CachePruneOutcome::Deleted, reasons));
+                    after_removal();
                 }
                 Some(error) => results.push(prune_result(
                     &current,

@@ -15,6 +15,7 @@ pub(super) struct InventoryLimits {
     pub(super) sqlite_opens: usize,
     pub(super) metadata_bytes: usize,
     pub(super) sqlite_steps: usize,
+    pub(super) busy_timeout: Duration,
     pub(super) elapsed: Duration,
 }
 
@@ -46,6 +47,7 @@ impl Default for InventoryLimits {
             sqlite_opens: 1024,
             metadata_bytes: 8 * 1024 * 1024,
             sqlite_steps: 2_000_000,
+            busy_timeout: Duration::from_millis(100),
             elapsed: Duration::from_secs(10),
         }
     }
