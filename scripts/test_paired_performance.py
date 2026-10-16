@@ -315,8 +315,10 @@ class PairedPerformanceCliTests(unittest.TestCase):
             self.assertIn("invalid Benchstat comparison", completed.stderr)
 
     def test_gate_rejects_non_finite_regression_thresholds(self) -> None:
-        # 1e999 is valid JSON syntax but overflows the Python float range.
-        for literal in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
+        # Exponents and large JSON integers can exceed the Python float range.
+        for literal in (
+            "NaN", "Infinity", "-Infinity", "1e999", "-1e999", "1" + "0" * 400,
+        ):
             with self.subTest(
                 maximum=literal
             ), tempfile.TemporaryDirectory() as directory:
