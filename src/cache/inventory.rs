@@ -19,25 +19,6 @@ pub(super) struct InventoryLimits {
     pub(super) elapsed: Duration,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn elapsed_budget_is_checked_without_waiting_for_another_sqlite_callback() {
-        let manager = CacheManager::new(PathBuf::new(), 0);
-        let mut budget = InventoryBudget::new(&manager);
-        budget.started = Instant::now() - Duration::from_secs(11);
-        assert!(matches!(
-            budget.check(),
-            Err(Error::CacheInventoryIncomplete {
-                dimension: "elapsed_millis",
-                ..
-            })
-        ));
-    }
-}
-
 impl Default for InventoryLimits {
     fn default() -> Self {
         Self {
@@ -153,5 +134,24 @@ impl InventoryBudget {
             }
             other => Ok(other?),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elapsed_budget_is_checked_without_waiting_for_another_sqlite_callback() {
+        let manager = CacheManager::new(PathBuf::new(), 0);
+        let mut budget = InventoryBudget::new(&manager);
+        budget.started = Instant::now() - Duration::from_secs(11);
+        assert!(matches!(
+            budget.check(),
+            Err(Error::CacheInventoryIncomplete {
+                dimension: "elapsed_millis",
+                ..
+            })
+        ));
     }
 }
