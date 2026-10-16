@@ -302,6 +302,7 @@ impl ReconciliationCoordinator {
         let coordination = self.inner.coordination.clone();
         let indexing_admission = Arc::clone(&self.inner.indexing_admission);
         tokio::spawn(async move {
+            tracing::debug!(wave_id, phase = "admission", "reconciliation progress");
             let permit = tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => Err(Error::Cancelled),
@@ -318,6 +319,7 @@ impl ReconciliationCoordinator {
             };
             let result = tokio::task::spawn_blocking(move || {
                 let _permit = permit;
+                tracing::debug!(wave_id, phase = "operation_lock", "reconciliation progress");
                 let operation = coordination.acquire_operation(&cancellation)?;
                 if !runner_coordinator.mark_running(wave_id)? {
                     operation.release()?;
@@ -327,6 +329,11 @@ impl ReconciliationCoordinator {
                 let result = indexer
                     .reconcile_cancellable_report(IndexingMode::Reconcile, &cancellation)
                     .map(|_| ());
+                tracing::debug!(
+                    wave_id,
+                    phase = "release_operation",
+                    "reconciliation progress"
+                );
                 operation.release()?;
                 result
             })

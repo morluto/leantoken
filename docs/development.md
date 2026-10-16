@@ -145,6 +145,14 @@ indexing/SQLite, Git, and filesystem owners have documented two-minute bounds;
 real-process/MCP tests have three minutes; and the opt-in extended owner has ten
 minutes. Retries remain disabled in every profile.
 
+The cross-process receipt-rebase MCP test captures scoped debug diagnostics for
+receipt phases, reconciliation admission and operation-lock waits, and indexer
+timings. Only that child enables these targets; the existing 64 KiB stderr cap
+and request/readiness deadlines remain in effect. Phase events contain fixed
+labels, not receipt IDs or source text. A timeout preserves the last request
+identity and the phase reached inside the child, so a passing rerun must not be
+treated as a fix for an unexplained timeout (see issue #623).
+
 Run the token-economy contract explicitly when changing retrieval accounting or
 its fixture. CI selects this lane for its owned source, suite, fixture, and
 manifest paths on every supported OS:

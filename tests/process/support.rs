@@ -226,6 +226,14 @@ impl McpProcess {
         Self::spawn_with_command_args(root, database, arguments, &[], Stdio::piped())
     }
 
+    pub(crate) fn spawn_with_diagnostic_stderr(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        filter: &str,
+    ) -> Self {
+        Self::spawn_with_log_filter(root, database, &[], &[], Stdio::piped(), Some(filter))
+    }
+
     pub(crate) fn spawn_with_command_args(
         root: &std::path::Path,
         database: &std::path::Path,
@@ -233,8 +241,22 @@ impl McpProcess {
         mcp_arguments: &[&str],
         stderr: Stdio,
     ) -> Self {
+        Self::spawn_with_log_filter(root, database, arguments, mcp_arguments, stderr, None)
+    }
+
+    fn spawn_with_log_filter(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+        mcp_arguments: &[&str],
+        stderr: Stdio,
+        filter: Option<&str>,
+    ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         let process_home = apply_hermetic_std_environment(&mut command, root);
+        if let Some(filter) = filter {
+            command.env("RUST_LOG", filter);
+        }
         command
             .args([
                 "--root",
