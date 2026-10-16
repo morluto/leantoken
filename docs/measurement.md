@@ -949,6 +949,22 @@ comparison times all frozen task discovery queries against one ranked
 but its latency ratio is not a speedup or regression claim because the
 operations have different semantics.
 
+The MCP readiness probe has one monotonic deadline across retries and incoming
+notifications. An owned stdout reader moves complete newline-delimited frames
+through a queue holding at most one frame; the reader can hold one additional
+frame while waiting to enqueue it. A response timeout invalidates that client,
+as do EOF, decoding errors, malformed JSON-RPC, and frames over 4,194,304
+characters. The stdout reader caps each read at 4,194,305 characters, so even
+unterminated output cannot grow a frame without bound. Invalid-JSON diagnostics
+retain at most 256 characters. A failed client cannot send another request or
+reuse a late reply for another measurement. Cleanup stops queue
+delivery and wakes a blocked response caller through the same bounded queue,
+then terminates and waits for the owned child (killing it after the existing
+five-second grace period), then joins both output readers before closing their
+streams. Initialization and timed workload calls retain their existing response
+timing contract. The reader and queue are part of the measurement client, so
+new reports bind the runner revision as usual.
+
 The report separates cold indexing, MCP initialization/readiness, warm p50/p95,
 payload bytes, database bytes, and raw alternating samples. It does not include
 provider latency, model turns, editing, validation, or task success and
