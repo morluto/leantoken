@@ -211,8 +211,10 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
         .expect("run private runtime setup");
     assert!(
         setup.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&setup.stderr)
+        "status: {}\nsetup report: {}\nstderr: {}",
+        setup.status,
+        String::from_utf8_lossy(&setup.stdout[..setup.stdout.len().min(16 * 1024)]),
+        String::from_utf8_lossy(&setup.stderr[..setup.stderr.len().min(16 * 1024)])
     );
     let report: serde_json::Value =
         serde_json::from_slice(&setup.stdout).expect("setup JSON output");
