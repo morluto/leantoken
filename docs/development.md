@@ -416,9 +416,14 @@ Tests are organized around observable behavior:
 Integration test files are modules of one `integration` target so Cargo can
 run them in parallel rather than starting one executable per file.
 
-- `crates/test-suite/src/domains/storage.rs`: migrations, WAL/foreign keys,
+- `crates/test-suite/src/domains/storage.rs`: WAL/foreign keys,
   FTS5, atomic replacement, rollback, stale-plan rejection, reopen, query-plan
   evidence, and generation behavior;
+- `crates/test-suite/src/domains/storage_migrations.rs`: authoritative migration
+  prefix matrix, immutable released main/WAL fixtures, canonical schema and data
+  compatibility, migration rollback, and append-only history. Select it with
+  `cargo test-focused storage_migrations`; the few private receipt migration
+  checks retain crate-private evaluation and namespace semantics;
 - `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
   safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
   bounded chunking, targeted reconciliation, and dependency invalidation;
@@ -462,7 +467,7 @@ Treat the SQLite schema and retrieval ordering as behavioral contracts, not
 implementation details. When changing them:
 
 - for schema changes, use a versioned migration and test both a new database
-  and an upgraded one;
+  and every supported migration prefix through `cargo test-focused storage_migrations`;
 - keep multi-query responses inside one storage-owned snapshot capability;
 - bind public pagination cursors to the committed generation and operation
   parameters, even when the underlying query uses a simpler keyset;
@@ -487,6 +492,39 @@ Prefer query-plan evidence (`EXPLAIN QUERY PLAN`) and focused integration tests
 for storage changes. A faster microbenchmark is insufficient if it weakens
 atomic publication, stale-plan rejection, bounded memory, or deterministic
 results.
+
+Migration fixtures have one SQL owner: the private suite compiles the real
+`src/storage/schema.rs` declarations through `#[path]` for prefix generation,
+then upgrades using the normal product opener. Its helper is `cfg(test)` only;
+do not add a product test feature, copy migration SQL, subtract newer schema
+objects, or assign a predecessor's `user_version` manually. The matrix expands
+with the authoritative chain. Append a migration rather than editing or
+reordering a released entry, and explicitly update the migration digests,
+latest schema identity, and release-fixture review cursor in
+`crates/test-suite/fixtures/storage-migrations/compatibility.json`. Dropping a
+supported predecessor needs a compatibility decision and changelog entry.
+
+Release anchors in that directory are immutable main/WAL outputs of official
+executables, with source, tool, command, schema, and byte provenance. Before
+publishing a schema change, exercise at least the previous released format.
+The v0.1.15 anchor also proves genuine source-only savings accounting upgrades;
+v0.1.27 is the previous package release, and v0.1.28 records the shipped current
+format independently of later changes under the same package version.
+
+Intentional fixture regeneration runs `generate.py` from that directory on
+Linux with Python 3.11 or newer and the generator-only `blake3==1.0.11` package
+in a disposable virtual environment. `--prepare` downloads and verifies the
+pinned release archives without executing them; running without that option
+indexes one small source file per official executable. Home/configuration/data
+and temporary paths are isolated, each process has a 60-second timeout and a
+4 MiB output-file limit, and failure preserves its workspace and logs. Review
+the resulting artifacts and provenance, then explicitly update each
+`release_anchors[*].metadata_blake3` in the compatibility manifest. Regeneration
+does not reproduce random namespaces or timestamps byte for byte; normal tests
+verify the exact committed artifact identities and need no generator, network,
+Python, or released executable. Preserve committed WAL with the main database;
+never consolidate it using a different SQLite writer and label it untouched
+release output.
 
 ## MCP schema snapshots
 

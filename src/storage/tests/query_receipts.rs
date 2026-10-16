@@ -191,30 +191,20 @@ fn cloned_databases_regenerate_receipt_namespaces() {
 
 #[test]
 fn first_identity_recording_rotates_legacy_receipt_namespaces() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    let storage = indexed_storage(&database);
-    storage
-        .persist_query_receipt_at(&record(&storage, "absent"), 1_000)
-        .expect("persist receipt");
-    let namespace_before: String = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    let directory =
+        leantoken_test_support::Sandbox::new(module_path!(), "legacy_identity_migration")
+            .expect("sandbox");
+    let database = directory.root().join("index.sqlite");
+    let mut connection = Connection::open(&database).expect("historical connection");
+    migration_test_support::apply_prefix(&mut connection, 11)
+        .expect("authoritative query-receipt prefix without runtime identity metadata");
+    let namespace_before: String = connection
         .query_row(
             "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
             [],
             |row| row.get(0),
         )
         .expect("query namespace");
-    drop(storage);
-
-    // Simulate a pre-change release database: receipts exist but the
-    // clone-signal column has never been recorded.
-    let connection = Connection::open(&database).expect("open legacy database");
-    connection
-        .execute_batch("ALTER TABLE meta DROP COLUMN database_identity;")
-        .expect("drop clone-signal column");
     drop(connection);
 
     let reopened = Storage::open(&database).expect("reopen");
@@ -364,87 +354,6 @@ fn query_receipt_queries_use_bounded_indexes() {
         lookup_plan.contains("query_coverage_receipts_predicate_idx"),
         "{lookup_plan}"
     );
-}
-
-#[test]
-fn query_receipt_migration_preserves_existing_index_and_rolls_back_conflicts() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    let storage = indexed_storage(&database);
-    let before = storage.counts().expect("counts");
-    drop(storage);
-
-    downgrade_query_receipt_schema(&database, false);
-    let migrated = Storage::open(&database).expect("migrate query receipts");
-    let after = migrated.counts().expect("migrated counts");
-    assert_eq!(
-        (
-            after.files,
-            after.chunks,
-            after.symbols,
-            after.source_bytes,
-            after.languages
-        ),
-        (
-            before.files,
-            before.chunks,
-            before.symbols,
-            before.source_bytes,
-            before.languages.clone()
-        )
-    );
-    assert_eq!(
-        migrated.meta().expect("migrated meta").schema_version,
-        CURRENT_SCHEMA_VERSION
-    );
-    let connection = Connection::open(&database).expect("inspect migration");
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .expect("migration version"),
-        CURRENT_MIGRATION_VERSION
-    );
-    drop(connection);
-    drop(migrated);
-
-    downgrade_query_receipt_schema(&database, true);
-    assert!(Storage::open(&database).is_err());
-    let connection = Connection::open(&database).expect("inspect rollback");
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .expect("rolled back version"),
-        10
-    );
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
-            .expect("preserved files"),
-        i64::try_from(before.files).expect("bounded files")
-    );
-}
-
-fn downgrade_query_receipt_schema(database: &Path, conflicting_table: bool) {
-    let connection = Connection::open(database).expect("downgrade connection");
-    connection
-        .execute_batch(
-            "DROP TABLE query_coverage_receipts;
-             DROP TABLE query_coverage_receipt_usage;
-             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
-             ALTER TABLE meta DROP COLUMN index_scope_includes;
-             ALTER TABLE meta DROP COLUMN index_scope_excludes;
-             UPDATE meta SET schema_version = 9;
-             PRAGMA user_version = 10;",
-        )
-        .expect("downgrade query receipt schema");
-    if conflicting_table {
-        connection
-            .execute(
-                "CREATE TABLE query_coverage_receipt_usage(conflicting_value TEXT)",
-                [],
-            )
-            .expect("conflicting migration table");
-    }
 }
 
 #[test]

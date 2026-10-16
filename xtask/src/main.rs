@@ -85,6 +85,7 @@ fn focused_test_command(root: &Path, args: Vec<String>) -> Result<(), XtaskError
     let suite_domain = [
         "indexing_repository",
         "storage",
+        "storage_migrations",
         "retrieval",
         "protocol",
         "platform",

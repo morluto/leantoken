@@ -1116,75 +1116,67 @@ fn receipt_rebase_structural_lookup_uses_file_bounded_indexes() {
 }
 
 #[test]
-fn receipt_migration_preserves_existing_index_and_failed_migration_rolls_back() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    {
-        let storage = Storage::open(&database).expect("storage");
-        storage
-            .full_reconcile("config", vec![sample_file("lib.rs", "fn indexed() {}\n")])
-            .expect("index");
-    }
-    downgrade_receipt_schema(&database, false);
-    let migrated = Storage::open(&database).expect("migrate receipts");
-    assert!(migrated.find_file("lib.rs").expect("find").is_some());
-    drop(migrated);
-
-    downgrade_receipt_schema(&database, true);
-    assert!(Storage::open(&database).is_err());
-    let connection = Connection::open(&database).expect("inspect failed migration");
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
-            .expect("file count"),
-        1
-    );
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .expect("migration version"),
-        7
-    );
-}
-
-#[test]
 fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    let storage = Storage::open(&database).expect("storage");
-    let generation = storage
-        .full_reconcile("config", vec![sample_file("lib.rs", "fn indexed() {}\n")])
-        .expect("index");
+    let directory = leantoken_test_support::Sandbox::new(module_path!(), "exact_only_migration")
+        .expect("sandbox");
+    let database = directory.root().join("index.sqlite");
+    let mut connection = Connection::open(&database).expect("historical connection");
+    migration_test_support::apply_prefix(&mut connection, 9)
+        .expect("authoritative prefix before exact-only evidence");
     let prior = evidence(1);
-    let receipt_id = storage
-        .evaluate_receipt(None, generation, std::slice::from_ref(&prior), true)
-        .expect("receipt")
-        .receipt_id;
-    drop(storage);
-
-    let connection = Connection::open(&database).expect("downgrade connection");
+    let legacy_evidence_bytes =
+        i64::try_from(prior.logical_bytes() - 8).expect("bounded pre-exact-only evidence bytes");
     connection
         .execute_batch(
-            "DROP TABLE query_coverage_receipts;
-             DROP TABLE query_coverage_receipt_usage;
-             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
-             ALTER TABLE meta DROP COLUMN index_scope_includes;
-             ALTER TABLE meta DROP COLUMN index_scope_excludes;
-             ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
-             UPDATE retrieval_receipt_evidence
-             SET logical_bytes = logical_bytes - 8;
-             UPDATE retrieval_receipts
-             SET evidence_bytes = evidence_bytes - evidence_count * 8;
-             UPDATE retrieval_receipt_usage
-             SET evidence_bytes = evidence_bytes - evidence_count * 8
-             WHERE id = 1;
-             UPDATE meta SET schema_version = 8 WHERE id = 1;
-             PRAGMA user_version = 9;",
+            "PRAGMA foreign_keys = ON;
+             PRAGMA max_page_count = 256;
+             UPDATE meta SET repository_identity='historical-repository',repository_generation=1;",
         )
-        .expect("downgrade exact-only migration");
+        .expect("historical repository metadata");
+    connection.execute(
+        "INSERT INTO retrieval_receipts(id,repository_identity,repository_generation,created_unix_millis,last_access_unix_millis,expires_unix_millis,access_sequence,logical_bytes,evidence_count,evidence_bytes)
+         VALUES (1,'historical-repository',1,1000,1000,9223372036854775807,1,?1,1,?2)",
+        params![
+            usize_to_i64(RECEIPT_HEADER_FIXED_LOGICAL_BYTES + "historical-repository".len())
+                .expect("bounded header bytes"),
+            legacy_evidence_bytes,
+        ],
+    ).expect("historical receipt header");
+    connection.execute(
+        "INSERT INTO retrieval_receipt_evidence(receipt_id,ordinal,path,start_line,end_line,content_hash,semantic_signature,logical_bytes)
+         VALUES (1,0,?1,?2,?3,?4,?5,?6)",
+        params![
+            prior.path.as_str(),
+            usize_to_i64(prior.start_line).expect("line"),
+            usize_to_i64(prior.end_line).expect("line"),
+            prior.content_hash.as_str(),
+            prior.semantic_signature().map(|signature| signature as i64),
+            legacy_evidence_bytes,
+        ],
+    ).expect("ordinary historical evidence without an exact-only column");
+    connection.execute(
+        "UPDATE retrieval_receipt_usage SET next_access_sequence=1,evidence_count=1,evidence_bytes=?1 WHERE id=1",
+        [legacy_evidence_bytes],
+    ).expect("historical evidence usage");
     drop(connection);
 
     let migrated = Storage::open(&database).expect("migrate exact-only column");
+    let namespace: String = migrated
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM retrieval_receipt_usage WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("current namespace after first identity recording");
+    let receipt_id = crate::receipt::format_receipt_id(&namespace, 1);
+    let stored = migrated
+        .read_receipt(&receipt_id, 1_001)
+        .expect("upgraded evidence");
+    assert_eq!(stored.evidence.as_slice(), std::slice::from_ref(&prior));
+    assert!(!stored.evidence[0].exact_only());
     let overlapping = ReceiptEvidence::new(
         prior.path,
         prior.start_line,
@@ -1193,35 +1185,7 @@ fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
         Some("unrelated replacement"),
     );
     let evaluation = migrated
-        .evaluate_receipt(Some(&receipt_id), generation, &[overlapping], true)
+        .evaluate_receipt_at(Some(&receipt_id), 1, &[overlapping], true, 1_001)
         .expect("evaluate migrated ordinary evidence");
     assert_eq!(evaluation.decisions, vec![ReceiptDecision::SuppressOverlap]);
-}
-
-fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
-    let connection = Connection::open(database).expect("downgrade connection");
-    connection
-        .execute_batch(
-            "DROP TABLE IF EXISTS query_coverage_receipts;
-             DROP TABLE IF EXISTS query_coverage_receipt_usage;
-             DROP TABLE IF EXISTS read_delta_bases;
-             DROP TABLE IF EXISTS read_delta_base_usage;
-             DROP TABLE IF EXISTS retrieval_receipt_evidence;
-             DROP TABLE IF EXISTS retrieval_receipts;
-             DROP TABLE IF EXISTS retrieval_receipt_usage;
-             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
-             ALTER TABLE meta DROP COLUMN index_scope_includes;
-             ALTER TABLE meta DROP COLUMN index_scope_excludes;
-             UPDATE meta SET schema_version = 6 WHERE id = 1;
-             PRAGMA user_version = 7;",
-        )
-        .expect("downgrade receipt schema");
-    if conflicting_table {
-        connection
-            .execute(
-                "CREATE TABLE retrieval_receipts(conflicting_value TEXT)",
-                [],
-            )
-            .expect("conflicting migration table");
-    }
 }
