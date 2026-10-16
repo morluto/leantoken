@@ -7,7 +7,7 @@ use std::{
 use rmcp::{
     ErrorData, RoleServer,
     model::{
-        ClientNotification, ClientRequest, GetExtensions, JsonRpcMessage, ProtocolVersion,
+        ClientNotification, ClientRequest, GetExtensions, GetMeta, JsonRpcMessage, ProtocolVersion,
         ServerResult,
     },
     service::{RxJsonRpcMessage, TxJsonRpcMessage},
@@ -241,7 +241,11 @@ where
         }
     }
 
-    fn overloaded_response(&self, id: rmcp::model::RequestId) -> TxJsonRpcMessage<RoleServer> {
+    fn overloaded_response(
+        &self,
+        id: rmcp::model::RequestId,
+        request_protocol: Option<&ProtocolVersion>,
+    ) -> TxJsonRpcMessage<RoleServer> {
         let result = retryable_tool_result(
             RetryableToolResponse::new(
                 "retrieval_capacity_exhausted",
@@ -251,12 +255,12 @@ where
             self.result_mode,
         );
         let mut result = ServerResult::CallToolResult(result);
-        let protocol = crate::tokens::McpProtocolShape::negotiated(
-            self.negotiated_protocol
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_ref(),
-        );
+        let negotiated = self
+            .negotiated_protocol
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let protocol =
+            crate::tokens::McpProtocolShape::negotiated(request_protocol.or(negotiated.as_ref()));
         if protocol == crate::tokens::McpProtocolShape::Legacy {
             result.strip_result_type_for_legacy_peer();
         }
@@ -310,7 +314,13 @@ where
                         // is written directly, bypassing `send`, so a reserved
                         // in-flight or tombstoned ID is never released early.
                         let response = if tool_call {
-                            self.overloaded_response(id)
+                            let protocol = match &message {
+                                JsonRpcMessage::Request(request) => {
+                                    request.request.get_meta().protocol_version()
+                                }
+                                _ => None,
+                            };
+                            self.overloaded_response(id, protocol.as_ref())
                         } else {
                             TxJsonRpcMessage::<RoleServer>::error(
                                 ErrorData::invalid_request("request id is already in flight", None),

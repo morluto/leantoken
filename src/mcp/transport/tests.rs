@@ -444,18 +444,20 @@ fn dispatch_permit_returns_when_a_request_is_cancelled() {
 #[test]
 fn overload_results_follow_the_negotiated_rmcp_result_shape() {
     let transport = BoundedStdioTransport::new(RequestAdmission::new(1), McpResultMode::Dual);
-    let legacy =
-        serde_json::to_value(transport.overloaded_response(rmcp::model::NumberOrString::Number(1)))
-            .expect("serialize legacy overload response");
+    let legacy = serde_json::to_value(
+        transport.overloaded_response(rmcp::model::NumberOrString::Number(1), None),
+    )
+    .expect("serialize legacy overload response");
     assert!(legacy.pointer("/result/resultType").is_none());
 
     *transport
         .negotiated_protocol
         .write()
         .expect("protocol lock") = Some(ProtocolVersion::V_2026_07_28);
-    let modern =
-        serde_json::to_value(transport.overloaded_response(rmcp::model::NumberOrString::Number(2)))
-            .expect("serialize modern overload response");
+    let modern = serde_json::to_value(
+        transport.overloaded_response(rmcp::model::NumberOrString::Number(2), None),
+    )
+    .expect("serialize modern overload response");
     assert_eq!(
         modern.pointer("/result/resultType"),
         Some(&serde_json::json!("complete"))

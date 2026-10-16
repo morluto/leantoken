@@ -7,13 +7,16 @@ pub(super) async fn run_mcp(cli: Cli, result_mode: mcp::McpResultMode) -> Result
     let server = server.with_result_mode(result_mode);
     let runtime_contexts = server.context_registry();
     let mut server_task = tokio::spawn(mcp::serve_stdio_server(server));
+    let cancellation = CancellationToken::new();
 
     tokio::select! {
         result = &mut server_task => return result?,
-        () = service_state.wait_initialized() => {}
+        () = service_state.wait_initialized() => {},
+        // A stateless opener may itself be a retrieval, so the SDK cannot
+        // finish accepting the session until repository services are ready.
+        activation = service_state.wait_for_activation(cancellation.clone()) => activation?,
     }
 
-    let cancellation = CancellationToken::new();
     let runtime_cancellation = cancellation.clone();
     let runtime_state = service_state.clone();
     let runtime_task = tokio::spawn(async move {
