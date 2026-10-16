@@ -386,6 +386,21 @@ At most five compatibility and 32 exact-version filters are accepted. All
 filters are bound into the versioned cursor and cannot be changed between
 pages.
 
+Pagination limits response size independently from inventory work. Each list,
+summary, or prune inventory admits at most 4,096 root entries, 1,024 candidate
+caches/SQLite opens, and 32,768 artifact entries across both inspection passes.
+It also limits metadata, SQLite execution, and cooperative elapsed work; see
+the architecture bounds. Overflow fails with `incomplete_inventory` and JSON
+`complete: false`, the limiting `field`, observed lower bound (`requested`),
+and `limit`. Lowering `--limit` or adding filters does not raise these limits.
+An incomplete inventory has no page cursor or trustworthy aggregate totals,
+and prune refuses it before deleting any cache.
+
+Each page re-inspects the filesystem. Stable identifier cursors avoid skipped
+or repeated entries while the inventory is unchanged; they are not filesystem
+snapshots. Restart listing after inventory mutation to include newly added
+identifiers before the cursor boundary.
+
 Entry pages retain the existing metadata `state` and separately expose content
 `compatibility`, full/scoped index identity, recorded root, schema, last
 access, direct SQLite/sidecar bytes, and active lease status. Summaries report

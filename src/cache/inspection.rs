@@ -2,6 +2,8 @@ use super::*;
 
 impl CacheManager {
     pub(super) fn inspect_all(&self) -> Result<(Vec<InspectedCache>, usize)> {
+        let mut budget = InventoryBudget::new(self);
+        budget.check()?;
         let read_dir = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -12,6 +14,13 @@ impl CacheManager {
         let mut entries = Vec::new();
         let mut ignored = 0usize;
         for entry in read_dir {
+            budget.check()?;
+            budget.root_entries += 1;
+            InventoryBudget::enforce(
+                "root_entries",
+                budget.root_entries,
+                budget.limits.root_entries,
+            )?;
             let entry = entry?;
             let file_type = entry.file_type()?;
             let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
@@ -22,12 +31,19 @@ impl CacheManager {
                 ignored += 1;
                 continue;
             };
-            let cache = self.inspect_managed_cache(&id, identity, true)?;
+            budget.candidates += 1;
+            InventoryBudget::enforce(
+                "candidate_caches",
+                budget.candidates,
+                budget.limits.candidates,
+            )?;
+            let cache = self.inspect_managed_cache_with_budget(&id, identity, true, &mut budget)?;
             if cache.entry.size_bytes == 0 && cache.entry.state == CacheState::Incomplete {
                 continue;
             }
             entries.push(cache);
         }
+        budget.check()?;
         entries.sort_by(|left, right| left.entry.id.cmp(&right.entry.id));
         Ok((entries, ignored))
     }
@@ -38,6 +54,22 @@ impl CacheManager {
         identity: ManagedCacheIdentity,
         probe_active: bool,
     ) -> Result<InspectedCache> {
+        self.inspect_managed_cache_with_budget(
+            id,
+            identity,
+            probe_active,
+            &mut InventoryBudget::new(self),
+        )
+    }
+
+    pub(super) fn inspect_managed_cache_with_budget(
+        &self,
+        id: &str,
+        identity: ManagedCacheIdentity,
+        probe_active: bool,
+        budget: &mut InventoryBudget,
+    ) -> Result<InspectedCache> {
+        budget.check()?;
         let path = self.root.join(id);
         let database = path.join(DATABASE_NAME);
         let (index_content_version, index_scope_digest) = match &identity {
@@ -48,7 +80,7 @@ impl CacheManager {
                 ..
             } => (Some(*version), scope_digest.clone()),
         };
-        let initial_scan = scan_artifacts(&path)?;
+        let initial_scan = scan_artifacts(&path, budget)?;
         let latest_access_mtime = initial_scan.latest_access_mtime;
         let mut unexpected = initial_scan.unexpected;
         let mut metadata_safe = true;
@@ -86,7 +118,7 @@ impl CacheManager {
         let database_is_regular =
             fs::symlink_metadata(&database).is_ok_and(|metadata| metadata.file_type().is_file());
         if initial_scan.has_artifacts && database_is_regular {
-            match inspect_database(&database) {
+            match inspect_database(&database, budget) {
                 Ok(metadata) => {
                     entry.schema_version = metadata.schema_version;
                     entry.repository_root = metadata.repository_root;
@@ -115,10 +147,15 @@ impl CacheManager {
                             Some("cache identity does not match its recorded root".into());
                     }
                 }
+                Err(error @ (Error::CacheInventoryIncomplete { .. } | Error::Cancelled)) => {
+                    return Err(error);
+                }
                 Err(error) => {
                     metadata_safe = false;
                     entry.state = CacheState::Corrupt;
-                    entry.detail = Some(error.to_string());
+                    let detail = error.to_string();
+                    budget.admit_metadata(detail.len())?;
+                    entry.detail = Some(detail);
                 }
             }
         }
@@ -127,7 +164,7 @@ impl CacheManager {
             entry.state = CacheState::Unsupported;
             entry.detail = Some("cache uses a newer index-content version".into());
         }
-        let final_scan = scan_artifacts(&entry.path)?;
+        let final_scan = scan_artifacts(&entry.path, budget)?;
         entry.size_bytes = final_scan.size_bytes;
         unexpected |= final_scan.unexpected;
         if unexpected {
@@ -135,6 +172,7 @@ impl CacheManager {
             entry.detail = Some("cache directory contains unexpected entries".into());
         }
         let compatibility = CacheCompatibility::classify(&entry);
+        budget.check()?;
 
         Ok(InspectedCache {
             identity,
