@@ -347,6 +347,51 @@ version = "2.6.0"
                     self.assertFalse(self.requests, "validate trusted identity before contacting release endpoints")
                 self.generate.assert_not_called()
 
+    def test_cli_accepts_only_generation_or_exact_prepare_mode(self):
+        for arguments, prepare_only in [([], False), (["--prepare"], True)]:
+            with self.subTest(arguments=arguments), mock.patch.object(generate, "main") as main:
+                generate.cli(arguments)
+                main.assert_called_once_with(prepare_only=prepare_only)
+        self.assertFalse(self.workspaces)
+        self.assertFalse(self.requests)
+        self.generate.assert_not_called()
+
+    def test_cli_refuses_invalid_arguments_before_any_generation_activity(self):
+        for arguments in [
+            ["--preapre"], ["--unknown"], ["--prepare", "--prepare"],
+            ["--prepare", "extra"], ["extra", "--prepare"], ["--prepare=true"], ["--"],
+        ]:
+            with self.subTest(arguments=arguments):
+                with mock.patch.object(generate, "main") as main, mock.patch.object(generate, "prepare") as prepare:
+                    with self.assertRaises(SystemExit) as failure:
+                        generate.cli(arguments)
+                    self.assertEqual(failure.exception.code, 2)
+                    main.assert_not_called()
+                    prepare.assert_not_called()
+                self.assertFalse(self.workspaces)
+                self.assertFalse(self.requests)
+                self.generate.assert_not_called()
+
+    def test_optimized_script_entry_refuses_typo_without_workspace_or_network(self):
+        path = pathlib.Path(generate.__file__).resolve()
+        script = (
+            "import runpy, socket, sys, tempfile\n"
+            "def forbidden(*args, **kwargs):\n"
+            "    raise RuntimeError('generation activity reached before CLI rejection')\n"
+            "tempfile.mkdtemp = forbidden\n"
+            "socket.create_connection = forbidden\n"
+            f"sys.argv = [{str(path)!r}, '--preapre']\n"
+            f"runpy.run_path({str(path)!r}, run_name='__main__')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-I", "-S", "-O", "-c", script],
+            env={"HOME": str(self.root), "TMPDIR": str(self.root), "PATH": os.defpath},
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("usage: generate.py [--prepare]", result.stderr)
+        self.assertFalse(result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

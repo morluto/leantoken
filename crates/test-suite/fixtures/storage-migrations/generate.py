@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Explicitly refresh immutable release anchors using published Linux binaries.
 
-Run --prepare to download/verify without executing Rust. Every invocation
+Only zero arguments (generation) or exactly --prepare (download/verify without
+executing Rust) are accepted; invalid arguments fail before any workspace or
+network access. Every accepted invocation
 atomically creates a fresh private (0700) workspace for downloads, extraction,
 and execution; no executable is trusted or reused from a shared cache.
 Archive/executable digests come from reviewed checked-in v*.json provenance;
@@ -322,5 +324,12 @@ def main(prepare_only):
         shutil.rmtree(workspace)
 
 
+def cli(arguments):
+    if arguments not in ([], ["--prepare"]):
+        print("usage: generate.py [--prepare]", file=sys.stderr)
+        raise SystemExit(2)
+    main(prepare_only=bool(arguments))
+
+
 if __name__ == "__main__":
-    main(prepare_only="--prepare" in sys.argv)
+    cli(sys.argv[1:])

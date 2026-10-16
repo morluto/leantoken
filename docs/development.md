@@ -518,14 +518,17 @@ format independently of later changes under the same package version.
 
 Intentional fixture regeneration runs `generate.py` from that directory on
 Linux with Python 3.11 or newer and the generator-only `blake3==1.0.11` package
-in a disposable virtual environment. `--prepare` downloads and verifies the
-pinned release archives without executing them; running without that option
-indexes one small source file per official executable. Before network access,
+in a disposable virtual environment. The only accepted argument lists are zero
+arguments for generation and exactly `--prepare` for preparation; unknown,
+extra, or duplicate options fail before workspace creation or network access.
+`--prepare` downloads and verifies the pinned release archives without executing
+them; running without that option indexes one small source file per official
+executable. Before network access,
 the generator reads each checked-in `vVERSION.json` provenance record (at most
 16 KiB), validates its fixed version/tag/commit, and uses its archive/executable
 SHA256 values as execution pins. Endpoint checksums cannot update those pins;
 adding or changing a pin requires explicit provenance and compatibility-manifest
-review. Each invocation uses a
+review. Each accepted invocation uses a
 fresh atomically created private workspace (0700) for downloads, extraction, and
 execution. Successful `--prepare` runs discard their verified downloads;
 generation redownloads and verifies without reusing an executable cache. Failures
