@@ -29,9 +29,11 @@ pub fn acquire_current_runtime_lease() -> Result<Option<RuntimeLease>> {
     let Some((version, named_digest)) = parse_runtime_directory_name(directory_name) else {
         return Ok(None);
     };
-    let home = BaseDirs::new()
+    // Match setup when Windows known folders are unavailable but HOME or
+    // USERPROFILE still identifies the configured fallback runtime root.
+    let home = home_directory()
         .ok_or_else(|| Error::SetupFailure("could not locate the home directory".into()))?;
-    let runtime_root = setup_runtime_root(home.home_dir());
+    let runtime_root = setup_runtime_root(&home);
     let canonical_root = match runtime_root.canonicalize() {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

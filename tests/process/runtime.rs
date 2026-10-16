@@ -351,8 +351,11 @@ impl ManagedRuntimeLeaseFixture<'_> {
         serde_json::from_slice(&output.stdout).expect("runtime lifecycle JSON")
     }
 
-    fn spawn(&self) -> super::support::McpProcess {
+    fn spawn(&self, omit_home: bool) -> super::support::McpProcess {
         let mut command = self.command(self.artifact);
+        if omit_home {
+            command.env_remove("HOME");
+        }
         command
             .arg("--root")
             .arg(self.repository)
@@ -462,8 +465,10 @@ fn assert_private_runtime_process_lifetime(
     };
     // One installed copy and database, with at most one live MCP child. Each
     // phase uses the existing five-second initialize and bounded exit helpers.
-    for crash in [false, true] {
-        let mut process = fixture.spawn();
+    // The second launch also exercises Windows' USERPROFILE home fallback when
+    // HOME is absent; its platform directory discovery can still be unavailable.
+    for (crash, omit_home) in [(false, false), (true, true)] {
+        let mut process = fixture.spawn(omit_home);
         let initialized = process.initialize();
         assert_eq!(
             &initialized["result"]["serverInfo"]["version"],
