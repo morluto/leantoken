@@ -367,10 +367,16 @@ package release is v0.1.27; the v0.1.28 anchor independently covers shipped byte
 even while the working package retains that version. Committed WAL is preserved
 with its main file and copied before opening; Python never checkpoints or
 rewrites these release artifacts. SHM is a derived index. The compatibility
-manifest also freezes each provenance record's digest.
+manifest also freezes each provenance record's digest. Before any download,
+the generator validates the fixed version/tag/commit against its checked-in
+provenance record and uses that record's archive and executable SHA256 digests
+as execution pins. The adjacent endpoint checksum is a consistency check;
+replacing both an archive and its endpoint checksum cannot replace these pins.
+Pin changes require explicit provenance and compatibility-manifest review.
 
 Release preparation uses a fresh private workspace and independent per-release
-limits: a 4 KiB checksum response, a 16 MiB compressed archive, 64 tar members,
+limits: a 16 KiB trusted provenance record, a 4 KiB checksum response, a 16 MiB
+compressed archive, 64 tar members,
 96 MiB of total declared member bytes, a 128 MiB expanded tar, and a 64 MiB
 executable. Downloads and executable extraction count actual streamed bytes;
 the executable's declared size is checked separately. Copies and SHA256 hashing

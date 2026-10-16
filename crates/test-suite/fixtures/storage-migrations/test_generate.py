@@ -36,13 +36,16 @@ class PrivateGeneratorWorkspaceTests(unittest.TestCase):
         (self.root / "leantoken-release-migration-generators").symlink_to(
             attacker, target_is_directory=True
         )
-        self.binary_bytes = b"verified synthetic executable; never executed"
-        self.set_archive_members(["leantoken"])
         self.version = "0.1.28"
         self.commit = generate.RELEASES[self.version]
+        self.provenance = self.root / "provenance"
+        self.provenance.mkdir()
+        self.binary_bytes = b"verified synthetic executable; never executed"
+        self.set_archive_members(["leantoken"])
         self.workspaces = []
         self.stdout = io.StringIO()
         self.stderr = io.StringIO()
+        self.requests = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         real_mkdtemp = tempfile.mkdtemp
@@ -54,6 +57,7 @@ class PrivateGeneratorWorkspaceTests(unittest.TestCase):
             return str(path)
 
         def download(url):
+            self.requests.append(url)
             if url.endswith(".sha256"):
                 return FixedBufferResponse(f"{self.checksum}  {generate.ARCHIVE}\n".encode())
             return FixedBufferResponse(self.archive)
@@ -76,6 +80,7 @@ version = "2.6.0"
         patches.enter_context(contextlib.redirect_stderr(self.stderr))
         patches.enter_context(mock.patch.object(generate.tempfile, "mkdtemp", private_workspace))
         patches.enter_context(mock.patch.object(generate, "RELEASES", {self.version: self.commit}))
+        patches.enter_context(mock.patch.object(generate, "HERE", self.provenance))
         patches.enter_context(mock.patch.object(generate.urllib.request, "urlopen", download))
         patches.enter_context(mock.patch.object(generate, "git_bytes", git_source))
         self.git_resolve = patches.enter_context(
@@ -98,6 +103,13 @@ version = "2.6.0"
                     bundle.addfile(member)
         self.archive = stream.getvalue()
         self.checksum = hashlib.sha256(self.archive).hexdigest()
+        (self.provenance / f"v{self.version}.json").write_text(json.dumps({
+            "version": self.version,
+            "tag": f"v{self.version}",
+            "commit": self.commit,
+            "archive_sha256": self.checksum,
+            "binary_sha256": hashlib.sha256(self.binary_bytes).hexdigest(),
+        }))
 
     def assert_private_workspace(self, workspace):
         self.assertEqual(stat.S_IMODE(workspace.stat().st_mode), 0o700)
@@ -149,8 +161,8 @@ version = "2.6.0"
         self.assertIn(str(workspace), self.stderr.getvalue())
 
     def test_checksum_failure_preserves_private_download_without_extraction_or_execution(self):
-        self.checksum = "0" * 64
-        with self.assertRaisesRegex(ValueError, "published archive checksum mismatch"):
+        self.archive += b"changed after the trusted digest was recorded"
+        with self.assertRaisesRegex(ValueError, "archive digest differs from committed release provenance"):
             generate.main(prepare_only=False)
         workspace = self.workspaces[0]
         self.assert_private_workspace(workspace)
@@ -301,6 +313,39 @@ version = "2.6.0"
                 other = "stderr" if name == "stdout" else "stdout"
                 self.assertTrue((root / f"generator.{other}").read_bytes().startswith(b"before overflow\n"))
                 self.assertIn(str(workspace), self.stderr.getvalue())
+
+    def test_replaced_archive_and_matching_endpoint_checksum_cannot_replace_trusted_pin(self):
+        trusted = (self.provenance / f"v{self.version}.json").read_bytes()
+        self.archive += b"replacement release asset"
+        self.checksum = hashlib.sha256(self.archive).hexdigest()
+        with self.assertRaisesRegex(ValueError, "published checksum differs from committed release provenance"):
+            generate.main(prepare_only=False)
+        self.assertEqual(len(self.requests), 1, "reject before downloading the replacement archive")
+        self.assertTrue(self.requests[0].endswith(".sha256"))
+        self.assertFalse((self.workspaces[0] / self.version / "generator" / "leantoken").exists())
+        self.assertEqual((self.provenance / f"v{self.version}.json").read_bytes(), trusted)
+        self.generate.assert_not_called()
+
+    def test_provenance_identity_and_digest_pins_refuse_before_generation(self):
+        path = self.provenance / f"v{self.version}.json"
+        trusted = json.loads(path.read_text())
+        for field, replacement, message in [
+            ("version", "0.0.0", "provenance identity mismatch"),
+            ("tag", "v0.0.0", "provenance identity mismatch"),
+            ("commit", "0" * 40, "provenance identity mismatch"),
+            ("archive_sha256", "invalid", "invalid committed release archive_sha256"),
+            ("binary_sha256", "0" * 64, "executable digest differs from committed release provenance"),
+        ]:
+            with self.subTest(field=field):
+                changed = dict(trusted)
+                changed[field] = replacement
+                path.write_text(json.dumps(changed))
+                self.requests.clear()
+                with self.assertRaisesRegex(ValueError, message):
+                    generate.main(prepare_only=False)
+                if field != "binary_sha256":
+                    self.assertFalse(self.requests, "validate trusted identity before contacting release endpoints")
+                self.generate.assert_not_called()
 
 
 if __name__ == "__main__":

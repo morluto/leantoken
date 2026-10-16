@@ -4,6 +4,8 @@
 Run --prepare to download/verify without executing Rust. Every invocation
 atomically creates a fresh private (0700) workspace for downloads, extraction,
 and execution; no executable is trusted or reused from a shared cache.
+Archive/executable digests come from reviewed checked-in v*.json provenance;
+mutable endpoint checksums cannot replace those pins.
 Successful --prepare runs discard their verified downloads, so generation
 redownloads and verifies in its own workspace. A failure preserves that whole
 private workspace, including available fixture/log evidence, and reports its
@@ -38,6 +40,7 @@ ARCHIVE = "leantoken-x86_64-unknown-linux-gnu.tar.xz"
 # Limits are independent: compressed transfer, expanded tar, metadata and binary.
 COPY_BUFFER_BYTES = 64 * 1024
 MAX_CHECKSUM_BYTES = 4 * 1024
+MAX_PROVENANCE_BYTES = 16 * 1024
 MAX_ARCHIVE_BYTES = 16 * 1024 * 1024
 MAX_EXECUTABLE_BYTES = 64 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 64
@@ -102,7 +105,26 @@ def git_bytes(revision, path):
     return subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=WORKSPACE)
 
 
+def release_pin(version, commit):
+    # The reviewed repository provenance is authoritative; mutable release
+    # assets and their adjacent checksum cannot update these execution pins.
+    if RELEASES.get(version) != commit:
+        raise ValueError("release is not in the fixed compatibility matrix")
+    with (HERE / f"v{version}.json").open("rb") as source, io.BytesIO() as output:
+        copy_bounded(source, output, MAX_PROVENANCE_BYTES, "committed release provenance")
+        pin = json.loads(output.getvalue())
+    if (pin.get("version"), pin.get("tag"), pin.get("commit")) != (version, f"v{version}", commit):
+        raise ValueError("committed release provenance identity mismatch")
+    for field in ["archive_sha256", "binary_sha256"]:
+        value = pin.get(field)
+        if not isinstance(value, str) or len(value) != 64 or any(byte not in "0123456789abcdef" for byte in value):
+            raise ValueError(f"invalid committed release {field}")
+    return pin
+
+
 def prepare(version, commit, workspace):
+    pin = release_pin(version, commit)
+    checksum = pin["archive_sha256"]
     destination = workspace / version / "generator"
     destination.mkdir(parents=True)
     url = f"https://github.com/morluto/leantoken/releases/download/v{version}/{ARCHIVE}"
@@ -111,12 +133,13 @@ def prepare(version, commit, workspace):
         fields = response.getvalue().decode().split()
     if not fields or len(fields[0]) != 64 or any(byte not in "0123456789abcdef" for byte in fields[0]):
         raise ValueError("invalid published archive checksum")
-    checksum = fields[0]
+    if fields[0] != checksum:
+        raise ValueError("published checksum differs from committed release provenance")
     archive = destination / ARCHIVE
     with urllib.request.urlopen(url) as source, archive.open("xb") as output:
         archive_digest, _ = copy_bounded(source, output, MAX_ARCHIVE_BYTES, "release archive")
     if archive_digest != checksum:
-        raise ValueError("published archive checksum mismatch")
+        raise ValueError("archive digest differs from committed release provenance")
     unpacked = destination / "release.tar"
     expand_archive(archive, unpacked)
     with BoundedTarReader(unpacked.open("rb", buffering=0)) as source, tarfile.open(fileobj=source, mode="r:") as bundle:
@@ -144,6 +167,8 @@ def prepare(version, commit, workspace):
             )
         if binary_bytes != executable.size:
             raise ValueError("extracted executable size differs from its archive declaration")
+        if binary_digest != pin["binary_sha256"]:
+            raise ValueError("executable digest differs from committed release provenance")
         binary.chmod(0o755)
     resolved = subprocess.check_output(["git", "rev-parse", f"v{version}^{{}}"], cwd=WORKSPACE).decode().strip()
     if resolved != commit:
