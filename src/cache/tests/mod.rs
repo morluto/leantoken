@@ -1,6 +1,7 @@
 #[cfg(unix)]
 use super::remove_managed_artifacts;
 mod compact;
+mod inventory;
 mod leases;
 mod list;
 mod prune;

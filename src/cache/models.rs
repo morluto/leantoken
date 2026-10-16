@@ -465,6 +465,8 @@ impl CachePruneAction {
 pub(super) struct CacheManager {
     pub(super) root: PathBuf,
     pub(super) now: u64,
+    pub(super) inventory_limits: InventoryLimits,
+    pub(super) cancellation: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Debug)]

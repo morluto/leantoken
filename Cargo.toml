@@ -76,7 +76,7 @@ r2d2_sqlite = { version = "0.35.0", default-features = false }
 regex = "1.12.2"
 regex-syntax = "0.8.11"
 rmcp = { version = "=3.1.2", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "cache", "hooks"] }
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled", "cache", "hooks", "limits"] }
 rusqlite_migration = "2.6.0"
 schemars = "1.2.1"
 semver = "1.0.27"

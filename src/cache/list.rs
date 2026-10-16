@@ -11,7 +11,12 @@ impl CacheManager {
     }
 
     pub(super) fn new(root: PathBuf, now: u64) -> Self {
-        Self { root, now }
+        Self {
+            root,
+            now,
+            inventory_limits: InventoryLimits::default(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+        }
     }
 
     pub(super) fn list_with(&self, request: &CacheListRequest) -> Result<CacheListReport> {
