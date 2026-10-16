@@ -3,8 +3,12 @@
 import contextlib
 import hashlib
 import io
+import json
+import os
 import pathlib
 import stat
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -247,6 +251,56 @@ version = "2.6.0"
         with self.assertRaisesRegex(ValueError, "archive metadata read exceeded the fixed buffer"):
             generate.main(prepare_only=False)
         self.generate.assert_not_called()
+
+    def test_python_child_logs_preserve_successful_json_without_captured_pipes(self):
+        root = self.root / "successful-child"
+        root.mkdir()
+        command = [
+            sys.executable, "-I", "-S", "-c",
+            "import os; os.write(1, b'{\"indexed\": 1}\\n'); os.write(2, b'diagnostic\\n')",
+        ]
+        with mock.patch.object(generate, "MAX_OUTPUT_FILE_BYTES", 4096):
+            stdout = generate.run_generator(command, root, {"HOME": str(root), "PATH": os.defpath})
+        self.assertEqual(stdout, '{"indexed": 1}\n')
+        self.assertEqual(json.loads(stdout), {"indexed": 1})
+        self.assertEqual((root / "generator.stderr").read_bytes(), b"diagnostic\n")
+        self.assertTrue(stat.S_ISREG((root / "generator.stdout").stat().st_mode))
+        self.assertTrue(stat.S_ISREG((root / "generator.stderr").stat().st_mode))
+
+    def test_python_child_output_limit_preserves_bounded_logs_and_failed_workspace(self):
+        limit = 4096
+        for descriptor, name in [(1, "stdout"), (2, "stderr")]:
+            with self.subTest(stream=name):
+                def fail_with_real_python_child(version, _binary, _metadata, workspace):
+                    root = workspace / version / "fixture"
+                    root.mkdir()
+                    script = (
+                        f"import os; os.write({3 - descriptor}, b'before overflow\\n'); "
+                        f"os.write({descriptor}, b'x' * {limit}); os.write({descriptor}, b'!')"
+                    )
+                    return generate.run_generator(
+                        [sys.executable, "-I", "-S", "-c", script],
+                        root,
+                        {"HOME": str(root), "PATH": os.defpath},
+                    )
+
+                self.generate.side_effect = fail_with_real_python_child
+                with mock.patch.object(generate, "MAX_OUTPUT_FILE_BYTES", limit):
+                    with self.assertRaises(subprocess.CalledProcessError) as failure:
+                        generate.main(prepare_only=False)
+                self.assertIsNone(failure.exception.stdout)
+                self.assertIsNone(failure.exception.stderr)
+                workspace = self.workspaces[-1]
+                self.assert_private_workspace(workspace)
+                root = workspace / self.version / "fixture"
+                self.assertEqual((root / f"generator.{name}").stat().st_size, limit)
+                for stream in ["stdout", "stderr"]:
+                    output = root / f"generator.{stream}"
+                    self.assertTrue(stat.S_ISREG(output.stat().st_mode))
+                    self.assertLessEqual(output.stat().st_size, limit)
+                other = "stderr" if name == "stdout" else "stdout"
+                self.assertTrue((root / f"generator.{other}").read_bytes().startswith(b"before overflow\n"))
+                self.assertIn(str(workspace), self.stderr.getvalue())
 
 
 if __name__ == "__main__":

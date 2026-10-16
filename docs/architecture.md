@@ -386,8 +386,12 @@ removes the workspace and failure preserves the available bounded files.
 
 Release generation indexes one small source file with one worker, isolated home,
 configuration, data, and temporary directories, a 60-second process timeout, and
-a 4 MiB per-file output limit. Checked-in anchors allow at most 1 MiB of main
-database and 4 MiB of WAL each. Prefix cases run sequentially within the matrix,
+a 4 MiB per-file output limit. Stdout and stderr go directly to private regular
+log files opened before the child, so the same kernel limit bounds each log.
+Successful stdout is read back in 64 KiB chunks with a separate 4 MiB cap before
+JSON parsing; failure leaves both bounded logs in the workspace. Checked-in
+anchors allow at most 1 MiB of main database and 4 MiB of WAL each. Prefix cases
+run sequentially within the matrix,
 retain one historical and one fresh database per case, and limit each database
 to 256 default 4096-byte pages. Schema inventories allow at most 256 objects and
 1024 rows per query. Case metadata and schema inventories accompany the sandbox

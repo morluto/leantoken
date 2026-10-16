@@ -44,6 +44,7 @@ MAX_ARCHIVE_MEMBERS = 64
 MAX_ARCHIVE_DECLARED_BYTES = 96 * 1024 * 1024
 MAX_TAR_BYTES = 128 * 1024 * 1024
 MAX_XZ_MEMORY_BYTES = 128 * 1024 * 1024
+MAX_OUTPUT_FILE_BYTES = 4 * 1024 * 1024
 RELEASES = {
     "0.1.15": "6934ba9ff0c93e565d556f6f35750f8fe5a91faa",
     "0.1.27": "910ed8a34fbdd60e1c25c916e9ded12c8bf439e3",
@@ -197,10 +198,7 @@ def generate(version, binary, metadata, workspace):
             isolated.mkdir(parents=True)
             environment[variable] = str(isolated)
         (root / "generation.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60, env=environment, preexec_fn=bound_output_files)
-        (root / "generator.stdout").write_text(result.stdout)
-        (root / "generator.stderr").write_text(result.stderr)
-        metadata["generator_stdout"] = json.loads(result.stdout)
+        metadata["generator_stdout"] = json.loads(run_generator(command, root, environment))
         if not database.exists():
             raise ValueError("released generator did not create its database")
         payload = database.read_bytes()
@@ -237,19 +235,26 @@ def generate(version, binary, metadata, workspace):
         if wal:
             (HERE / metadata["wal_fixture"]).write_bytes(wal)
         (HERE / f"v{version}.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n")
-    except Exception as failure:
-        for stream in ("stdout", "stderr"):
-            output = getattr(failure, stream, None)
-            if output:
-                (root / f"generator.{stream}").write_text(output if isinstance(output, str) else output.decode(errors="replace"))
+    except Exception:
         print(f"Release generation failed; disposable main/WAL/source/log evidence preserved: {root}", file=sys.stderr)
         raise
 
 
+def run_generator(command, root, environment):
+    # Regular files make RLIMIT_FSIZE cover child logs as well as SQLite output.
+    # They remain available even when the process fails or exceeds its timeout.
+    stdout_path = root / "generator.stdout"
+    with stdout_path.open("xb") as stdout, (root / "generator.stderr").open("xb") as stderr:
+        subprocess.run(command, check=True, stdout=stdout, stderr=stderr, timeout=60, env=environment, preexec_fn=bound_output_files)
+    with stdout_path.open("rb") as source, io.BytesIO() as output:
+        copy_bounded(source, output, MAX_OUTPUT_FILE_BYTES, "generator stdout")
+        return output.getvalue().decode("utf-8")
+
+
 def bound_output_files():
-    # The fixture has one small source file; a4MiB/file hard limit also bounds failed
-    # main/WAL generation. This generator already requires Linux release assets.
-    resource.setrlimit(resource.RLIMIT_FSIZE, (4 * 1024 * 1024, 4 * 1024 * 1024))
+    # This generator already requires Linux release assets. The kernel limit
+    # independently bounds main/WAL output and both regular child log files.
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OUTPUT_FILE_BYTES, MAX_OUTPUT_FILE_BYTES))
 
 
 def writer_version(database, wal):

@@ -534,9 +534,10 @@ memory at 128 MiB. The largest pinned official archive/executable are
 8,295,356/45,890,808 bytes, leaving reviewable headroom. Normal CI quality runs
 the offline limit/refusal tests in ordinary and optimized Python modes.
 Home/configuration/data and temporary paths are isolated, each process has a
-60-second timeout and a 4 MiB output-file limit, and failure preserves its
-workspace and logs. Review
-the resulting artifacts and provenance, then explicitly update each
+60-second timeout and a 4 MiB output-file limit. Child stdout/stderr are private
+regular files covered by that limit; successful stdout readback is independently
+capped at 4 MiB before JSON parsing. Failure preserves the workspace and logs.
+Review the resulting artifacts and provenance, then explicitly update each
 `release_anchors[*].metadata_blake3` in the compatibility manifest. Regeneration
 does not reproduce random namespaces or timestamps byte for byte; normal tests
 verify the exact committed artifact identities and need no generator, network,
