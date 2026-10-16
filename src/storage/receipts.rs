@@ -1,3 +1,85 @@
+hot_query!(
+    RECEIPT_OLDEST_EXCEPT,
+    "receipt_oldest_except",
+    &["retained_id: integer"],
+    "zero or one oldest receipt excluding retained source",
+    &["retrieval_receipts_lru_idx"],
+    "SELECT id
+                 FROM retrieval_receipts
+                 WHERE access_sequence > 0 AND id != ?1
+                 ORDER BY access_sequence, id
+                 LIMIT 1"
+);
+
+hot_query!(
+    RECEIPT_OLDEST,
+    "receipt_oldest",
+    &[],
+    "zero or one oldest receipt by access_sequence,id",
+    &["retrieval_receipts_lru_idx"],
+    "SELECT id
+                 FROM retrieval_receipts
+                 WHERE access_sequence > 0
+                 ORDER BY access_sequence, id
+                 LIMIT 1"
+);
+
+hot_query!(
+    RECEIPT_PRUNE_EXCEPT,
+    "receipt_prune_except",
+    &["now_unix_millis: integer", "retained_id: integer"],
+    "delete expired headers except retained source; cascade indexed evidence",
+    &[
+        "retrieval_receipts_expiry_idx",
+        "sqlite_autoindex_retrieval_receipt_evidence_1"
+    ],
+    "DELETE FROM retrieval_receipts
+             WHERE expires_unix_millis <= ?1 AND id != ?2"
+);
+
+hot_query!(
+    RECEIPT_PRUNE,
+    "receipt_prune",
+    &["now_unix_millis: integer"],
+    "delete expired headers and cascade indexed evidence",
+    &[
+        "retrieval_receipts_expiry_idx",
+        "sqlite_autoindex_retrieval_receipt_evidence_1"
+    ],
+    "DELETE FROM retrieval_receipts
+         WHERE expires_unix_millis <= ?1"
+);
+
+hot_query!(
+    RECEIPT_EVIDENCE,
+    "receipt_evidence",
+    &["receipt_id: integer"],
+    "quota-bounded evidence in ordinal order",
+    &["sqlite_autoindex_retrieval_receipt_evidence_1"],
+    "SELECT path, start_line, end_line, content_hash, semantic_signature, exact_only
+         FROM retrieval_receipt_evidence
+         WHERE receipt_id = ?1
+         ORDER BY ordinal"
+);
+
+hot_query!(
+    RECEIPT_LOOKUP,
+    "receipt_lookup",
+    &["receipt_id: integer"],
+    "zero or one receipt header by integer primary key",
+    &[],
+    "SELECT id,
+                repository_identity,
+                repository_generation,
+                created_unix_millis,
+                last_access_unix_millis,
+                expires_unix_millis,
+                evidence_count,
+                evidence_bytes
+         FROM retrieval_receipts
+         WHERE id = ?1"
+);
+
 use crate::receipt::{
     MAX_EVIDENCE_BYTES_PER_RECEIPT, MAX_EVIDENCE_PER_RECEIPT, MAX_RECEIPT_EVIDENCE_LOGICAL_BYTES,
     MAX_RECEIPT_ID_BYTES, MAX_RECEIPTS, MAX_TOTAL_EVIDENCE, MAX_TOTAL_EVIDENCE_BYTES,
@@ -547,8 +629,7 @@ impl Storage {
         }
 
         tx.execute(
-            "DELETE FROM retrieval_receipts
-             WHERE expires_unix_millis <= ?1 AND id != ?2",
+            RECEIPT_PRUNE_EXCEPT.sql,
             params![now_unix_millis, source_row_id],
         )?;
         usage = receipt_usage(&tx)?;
@@ -705,31 +786,18 @@ pub(crate) fn load_receipt_connection(
     row_id: i64,
 ) -> Result<Option<PersistentReceiptRow>> {
     connection
-        .query_row(
-            "SELECT id,
-                repository_identity,
-                repository_generation,
-                created_unix_millis,
-                last_access_unix_millis,
-                expires_unix_millis,
-                evidence_count,
-                evidence_bytes
-         FROM retrieval_receipts
-         WHERE id = ?1",
-            [row_id],
-            |row| {
-                Ok(PersistentReceiptRow {
-                    id: row.get(0)?,
-                    repository_identity: row.get(1)?,
-                    repository_generation: i64_to_u64(row.get(2)?)?,
-                    created_unix_millis: row.get(3)?,
-                    last_access_unix_millis: row.get(4)?,
-                    expires_unix_millis: row.get(5)?,
-                    evidence_count: i64_to_usize(row.get(6)?)?,
-                    evidence_bytes: i64_to_usize(row.get(7)?)?,
-                })
-            },
-        )
+        .query_row(RECEIPT_LOOKUP.sql, [row_id], |row| {
+            Ok(PersistentReceiptRow {
+                id: row.get(0)?,
+                repository_identity: row.get(1)?,
+                repository_generation: i64_to_u64(row.get(2)?)?,
+                created_unix_millis: row.get(3)?,
+                last_access_unix_millis: row.get(4)?,
+                expires_unix_millis: row.get(5)?,
+                evidence_count: i64_to_usize(row.get(6)?)?,
+                evidence_bytes: i64_to_usize(row.get(7)?)?,
+            })
+        })
         .optional()
         .map_err(Into::into)
 }
@@ -745,12 +813,7 @@ pub(crate) fn load_receipt_evidence_connection(
     connection: &Connection,
     receipt_id: i64,
 ) -> Result<Vec<ReceiptEvidence>> {
-    let mut statement = connection.prepare(
-        "SELECT path, start_line, end_line, content_hash, semantic_signature, exact_only
-         FROM retrieval_receipt_evidence
-         WHERE receipt_id = ?1
-         ORDER BY ordinal",
-    )?;
+    let mut statement = connection.prepare(RECEIPT_EVIDENCE.sql)?;
     statement
         .query_map([receipt_id], |row| {
             Ok(ReceiptEvidence::from_stored(
@@ -767,11 +830,7 @@ pub(crate) fn load_receipt_evidence_connection(
 }
 
 pub(crate) fn prune_expired_receipts(tx: &Transaction<'_>, now_unix_millis: i64) -> Result<()> {
-    tx.execute(
-        "DELETE FROM retrieval_receipts
-         WHERE expires_unix_millis <= ?1",
-        [now_unix_millis],
-    )?;
+    tx.execute(RECEIPT_PRUNE.sql, [now_unix_millis])?;
     Ok(())
 }
 
@@ -781,26 +840,12 @@ pub(crate) fn evict_oldest_receipt_except(
 ) -> Result<bool> {
     let candidate = match retained_id {
         Some(retained_id) => tx
-            .query_row(
-                "SELECT id
-                 FROM retrieval_receipts
-                 WHERE access_sequence > 0 AND id != ?1
-                 ORDER BY access_sequence, id
-                 LIMIT 1",
-                [retained_id],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row(RECEIPT_OLDEST_EXCEPT.sql, [retained_id], |row| {
+                row.get::<_, i64>(0)
+            })
             .optional()?,
         None => tx
-            .query_row(
-                "SELECT id
-                 FROM retrieval_receipts
-                 WHERE access_sequence > 0
-                 ORDER BY access_sequence, id
-                 LIMIT 1",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row(RECEIPT_OLDEST.sql, [], |row| row.get::<_, i64>(0))
             .optional()?,
     };
     let Some(candidate) = candidate else {

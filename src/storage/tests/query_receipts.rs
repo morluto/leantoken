@@ -312,51 +312,6 @@ fn touch_query_receipt_bumps_access_sequence_and_extends_ttl() {
 }
 
 #[test]
-fn query_receipt_queries_use_bounded_indexes() {
-    let directory = tempfile::tempdir().expect("directory");
-    let storage = indexed_storage(&directory.path().join("index.sqlite"));
-    let connection = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let partition_plan = connection
-        .prepare("EXPLAIN QUERY PLAN SELECT path, content_hash FROM files ORDER BY path")
-        .expect("partition plan")
-        .query_map([], |row| row.get::<_, String>(3))
-        .expect("partition rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("partition details")
-        .join("\n");
-    assert!(
-        partition_plan.contains("sqlite_autoindex_files_1"),
-        "{partition_plan}"
-    );
-
-    let lookup_plan = connection
-        .prepare(
-            "EXPLAIN QUERY PLAN
-             SELECT id
-             FROM query_coverage_receipts
-             WHERE repository_generation = 1
-               AND predicate_blake3 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-               AND partition_blake3 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-               AND result_blake3 = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
-             ORDER BY id
-             LIMIT 1",
-        )
-        .expect("lookup plan")
-        .query_map([], |row| row.get::<_, String>(3))
-        .expect("lookup rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("lookup details")
-        .join("\n");
-    assert!(
-        lookup_plan.contains("query_coverage_receipts_predicate_idx"),
-        "{lookup_plan}"
-    );
-}
-
-#[test]
 fn search_semantics_fingerprint_fits_sqlite_positive_integer_range() {
     let fingerprint = search_semantics_fingerprint();
 

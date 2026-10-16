@@ -1,3 +1,73 @@
+hot_query!(
+    SEARCH_SYMBOLS_TRIGRAM,
+    "search_symbols_trigram",
+    &["query: text", "case_sensitive: boolean", "limit: integer", "offset: integer", "fts_query: text", "qualified: boolean", "folded_variants: JSON text[] or null"],
+    "at most limit ranked hits; FTS candidate fanout may require sorting",
+    &[],
+    "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
+                 FROM symbols_fts_trigram
+                 JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
+                 JOIN files f ON f.id = s.file_id
+                 WHERE symbols_fts_trigram MATCH ?5
+                   AND CASE WHEN ?2
+                       THEN instr(s.name, ?1) > 0
+                           OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
+                       ELSE CASE WHEN ?7 IS NULL
+                           THEN instr(lower(s.name), lower(?1)) > 0
+                               OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
+                           ELSE EXISTS (
+                               SELECT 1 FROM json_each(?7) AS folded
+                               WHERE instr(lower(s.name), lower(CAST(folded.value AS TEXT))) > 0
+                                  OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(CAST(folded.value AS TEXT))) > 0)
+                           )
+                       END
+                   END
+                 ORDER BY CASE WHEN CASE WHEN ?2
+                              THEN s.name = ?1
+                                  OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
+                              ELSE CASE WHEN ?7 IS NULL
+                                  THEN lower(s.name) = lower(?1)
+                                      OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
+                                  ELSE EXISTS (
+                                      SELECT 1 FROM json_each(?7) AS folded
+                                      WHERE lower(s.name) = lower(CAST(folded.value AS TEXT))
+                                         OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(CAST(folded.value AS TEXT)))
+                                  )
+                              END
+                          END THEN 0 ELSE 1 END,
+                          length(s.name), f.path, s.start_byte
+                 LIMIT ?3 OFFSET ?4"
+);
+
+hot_query!(
+    FIND_SYMBOLS_EXACT_BATCH,
+    "find_symbols_exact_batch",
+    &["names: JSON text[]", "per_name_limit: integer"],
+    "input cardinality times per-name limit; groups ordered by path,start_byte,id",
+    &["symbols_name_idx"],
+    "WITH requested AS (
+                 SELECT CAST(key AS INTEGER) AS request_index,
+                        CAST(value AS TEXT) AS name
+                 FROM json_each(?1)
+             )
+             SELECT requested.request_index,
+                    f.path, f.content_hash, f.generation,
+                    s.id, s.file_id, s.name, s.kind, s.parent, s.signature,
+                    s.start_line, s.end_line, s.start_byte, s.end_byte
+             FROM requested
+             JOIN symbols AS s ON s.id IN (
+                 SELECT exact.id
+                 FROM symbols AS exact INDEXED BY symbols_name_idx
+                 JOIN files AS exact_file ON exact_file.id = exact.file_id
+                 WHERE exact.name = requested.name COLLATE NOCASE
+                   AND exact.name = requested.name COLLATE BINARY
+                 ORDER BY exact_file.path, exact.start_byte
+                 LIMIT ?2
+             )
+             JOIN files f ON f.id = s.file_id
+             ORDER BY requested.request_index, f.path, s.start_byte, s.id"
+);
+
 impl ReadSession {
     pub fn search_word(&self, query: &str, max_results: usize) -> Result<Vec<ChunkHit>> {
         self.search_word_page(query, max_results, 0)
@@ -194,39 +264,7 @@ impl ReadSession {
             .map(|variants| serde_json::to_string(&variants.values))
             .transpose()?;
         let sql = if indexed {
-            "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
-                 FROM symbols_fts_trigram
-                 JOIN symbols s ON s.rowid = symbols_fts_trigram.rowid
-                 JOIN files f ON f.id = s.file_id
-                 WHERE symbols_fts_trigram MATCH ?5
-                   AND CASE WHEN ?2
-                       THEN instr(s.name, ?1) > 0
-                           OR (?6 AND s.parent IS NOT NULL AND instr(s.parent || '.' || s.name, ?1) > 0)
-                       ELSE CASE WHEN ?7 IS NULL
-                           THEN instr(lower(s.name), lower(?1)) > 0
-                               OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(?1)) > 0)
-                           ELSE EXISTS (
-                               SELECT 1 FROM json_each(?7) AS folded
-                               WHERE instr(lower(s.name), lower(CAST(folded.value AS TEXT))) > 0
-                                  OR (?6 AND s.parent IS NOT NULL AND instr(lower(s.parent || '.' || s.name), lower(CAST(folded.value AS TEXT))) > 0)
-                           )
-                       END
-                   END
-                 ORDER BY CASE WHEN CASE WHEN ?2
-                              THEN s.name = ?1
-                                  OR (?6 AND s.parent IS NOT NULL AND s.parent || '.' || s.name = ?1)
-                              ELSE CASE WHEN ?7 IS NULL
-                                  THEN lower(s.name) = lower(?1)
-                                      OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(?1))
-                                  ELSE EXISTS (
-                                      SELECT 1 FROM json_each(?7) AS folded
-                                      WHERE lower(s.name) = lower(CAST(folded.value AS TEXT))
-                                         OR (?6 AND s.parent IS NOT NULL AND lower(s.parent || '.' || s.name) = lower(CAST(folded.value AS TEXT)))
-                                  )
-                              END
-                          END THEN 0 ELSE 1 END,
-                          length(s.name), f.path, s.start_byte
-                 LIMIT ?3 OFFSET ?4"
+            SEARCH_SYMBOLS_TRIGRAM.sql
         } else {
             "SELECT f.path, f.content_hash, f.generation, s.id, s.file_id, s.name, s.kind, s.parent, s.signature, s.start_line, s.end_line, s.start_byte, s.end_byte
                  FROM symbols s JOIN files f ON f.id = s.file_id
@@ -360,29 +398,7 @@ impl ReadSession {
         }
         let input = serde_json::to_string(names)?;
         let limit = bounded_limit(max_results_per_name);
-        let mut stmt = self.conn.prepare_cached(
-            "WITH requested AS (
-                 SELECT CAST(key AS INTEGER) AS request_index,
-                        CAST(value AS TEXT) AS name
-                 FROM json_each(?1)
-             )
-             SELECT requested.request_index,
-                    f.path, f.content_hash, f.generation,
-                    s.id, s.file_id, s.name, s.kind, s.parent, s.signature,
-                    s.start_line, s.end_line, s.start_byte, s.end_byte
-             FROM requested
-             JOIN symbols AS s ON s.id IN (
-                 SELECT exact.id
-                 FROM symbols AS exact INDEXED BY symbols_name_idx
-                 JOIN files AS exact_file ON exact_file.id = exact.file_id
-                 WHERE exact.name = requested.name COLLATE NOCASE
-                   AND exact.name = requested.name COLLATE BINARY
-                 ORDER BY exact_file.path, exact.start_byte
-                 LIMIT ?2
-             )
-             JOIN files f ON f.id = s.file_id
-             ORDER BY requested.request_index, f.path, s.start_byte, s.id",
-        )?;
+        let mut stmt = self.conn.prepare_cached(FIND_SYMBOLS_EXACT_BATCH.sql)?;
         let rows = stmt.query_map(params![input, limit], |row| {
             let request_index = i64_to_usize(row.get(0)?)?;
             let hit = SymbolHit {

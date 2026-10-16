@@ -417,13 +417,18 @@ Integration test files are modules of one `integration` target so Cargo can
 run them in parallel rather than starting one executable per file.
 
 - `crates/test-suite/src/domains/storage.rs`: WAL/foreign keys,
-  FTS5, atomic replacement, rollback, stale-plan rejection, reopen, query-plan
-  evidence, and generation behavior;
+  FTS5, atomic replacement, rollback, stale-plan rejection, reopen, and
+  generation behavior;
 - `crates/test-suite/src/domains/storage_migrations.rs`: authoritative migration
   prefix matrix, immutable released main/WAL fixtures, canonical schema and data
   compatibility, migration rollback, and append-only history. Select it with
   `cargo test-focused storage_migrations`; the few private receipt migration
   checks retain crate-private evaluation and namespace semantics;
+- `src/storage/query_plans.rs`: production-owned SQL plans, checked hot-query
+  inventory, adversarial storage-API/cardinality behavior, and paired tree-index
+  work evidence; select it with
+  `cargo test-focused product::storage::query_plans`, independently of migration
+  and general storage lifecycle tests;
 - `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
   safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
   bounded chunking, targeted reconciliation, and dependency invalidation;
@@ -520,9 +525,9 @@ fresh atomically created private workspace (0700) for downloads, extraction, and
 execution. Successful `--prepare` runs discard their verified downloads;
 generation redownloads and verifies without reusing an executable cache. Failures
 preserve that private workspace and the available fixture/log evidence.
-Home/configuration/data
-and temporary paths are isolated, each process has a 60-second timeout and a
-4 MiB output-file limit, and failure preserves its workspace and logs. Review
+Home/configuration/data and temporary paths are isolated, each process has a
+60-second timeout and a 4 MiB output-file limit, and failure preserves its
+workspace and logs. Review
 the resulting artifacts and provenance, then explicitly update each
 `release_anchors[*].metadata_blake3` in the compatibility manifest. Regeneration
 does not reproduce random namespaces or timestamps byte for byte; normal tests
@@ -530,6 +535,39 @@ verify the exact committed artifact identities and need no generator, network,
 Python, or released executable. Preserve committed WAL with the main database;
 never consolidate it using a different SQLite writer and label it untouched
 release output.
+
+Keep hot SQL in its private owner-local `HotQuery` declaration and prepare that
+same statement in production and plan diagnostics. Do not paste an independent
+SELECT into an EQP test. Scoped-regex statements share their production template
+and builder. Add the descriptor to the checked inventory, pair it with actual
+storage-API behavior, and review the complete normalized plan: every access,
+approved index, branch, scan, temporary sort, and automatic-index/materialization
+decision matters. Inventory changes require an explicit SQL-owner disposition;
+its keyword-count check is a review tripwire, not a parser or proof of bounds.
+
+Run the independent evidence owner with:
+
+```bash
+cargo test-focused product::storage::query_plans
+```
+
+The `product::` prefix is required here: an unqualified `storage::` selector
+routes to the domain-suite storage owner. The plan owner exercises a bounded
+256-irrelevant-file fixture, persistent quotas, duplicates/ties, absent and
+high-cardinality matches, limits, cancellation, and publication snapshots.
+It records SQLite version/source identity, raw node/parent/detail rows, output
+cardinality, fullscan/VM/sort counters, and automatic-index rows. All 25 named
+plan/work contracts are checked before one aggregated failure. The policy uses
+bundled SQLite, leaves QPSG disabled, and does not collect `ANALYZE`/`PRAGMA optimize`
+statistics. Review these identities and all operator failures when SQLite or
+schema changes; do not accept a whole EQP text snapshot as the contract.
+
+Tree plans have two reviewed alternatives: ordered path access without a sort,
+or a depth-index search with one ordering sort. The paired 64/256-file flat/deep
+fixture checks both against the real storage API and records cardinality-based
+work limits. Tree output `LIMIT` does not bound visited entries, and neither
+index wins for every request shape. Keep that distinction in performance claims
+and preserve the explicit tree-sort condition when updating plan allowances.
 
 ## MCP schema snapshots
 
