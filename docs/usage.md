@@ -325,10 +325,11 @@ referenced artifact and the current executable. It also retains artifacts held
 by lease-aware running processes, even after refresh removes their last client
 reference. Older processes without lease support cannot advertise activity to
 another command; keep their client references while they run.
-Managed launchers need a resolvable setup home (`HOME`, Windows `USERPROFILE`,
-or platform directories) to recognize the configured runtime root and acquire
-their lifetime lease. A process with no resolvable setup home cannot advertise
-activity through a runtime lease.
+Setup's marked native launchers recognize their validated absolute installation
+path and acquire the same artifact lease even when the host's home or data
+environment differs from installation. Unmarked manual launches require a
+resolvable setup home and matching data-directory settings to recognize the
+configured runtime root; with no resolvable home, they acquire no runtime lease.
 
 Retention keeps two additional unreferenced artifacts by default, sorted by
 semantic version descending, then digest and path ascending. Same-version

@@ -12,18 +12,23 @@ pub struct RuntimeLease {
 
 /// Protect the current executable when it is a verified managed private runtime.
 ///
-/// Direct executables outside the configured runtime root need no lease. Older
+/// Unmarked executables outside the configured runtime root need no lease. Older
 /// executables that do not call this function cannot advertise their lifetime.
-/// A resolvable setup home is required to recognize managed ownership; without
-/// one, no lease is acquired.
-pub fn acquire_current_runtime_lease() -> Result<Option<RuntimeLease>> {
+/// The parsed setup marker opts a valid installation path into managed lifetime
+/// protection independently of home/data environment changes. Unmarked paths
+/// require a resolvable setup home and a matching configured runtime root.
+pub fn acquire_current_runtime_lease(managed_by_setup: bool) -> Result<Option<RuntimeLease>> {
     let executable = std::env::current_exe()?.canonicalize()?;
-    acquire_executable_runtime_lease(&executable, home_directory)
+    acquire_executable_runtime_lease(&executable, managed_by_setup, || {
+        // Use setup's HOME/Windows USERPROFILE fallbacks for unmarked runs too.
+        home_directory().map(|home| setup_runtime_root(&home))
+    })
 }
 
 fn acquire_executable_runtime_lease(
     executable: &Path,
-    resolve_home: impl FnOnce() -> Option<PathBuf>,
+    managed_by_setup: bool,
+    resolve_configured_root: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<Option<RuntimeLease>> {
     let Some(directory) = executable.parent() else {
         return Ok(None);
@@ -38,21 +43,11 @@ fn acquire_executable_runtime_lease(
     let Some((version, named_digest)) = parse_runtime_directory_name(directory_name) else {
         return Ok(None);
     };
-    // Match setup when Windows known folders are unavailable but HOME or
-    // USERPROFILE still identifies the configured fallback runtime root.
-    let Some(home) = resolve_home() else {
-        // A version-shaped parent alone does not establish managed ownership.
+    let Some(runtime_root) =
+        executable_runtime_root(directory, managed_by_setup, resolve_configured_root)?
+    else {
         return Ok(None);
     };
-    let runtime_root = setup_runtime_root(&home);
-    let canonical_root = match runtime_root.canonicalize() {
-        Ok(root) => root,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    if directory.parent() != Some(canonical_root.as_path()) {
-        return Ok(None);
-    }
     if version.to_string() != env!("CARGO_PKG_VERSION") {
         return Err(Error::SetupFailure(
             "private runtime release identity mismatch".into(),
@@ -101,6 +96,33 @@ fn acquire_executable_runtime_lease(
         ));
     }
     Ok(Some(RuntimeLease { _file: lease.file }))
+}
+
+fn executable_runtime_root(
+    directory: &Path,
+    managed_by_setup: bool,
+    resolve_configured_root: impl FnOnce() -> Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    if managed_by_setup {
+        // The parsed marker is an explicit lifecycle opt-in, not filesystem
+        // authority. The caller already checked the canonical executable's
+        // native basename and runtime namespace; all capability/digest checks
+        // still apply before a lease is acquired in this installation root.
+        return Ok(directory
+            .parent()
+            .filter(|root| root.file_name() == Some(std::ffi::OsStr::new("runtimes")))
+            .map(Path::to_path_buf));
+    }
+    let Some(runtime_root) = resolve_configured_root() else {
+        // A version-shaped parent alone does not establish managed ownership.
+        return Ok(None);
+    };
+    let canonical_root = match runtime_root.canonicalize() {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    Ok((directory.parent() == Some(canonical_root.as_path())).then_some(runtime_root))
 }
 
 pub(super) fn runtime_lease_is_active(runtime_root: &Path, directory_name: &Path) -> Result<bool> {
@@ -285,6 +307,14 @@ fn safe_lease_metadata(metadata: &cap_std::fs::Metadata) -> bool {
 mod tests {
     use super::*;
 
+    fn executable_fixture(root: &Path, namespace: &str, name: &str) -> PathBuf {
+        let directory = root.join(namespace);
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join(name);
+        fs::write(&executable, b"standalone executable fixture").unwrap();
+        executable.canonicalize().unwrap()
+    }
+
     #[test]
     fn standalone_versioned_executable_needs_no_home_before_managed_ownership() {
         let temporary = tempfile::tempdir().unwrap();
@@ -293,8 +323,9 @@ mod tests {
         let executable = directory.join(runtime_executable_name(cfg!(windows)));
         fs::write(&executable, b"standalone executable fixture").unwrap();
 
-        let lease = acquire_executable_runtime_lease(&executable.canonicalize().unwrap(), || None)
-            .expect("an unavailable setup home cannot establish managed ownership");
+        let lease =
+            acquire_executable_runtime_lease(&executable.canonicalize().unwrap(), false, || None)
+                .expect("an unavailable setup home cannot establish managed ownership");
 
         assert!(lease.is_none());
         assert_eq!(
@@ -303,5 +334,116 @@ mod tests {
         );
         assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 1);
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn marked_installations_hold_their_original_lease_without_home_rediscovery() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("runtimes");
+        let digest = blake3::hash(b"standalone executable fixture").to_hex();
+        for namespace in [
+            env!("CARGO_PKG_VERSION").to_owned(),
+            format!("{}_{digest}", env!("CARGO_PKG_VERSION")),
+        ] {
+            let executable =
+                executable_fixture(&root, &namespace, runtime_executable_name(cfg!(windows)));
+            let lease = acquire_executable_runtime_lease(&executable, true, || {
+                panic!("a marked installation must not rediscover its root from home")
+            })
+            .unwrap()
+            .expect("valid marked installation acquires its lifetime lease");
+
+            assert!(runtime_lease_is_active(&root, Path::new(&namespace)).unwrap());
+            drop(lease);
+            assert!(!runtime_lease_is_active(&root, Path::new(&namespace)).unwrap());
+        }
+    }
+
+    #[test]
+    fn unmarked_installations_require_the_same_configured_root() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("runtimes");
+        let digest = blake3::hash(b"standalone executable fixture").to_hex();
+        let namespace = format!("{}_{digest}", env!("CARGO_PKG_VERSION"));
+        let executable =
+            executable_fixture(&root, &namespace, runtime_executable_name(cfg!(windows)));
+        let lease = acquire_executable_runtime_lease(&executable, false, || Some(root.clone()))
+            .unwrap()
+            .expect("an unmarked configured installation acquires its lifetime lease");
+        let other_root = temporary.path().join("different-runtimes");
+        fs::create_dir(&other_root).unwrap();
+
+        assert!(
+            acquire_executable_runtime_lease(&executable, false, || Some(other_root.clone()))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!other_root.join(RUNTIME_LEASE_DIRECTORY).exists());
+        assert!(runtime_lease_is_active(&root, Path::new(&namespace)).unwrap());
+        drop(lease);
+    }
+
+    #[test]
+    fn marker_alone_does_not_recognize_an_arbitrary_executable_path() {
+        let temporary = tempfile::tempdir().unwrap();
+        for (root_name, namespace, executable_name) in [
+            (
+                "runtimes",
+                "not-a-version",
+                runtime_executable_name(cfg!(windows)),
+            ),
+            (
+                "runtimes",
+                "1.2.3_short",
+                runtime_executable_name(cfg!(windows)),
+            ),
+            (
+                "standalone",
+                "1.2.3",
+                runtime_executable_name(cfg!(windows)),
+            ),
+            ("runtimes", env!("CARGO_PKG_VERSION"), "other-executable"),
+        ] {
+            let root = temporary.path().join(root_name);
+            let executable = executable_fixture(&root, namespace, executable_name);
+            let lease = acquire_executable_runtime_lease(&executable, true, || {
+                panic!("a marked path must not fall back to home discovery")
+            })
+            .unwrap();
+
+            assert!(lease.is_none(), "{}", executable.display());
+            assert!(!root.join(RUNTIME_LEASE_DIRECTORY).exists());
+            assert_eq!(
+                fs::read(&executable).unwrap(),
+                b"standalone executable fixture"
+            );
+        }
+    }
+
+    #[test]
+    fn marked_installations_still_require_exact_release_and_named_digest() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("runtimes");
+        let digest = blake3::hash(b"standalone executable fixture").to_hex();
+        for (namespace, expected) in [
+            (
+                format!("{}_{}", env!("CARGO_PKG_VERSION"), "0".repeat(64)),
+                "artifact digest mismatch",
+            ),
+            (
+                format!("0.0.0-incorrect_{digest}"),
+                "release identity mismatch",
+            ),
+        ] {
+            let executable =
+                executable_fixture(&root, &namespace, runtime_executable_name(cfg!(windows)));
+            let error = acquire_executable_runtime_lease(&executable, true, || {
+                panic!("marked identity validation must not depend on home")
+            })
+            .expect_err("invalid marked identity must fail closed");
+
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(!root.join(RUNTIME_LEASE_DIRECTORY).exists());
+        }
     }
 }

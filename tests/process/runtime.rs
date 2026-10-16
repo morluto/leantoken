@@ -353,6 +353,11 @@ impl ManagedRuntimeLeaseFixture<'_> {
 
     fn spawn(&self, omit_home: bool) -> super::support::McpProcess {
         let mut command = self.command(self.artifact);
+        // Configured hosts launch the absolute installed binary without having
+        // to inherit the data-directory settings used during installation.
+        for variable in ["XDG_DATA_HOME", "LOCALAPPDATA", "APPDATA"] {
+            command.env_remove(variable);
+        }
         if omit_home {
             command.env_remove("HOME");
         }
@@ -465,8 +470,8 @@ fn assert_private_runtime_process_lifetime(
     };
     // One installed copy and database, with at most one live MCP child. Each
     // phase uses the existing five-second initialize and bounded exit helpers.
-    // The second launch also exercises Windows' USERPROFILE home fallback when
-    // HOME is absent; its platform directory discovery can still be unavailable.
+    // Both launches omit installation data-directory variables. The Windows
+    // crash phase also omits HOME while retaining the fixture USERPROFILE.
     for (crash, omit_home) in [(false, false), (true, cfg!(windows))] {
         let mut process = fixture.spawn(omit_home);
         let initialized = process.initialize();

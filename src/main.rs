@@ -76,7 +76,8 @@ async fn main() {
     }
     let json = cli.json;
     init_tracing(json);
-    let (result, _runtime_lease) = match setup::acquire_current_runtime_lease() {
+    let (result, _runtime_lease) = match setup::acquire_current_runtime_lease(cli.managed_by_setup)
+    {
         Ok(lease) => (run(cli).await, lease),
         Err(error) => (Err(error), None),
     };

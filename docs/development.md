@@ -449,10 +449,13 @@ run them in parallel rather than starting one executable per file.
   audit behavior through the executable. `tests/process/runtime.rs` owns private
   runtime artifact coexistence, refresh, legacy migration, reference retention,
   and process-lifetime lease release using the unmodified installed executable
-  on each native platform. Linux validates same-version executable variants
+  on each native platform, including hosts that omit installation data-directory
+  settings. Linux validates same-version executable variants
   with harmless ELF overlays rather than a second Rust build;
 - `src/setup/tests.rs`: deterministic client-edit rollback and capability/lease
   races that cannot be driven reliably through the process boundary;
+- `src/setup/runtime/lease.rs`: deterministic marked/unmarked ownership and
+  unavailable-home cases without mutating the test process environment;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
 `src/episode.rs` owns golden and boundary coverage for versioned analyzer adapters, published
 60-run replay, exact/proxy classification boundaries, binding/privacy failure,

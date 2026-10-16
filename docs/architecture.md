@@ -852,11 +852,18 @@ including a crash, releases the OS lock. Startup may wait for an in-progress
 exclusive deletion and must revalidate the artifact after obtaining shared
 ownership before serving requests. Startup does not acquire the setup lock, so
 a verification child cannot deadlock with its setup parent.
-Managed startup recognition requires a setup home resolved through `HOME`,
-Windows `USERPROFILE`, or platform directories, and an exact match with that
-home's configured runtime root. Without a resolvable home, a version-shaped
-executable path does not establish ownership and startup acquires no lease.
-Managed hosts must preserve a resolvable setup home for lifetime protection.
+Setup's native launchers carry the parsed `--managed-by-setup` marker. Marked
+startup recognizes only a canonical native executable directly inside a
+validated legacy or digest-addressed artifact directory whose parent is named
+`runtimes`. It derives the installation root from that path, so a host need not
+inherit installation-time `HOME` or data-directory variables to lease the exact
+artifact. The marker opts into this lifecycle protocol; it does not bypass
+release/digest, capability, or sidecar identity checks. Marked legacy layouts
+retain the same full-file digest and post-acquisition revalidation as before.
+Unmarked manual startup instead requires a setup home resolved through `HOME`,
+Windows `USERPROFILE`, or platform directories and an exact match with the
+configured runtime root. Without a resolvable home, an unmarked version-shaped
+executable path does not establish ownership and acquires no lease.
 
 Stable sidecars live outside artifact directories at
 `<runtime_root>/.leases/<BLAKE3(complete artifact directory name)>.lock`.
