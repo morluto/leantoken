@@ -974,9 +974,14 @@ adds no process fan-out or production watcher work.
 The agent wall-time measurement client owns one stdout reader per MCP child,
 a queue retaining at most one complete frame, and at most one additional frame
 waiting for delivery. Queue backpressure checks the stop flag every 20 ms;
-the existing stderr reader retains at most 65,536 characters. Readiness uses
+stdout reads stop after 4,194,305 characters and reject a frame over 4,194,304
+characters, including an unterminated frame. EOF, decoding errors, malformed
+JSON-RPC, oversized frames, and response timeouts invalidate the client before
+another request can be sent. Invalid-JSON diagnostics retain only 256 characters.
+The existing stderr reader retains at most 65,536 characters. Readiness uses
 one absolute deadline (30 seconds by default) across response waits and retries,
-and a timed-out response invalidates the client. Cleanup stops queue delivery,
+with terminal failures excluded from readiness retries. Cleanup wakes a waiting
+response caller through the same bounded queue, stops reader delivery,
 terminates and waits for the child, then joins both readers before closing their
 streams. These are measurement-client bounds; see the
 [agent wall-time methodology](measurement.md#agent-wall-time-microbenchmark).

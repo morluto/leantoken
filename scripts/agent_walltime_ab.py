@@ -42,6 +42,7 @@ class McpProcess:
     """Minimal newline-delimited JSON-RPC client for one LeanToken process."""
 
     STDERR_CAPTURE_CHARS = 64 * 1024
+    STDOUT_FRAME_CHARS = 4 * 1024 * 1024
 
     def __init__(self, binary: Path, root: Path, database: Path) -> None:
         self.process = subprocess.Popen(
@@ -86,6 +87,10 @@ class McpProcess:
     def close(self) -> None:
         self._closed = True
         self._stdout_stop.set()
+        try:
+            self._stdout_lines.put_nowait(InvalidEvidence("MCP transport is closed"))
+        except queue.Full:
+            pass
         if self.process.stdin:
             self.process.stdin.close()
         if self.process.poll() is None:
@@ -116,9 +121,16 @@ class McpProcess:
             return
         while not self._stdout_stop.is_set():
             try:
-                line = stream.readline()
+                line = stream.readline(self.STDOUT_FRAME_CHARS + 1)
             except (OSError, UnicodeError) as error:
                 self._publish_stdout(error)
+                return
+            if len(line) > self.STDOUT_FRAME_CHARS:
+                self._publish_stdout(
+                    InvalidEvidence(
+                        f"MCP stdout frame exceeds the {self.STDOUT_FRAME_CHARS}-character limit"
+                    )
+                )
                 return
             if not self._publish_stdout(line) or not line:
                 return
@@ -182,20 +194,26 @@ class McpProcess:
                 raise self._fail_transport(
                     "MCP response timed out before the deadline"
                 ) from None
+            if self._closed:
+                raise InvalidEvidence("MCP transport is closed")
             if deadline is not None and time.monotonic() >= deadline:
                 raise self._fail_transport("MCP response timed out before the deadline")
             if isinstance(line, Exception):
-                raise InvalidEvidence(f"cannot read MCP stdout: {line}") from line
+                raise self._fail_transport(f"cannot read MCP stdout: {line}") from line
             if not line:
                 self._stderr_thread.join(timeout=0.1)
                 stderr = self._captured_stderr().strip()
                 if not stderr:
                     stderr = "(no stderr captured)"
-                raise InvalidEvidence(f"MCP server closed unexpectedly: {stderr}")
+                raise self._fail_transport(f"MCP server closed unexpectedly: {stderr}")
             try:
                 value = json.loads(line)
             except json.JSONDecodeError as error:
-                raise InvalidEvidence(f"MCP emitted invalid JSON: {line!r}") from error
+                raise self._fail_transport(
+                    f"MCP emitted invalid JSON: {line[:256]!r}"
+                ) from error
+            if not isinstance(value, dict):
+                raise self._fail_transport("MCP emitted a non-object JSON-RPC frame")
             if value.get("id") == request_id:
                 if deadline is not None and time.monotonic() >= deadline:
                     raise self._fail_transport(
@@ -274,7 +292,7 @@ class McpProcess:
             try:
                 self.call(
                     "files",
-                    {"operation": {"kind": "tree"}, "max_results": 1},
+                    {"operation": {"kind": "tree", "max_results": 1}},
                     deadline=deadline,
                 )
                 if time.monotonic() >= deadline:
@@ -283,7 +301,7 @@ class McpProcess:
                     )
                 return elapsed_ms(started)
             except InvalidEvidence as error:
-                if "retryable" not in str(error):
+                if self._transport_error is not None or "retryable" not in str(error):
                     raise
             time.sleep(min(0.02, max(0.0, deadline - time.monotonic())))
         raise InvalidEvidence("MCP server did not become ready before the deadline")

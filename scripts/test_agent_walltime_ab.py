@@ -19,7 +19,9 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AgentWalltimeAbTests(unittest.TestCase):
-    def start_readiness_peer(self, mode: str) -> tuple[object, Path]:
+    def start_readiness_peer(
+        self, mode: str, *, initialize: bool = True
+    ) -> tuple[object, Path]:
         workspace = tempfile.TemporaryDirectory()
         self.addCleanup(workspace.cleanup)
         root = Path(workspace.name)
@@ -28,6 +30,7 @@ class AgentWalltimeAbTests(unittest.TestCase):
         server.write_text(
             f"#!{sys.executable}\n"
             + """import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -42,8 +45,24 @@ for line in sys.stdin:
         output.write(json.dumps(request) + "\\n")
     request_id = request["id"]
     if request_id == 0:
+        if mode == "silent_init":
+            time.sleep(10)
+            continue
         result = {}
     else:
+        if mode == "closed":
+            os.close(sys.stdout.fileno())
+            continue
+        if mode == "invalid_json":
+            print("{retryable", flush=True)
+            continue
+        if mode == "invalid_shape":
+            print("[]", flush=True)
+            continue
+        if mode == "oversized":
+            sys.stdout.write("x" * (4 * 1024 * 1024 + 1))
+            sys.stdout.flush()
+            continue
         if mode == "silent":
             time.sleep(10)
             continue
@@ -86,7 +105,8 @@ for line in sys.stdin:
             self.assertEqual(leaked, [])
 
         self.addCleanup(close)
-        mcp.initialize()
+        if initialize:
+            mcp.initialize()
         return mcp, requests
 
     def readiness_outcome(self, mcp: object) -> tuple[object, threading.Thread]:
@@ -145,6 +165,47 @@ for line in sys.stdin:
                 result, _ = self.readiness_outcome(mcp)
                 self.assertIsInstance(result, MODULE.InvalidEvidence)
                 self.assertRegex(str(result), "deadline|timed out")
+
+    def test_mcp_terminal_stdout_failure_prevents_reuse(self) -> None:
+        for mode, message in (
+            ("closed", "closed unexpectedly"),
+            ("invalid_json", "invalid JSON"),
+            ("invalid_shape", "non-object"),
+            ("oversized", "frame exceeds"),
+        ):
+            with self.subTest(mode=mode):
+                mcp, requests = self.start_readiness_peer(mode)
+                with self.assertRaisesRegex(MODULE.InvalidEvidence, message):
+                    mcp.wait_ready(timeout_seconds=1)
+                with self.assertRaisesRegex(MODULE.InvalidEvidence, "unusable|closed"):
+                    mcp.call("files", {}, deadline=time.monotonic() + 0.05)
+                mcp.close()
+                sent = [json.loads(line) for line in requests.read_text().splitlines()]
+                self.assertEqual([request["id"] for request in sent], [0, 1])
+
+    def test_mcp_close_releases_a_pending_response_waiter(self) -> None:
+        mcp, requests = self.start_readiness_peer("silent_init", initialize=False)
+        failures: list[BaseException] = []
+
+        def initialize() -> None:
+            try:
+                mcp.initialize()
+            except BaseException as error:
+                failures.append(error)
+
+        # A broken client must fail this watchdog without stranding the test process.
+        worker = threading.Thread(target=initialize, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 1
+        while not requests.exists() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(requests.exists(), "peer did not receive initialization")
+        mcp.close()
+        worker.join(timeout=1)
+        self.assertFalse(worker.is_alive(), "close left the response waiter blocked")
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], MODULE.InvalidEvidence)
+        self.assertRegex(str(failures[0]), "closed")
 
     def test_mcp_process_drains_and_bounds_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
