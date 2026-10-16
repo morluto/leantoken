@@ -1,0 +1,3 @@
+# Immutable release compatibility databases are deliberate repository fixtures.
+!v*.sqlite
+__pycache__/
