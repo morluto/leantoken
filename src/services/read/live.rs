@@ -138,6 +138,7 @@ pub(super) fn stream_snapshot(file: &File) -> Result<LiveFileSnapshot> {
             hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string(),
         ),
         end_line,
+        eof_observed: true,
         bytes_read: bytes_seen,
         file_size,
         modified_ns: file_modified_ns,
@@ -174,6 +175,7 @@ pub(super) fn observe_live_range(
     let mut next_token_check = LIVE_READ_TOKEN_CHECK_BYTES;
     let mut utf8_pending = Vec::new();
     let mut bytes_seen = 0usize;
+    let mut eof_observed = false;
     let mut newline_count = 0usize;
     let mut last_byte_was_newline = false;
     let requested_end_line = target_end_line.unwrap_or(usize::MAX);
@@ -181,6 +183,7 @@ pub(super) fn observe_live_range(
     loop {
         let buffer = reader.fill_buf()?;
         if buffer.is_empty() {
+            eof_observed = true;
             break;
         }
         let mut validation_chunk = Vec::new();
@@ -302,6 +305,7 @@ pub(super) fn observe_live_range(
                 hasher.finalize().to_hex()[..crate::text::CONTENT_FINGERPRINT_HEX_LEN].to_string()
             }),
             end_line,
+            eof_observed,
             bytes_read: bytes_seen,
             file_size,
             modified_ns: file_modified_ns,

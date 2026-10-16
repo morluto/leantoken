@@ -153,6 +153,96 @@ fn cli_indexes_statuses_and_searches_as_json() {
 }
 
 #[test]
+fn cli_read_distinguishes_target_ends_from_scan_frontiers() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    let markdown = format!("# Long\n{}", "x\n".repeat(100_000));
+    let rust = format!(
+        "pub fn long_symbol() {{\n{}}}\n",
+        format!("    // {}\n", "padding ".repeat(12)).repeat(1_024)
+    );
+    std::fs::write(root.path().join("long.md"), &markdown).expect("write long heading");
+    std::fs::write(root.path().join("long.rs"), &rust).expect("write long symbol");
+    let database = root.path().join("index.sqlite");
+    run(
+        root.path(),
+        &database,
+        &["--max-index-workers", "1", "index"],
+    );
+
+    let read = |path: &str, target: &[&str]| {
+        let mut arguments = vec![
+            "read",
+            path,
+            "--max-tokens",
+            "8",
+            "--consistency",
+            "indexed_generation",
+        ];
+        arguments.extend_from_slice(target);
+        run(root.path(), &database, &arguments)
+    };
+    let cases: [(&str, &[&str], Option<u64>, &str); 4] = [
+        ("long.md", &[], None, &markdown),
+        (
+            "long.md",
+            &["--lines", "1:100001"],
+            Some(100_001),
+            &markdown,
+        ),
+        ("long.md", &["--heading", "Long"], Some(100_001), &markdown),
+        ("long.rs", &["--symbol", "long_symbol"], Some(1_026), &rust),
+    ];
+    for (path, target, expected_end, source) in cases {
+        let first = read(path, target);
+        assert_eq!(first["target_end_line"], serde_json::json!(expected_end));
+        assert_eq!(first["truncated"], true);
+        assert!(first["meta"]["source_tokens"].as_u64().unwrap() <= 8);
+        assert!(first["live_bytes_read"].as_u64().unwrap() < source.len() as u64);
+        let observed = first["observed_end_line"].as_u64().expect("scan frontier");
+        assert!(observed >= first["returned_end_line"].as_u64().unwrap());
+        assert!(observed < source.lines().count() as u64);
+
+        let cursor = first["continuation_cursor"].as_str().expect("continuation");
+        let next = read(path, &["--cursor", cursor]);
+        assert_eq!(next["target_end_line"], first["target_end_line"]);
+        assert_eq!(next["target_start_line"], first["target_start_line"]);
+        let returned = format!(
+            "{}{}",
+            first["content"].as_str().unwrap(),
+            next["content"].as_str().unwrap()
+        );
+        assert!(source.starts_with(&returned));
+
+        let mut full_target = target.to_vec();
+        full_target.extend(["--policy", "full"]);
+        let full = read(path, &full_target);
+        assert_eq!(full["target_end_line"], source.lines().count());
+        assert_eq!(full["observed_end_line"], source.lines().count());
+        assert_eq!(full["content"], first["content"]);
+    }
+
+    // Keep the indexed boundaries while shortening the live targets. Only an
+    // observed EOF can replace those boundaries with the shorter live end.
+    std::fs::write(root.path().join("long.md"), "# Long\nx\n").expect("shorten heading");
+    std::fs::write(root.path().join("long.rs"), "fn long_symbol() {}\n").expect("shorten symbol");
+    for policy in ["bounded", "full"] {
+        for (path, target, expected_end) in [
+            ("long.md", vec![], 2),
+            ("long.md", vec!["--lines", "1:100001"], 2),
+            ("long.md", vec!["--heading", "Long"], 2),
+            ("long.rs", vec!["--symbol", "long_symbol"], 1),
+        ] {
+            let mut arguments = target;
+            arguments.extend(["--policy", policy]);
+            let response = read(path, &arguments);
+            assert_eq!(response["target_end_line"], expected_end);
+            assert_eq!(response["observed_end_line"], expected_end);
+            assert_eq!(response["truncated"], false);
+        }
+    }
+}
+
+#[test]
 fn cli_search_compact_and_coordinate_projections_are_source_free() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
