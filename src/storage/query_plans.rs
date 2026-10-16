@@ -98,17 +98,39 @@ enum IndexClass {
     None,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IndexedComparison {
+    Equal,
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IndexedTerm {
+    column: String,
+    comparison: IndexedComparison,
+}
+
 #[derive(Clone, Debug)]
 struct Access {
     owner: String,
     scan: bool,
     index_class: IndexClass,
     index: Option<String>,
+    indexed_terms: Vec<IndexedTerm>,
     virtual_index: Option<String>,
     covering: bool,
 }
 
 impl Access {
+    fn has_indexed_equality(&self, column: &str) -> bool {
+        self.indexed_terms
+            .iter()
+            .any(|term| term.column == column && term.comparison == IndexedComparison::Equal)
+    }
+
     fn uses_fts_match(&self) -> bool {
         // Bundled FTS5's xBestIndex encodes MATCH as M<column-number> in
         // idxStr. A virtual index without it can still scan the entire FTS
@@ -131,6 +153,46 @@ struct PlanNode {
     parent: i64,
     detail: String,
     access: Option<Access>,
+}
+
+fn normalize_indexed_term(term: &str) -> Option<IndexedTerm> {
+    // These describe index bounds printed by bundled SQLite, rather than
+    // residual WHERE predicates. Preserve ranges instead of equating every
+    // SEARCH through a named index with a selective equality lookup.
+    [
+        (">=", IndexedComparison::GreaterOrEqual),
+        ("<=", IndexedComparison::LessOrEqual),
+        ("=", IndexedComparison::Equal),
+        (">", IndexedComparison::Greater),
+        ("<", IndexedComparison::Less),
+    ]
+    .into_iter()
+    .find_map(|(operator, comparison)| {
+        let (column, value) = term.split_once(operator)?;
+        let column = column
+            .trim()
+            .rsplit('.')
+            .next()?
+            .trim_matches(['"', '`', '[', ']']);
+        (!column.is_empty() && !value.trim().is_empty()).then(|| IndexedTerm {
+            column: column.to_owned(),
+            comparison,
+        })
+    })
+}
+
+fn normalize_indexed_terms(detail: &str) -> Vec<IndexedTerm> {
+    let Some((_, suffix)) = detail.split_once(" (") else {
+        return Vec::new();
+    };
+    let Some((conditions, _)) = suffix.rsplit_once(')') else {
+        return Vec::new();
+    };
+    let conditions = conditions.split_whitespace().collect::<Vec<_>>().join(" ");
+    conditions
+        .split(" AND ")
+        .filter_map(normalize_indexed_term)
+        .collect()
 }
 
 fn normalize_access(detail: &str) -> Option<Access> {
@@ -168,6 +230,7 @@ fn normalize_access(detail: &str) -> Option<Access> {
         scan,
         index_class,
         index,
+        indexed_terms: normalize_indexed_terms(detail),
         virtual_index,
         covering,
     })
@@ -237,6 +300,13 @@ fn qualified_symbol_branch_violations(plan: &[PlanNode], index: &str) -> Vec<Str
             && access.index_class == IndexClass::Named && access.index.as_deref() == Some(index))
         {
             errors.push(format!("qualified-symbol {name} branch requires exactly one SEARCH symbols using {index}: {lookups:?}"));
+        }
+        if let [access] = lookups.as_slice()
+            && !access.has_indexed_equality("name")
+        {
+            errors.push(format!(
+                "qualified-symbol {name} branch requires indexed name equality: {access:?}"
+            ));
         }
     }
     let index_lookups = plan
@@ -1423,6 +1493,70 @@ fn verify_accounting(session: &ReadSession) {
     );
 }
 
+fn qualified_symbol_ids(
+    connection: &Connection,
+    sql: &str,
+    parameters: &[Value],
+) -> rusqlite::Result<Vec<i64>> {
+    let mut statement = connection.prepare(sql)?;
+    statement
+        .query_map(rusqlite::params_from_iter(parameters), |row| row.get(0))?
+        .collect()
+}
+
+fn qualified_symbol_range_mutation_failures(connection: &Connection, case: &Case) -> Vec<String> {
+    if case.query.contract.operation != "find_qualified_symbol" {
+        return Vec::new();
+    }
+    let expected = match qualified_symbol_ids(connection, case.sql(), &case.parameters) {
+        Ok(ids) => ids,
+        Err(error) => {
+            return vec![format!(
+                "cannot collect qualified-symbol mutation baseline: {error}"
+            )];
+        }
+    };
+    let mut failures = Vec::new();
+    for (branch, equality) in [
+        ("LEFT", "name = ?2 COLLATE NOCASE"),
+        ("RIGHT", "name = ?4 COLLATE NOCASE"),
+    ] {
+        // Keep the BINARY residual equality, output order, limit and bindings.
+        // Answers stay the same while the NOCASE index bound becomes broad.
+        let broad = case
+            .sql()
+            .replacen(equality, "name >= '' COLLATE NOCASE", 1);
+        if broad == case.sql() {
+            failures.push(format!(
+                "negative {branch} mutation could not replace the indexed name equality"
+            ));
+            continue;
+        }
+        match qualified_symbol_ids(connection, &broad, &case.parameters) {
+            Ok(ids) if ids == expected => {}
+            result => failures.push(format!(
+                "negative {branch} range mutation changed answers: {result:?}"
+            )),
+        }
+        match explain(connection, &broad, &case.parameters) {
+            Ok(plan) => {
+                let expected =
+                    format!("qualified-symbol {branch} branch requires indexed name equality");
+                if !violations(case, &plan)
+                    .iter()
+                    .any(|error| error.starts_with(&expected))
+                {
+                    failures.push(format!("broad {branch} name-index range escaped the equality contract; raw plan={plan:#?}"));
+                }
+            }
+            Err(error) => failures.push(format!(
+                "negative {branch} range mutation did not produce an inspectable plan: {error}"
+            )),
+        }
+    }
+    failures
+}
+
 #[derive(Debug)]
 struct ObservedWork {
     binds: usize,
@@ -1549,6 +1683,7 @@ fn production_owned_plans_and_behavior_on_adversarial_cardinality() {
                     }
                 }
             }
+            errors.extend(qualified_symbol_range_mutation_failures(&connection, case));
             for index in contract.indexes {
                 let exists: bool = connection
                     .query_row(
@@ -1676,6 +1811,49 @@ fn complete_plan_rejects_extra_work_and_an_unindexed_union_branch() {
     assert!(
         !violations(&case, &base[..4]).is_empty(),
         "both UNION branches must be protected"
+    );
+    for (position, id, parent, branch) in [(2, 3, 2, "LEFT"), (4, 5, 4, "RIGHT")] {
+        let mut broad_range = base.clone();
+        broad_range[position] = child(
+            id,
+            parent,
+            "SEARCH symbols USING INDEX symbols_name_idx (name>?)",
+        );
+        assert_eq!(
+            broad_range[position]
+                .access
+                .as_ref()
+                .expect("range access")
+                .indexed_terms,
+            [IndexedTerm {
+                column: "name".into(),
+                comparison: IndexedComparison::Greater
+            }]
+        );
+        let expected = format!("qualified-symbol {branch} branch requires indexed name equality");
+        assert!(
+            violations(&case, &broad_range)
+                .iter()
+                .any(|error| error.starts_with(&expected)),
+            "a named-index range must not count as a name equality in the {branch} branch"
+        );
+    }
+    let composite = normalize_access(
+        "SEARCH chunks USING INDEX chunks_file_line_idx (file_id=? AND start_line<?) LEFT-JOIN",
+    )
+    .expect("composite indexed access");
+    assert_eq!(
+        composite.indexed_terms,
+        [
+            IndexedTerm {
+                column: "file_id".into(),
+                comparison: IndexedComparison::Equal
+            },
+            IndexedTerm {
+                column: "start_line".into(),
+                comparison: IndexedComparison::Less
+            },
+        ]
     );
     let mut same_branch = base.clone();
     same_branch[4] = child(5, 4, "SEARCH symbols USING INTEGER PRIMARY KEY (rowid=?)");
