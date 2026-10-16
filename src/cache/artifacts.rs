@@ -1,6 +1,7 @@
 use super::*;
 
-pub(super) fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
+pub(super) fn scan_artifacts(path: &Path, budget: &mut InventoryBudget) -> Result<ArtifactScan> {
+    budget.check()?;
     let mut scan = ArtifactScan {
         size_bytes: 0,
         latest_access_mtime: None,
@@ -10,6 +11,13 @@ pub(super) fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
     let database = path.join(DATABASE_NAME);
     let lease_path = coordination_sidecar_path(&database, LEASE_LOCK_SUFFIX);
     for child in fs::read_dir(path)? {
+        budget.check()?;
+        budget.artifacts += 1;
+        InventoryBudget::enforce(
+            "artifact_entries",
+            budget.artifacts,
+            budget.limits.artifacts,
+        )?;
         let child = child?;
         let metadata = fs::symlink_metadata(child.path())?;
         let child_path = child.path();
@@ -41,6 +49,7 @@ pub(super) fn scan_artifacts(path: &Path) -> Result<ArtifactScan> {
             );
         }
     }
+    budget.check()?;
     Ok(scan)
 }
 
@@ -59,14 +68,36 @@ pub(super) enum DatabaseSchema {
     Future,
 }
 
-pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
-    let connection = Connection::open_with_flags(
+pub(super) fn inspect_database(
+    path: &Path,
+    budget: &mut InventoryBudget,
+) -> Result<DatabaseMetadata> {
+    budget.check()?;
+    budget.sqlite_opens += 1;
+    InventoryBudget::enforce(
+        "sqlite_opens",
+        budget.sqlite_opens,
+        budget.limits.sqlite_opens,
+    )?;
+    let connection = budget.sqlite_result(Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    connection.busy_timeout(Duration::from_millis(100))?;
+    ))?;
+    budget.observe_sqlite(&connection)?;
+    budget.sqlite_result(connection.set_limit(
+        rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
+        MAX_INVENTORY_VALUE_BYTES,
+    ))?;
+    budget.sqlite_result(connection.set_limit(
+        rusqlite::limits::Limit::SQLITE_LIMIT_SQL_LENGTH,
+        MAX_INVENTORY_VALUE_BYTES,
+    ))?;
+    budget.sqlite_result(connection.pragma_update(None, "cache_size", -256))?;
+    budget.sqlite_result(connection.busy_timeout(Duration::from_millis(100)))?;
     let migration_version =
-        connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
+        budget.sqlite_result(
+            connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)),
+        )?;
     if migration_version > CURRENT_MIGRATION_VERSION {
         return Ok(DatabaseMetadata {
             schema_version: None,
@@ -75,19 +106,24 @@ pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
             schema: DatabaseSchema::Future,
         });
     }
-    let mut statement = connection.prepare("PRAGMA table_info(meta)")?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    let mut statement = budget.sqlite_result(connection.prepare("PRAGMA table_info(meta)"))?;
+    let mut rows = budget.sqlite_result(statement.query([]))?;
+    let mut columns = BTreeSet::new();
+    while let Some(row) = budget.sqlite_result(rows.next())? {
+        let column: String = budget.sqlite_result(row.get(1))?;
+        budget.admit_metadata(column.len())?;
+        columns.insert(column);
+    }
     if !columns.contains("schema_version") {
         return Err(Error::InvalidConfiguration(
             "cache metadata table has no schema version".into(),
         ));
     }
-    let schema_version =
-        connection.query_row("SELECT schema_version FROM meta WHERE id = 1", [], |row| {
-            row.get::<_, i64>(0)
-        })?;
+    let schema_version = budget.sqlite_result(connection.query_row(
+        "SELECT schema_version FROM meta WHERE id = 1",
+        [],
+        |row| row.get::<_, i64>(0),
+    ))?;
     if schema_version > CURRENT_SCHEMA_VERSION {
         return Ok(DatabaseMetadata {
             schema_version: Some(schema_version),
@@ -97,20 +133,23 @@ pub(super) fn inspect_database(path: &Path) -> Result<DatabaseMetadata> {
         });
     }
     let repository_root = if columns.contains("repository_root") {
-        let root =
-            connection.query_row("SELECT repository_root FROM meta WHERE id = 1", [], |row| {
-                row.get::<_, String>(0)
-            })?;
+        let root = budget.sqlite_result(connection.query_row(
+            "SELECT repository_root FROM meta WHERE id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        ))?;
+        InventoryBudget::enforce("repository_root_bytes", root.len(), 8192)?;
+        budget.admit_metadata(root.len())?;
         (!root.is_empty()).then(|| PathBuf::from(root))
     } else {
         None
     };
     let last_access_unix_seconds = if columns.contains("last_access_unix_seconds") {
-        let accessed = connection.query_row(
+        let accessed = budget.sqlite_result(connection.query_row(
             "SELECT last_access_unix_seconds FROM meta WHERE id = 1",
             [],
             |row| row.get::<_, i64>(0),
-        )?;
+        ))?;
         u64::try_from(accessed).ok().filter(|value| *value > 0)
     } else {
         None

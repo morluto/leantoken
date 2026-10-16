@@ -10,6 +10,7 @@ impl CacheManager {
         let selected = select_prune_candidates(&entries, &plan, total_bytes_before);
         let mut reclaimed_bytes = 0u64;
         let mut results = Vec::with_capacity(entries.len());
+        let mut revalidation_budget = InventoryBudget::new(self);
 
         for cache in entries {
             let Some(mut reasons) = selected.get(&cache.entry.id).cloned() else {
@@ -66,20 +67,24 @@ impl CacheManager {
                     continue;
                 }
             };
-            let current =
-                match self.inspect_managed_cache(&cache.entry.id, cache.identity.clone(), false) {
-                    Ok(current) => current,
-                    Err(error) => {
-                        results.push(prune_result(
-                            &cache,
-                            CachePruneOutcome::Failed {
-                                error: error.to_string(),
-                            },
-                            reasons,
-                        ));
-                        continue;
-                    }
-                };
+            let current = match self.inspect_managed_cache_with_budget(
+                &cache.entry.id,
+                cache.identity.clone(),
+                false,
+                &mut revalidation_budget,
+            ) {
+                Ok(current) => current,
+                Err(error) => {
+                    results.push(prune_result(
+                        &cache,
+                        CachePruneOutcome::Failed {
+                            error: error.to_string(),
+                        },
+                        reasons,
+                    ));
+                    continue;
+                }
+            };
             let selected_for_compatibility = reasons
                 .iter()
                 .any(|reason| reason.starts_with("incompatible_with_current:"));
@@ -124,6 +129,16 @@ impl CacheManager {
                 continue;
             }
 
+            if self.cancellation.is_cancelled() {
+                results.push(prune_result(
+                    &current,
+                    CachePruneOutcome::Failed {
+                        error: Error::Cancelled.to_string(),
+                    },
+                    reasons,
+                ));
+                continue;
+            }
             let removal = remove_managed_artifacts(&current.entry.path);
             reclaimed_bytes = reclaimed_bytes.saturating_add(removal.reclaimed_bytes);
             match removal.error {

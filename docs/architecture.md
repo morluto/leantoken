@@ -895,6 +895,30 @@ An explicit database path preserves the caller-selected identity and is not
 rewritten by the managed-cache policy. Callers must not concurrently share one
 explicit database across incompatible index-content versions.
 
+Explicit cache list/prune inventory admits at most 4,096 managed-root directory
+entries (including ignored names), 1,024 candidate caches, 32,768 artifact
+entries across both inspection passes, and 1,024 read-only SQLite opens. These
+bounds apply before pagination, filters, and summaries; retained inspection
+entries are bounded by candidate admission. Metadata strings share an 8 MiB
+inventory budget, recorded roots are limited to 8 KiB, and SQLite values/rows
+and SQL statements are limited to 64 KiB per inspection connection. Connections
+are opened serially with a 256 KiB page-cache target and a 100 ms busy timeout.
+An inventory also has a cooperative ten-second elapsed limit and a progress
+handler admitting at most two million SQLite VM steps. Inside SQLite,
+cancellation and elapsed time are checked every 1,000 steps. Filesystem
+system calls and OS scheduling can delay cooperative checks; this is not a hard
+wall-clock or whole-process heap guarantee for SQLite internals.
+
+Reaching any inventory bound returns `incomplete_inventory` rather than a
+complete-looking page or summary. Prune obtains the complete bounded inventory
+before selecting or deleting anything, so initial overflow cannot apply a
+partial LRU/byte policy. Post-lease revalidation shares a separate budget with
+the same limits across all selected caches; a failed revalidation retains that
+cache and is recorded in the prune report. Library cancellation is observed at
+inventory boundaries and inside SQLite execution. Completed per-cache removals
+remain reported if cancellation arrives during pruning; later cancelled
+revalidations cannot authorize another removal.
+
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
 followers normally read the same committed SQLite generations without scanning

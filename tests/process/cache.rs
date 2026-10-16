@@ -2,6 +2,86 @@ use super::support::Command;
 use std::fs;
 
 #[test]
+fn cli_cache_inventory_limit_prevents_partial_list_and_destructive_prune() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = temp.path().join("repository");
+    fs::create_dir(&repository).unwrap();
+    fs::write(repository.join("main.rs"), "fn inventory_probe() {}\n").unwrap();
+    let command = || {
+        let mut command = Command::cargo_bin("leantoken").unwrap();
+        command
+            .env("HOME", temp.path())
+            .env("USERPROFILE", temp.path())
+            .env("XDG_CACHE_HOME", temp.path().join("cache"))
+            .env("LOCALAPPDATA", temp.path().join("local-app-data"))
+            .env_remove("npm_lifecycle_event")
+            .current_dir(temp.path())
+            .timeout(std::time::Duration::from_secs(30));
+        command
+    };
+    command()
+        .args([
+            "--root",
+            repository.to_str().unwrap(),
+            "--tokenizer",
+            "estimate",
+            "index",
+        ])
+        .assert()
+        .success();
+    let listed = command()
+        .args(["--json", "cache", "list"])
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let root = std::path::Path::new(listed["cache_root"].as_str().unwrap());
+    assert!(
+        root.canonicalize()
+            .unwrap()
+            .starts_with(temp.path().canonicalize().unwrap())
+    );
+    let database =
+        std::path::Path::new(listed["entries"][0]["path"].as_str().unwrap()).join("index.sqlite");
+    let before = fs::read(&database).unwrap();
+    for index in 0..4096 {
+        fs::write(root.join(format!("unmanaged-{index}")), []).unwrap();
+    }
+    for arguments in [
+        vec!["--json", "cache", "list", "--limit", "1"],
+        vec!["--json", "cache", "list", "--summary"],
+        vec![
+            "--json",
+            "cache",
+            "prune",
+            "--max-total-bytes",
+            "0",
+            "--yes",
+        ],
+    ] {
+        let output = command().args(arguments).output().unwrap();
+        assert!(
+            !output.status.success(),
+            "inventory must refuse an incomplete population"
+        );
+        assert!(
+            output.stdout.is_empty(),
+            "an incomplete inventory must not look complete"
+        );
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["category"], "incomplete_inventory");
+        assert_eq!(error["complete"], false);
+        assert_eq!(error["field"], "root_entries");
+        assert_eq!(error["limit"], 4096);
+        assert_eq!(
+            fs::read(&database).unwrap(),
+            before,
+            "prune must fail before deleting artifacts"
+        );
+    }
+}
+
+#[test]
 fn cli_cache_compact_previews_applies_and_reports_reader_failures() {
     let temp = tempfile::tempdir().unwrap();
     let repository = temp.path().join("repository");
