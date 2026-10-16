@@ -341,7 +341,7 @@ impl McpServices {
         self.initialized.notify_waiters();
     }
 
-    /// Wait until the client completes the MCP initialization phase.
+    /// Wait until the MCP transport accepts a session or initialization completes.
     pub async fn wait_initialized(&self) {
         loop {
             let notified = self.initialized.notified();

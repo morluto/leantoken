@@ -10,6 +10,117 @@ const INDEX_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROCESS_FAILURE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[test]
+fn mcp_stateless_discovery_starts_the_indexing_runtime() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn stateless_ready() {}\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+    let meta = serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "leantoken-test", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {}
+    });
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": {"_meta": meta}
+    }));
+    let discovery = process.response(Duration::from_secs(5));
+    assert_eq!(discovery["id"], "discover");
+    assert_eq!(
+        discovery["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "leantoken",
+        "{discovery}"
+    );
+
+    for (id, method) in [(1, "resources/list"), (2, "tools/list")] {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": method,
+            "params": {"_meta": meta}
+        }));
+        let response = process.response(Duration::from_secs(5));
+        assert_eq!(response["id"], id);
+        assert!(response.get("result").is_some(), "{response}");
+    }
+
+    // Discovery replaces initialize and notifications/initialized. Even a
+    // non-retrieval tool must become available without activating an index call.
+    let deadline = Instant::now() + INDEX_READY_TIMEOUT;
+    let mut id = 3;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": "savings", "arguments": {}, "_meta": meta}
+        }));
+        let response = process.response(Duration::from_secs(5));
+        assert_eq!(response["id"], id);
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        if response["result"]["structuredContent"]["reason"] != "index_starting" {
+            assert_ne!(
+                response["result"]["structuredContent"]["status"], "retryable",
+                "{response}"
+            );
+            assert!(
+                response["result"]["structuredContent"].is_object(),
+                "{response}"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "{response}");
+        id += 1;
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": id + 1, "method": "tools/call",
+        "params": {
+            "name": "files", "_meta": meta,
+            "arguments": {"operation": {"kind": "tree", "max_results": 10}}
+        }
+    }));
+    let files = process.response(INDEX_READY_TIMEOUT);
+    assert_eq!(files["result"]["resultType"], "complete");
+    assert_eq!(
+        files["result"]["structuredContent"]["entries"][0]["path"], "lib.rs",
+        "{files}"
+    );
+    assert!(
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
+    );
+    process.stop();
+}
+
+#[test]
+fn mcp_stateless_first_tool_call_starts_the_indexing_runtime() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn stateless_ready() {}\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {"operation": {"kind": "tree", "max_results": 10}},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }
+        }
+    }));
+    let response = process.response(INDEX_READY_TIMEOUT);
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["result"]["resultType"], "complete");
+    assert_eq!(
+        response["result"]["structuredContent"]["entries"][0]["path"], "lib.rs",
+        "{response}"
+    );
+    process.stop();
+}
+
+#[test]
 fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");

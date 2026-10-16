@@ -142,6 +142,7 @@ pub async fn serve_stdio(services: Arc<Services>, result_mode: McpResultMode) ->
 pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
     let token = CancellationToken::new();
     let transport = BoundedStdioTransport::new(server.request_dispatch.clone(), server.result_mode);
+    let service_state = server.services.clone();
 
     let signal_task = tokio::spawn({
         let token = token.clone();
@@ -160,6 +161,9 @@ pub async fn serve_stdio_server(server: LeanTokenMcp) -> crate::Result<()> {
             ) => return Ok(()),
             Err(error) => return Err(crate::Error::Io(std::io::Error::other(error))),
         };
+        // RMCP accepts both initialize and stateless request metadata. The
+        // latter does not invoke the on_initialized handler.
+        service_state.mark_protocol_initialized();
         service.waiting().await?;
         Ok(())
     }

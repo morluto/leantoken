@@ -1,6 +1,81 @@
 use super::support::{Command, Duration, McpProcess};
 
 #[test]
+fn mcp_overload_replies_follow_each_requests_protocol() {
+    for stateless in [false, true] {
+        let root = tempfile::tempdir().expect("temporary repository");
+        std::fs::write(root.path().join("lib.rs"), "pub fn answer() {}\n").expect("write fixture");
+        let database = root.path().join("index.sqlite");
+        let blocker = rusqlite::Connection::open(&database).expect("blocking connection");
+        blocker
+            .execute_batch("CREATE TABLE startup_blocker(value INTEGER); BEGIN EXCLUSIVE;")
+            .expect("hold startup behind a write lock");
+        let mut process =
+            McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+        let meta = serde_json::json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {}
+        });
+        if stateless {
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+                "params": {"_meta": meta}
+            }));
+            let discovery = process.response(Duration::from_secs(5));
+            assert_eq!(discovery["id"], "discover");
+            assert_eq!(discovery["result"]["resultType"], "complete", "{discovery}");
+        } else {
+            process.initialize();
+            process.send_initialized();
+        }
+
+        // The documented dispatch capacity is 16. Each retrieval stays in
+        // startup while SQLite is locked, keeping that capacity occupied.
+        for id in 100..116 {
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {
+                    "name": "files", "_meta": meta,
+                    "arguments": {"operation": {"kind": "tree", "max_results": 1}}
+                }
+            }));
+        }
+        for (id, protocol, modern) in [(116, "2026-07-28", true), (117, "2025-11-25", false)] {
+            let mut request_meta = meta.clone();
+            request_meta["io.modelcontextprotocol/protocolVersion"] = protocol.into();
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {
+                    "name": "files", "_meta": request_meta,
+                    "arguments": {"operation": {"kind": "tree", "max_results": 1}}
+                }
+            }));
+            let response = process.response(Duration::from_secs(5));
+            assert_eq!(response["id"], id, "{response}");
+            assert_eq!(response["result"]["isError"], false, "{response}");
+            assert_eq!(
+                response["result"]["structuredContent"]["reason"], "retrieval_capacity_exhausted",
+                "{response}"
+            );
+            assert_eq!(
+                response.pointer("/result/resultType"),
+                modern.then_some(&serde_json::json!("complete")),
+                "{response}"
+            );
+        }
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": 118, "method": "tools/list",
+            "params": {"_meta": meta}
+        }));
+        let catalog = process.response(Duration::from_secs(5));
+        assert_eq!(catalog["id"], 118, "{catalog}");
+        assert!(catalog["result"]["tools"].is_array(), "{catalog}");
+        blocker.execute_batch("ROLLBACK").expect("release database");
+        process.stop();
+    }
+}
+
+#[test]
 fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")

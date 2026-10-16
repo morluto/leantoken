@@ -85,6 +85,10 @@ MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
 input bound and pre-dispatch tool-call admission that the stock unbounded stdio
 reader does not provide.
 
+Direct overload replies use the rejected request's protocol version from `_meta`
+when present, falling back to the initialized session version. Per-request
+versions do not overwrite session state or add retained transport metadata.
+
 Direct admission rejections and invalid-shape errors retain at most one write
 task on the transport, with no outbound queue. Its encoded frame, byte cursor,
 and writer ownership survive cancellation of the SDK's receive future. The task
@@ -629,12 +633,15 @@ inspection only after the exact filename shape matches.
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
 the caller explicitly opts into broad-root indexing. MCP performs this check
-after the protocol initialize exchange so a bad host working directory fails
+after accepting the opening protocol request so a bad host working directory fails
 closed without recreating the startup handshake timeout.
 
-MCP starts the stdio protocol before opening SQLite or indexing. It answers the
-mandatory initialize exchange first, then starts repository services after the
-client's initialized notification. A generation-zero retrieval waits up to 30
+MCP starts the stdio protocol before opening SQLite or indexing. It answers
+`initialize` or stateless `server/discover` before starting repository services;
+stateless clients do not send an initialized notification. A first request that
+is itself a validated retrieval can activate the runtime while the SDK waits for
+that response. These signals start the existing single runtime task without
+adding workers or queues. A generation-zero retrieval waits up to 30
 seconds for the first publication and release of the repository operation lock,
 with caller cancellation, before running the retrieval once more. It does not
 poll by repeatedly executing the retrieval. If the bound expires, it returns a
