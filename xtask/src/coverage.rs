@@ -36,7 +36,7 @@ pub(super) fn check_policy(root: &Path) -> Result<(), String> {
     policy(root).map(|_| ())
 }
 
-fn policy(root: &Path) -> Result<Policy, String> {
+fn policy(root: &Path) -> Result<(Policy, BTreeMap<String, bool>), String> {
     let policy: Policy =
         serde_json::from_slice(&fs::read(root.join(POLICY)).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -130,7 +130,7 @@ fn policy(root: &Path) -> Result<Policy, String> {
             ));
         }
     }
-    Ok(policy)
+    Ok((policy, inventory))
 }
 
 fn test_module(module: &syn::ItemMod) -> bool {
@@ -239,7 +239,7 @@ fn source_inventory(root: &Path) -> Result<BTreeMap<String, bool>, String> {
 }
 
 fn assess(root: &Path, report: &Path) -> Result<(), String> {
-    let policy = policy(root)?;
+    let (policy, inventory) = policy(root)?;
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(report).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -261,7 +261,8 @@ fn assess(root: &Path, report: &Path) -> Result<(), String> {
             continue;
         };
         let path = relative.to_string_lossy().replace('\\', "/");
-        if !path.starts_with("src/") {
+        // LLVM's filename filters do not recognize every #[cfg(test)] module.
+        if !path.starts_with("src/") || inventory.get(&path) == Some(&true) {
             continue;
         }
         if !seen.insert(path.clone()) {
@@ -729,6 +730,57 @@ mod tests {
             assess(root.path(), &path)
                 .unwrap_err()
                 .contains("production source lacks a coverage disposition: src/unreported.rs")
+        );
+    }
+
+    #[test]
+    fn reported_test_modules_cannot_hide_production_or_unknown_sources() {
+        let root = fixture();
+        let library = root.path().join("src/lib.rs");
+        let test_module = "pub mod critical;\n#[cfg(test)] mod query_plans;\n";
+        fs::write(&library, test_module).unwrap();
+        fs::write(
+            root.path().join("src/query_plans.rs"),
+            "pub fn query_plan_probe() {}\n",
+        )
+        .unwrap();
+        let policy_path = root.path().join(POLICY);
+        let mut policy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&policy_path).unwrap()).unwrap();
+        policy["declarations"] = serde_json::json!({"src/lib.rs": "Module declarations only"});
+        fs::write(policy_path, policy.to_string()).unwrap();
+
+        let report_path = report(root.path(), 90);
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+        let metric = serde_json::json!({"count": 100, "covered": 0});
+        report["data"][0]["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "filename": root.path().join("src/query_plans.rs"),
+                "summary": {"lines": metric, "functions": metric, "regions": metric}
+            }));
+        fs::write(&report_path, report.to_string()).unwrap();
+        assess(root.path(), &report_path).unwrap();
+
+        // The same reported file requires a budget when production can reach it.
+        fs::write(&library, "pub mod critical;\nmod query_plans;\n").unwrap();
+        assert!(
+            assess(root.path(), &report_path)
+                .unwrap_err()
+                .contains("production source lacks a coverage disposition: src/query_plans.rs")
+        );
+
+        // A report entry absent from the AST inventory must still fail closed.
+        fs::write(&library, test_module).unwrap();
+        report["data"][0]["files"][1]["filename"] =
+            serde_json::json!(root.path().join("src/unknown.rs"));
+        fs::write(&report_path, report.to_string()).unwrap();
+        assert!(
+            assess(root.path(), &report_path)
+                .unwrap_err()
+                .contains("new production file needs an explicit coverage budget: src/unknown.rs")
         );
     }
 
