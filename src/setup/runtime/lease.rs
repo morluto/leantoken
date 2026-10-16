@@ -18,11 +18,47 @@ pub struct RuntimeLease {
 /// protection independently of home/data environment changes. Unmarked paths
 /// require a resolvable setup home and a matching configured runtime root.
 pub fn acquire_current_runtime_lease(managed_by_setup: bool) -> Result<Option<RuntimeLease>> {
-    let executable = std::env::current_exe()?.canonicalize()?;
+    let executable = std::env::current_exe()?;
+    let Some(executable) = canonical_runtime_executable(&executable)? else {
+        return Ok(None);
+    };
     acquire_executable_runtime_lease(&executable, managed_by_setup, || {
         // Use setup's HOME/Windows USERPROFILE fallbacks for unmarked runs too.
         home_directory().map(|home| setup_runtime_root(&home))
     })
+}
+
+fn canonical_runtime_executable(executable: &Path) -> Result<Option<PathBuf>> {
+    match executable.canonicalize() {
+        Ok(path) => Ok(Some(path)),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && !potential_runtime_artifact(executable) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn potential_runtime_artifact(executable: &Path) -> bool {
+    let Some(name) = executable.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    // Linux appends this suffix to /proc/self/exe after the image is unlinked.
+    // Strip it only for fail-closed classification, never to open a replacement.
+    #[cfg(target_os = "linux")]
+    let name = name.strip_suffix(" (deleted)").unwrap_or(name);
+    let Some(directory) = executable.parent() else {
+        return false;
+    };
+    name == runtime_executable_name(cfg!(windows))
+        && directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(parse_runtime_directory_name)
+            .is_some()
+        && directory.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("runtimes"))
 }
 
 fn acquire_executable_runtime_lease(
@@ -313,6 +349,84 @@ mod tests {
         let executable = directory.join(name);
         fs::write(&executable, b"standalone executable fixture").unwrap();
         executable.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn missing_standalone_executable_paths_do_not_require_a_runtime_lease() {
+        let temporary = tempfile::tempdir().unwrap();
+        for directory in [
+            "bin",
+            "1.2.3",
+            "runtimes/not-a-version",
+            "runtimes/1.2.3_short",
+        ] {
+            let executable = temporary
+                .path()
+                .join(directory)
+                .join(runtime_executable_name(cfg!(windows)));
+            assert!(canonical_runtime_executable(&executable).unwrap().is_none());
+        }
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn missing_runtime_artifact_paths_keep_their_not_found_error() {
+        let temporary = tempfile::tempdir().unwrap();
+        for namespace in ["1.2.3".to_owned(), format!("1.2.3_{}", "a".repeat(64))] {
+            let executable = temporary
+                .path()
+                .join("runtimes")
+                .join(namespace)
+                .join(runtime_executable_name(cfg!(windows)));
+            let error = canonical_runtime_executable(&executable)
+                .expect_err("a potentially managed disappearing artifact must fail closed");
+            assert!(
+                matches!(error, Error::Io(error) if error.kind() == std::io::ErrorKind::NotFound)
+            );
+        }
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn deleted_linux_image_suffix_does_not_hide_a_runtime_artifact() {
+        let temporary = tempfile::tempdir().unwrap();
+        for (directory, managed) in [
+            ("bin".to_owned(), false),
+            ("1.2.3".to_owned(), false),
+            ("runtimes/1.2.3".to_owned(), true),
+            (format!("runtimes/1.2.3_{}", "a".repeat(64)), true),
+            ("runtimes/1.2.3_short".to_owned(), false),
+        ] {
+            let executable = temporary.path().join(directory).join("leantoken (deleted)");
+            let resolved = canonical_runtime_executable(&executable);
+            if managed {
+                assert!(
+                    matches!(resolved, Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
+                );
+            } else {
+                assert!(resolved.unwrap().is_none());
+            }
+        }
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_symlinks_still_resolve_and_other_io_errors_still_fail() {
+        let temporary = tempfile::tempdir().unwrap();
+        let target = executable_fixture(temporary.path(), "bin", runtime_executable_name(false));
+        let link = temporary.path().join("executable-link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(canonical_runtime_executable(&link).unwrap(), Some(target));
+
+        let blocker = temporary.path().join("not-a-directory");
+        fs::write(&blocker, b"file").unwrap();
+        let error = canonical_runtime_executable(&blocker.join(runtime_executable_name(false)))
+            .expect_err("other canonicalization errors must not be ignored");
+        assert!(
+            matches!(error, Error::Io(error) if error.kind() == std::io::ErrorKind::NotADirectory)
+        );
     }
 
     #[test]

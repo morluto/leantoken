@@ -936,6 +936,11 @@ Unmarked manual startup instead requires a setup home resolved through `HOME`,
 Windows `USERPROFILE`, or platform directories and an exact match with the
 configured runtime root. Without a resolvable home, an unmarked version-shaped
 executable path does not establish ownership and acquires no lease.
+Successful executable-path canonicalization still resolves symlinks before
+ownership checks. A missing standalone path outside the runtime artifact layout
+needs no lease, while a potentially managed missing path retains its error,
+including Linux's ` (deleted)` image suffix. Other path-resolution errors also
+fail closed; this fallback creates no sidecars and performs no home lookup.
 
 Stable sidecars live outside artifact directories at
 `<runtime_root>/.leases/<BLAKE3(complete artifact directory name)>.lock`.
