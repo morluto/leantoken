@@ -411,7 +411,6 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
     // Scan once with constant state and return disjoint borrowed scopes,
     // avoiding copied or repeatedly scanned subject suffixes.
     let normalized = part.to_ascii_lowercase();
-    let delimiter = |character: char| !character.is_alphanumeric() && character != '_';
     let mut clauses = Vec::new();
     let mut start = 0;
     let mut offset = 0;
@@ -423,8 +422,9 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
     let mut comma_before_next_word = false;
     let mut coordinator = None;
     let mut pending_split = None;
-    for piece in normalized.split_inclusive(delimiter) {
-        let word = piece.trim_end_matches(delimiter);
+    for piece in normalized.split_inclusive(task_role_word_delimiter) {
+        let raw_word = piece.trim_end_matches(task_role_word_delimiter);
+        let [word, _] = task_role_word(raw_word);
         let word_start = offset;
         offset += piece.len();
         // Carry separator punctuation only across whitespace pieces.
@@ -444,10 +444,10 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             pending_split = None;
         }
         let instruction = unchanged_instruction_marker(word);
-        // Inside a condition, require a separated imperative rather than
-        // treating a subordinate actor's ensure/leave verb as a new command.
+        // Require an imperative rather than treating an actor's inflected
+        // ensure/leave verb as a new command. Conditions also need separation.
         let command_boundary = coordinator
-            .filter(|(_, _, comma)| !subordinate || (*comma && matches!(word, "ensure" | "leave")));
+            .filter(|(_, _, comma)| matches!(word, "ensure" | "leave") && (!subordinate || *comma));
         if instruction
             && let Some((boundary, next_start, _)) = command_boundary
             && boundary > start
@@ -468,7 +468,7 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
         // Share the instruction-subject vocabulary; a real intervening subject
         // or predicate closes this window. Retain the full right-hand slice.
         coordinator = match word {
-            "and" | "or" => Some((word_start, word_start + word.len(), preceded_by_comma)),
+            "and" | "or" => Some((word_start, word_start + raw_word.len(), preceded_by_comma)),
             _ if unchanged_subject_modifier(word) => coordinator,
             _ => None,
         };
@@ -506,7 +506,8 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     let clause = clause.to_ascii_lowercase();
     let has_any = |markers: &[&str]| markers.iter().any(|marker| clause.contains(marker));
     let words = clause
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .split(task_role_word_delimiter)
+        .flat_map(task_role_word)
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>();
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
@@ -651,6 +652,38 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn task_role_word_delimiter(character: char) -> bool {
+    !character.is_alphanumeric() && !matches!(character, '_' | '\'' | '’')
+}
+
+fn task_role_word(word: &str) -> [&str; 2] {
+    // Borrow logical auxiliaries without changing the source's byte positions.
+    // Other internal apostrophes remain part of their original lexical word.
+    let word = word.trim_matches(['\'', '’']);
+    match word {
+        "aren't" | "aren’t" => ["are", "not"],
+        "isn't" | "isn’t" => ["is", "not"],
+        "weren't" | "weren’t" => ["were", "not"],
+        "wasn't" | "wasn’t" => ["was", "not"],
+        "haven't" | "haven’t" => ["have", "not"],
+        "hasn't" | "hasn’t" => ["has", "not"],
+        "hadn't" | "hadn’t" => ["had", "not"],
+        "don't" | "don’t" => ["do", "not"],
+        "doesn't" | "doesn’t" => ["does", "not"],
+        "didn't" | "didn’t" => ["did", "not"],
+        "can't" | "can’t" => ["can", "not"],
+        "couldn't" | "couldn’t" => ["could", "not"],
+        "mightn't" | "mightn’t" => ["might", "not"],
+        "mustn't" | "mustn’t" => ["must", "not"],
+        "shan't" | "shan’t" => ["shall", "not"],
+        "shouldn't" | "shouldn’t" => ["should", "not"],
+        "won't" | "won’t" => ["will", "not"],
+        "wouldn't" | "wouldn’t" => ["would", "not"],
+        "needn't" | "needn’t" => ["need", "not"],
+        _ => [word, ""],
+    }
 }
 
 fn unchanged_subject_constraint(words: &[&str], subject: usize, instruction: bool) -> bool {

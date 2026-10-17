@@ -244,6 +244,16 @@ fn mutation_prohibitions_keep_distinct_query_roles() {
         "Ensure unchanged files are not to be modified",
         "Ensure unchanged files have not been modified",
         "Ensure unchanged files had not been modified",
+        "Ensure unchanged files aren't modified",
+        "Ensure unchanged files weren't modified",
+        "Ensure unchanged files haven't been modified",
+        "Ensure unchanged files hadn't been modified",
+        "don't modify unchanged files",
+        "don’t modify unchanged files",
+        "Ensure unchanged files can't be modified",
+        "Ensure unchanged files won't be modified",
+        "Ensure unchanged files mustn’t be modified",
+        "Ensure unchanged files couldn't have been modified",
     ] {
         let task = format!("Refactor the serializer; {prohibition}");
         let clauses = task_clauses(&task);
@@ -310,6 +320,26 @@ fn mutation_prohibition_observations_and_skipped_operations_stay_primary() {
         "Ensure unchanged files have not been processed",
         "Ensure unchanged files have not been required",
         "Ensure unchanged files are refreshed when records have not been modified",
+        "Find how unchanged files aren't modified",
+        "Find how unchanged file isn't modified",
+        "Ensure unchanged callers haven't modified records",
+        "Ensure unchanged caller hasn't modified records",
+        "Ensure unchanged callers hadn't modified records",
+        "Ensure unchanged files aren't processed",
+        "Ensure unchanged files haven't been processed",
+        "don't process unchanged files",
+        "Find why workers don't change unchanged files",
+        "Ensure unchanged files are refreshed when records aren't modified",
+        "Ensure caller's unchanged files are refreshed",
+        "Ensure a caller’s unchanged files are refreshed",
+        "Ensure callers' unchanged files aren't processed",
+        "Find how 'unchanged' files aren't modified",
+        "Ensure 'unchanged' files are refreshed",
+        "Ensure unchanged callers shouldn't modify records",
+        "Ensure unchanged files can't be processed",
+        "Find how unchanged files won't be modified",
+        "Ensure unchanged files are refreshed when records mustn't be modified",
+        "Ensure unchanged files ain't modified",
     ] {
         assert!(matches!(
             clause_roles(task, true, false).as_slice(),
@@ -367,6 +397,14 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
             "Ensure unchanged records are refreshed and unchanged files have not been modified",
             "Ensure unchanged records are refreshed",
         ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files aren't modified",
+            "Ensure unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files haven't been modified",
+            "Ensure unchanged records are refreshed",
+        ),
     ] {
         assert_eq!(task_clauses(task).len(), 2);
         let queries = plan(task, 16).queries;
@@ -394,6 +432,8 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
         "Ensure unchanged records and unchanged files are not modified",
         "Ensure unchanged records and unchanged files remain unchanged",
         "Ensure unchanged records and unchanged files have not been modified",
+        "Ensure unchanged records and unchanged files aren't modified",
+        "Ensure unchanged records and unchanged files haven't been modified",
     ] {
         assert_eq!(task_clauses(task).len(), 1);
         let queries = plan(task, 16).queries;
@@ -445,6 +485,51 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
                 .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
             "a fact, skipped operation or subordinate subject stays primary: {task}"
         );
+    }
+}
+
+#[test]
+fn contracted_predicates_keep_quoted_scope_byte_boundaries() {
+    for (task, primary, preserved) in [
+        (
+            "Ensure 'unchanged' records are refreshed and 'unchanged' files aren't modified",
+            "Ensure 'unchanged' records are refreshed",
+            "'unchanged' files aren't modified",
+        ),
+        (
+            "Ensure ‘unchanged’ records are refreshed and ‘unchanged’ files aren’t modified",
+            "Ensure ‘unchanged’ records are refreshed",
+            "‘unchanged’ files aren’t modified",
+        ),
+    ] {
+        let clauses = task_clauses(task);
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[0].text, primary);
+        assert_eq!(clauses[1].text, preserved);
+        assert!(matches!(
+            clause_roles(clauses[0].text, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        let queries = plan(task, 16).queries;
+        for value in ["records", "refreshed"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("primary subject query");
+            assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+            assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
+        let files = queries
+            .iter()
+            .find(|query| query.value == "files")
+            .expect("preserved files query");
+        assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+        assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+        assert_eq!(primary_task_text(task), primary);
     }
 }
 
@@ -620,6 +705,7 @@ fn coordinated_instructions_keep_distinct_query_roles() {
         assert_eq!(primary_task_text(task), primary);
     }
     for task in [
+        "Find how the handler refreshes unchanged records and ensures unchanged files are not modified",
         "Find how unchanged records are refreshed and the handler ensures unchanged files are not modified",
         "Find how unchanged records are refreshed when a handler ensures unchanged files are not modified",
     ] {
@@ -812,6 +898,13 @@ fn bound_predicate_modifiers_keep_preservation_roles() {
             "files",
         ),
         ("Ensure unchanged file has not been modified", "file"),
+        ("Ensure unchanged file isn't modified", "file"),
+        ("Ensure unchanged file wasn't modified", "file"),
+        ("Ensure unchanged file hasn't been modified", "file"),
+        (
+            "Ensure unchanged file hasn’t been accidentally modified",
+            "file",
+        ),
         (
             "Ensure unchanged files have definitely not previously been accidentally modified",
             "files",
