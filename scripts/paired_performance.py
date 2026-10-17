@@ -62,9 +62,9 @@ def benchmark_line(name: str, value: Any, source_unit: str) -> str:
     number = float(value)
     if not math.isfinite(number):
         raise InvalidEvidence(f"{name}: metric must be finite")
-    nanoseconds = int(round(number * UNIT_TO_NS[source_unit]))
-    if nanoseconds < 0:
+    if number < 0:
         raise InvalidEvidence(f"{name}: metric must not be negative")
+    nanoseconds = int(round(number * UNIT_TO_NS[source_unit]))
     return f"Benchmark{name} 1 {nanoseconds} ns/op"
 
 

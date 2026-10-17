@@ -253,6 +253,51 @@ class PairedPerformanceCliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 2)
             self.assertIn("metric must be finite", completed.stderr)
 
+    def test_collect_rejects_negative_metrics_before_nanosecond_rounding(self) -> None:
+        for unit, scale in (
+            ("ns", 1),
+            ("us", 1_000),
+            ("ms", 1_000_000),
+            ("s", 1_000_000_000),
+        ):
+            with self.subTest(unit=unit), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                manifest, samples = write_collect_fixture(root)
+                config = json.loads(manifest.read_text())
+                config["metrics"][0]["source_unit"] = unit
+                manifest.write_text(json.dumps(config), encoding="utf-8")
+                changed = samples / "head-02" / "hot-path.json"
+                report = json.loads(changed.read_text())
+                report["regex"]["timing_ms"]["p50"] = -0.25 / scale
+                changed.write_text(json.dumps(report), encoding="utf-8")
+
+                completed, base, head, parity = collect_command(manifest, samples, root)
+
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("metric must not be negative", completed.stderr)
+                self.assertFalse(base.exists())
+                self.assertFalse(head.exists())
+                self.assertFalse(parity.exists())
+
+    def test_collect_keeps_zero_and_positive_subnanosecond_metrics(self) -> None:
+        for value in (0.0, 0.25):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                manifest, samples = write_collect_fixture(root)
+                config = json.loads(manifest.read_text())
+                config["metrics"][0]["source_unit"] = "ns"
+                manifest.write_text(json.dumps(config), encoding="utf-8")
+                changed = samples / "head-02" / "hot-path.json"
+                report = json.loads(changed.read_text())
+                report["regex"]["timing_ms"]["p50"] = value
+                changed.write_text(json.dumps(report), encoding="utf-8")
+
+                completed, _, head, parity = collect_command(manifest, samples, root)
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("BenchmarkHotPathRegexP50 1 0 ns/op", head.read_text())
+                self.assertEqual(json.loads(parity.read_text())["parity"], "pass")
+
     def test_gate_rejects_a_statistically_significant_material_regression(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
