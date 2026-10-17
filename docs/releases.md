@@ -53,9 +53,9 @@ git-cliff parser as the changelog and waits for the current package version's
 tag before planning another release. An existing open `autorelease` PR is
 updated across version changes, even if its branch retains an older version
 name; the PR title and package metadata determine the release identity.
-Every generated candidate explicitly dispatches CI on that branch: PR events
-made with `GITHUB_TOKEN` do not start the ordinary PR workflow. The dispatched
-run validates the candidate's exact source revision and uses the normal
+Every generated candidate explicitly dispatches CI on that branch. Pull-request
+runs created with [`GITHUB_TOKEN`] require approval; `workflow_dispatch` starts
+directly. The dispatched run validates the candidate's exact source revision and uses the normal
 platform and owner bounds. Its `Required checks` job validates every planned
 receipt and provides the same stable merge check as a pull-request run.
 
