@@ -242,6 +242,8 @@ fn mutation_prohibitions_keep_distinct_query_roles() {
         "Ensure callers do not change files when idle",
         "Ensure unchanged files are definitely not modified",
         "Ensure unchanged files are not to be modified",
+        "Ensure unchanged files have not been modified",
+        "Ensure unchanged files had not been modified",
     ] {
         let task = format!("Refactor the serializer; {prohibition}");
         let clauses = task_clauses(&task);
@@ -297,6 +299,17 @@ fn mutation_prohibition_observations_and_skipped_operations_stay_primary() {
         "Find how unchanged files are not to be modified",
         "Ensure unchanged files are refreshed when records are definitely not modified",
         "Ensure unchanged files are refreshed when records are not to be modified",
+        "Find how unchanged files have not been modified",
+        "Find how unchanged file has not been modified",
+        "Ensure unchanged callers have not modified records",
+        "Ensure unchanged caller has not modified records",
+        "Ensure unchanged callers had not modified records",
+        "Ensure unchanged files have required fields",
+        "Ensure unchanged file has required fields",
+        "Ensure unchanged files had required fields",
+        "Ensure unchanged files have not been processed",
+        "Ensure unchanged files have not been required",
+        "Ensure unchanged files are refreshed when records have not been modified",
     ] {
         assert!(matches!(
             clause_roles(task, true, false).as_slice(),
@@ -350,6 +363,10 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
             "Ensure unchanged files remain unchanged and unchanged records are refreshed",
             "unchanged records are refreshed",
         ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files have not been modified",
+            "Ensure unchanged records are refreshed",
+        ),
     ] {
         assert_eq!(task_clauses(task).len(), 2);
         let queries = plan(task, 16).queries;
@@ -376,6 +393,7 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
     for task in [
         "Ensure unchanged records and unchanged files are not modified",
         "Ensure unchanged records and unchanged files remain unchanged",
+        "Ensure unchanged records and unchanged files have not been modified",
     ] {
         assert_eq!(task_clauses(task).len(), 1);
         let queries = plan(task, 16).queries;
@@ -548,6 +566,11 @@ fn coordinated_instructions_keep_distinct_query_roles() {
             "format",
             "Ensure unchanged records are refreshed when stale,",
         ),
+        (
+            "Ensure unchanged records are refreshed when stale; ensure the wire format remains unchanged",
+            "format",
+            "Ensure unchanged records are refreshed when stale",
+        ),
     ] {
         let clauses = task_clauses(task);
         assert_eq!(clauses.len(), 2);
@@ -613,7 +636,7 @@ fn coordinated_instructions_keep_distinct_query_roles() {
 
 #[test]
 fn resumed_instruction_restores_subject_scopes() {
-    let resumed = "Ensure unchanged records are refreshed when stale and ensure unchanged entries are refreshed and unchanged files are not modified";
+    let resumed = "Ensure unchanged records are refreshed when stale, and ensure unchanged entries are refreshed and unchanged files are not modified";
     let clauses = task_clauses(resumed);
     assert_eq!(clauses.len(), 3);
     assert!(matches!(
@@ -626,7 +649,7 @@ fn resumed_instruction_restores_subject_scopes() {
     ));
     assert_eq!(
         primary_task_text(resumed),
-        "Ensure unchanged records are refreshed when stale ensure unchanged entries are refreshed"
+        "Ensure unchanged records are refreshed when stale, ensure unchanged entries are refreshed"
     );
 }
 
@@ -714,6 +737,11 @@ fn subordinate_unchanged_predicates_keep_governing_subject_roles() {
         "Ensure unchanged records are refreshed when stale and unchanged files remain unchanged",
         "Ensure unchanged records are refreshed when stale and unchanged files are not modified",
         "Ensure unchanged records are refreshed when stale and a handler ensures unchanged files are not modified",
+        "Find unchanged records when the handler waits and ensures unchanged files are not modified",
+        "Find unchanged records when the handler waits, and ensures unchanged files are not modified",
+        "Find unchanged records when the handler waits and leaves unchanged files unchanged",
+        "Find unchanged records when handlers wait and ensure unchanged files are not modified",
+        "Find unchanged records when handlers wait and leave unchanged files unchanged",
     ] {
         assert_eq!(task_clauses(task).len(), 1);
         assert!(matches!(
@@ -781,6 +809,11 @@ fn bound_predicate_modifiers_keep_preservation_roles() {
         ),
         (
             "Ensure unchanged files are definitely never deliberately altered",
+            "files",
+        ),
+        ("Ensure unchanged file has not been modified", "file"),
+        (
+            "Ensure unchanged files have definitely not previously been accidentally modified",
             "files",
         ),
         ("The wire format is semantically unchanged", "format"),

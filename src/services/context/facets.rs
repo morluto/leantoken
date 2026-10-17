@@ -420,12 +420,19 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
     let mut subject_seen = false;
     let mut copula_seen = false;
     let mut subordinate = false;
+    let mut comma_before_next_word = false;
     let mut coordinator = None;
     let mut pending_split = None;
     for piece in normalized.split_inclusive(delimiter) {
         let word = piece.trim_end_matches(delimiter);
         let word_start = offset;
         offset += piece.len();
+        // Carry separator punctuation only across whitespace pieces.
+        let preceded_by_comma = comma_before_next_word;
+        comma_before_next_word = piece.ends_with(',')
+            || (word.is_empty()
+                && piece.chars().all(char::is_whitespace)
+                && comma_before_next_word);
         if word.is_empty() {
             continue;
         }
@@ -437,8 +444,12 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             pending_split = None;
         }
         let instruction = unchanged_instruction_marker(word);
+        // Inside a condition, require a separated imperative rather than
+        // treating a subordinate actor's ensure/leave verb as a new command.
+        let command_boundary = coordinator
+            .filter(|(_, _, comma)| !subordinate || (*comma && matches!(word, "ensure" | "leave")));
         if instruction
-            && let Some((boundary, next_start)) = coordinator
+            && let Some((boundary, next_start, _)) = command_boundary
             && boundary > start
         {
             // An explicit coordinated command establishes its own scope
@@ -457,7 +468,7 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
         // Share the instruction-subject vocabulary; a real intervening subject
         // or predicate closes this window. Retain the full right-hand slice.
         coordinator = match word {
-            "and" | "or" => Some((word_start, word_start + word.len())),
+            "and" | "or" => Some((word_start, word_start + word.len(), preceded_by_comma)),
             _ if unchanged_subject_modifier(word) => coordinator,
             _ => None,
         };
@@ -466,11 +477,11 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
         }
         has_instruction |= instruction;
         if word == "unchanged" {
-            if copula_seen && let Some((coordinator, subject_start)) = coordinator {
+            if copula_seen && let Some((coordinator, subject_start, _)) = coordinator {
                 pending_split.get_or_insert((coordinator, subject_start, has_instruction));
             }
             subject_seen = true;
-        } else if subject_seen && unchanged_predicate_governor(word) {
+        } else if subject_seen && unchanged_subject_governor(word) {
             // Confirm a boundary only when both subjects have their own
             // predicate. Subjects sharing one copula remain in one scope.
             if let Some((boundary, next_start, instruction)) = pending_split.take() {
@@ -506,54 +517,11 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
         .iter()
         .position(|word| unchanged_instruction_marker(word));
     let unchanged_constraint = unchanged_subject.is_some_and(|subject| {
-        // Only the first governing predicate can make this subject a
-        // requirement. A subordinate clause describes another subject.
-        let predicate = (subject + 1..words.len()).find(|index| {
-            matches!(words[*index], "is" | "are" | "be" | "was" | "were")
-                || unchanged_subordinate_boundary(words[*index])
-        });
-        predicate.is_some_and(|index| {
-            if !matches!(words[index], "is" | "are" | "be" | "was" | "were") {
-                return false;
-            }
-            let mut action = index + 1;
-            while words
-                .get(action)
-                .is_some_and(|word| unchanged_predicate_adverb(word))
-            {
-                action += 1;
-            }
-            if words.get(action).is_some_and(|word| {
-                matches!(*word, "required" | "mandatory" | "necessary" | "needed")
-            }) {
-                return true;
-            }
-            // An explicit instruction can prohibit changing this subject.
-            // Observations and unrelated subordinate predicates stay primary.
-            if !inherited_instruction && unchanged_instruction.is_none_or(|start| start >= subject)
-            {
-                return false;
-            }
-            if words
-                .get(action)
-                .is_some_and(|word| matches!(*word, "not" | "never"))
-            {
-                action += 1;
-            } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
-                return false;
-            }
-            if words.get(action) == Some(&"to") && words.get(action + 1) == Some(&"be") {
-                action += 1;
-            }
-            while words.get(action).is_some_and(|word| {
-                unchanged_predicate_adverb(word) || matches!(*word, "be" | "being")
-            }) {
-                action += 1;
-            }
-            words
-                .get(action)
-                .is_some_and(|word| unchanged_mutation_verb(word, true))
-        })
+        unchanged_subject_constraint(
+            &words,
+            subject,
+            inherited_instruction || unchanged_instruction.is_some_and(|start| start < subject),
+        )
     });
     // Determiners and common modifiers do not supply an instruction's
     // subject by themselves. Locate its first subject word once, so repeated
@@ -685,11 +653,86 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     .collect()
 }
 
+fn unchanged_subject_constraint(words: &[&str], subject: usize, instruction: bool) -> bool {
+    // Only the first governing predicate can make this subject a
+    // requirement. A subordinate clause describes another subject.
+    let Some(index) = (subject + 1..words.len()).find(|index| {
+        unchanged_passive_governor(words[*index]) || unchanged_subordinate_boundary(words[*index])
+    }) else {
+        return false;
+    };
+    if !unchanged_passive_governor(words[index]) {
+        return false;
+    }
+    let perfect = matches!(words[index], "have" | "has" | "had");
+    let mut action = index + 1;
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word))
+    {
+        action += 1;
+    }
+    if !perfect
+        && words
+            .get(action)
+            .is_some_and(|word| matches!(*word, "required" | "mandatory" | "necessary" | "needed"))
+    {
+        return true;
+    }
+    // An explicit instruction can prohibit changing this subject.
+    // Observations and unrelated subordinate predicates stay primary.
+    if !instruction {
+        return false;
+    }
+    if words
+        .get(action)
+        .is_some_and(|word| matches!(*word, "not" | "never"))
+    {
+        action += 1;
+    } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
+        return false;
+    }
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word))
+    {
+        action += 1;
+    }
+    if perfect {
+        if words.get(action) != Some(&"been") {
+            return false;
+        }
+        action += 1;
+    } else if words.get(action) == Some(&"to") && words.get(action + 1) == Some(&"be") {
+        action += 1;
+    }
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word) || matches!(*word, "be" | "being"))
+    {
+        action += 1;
+    }
+    words
+        .get(action)
+        .is_some_and(|word| unchanged_mutation_verb(word, true))
+}
+
 fn unchanged_instruction_marker(word: &str) -> bool {
     matches!(
         word,
         "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
     )
+}
+
+fn unchanged_passive_governor(word: &str) -> bool {
+    matches!(
+        word,
+        "is" | "are" | "be" | "was" | "were" | "have" | "has" | "had"
+    )
+}
+
+fn unchanged_subject_governor(word: &str) -> bool {
+    unchanged_predicate_governor(word) || unchanged_passive_governor(word)
 }
 
 fn unchanged_predicate_governor(word: &str) -> bool {

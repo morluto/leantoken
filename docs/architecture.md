@@ -2219,9 +2219,11 @@ their governing copula or negation.
 Scope confirmation and role detection share the same fixed governor vocabulary;
 subordinate observations do not supply a preservation predicate for the leading
 `unchanged` subject. Ordinary coordinated instructions retain primary roles.
-The forward scan can resume at an independent coordinated instruction after a
-subordinate observation, using constant state while keeping subject inheritance
-disabled inside that observation.
+After a subordinate observation, the forward scan requires a comma-delimited
+coordinator and uninflected `ensure`/`leave` to resume at another instruction.
+Ambiguous unpunctuated coordination stays with the observation. Constant state
+keeps subject inheritance disabled inside it. Negated perfect-passive constraints
+require `been`, so active mutations and possession do not become preservation.
 Object-first mutation prohibitions use the same fixed mutation vocabulary as
 passive constraints. A constant-state token pass accepts clause-leading commands
 or recognized leading instructions, stopping at subordinate boundaries except
