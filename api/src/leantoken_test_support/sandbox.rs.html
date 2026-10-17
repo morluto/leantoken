@@ -95,14 +95,15 @@
 <a href=#95 id=95 data-nosnippet>95</a>}
 <a href=#96 id=96 data-nosnippet>96</a>
 <a href=#97 id=97 data-nosnippet>97</a><span class="kw">fn </span>rerun_command(module: <span class="kw-2">&amp;</span>str, callsite: <span class="kw-2">&amp;</span>str, test_name: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt;) -&gt; String {
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>package = <span class="kw">match </span>module.split(<span class="string">"::"</span>).next() {
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="prelude-val">Some</span>(<span class="string">"leantoken_test_support"</span>) =&gt; <span class="string">"leantoken-test-support"</span>,
-<a href=#100 id=100 data-nosnippet>100</a>        <span class="prelude-val">Some</span>(<span class="string">"leantoken_test_suite"</span>) =&gt; <span class="string">"leantoken-test-suite"</span>,
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">_ </span>=&gt; <span class="string">"leantoken"</span>,
-<a href=#102 id=102 data-nosnippet>102</a>    };
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span>selector = test_name
-<a href=#104 id=104 data-nosnippet>104</a>        .filter(|name| !name.is_empty())
-<a href=#105 id=105 data-nosnippet>105</a>        .unwrap_or(callsite);
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="macro">format!</span>(<span class="string">"cargo test --locked --package {package} --all-features --lib {selector}"</span>)
-<a href=#107 id=107 data-nosnippet>107</a>}
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>selector = test_name
+<a href=#99 id=99 data-nosnippet>99</a>        .filter(|name| !name.is_empty())
+<a href=#100 id=100 data-nosnippet>100</a>        .unwrap_or(callsite);
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">match </span>module.split(<span class="string">"::"</span>).next() {
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="prelude-val">Some</span>(<span class="string">"leantoken_test_support"</span>) =&gt; <span class="macro">format!</span>(
+<a href=#103 id=103 data-nosnippet>103</a>            <span class="string">"cargo test --locked --package leantoken-test-support --all-features --lib {selector}"
+<a href=#104 id=104 data-nosnippet>104</a>        </span>),
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="prelude-val">Some</span>(<span class="string">"leantoken_test_suite"</span>) =&gt; <span class="macro">format!</span>(<span class="string">"cargo test-focused suite::{selector}"</span>),
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">_ </span>=&gt; <span class="macro">format!</span>(<span class="string">"cargo test-focused product::{selector}"</span>),
+<a href=#107 id=107 data-nosnippet>107</a>    }
+<a href=#108 id=108 data-nosnippet>108</a>}
 </code></pre></div></section></main></body></html>
