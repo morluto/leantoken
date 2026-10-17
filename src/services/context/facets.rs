@@ -445,10 +445,24 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
         {
             break;
         }
-        has_instruction |= matches!(
-            word,
-            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
-        );
+        let instruction = unchanged_instruction_marker(word);
+        if instruction
+            && let Some((boundary, next_start)) = coordinator
+            && boundary > start
+        {
+            // An explicit coordinated command establishes its own scope
+            // without requiring another unchanged subject or copula.
+            clauses.push(TaskClause {
+                text: part[start..boundary].trim(),
+                inherited_instruction,
+            });
+            start = next_start;
+            inherited_instruction = has_instruction;
+            subject_seen = false;
+            copula_seen = false;
+            pending_split = None;
+        }
+        has_instruction |= instruction;
         if word == "unchanged" {
             if copula_seen && let Some((coordinator, subject_start)) = coordinator {
                 pending_split.get_or_insert((coordinator, subject_start, has_instruction));
@@ -493,12 +507,9 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     // An unchanged subject (for example, "unchanged files") is still primary
     // task evidence. Reserve preservation roles for an instruction or predicate.
     let unchanged_subject = words.iter().position(|word| *word == "unchanged");
-    let unchanged_instruction = words.iter().position(|word| {
-        matches!(
-            *word,
-            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
-        )
-    });
+    let unchanged_instruction = words
+        .iter()
+        .position(|word| unchanged_instruction_marker(word));
     let unchanged_constraint = unchanged_subject.is_some_and(|subject| {
         // Only the first governing predicate can make this subject a
         // requirement. A subordinate clause describes another subject.
@@ -525,7 +536,11 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
             if !matches!(words[index], "is" | "are" | "be" | "was" | "were") {
                 return false;
             }
-            if words.get(index + 1).is_some_and(|word| {
+            let requirement = words
+                .iter()
+                .skip(index + 1)
+                .find(|word| !unchanged_predicate_adverb(word));
+            if requirement.is_some_and(|word| {
                 matches!(*word, "required" | "mandatory" | "necessary" | "needed")
             }) {
                 return true;
@@ -545,10 +560,9 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
             } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
                 return false;
             }
-            while words
-                .get(action)
-                .is_some_and(|word| word.ends_with("ly") || matches!(*word, "be" | "being"))
-            {
+            while words.get(action).is_some_and(|word| {
+                unchanged_predicate_adverb(word) || matches!(*word, "be" | "being")
+            }) {
                 action += 1;
             }
             words.get(action).is_some_and(|word| {
@@ -602,7 +616,7 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
                 !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
             return false;
         }
-        if copular_predicate && (word.ends_with("ly") || matches!(*word, "still" | "otherwise")) {
+        if copular_predicate && unchanged_predicate_adverb(word) {
             return false;
         }
         let copular = std::mem::take(&mut copular_predicate);
@@ -712,8 +726,35 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     .collect()
 }
 
+fn unchanged_instruction_marker(word: &str) -> bool {
+    matches!(
+        word,
+        "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+    )
+}
+
+fn unchanged_predicate_adverb(word: &str) -> bool {
+    // A governing predicate already establishes the word's modifying context.
+    word.ends_with("ly") || matches!(word, "still" | "otherwise")
+}
+
+fn unchanged_subject_adverb(word: &str) -> bool {
+    // Unknown words remain possible subjects; a suffix does not establish an adverb.
+    matches!(
+        word,
+        "absolutely"
+            | "completely"
+            | "deliberately"
+            | "entirely"
+            | "exactly"
+            | "fully"
+            | "otherwise"
+            | "still"
+    )
+}
+
 fn unchanged_subject_modifier(word: &str) -> bool {
-    word.ends_with("ly")
+    unchanged_subject_adverb(word)
         || matches!(
             word,
             "a" | "an"
@@ -729,8 +770,6 @@ fn unchanged_subject_modifier(word: &str) -> bool {
                 | "its"
                 | "cached"
                 | "unchanged"
-                | "still"
-                | "otherwise"
         )
 }
 

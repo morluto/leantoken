@@ -2211,9 +2211,13 @@ fragments. Role parsing splits preservation transitions and keeps the generic
 test path prior from marking every query in a mixed implementation/test clause.
 Coordinated `unchanged` subjects split at `and`/`or` boundaries with independent
 copulas, allowing only the existing instruction-subject modifiers before the
-later subject. Shared-copula subjects stay together. Role annotation
-and primary-task text consume the same disjoint scopes, including inherited
-instruction context. Each existing clause gets one linear scan, one lowercase
+later subject. Shared-copula subjects stay together. Recognized coordinated
+`ensure`/`leave` commands establish independent scopes. Subject/coordinator
+modifiers use a fixed vocabulary, so an `-ly` suffix alone does not discard a
+possible subject. Bound predicates retain contextual adverb handling after
+their governing copula or negation.
+Role annotation and primary-task text consume the same disjoint scopes,
+including inherited instruction context. Each existing clause gets one linear scan, one lowercase
 scratch string bounded by its byte length, and borrowed-scope metadata bounded
 by the number of confirmed boundaries. No source suffixes are copied per
 subject, and the existing query limit and repository fan-out remain unchanged.

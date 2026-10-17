@@ -390,3 +390,144 @@ fn coordinated_unchanged_modifiers_preserve_scoped_roles() {
         assert!(query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
     }
 }
+
+#[test]
+fn ordinary_ly_subjects_keep_preservation_predicates() {
+    for task in ["Leave assembly unchanged", "Ensure family unchanged"] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .any(|query| query.has_facet(FacetKind::PreserveConstraint))
+        );
+    }
+    for task in ["Ensure absolutely unchanged", "Leave entirely unchanged"] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+    }
+}
+
+#[test]
+fn coordinated_instructions_keep_distinct_query_roles() {
+    let task =
+        "Find how unchanged records are refreshed and ensure unchanged files are not modified";
+    let queries = plan(task, 16).queries;
+    for value in ["records", "refreshed"] {
+        let query = queries
+            .iter()
+            .find(|query| query.value == value)
+            .expect("primary subject query");
+        assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+        assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+    }
+    let files = queries
+        .iter()
+        .find(|query| query.value == "files")
+        .expect("preserved subject query");
+    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+    assert_eq!(
+        primary_task_text(task),
+        "Find how unchanged records are refreshed"
+    );
+    for (task, primary) in [
+        (
+            "Find unchanged records and leave family unchanged",
+            "Find unchanged records",
+        ),
+        (
+            "Find unchanged records and ensure unchanged files and unchanged entries are not modified",
+            "Find unchanged records",
+        ),
+    ] {
+        let clauses = task_clauses(task);
+        assert_eq!(clauses.len(), 2);
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        assert_eq!(primary_task_text(task), primary);
+    }
+    for task in [
+        "Find how unchanged records are refreshed and the handler ensures unchanged files are not modified",
+        "Find how unchanged records are refreshed when a handler ensures unchanged files are not modified",
+    ] {
+        assert_eq!(task_clauses(task).len(), 1);
+        assert_eq!(primary_task_text(task), task);
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .all(|query| !query.has_facet(FacetKind::PreserveConstraint))
+        );
+    }
+}
+
+#[test]
+fn nominal_unchanged_requirements_accept_predicate_modifiers() {
+    for task in [
+        "An unchanged API contract is absolutely required",
+        "An unchanged API contract is semantically required",
+        "Unchanged response fields are still mandatory",
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+    }
+    for task in [
+        "An unchanged API contract is not absolutely required",
+        "Ensure unchanged records are absolutely processed",
+        "Ensure unchanged records are accidentally processed",
+        "Find unchanged records when an API contract is absolutely required",
+        "Find unchanged records when an unchanged API contract is absolutely required",
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+    }
+}
+
+#[test]
+fn bound_predicate_modifiers_keep_preservation_roles() {
+    for (task, value) in [
+        (
+            "Ensure unchanged files are not accidentally modified",
+            "files",
+        ),
+        ("The wire format is semantically unchanged", "format"),
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        let queries = plan(task, 16).queries;
+        let query = queries
+            .iter()
+            .find(|query| query.value == value)
+            .expect("predicate evidence query");
+        assert!(query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+    }
+    for task in [
+        "Find which files are entirely unchanged records",
+        "Find where there are semantically unchanged records",
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .all(|query| !query.has_facet(FacetKind::PreserveConstraint))
+        );
+    }
+}
