@@ -2216,6 +2216,11 @@ later subject. Shared-copula subjects stay together. Recognized coordinated
 modifiers use a fixed vocabulary, so an `-ly` suffix alone does not discard a
 possible subject. Bound predicates retain contextual adverb handling after
 their governing copula or negation.
+Object-first mutation prohibitions use the same fixed mutation vocabulary as
+passive constraints. A constant-state token pass accepts clause-leading commands
+or recognized leading instructions, stopping at subordinate boundaries except
+for an instruction's immediate complement `that`. It adds no input copies or
+repository work.
 Role annotation and primary-task text consume the same disjoint scopes,
 including inherited instruction context. Each existing clause gets one linear scan, one lowercase
 scratch string bounded by its byte length, and borrowed-scope metadata bounded

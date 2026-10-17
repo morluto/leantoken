@@ -234,6 +234,81 @@ fn unchanged_subject_prohibitions_keep_preservation_constraints() {
 }
 
 #[test]
+fn mutation_prohibitions_keep_distinct_query_roles() {
+    for prohibition in [
+        "do not modify unchanged files",
+        "Ensure callers do not change unchanged files",
+        "Ensure that callers do not change unchanged files",
+        "Ensure callers do not change files when idle",
+        "Ensure unchanged files are definitely not modified",
+    ] {
+        let task = format!("Refactor the serializer; {prohibition}");
+        let clauses = task_clauses(&task);
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[1].text, prohibition);
+        assert!(matches!(
+            clause_roles(clauses[0].text, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, false).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        let queries = plan(&task, 16).queries;
+        let serializer = queries
+            .iter()
+            .find(|query| query.value == "serializer")
+            .expect("primary serializer query");
+        assert!(
+            serializer.has_facet(FacetKind::PrimaryChange),
+            "{serializer:?}"
+        );
+        assert!(
+            !serializer.has_facet(FacetKind::PreserveConstraint),
+            "{serializer:?}"
+        );
+        let files = queries
+            .iter()
+            .find(|query| query.value == "files")
+            .expect("preserved files query");
+        assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+        assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+        assert_eq!(primary_task_text(&task), "Refactor the serializer");
+    }
+}
+
+#[test]
+fn mutation_prohibition_observations_and_skipped_operations_stay_primary() {
+    for task in [
+        "Find why workers do not modify unchanged files",
+        "Find why workers do not change unchanged files",
+        "Find that callers do not change unchanged files",
+        "Ensure unchanged files are refreshed when workers do not modify records",
+        "Ensure callers observe when workers do not change unchanged files",
+        "Ensure callers observe that workers do not change unchanged files",
+        "Do not process unchanged files",
+        "Ensure callers do not process unchanged files",
+        "Ensure that callers do not process unchanged files",
+        "Ensure unchanged files are definitely not processed",
+        "Find how unchanged files are definitely not modified",
+        "Ensure unchanged files are refreshed when records are definitely not modified",
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+            "an observation, subordinate predicate or skipped operation stays primary: {task}"
+        );
+        assert_eq!(primary_task_text(task), task);
+    }
+}
+
+#[test]
 fn nominal_unchanged_requirements_keep_preservation_constraints() {
     for task in [
         "Refactor the serializer; unchanged wire format is required",
@@ -500,6 +575,10 @@ fn bound_predicate_modifiers_keep_preservation_roles() {
     for (task, value) in [
         (
             "Ensure unchanged files are not accidentally modified",
+            "files",
+        ),
+        (
+            "Ensure unchanged files are definitely never deliberately altered",
             "files",
         ),
         ("The wire format is semantically unchanged", "format"),

@@ -1527,14 +1527,16 @@ mod tests {
 
         let mut future = rollback;
         future.push("future_tool".into());
-        assert!(catalog_matches_release(&future, "0.2.0"));
+        let unrecognized_release = format!("{}-catalog-fixture", env!("CARGO_PKG_VERSION"));
+        assert!(!catalog_matches_release(&future, env!("CARGO_PKG_VERSION")));
+        assert!(catalog_matches_release(&future, &unrecognized_release));
         for required in COMPATIBLE_REQUIRED_TOOLS {
             let incomplete = future
                 .iter()
                 .filter(|tool| tool.as_str() != required)
                 .cloned()
                 .collect::<Vec<_>>();
-            assert!(!catalog_matches_release(&incomplete, "0.2.0"));
+            assert!(!catalog_matches_release(&incomplete, &unrecognized_release));
         }
     }
 
