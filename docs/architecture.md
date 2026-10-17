@@ -2209,6 +2209,37 @@ fragment when each exists and fits, before admitting at most one auxiliary
 fragment, two failure-trace fragments, two test fragments, and two preservation
 fragments. Role parsing splits preservation transitions and keeps the generic
 test path prior from marking every query in a mixed implementation/test clause.
+Coordinated `unchanged` subjects split at `and`/`or` boundaries with independent
+governing predicates, allowing only the existing instruction-subject modifiers
+before the later subject. Shared-copula subjects stay together. Recognized coordinated
+uninflected `ensure`/`leave` commands establish independent scopes. A connective
+`then` retains the coordinator boundary and advances the later scope to its command.
+Subject/coordinator modifiers use a fixed vocabulary, so an `-ly` suffix alone
+does not discard a possible subject. Bound predicates retain contextual adverb
+handling after their governing copula or negation.
+Scope confirmation and role detection share the same fixed governor vocabulary;
+subordinate observations do not supply a preservation predicate for the leading
+`unchanged` subject. Ordinary coordinated instructions retain primary roles.
+After a subordinate observation, the forward scan requires a comma-delimited
+coordinator and uninflected `ensure`/`leave` to resume at another instruction.
+Ambiguous unpunctuated coordination stays with the observation. Constant state
+keeps subject inheritance disabled inside it. Negated perfect-passive constraints
+require `been`, so active mutations and possession do not become preservation.
+Role tokenization preserves raw apostrophe-containing word spans and expands a
+supported negative contraction or `cannot` into at most two borrowed logical
+words. External single quotes are ignored for matching, without replacing
+source text or moving scope coordinates. Scope confirmation uses the same
+logical-word producer.
+Object-first mutation prohibitions use the same fixed mutation vocabulary as
+passive constraints. A constant-state token pass accepts clause-leading commands
+or recognized leading instructions, stopping at subordinate boundaries except
+for an instruction's immediate complement `that`. It adds no input copies or
+repository work.
+Role annotation and primary-task text consume the same disjoint scopes,
+including inherited instruction context. Each existing clause gets one linear scan, one lowercase
+scratch string bounded by its byte length, and borrowed-scope metadata bounded
+by the number of confirmed boundaries. No source suffixes are copied per
+subject, and the existing query limit and repository fan-out remain unchanged.
 The reservations require at most thirteen linear passes over the already bounded
 candidate pool. They apply only after explicit required/focus evidence is
 selected, add no repository scan or candidate fan-out, and never relax

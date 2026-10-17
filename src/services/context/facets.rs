@@ -338,14 +338,14 @@ impl TaskRole {
 fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
     let clauses = task_clauses(task);
     for (position, clause) in clauses.iter().enumerate() {
-        let roles = clause_roles(clause, position == 0);
+        let roles = clause_roles(clause.text, position == 0, clause.inherited_instruction);
         if roles.is_empty() {
             continue;
         }
-        let normalized = clause.to_ascii_lowercase();
-        let terms = task_terms(clause)
+        let normalized = clause.text.to_ascii_lowercase();
+        let terms = task_terms(clause.text)
             .into_iter()
-            .chain(technical_atoms(clause))
+            .chain(technical_atoms(clause.text))
             .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(&term)))
             .map(|term| term.to_ascii_lowercase())
             .collect::<HashSet<_>>();
@@ -373,12 +373,18 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
     }
 }
 
-fn task_clauses(task: &str) -> Vec<&str> {
+struct TaskClause<'a> {
+    text: &'a str,
+    inherited_instruction: bool,
+}
+
+fn task_clauses(task: &str) -> Vec<TaskClause<'_>> {
     task.split(['\n', ';'])
         .flat_map(|part| part.split(". "))
         .flat_map(split_role_transitions)
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
+        .flat_map(split_coordinated_unchanged_subjects)
         .collect()
 }
 
@@ -400,14 +406,199 @@ fn split_role_transitions(part: &str) -> Vec<&str> {
     clauses
 }
 
-fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
+fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
+    // ASCII case folding preserves the original source's byte offsets.
+    // Scan once with constant state and return disjoint borrowed scopes,
+    // avoiding copied or repeatedly scanned subject suffixes.
+    let normalized = part.to_ascii_lowercase();
+    let mut clauses = Vec::new();
+    let mut start = 0;
+    let mut offset = 0;
+    let mut inherited_instruction = false;
+    let mut has_instruction = false;
+    let mut subject_seen = false;
+    let mut copula_seen = false;
+    let mut subordinate = false;
+    let mut comma_before_next_word = false;
+    let mut coordinator = None;
+    let mut pending_split = None;
+    for piece in normalized.split_inclusive(task_role_word_delimiter) {
+        let raw_word = piece.trim_end_matches(task_role_word_delimiter);
+        let [word, _] = task_role_word(raw_word);
+        let word_start = offset;
+        offset += piece.len();
+        // Carry separator punctuation only across whitespace pieces.
+        let preceded_by_comma = comma_before_next_word;
+        comma_before_next_word = piece.ends_with(',')
+            || (word.is_empty()
+                && piece.chars().all(char::is_whitespace)
+                && comma_before_next_word);
+        if word.is_empty() {
+            continue;
+        }
+        if subject_seen && unchanged_subordinate_boundary(word) {
+            // Keep scanning for an independent coordinated instruction,
+            // without inheriting subjects or predicates from this condition.
+            subordinate = true;
+            coordinator = None;
+            pending_split = None;
+        }
+        let instruction = unchanged_instruction_marker(word);
+        // Require an imperative rather than treating an actor's inflected
+        // ensure/leave verb as a new command. Conditions also need separation.
+        let command_boundary = coordinator
+            .filter(|(_, _, comma)| matches!(word, "ensure" | "leave") && (!subordinate || *comma));
+        if instruction
+            && let Some((boundary, next_start, _)) = command_boundary
+            && boundary > start
+        {
+            // An explicit coordinated command establishes its own scope
+            // without requiring another unchanged subject or copula.
+            clauses.push(TaskClause {
+                text: part[start..boundary].trim(),
+                inherited_instruction,
+            });
+            start = next_start;
+            inherited_instruction = has_instruction;
+            subject_seen = false;
+            copula_seen = false;
+            subordinate = false;
+            pending_split = None;
+        }
+        // Share the instruction-subject vocabulary; a real intervening subject
+        // or predicate closes this window. Retain the full right-hand slice.
+        coordinator = match word {
+            "and" | "or" => Some((word_start, word_start + raw_word.len(), preceded_by_comma)),
+            "then" => coordinator
+                .map(|(boundary, _, comma)| (boundary, word_start + raw_word.len(), comma)),
+            _ if unchanged_subject_modifier(word) => coordinator,
+            _ => None,
+        };
+        if subordinate {
+            continue;
+        }
+        has_instruction |= instruction;
+        if word == "unchanged" {
+            if copula_seen && let Some((coordinator, subject_start, _)) = coordinator {
+                pending_split.get_or_insert((coordinator, subject_start, has_instruction));
+            }
+            subject_seen = true;
+        } else if subject_seen && unchanged_subject_governor(word) {
+            // Confirm a boundary only when both subjects have their own
+            // predicate. Subjects sharing one copula remain in one scope.
+            if let Some((boundary, next_start, instruction)) = pending_split.take() {
+                clauses.push(TaskClause {
+                    text: part[start..boundary].trim(),
+                    inherited_instruction,
+                });
+                start = next_start;
+                inherited_instruction = instruction;
+            }
+            copula_seen = true;
+        }
+    }
+    clauses.push(TaskClause {
+        text: part[start..].trim(),
+        inherited_instruction,
+    });
+    clauses
+}
+
+fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<TaskRole> {
     let clause = clause.to_ascii_lowercase();
     let has_any = |markers: &[&str]| markers.iter().any(|marker| clause.contains(marker));
     let words = clause
-        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .split(task_role_word_delimiter)
+        .flat_map(task_role_word)
         .filter(|word| !word.is_empty())
-        .collect::<HashSet<_>>();
+        .collect::<Vec<_>>();
     let has_word = |markers: &[&str]| markers.iter().any(|marker| words.contains(marker));
+    // An unchanged subject (for example, "unchanged files") is still primary
+    // task evidence. Reserve preservation roles for an instruction or predicate.
+    let unchanged_subject = words.iter().position(|word| *word == "unchanged");
+    let unchanged_instruction = words
+        .iter()
+        .position(|word| unchanged_instruction_marker(word));
+    let unchanged_constraint = unchanged_subject.is_some_and(|subject| {
+        unchanged_subject_constraint(
+            &words,
+            subject,
+            inherited_instruction || unchanged_instruction.is_some_and(|start| start < subject),
+        )
+    });
+    // Determiners and common modifiers do not supply an instruction's
+    // subject by themselves. Locate its first subject word once, so repeated
+    // occurrences of unchanged do not trigger repeated prefix scans.
+    let instruction_subject = unchanged_instruction.and_then(|start| {
+        (start + 1..words.len()).find(|index| !unchanged_subject_modifier(words[*index]))
+    });
+    let mut copular_predicate = false;
+    let unchanged_predicate = words
+        .iter()
+        .enumerate()
+        // A later subordinate predicate does not govern the first subject.
+        .take_while(|(index, word)| {
+            unchanged_subject.is_none_or(|subject| *index <= subject)
+                || !unchanged_subordinate_boundary(word)
+        })
+        .any(|(index, word)| {
+            if unchanged_predicate_governor(word) {
+                // Existential there is/are introduces a subject after the
+                // copula, including coordinated adjective phrases.
+                copular_predicate =
+                    !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
+                return false;
+            }
+            if copular_predicate && unchanged_predicate_adverb(word) {
+                return false;
+            }
+            let copular = std::mem::take(&mut copular_predicate);
+            if *word != "unchanged"
+                || words.get(index + 1).is_some_and(|next| {
+                    !matches!(
+                        *next,
+                        "after"
+                            | "before"
+                            | "during"
+                            | "throughout"
+                            | "for"
+                            | "under"
+                            | "until"
+                            | "within"
+                            | "despite"
+                            | "except"
+                            | "in"
+                            | "on"
+                            | "at"
+                            | "by"
+                            | "with"
+                            | "from"
+                            | "since"
+                            | "and"
+                            | "or"
+                            | "but"
+                            | "if"
+                            | "unless"
+                            | "when"
+                            | "whenever"
+                            | "provided"
+                            | "although"
+                            | "though"
+                            | "as"
+                            | "because"
+                    )
+                })
+            {
+                return false;
+            }
+            // A predicate ends the clause or precedes a circumstance, reason,
+            // coordinated clause, or condition.
+            // A following noun instead makes "unchanged" an attributive modifier.
+
+            // Direct ensure/leave instructions require a subject before the predicate.
+            let instruction = instruction_subject.is_some_and(|subject| subject < index);
+            copular || instruction
+        });
     let preserve = has_word(&[
         "preserve",
         "preserved",
@@ -418,17 +609,16 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
         "retain",
         "retained",
         "retaining",
-        "unchanged",
-    ]) || has_any(&[
-        "without changing",
-        "must remain",
-        "do not change",
-        "while maintaining",
-    ]);
+    ]) || unchanged_predicate
+        || unchanged_constraint
+        || unchanged_object_prohibition(&words)
+        || has_any(&["without changing", "must remain", "while maintaining"]);
     let test = has_word(&["test", "tests", "regression", "spec", "coverage", "assert"]);
     let primary = !preserve
         && !test
         && (first
+            || unchanged_instruction == Some(0)
+            || unchanged_subject.is_some()
             || has_word(&[
                 "fix",
                 "implement",
@@ -466,14 +656,259 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
     .collect()
 }
 
+fn task_role_word_delimiter(character: char) -> bool {
+    !character.is_alphanumeric() && !matches!(character, '_' | '\'' | '’')
+}
+
+fn task_role_word(word: &str) -> [&str; 2] {
+    // Borrow logical auxiliaries without changing the source's byte positions.
+    // Other internal apostrophes remain part of their original lexical word.
+    let word = word.trim_matches(['\'', '’']);
+    match word {
+        "aren't" | "aren’t" => ["are", "not"],
+        "isn't" | "isn’t" => ["is", "not"],
+        "weren't" | "weren’t" => ["were", "not"],
+        "wasn't" | "wasn’t" => ["was", "not"],
+        "haven't" | "haven’t" => ["have", "not"],
+        "hasn't" | "hasn’t" => ["has", "not"],
+        "hadn't" | "hadn’t" => ["had", "not"],
+        "don't" | "don’t" => ["do", "not"],
+        "doesn't" | "doesn’t" => ["does", "not"],
+        "didn't" | "didn’t" => ["did", "not"],
+        "cannot" | "can't" | "can’t" => ["can", "not"],
+        "couldn't" | "couldn’t" => ["could", "not"],
+        "mightn't" | "mightn’t" => ["might", "not"],
+        "mustn't" | "mustn’t" => ["must", "not"],
+        "shan't" | "shan’t" => ["shall", "not"],
+        "shouldn't" | "shouldn’t" => ["should", "not"],
+        "won't" | "won’t" => ["will", "not"],
+        "wouldn't" | "wouldn’t" => ["would", "not"],
+        "needn't" | "needn’t" => ["need", "not"],
+        _ => [word, ""],
+    }
+}
+
+fn unchanged_subject_constraint(words: &[&str], subject: usize, instruction: bool) -> bool {
+    // Only the first governing predicate can make this subject a
+    // requirement. A subordinate clause describes another subject.
+    let Some(index) = (subject + 1..words.len()).find(|index| {
+        unchanged_passive_governor(words[*index]) || unchanged_subordinate_boundary(words[*index])
+    }) else {
+        return false;
+    };
+    if !unchanged_passive_governor(words[index]) {
+        return false;
+    }
+    let perfect = matches!(words[index], "have" | "has" | "had");
+    let mut action = index + 1;
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word))
+    {
+        action += 1;
+    }
+    if !perfect
+        && words
+            .get(action)
+            .is_some_and(|word| matches!(*word, "required" | "mandatory" | "necessary" | "needed"))
+    {
+        return true;
+    }
+    // An explicit instruction can prohibit changing this subject.
+    // Observations and unrelated subordinate predicates stay primary.
+    if !instruction {
+        return false;
+    }
+    if words
+        .get(action)
+        .is_some_and(|word| matches!(*word, "not" | "never"))
+    {
+        action += 1;
+    } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
+        return false;
+    }
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word))
+    {
+        action += 1;
+    }
+    if perfect {
+        if words.get(action) != Some(&"been") {
+            return false;
+        }
+        action += 1;
+    } else if words.get(action) == Some(&"to") && words.get(action + 1) == Some(&"be") {
+        action += 1;
+    }
+    while words
+        .get(action)
+        .is_some_and(|word| unchanged_predicate_adverb(word) || matches!(*word, "be" | "being"))
+    {
+        action += 1;
+    }
+    words
+        .get(action)
+        .is_some_and(|word| unchanged_mutation_verb(word, true))
+}
+
+fn unchanged_instruction_marker(word: &str) -> bool {
+    matches!(
+        word,
+        "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+    )
+}
+
+fn unchanged_passive_governor(word: &str) -> bool {
+    matches!(
+        word,
+        "is" | "are" | "be" | "was" | "were" | "have" | "has" | "had"
+    )
+}
+
+fn unchanged_subject_governor(word: &str) -> bool {
+    unchanged_predicate_governor(word) || unchanged_passive_governor(word)
+}
+
+fn unchanged_predicate_governor(word: &str) -> bool {
+    matches!(
+        word,
+        "remain"
+            | "remains"
+            | "remained"
+            | "remaining"
+            | "stay"
+            | "stays"
+            | "stayed"
+            | "staying"
+            | "is"
+            | "are"
+            | "be"
+            | "been"
+            | "being"
+            | "was"
+            | "were"
+            | "left"
+            | "kept"
+    )
+}
+
+fn unchanged_subordinate_boundary(word: &str) -> bool {
+    matches!(
+        word,
+        "when"
+            | "while"
+            | "if"
+            | "unless"
+            | "because"
+            | "where"
+            | "which"
+            | "that"
+            | "before"
+            | "after"
+    )
+}
+
+fn unchanged_object_prohibition(words: &[&str]) -> bool {
+    // A leading instruction licenses do-not commands before subordinate
+    // boundaries. Observations mentioning the same words stay primary.
+    let instruction = words
+        .first()
+        .is_some_and(|word| unchanged_instruction_marker(word));
+    let mut after_do = false;
+    let mut expecting_verb = false;
+    for (index, word) in words.iter().enumerate() {
+        // An immediate complement belongs to the leading instruction.
+        if instruction && index == 1 && *word == "that" {
+            continue;
+        }
+        if unchanged_subordinate_boundary(word) {
+            break;
+        }
+        if expecting_verb {
+            if unchanged_predicate_adverb(word) {
+                continue;
+            }
+            if unchanged_mutation_verb(word, false) {
+                return true;
+            }
+        }
+        expecting_verb = after_do && *word == "not";
+        after_do = *word == "do" && (index == 0 || instruction);
+    }
+    false
+}
+
+fn unchanged_mutation_verb(word: &str, passive: bool) -> bool {
+    [
+        ("modify", "modified"),
+        ("change", "changed"),
+        ("alter", "altered"),
+        ("rewrite", "rewritten"),
+        ("update", "updated"),
+        ("mutate", "mutated"),
+        ("overwrite", "overwritten"),
+        ("delete", "deleted"),
+        ("remove", "removed"),
+        ("touch", "touched"),
+    ]
+    .into_iter()
+    .any(|(base, participle)| word == if passive { participle } else { base })
+}
+
+fn unchanged_predicate_adverb(word: &str) -> bool {
+    // A governing predicate already establishes the word's modifying context.
+    word.ends_with("ly") || matches!(word, "still" | "otherwise")
+}
+
+fn unchanged_subject_adverb(word: &str) -> bool {
+    // Unknown words remain possible subjects; a suffix does not establish an adverb.
+    matches!(
+        word,
+        "absolutely"
+            | "completely"
+            | "deliberately"
+            | "entirely"
+            | "exactly"
+            | "fully"
+            | "otherwise"
+            | "still"
+    )
+}
+
+fn unchanged_subject_modifier(word: &str) -> bool {
+    unchanged_subject_adverb(word)
+        || matches!(
+            word,
+            "a" | "an"
+                | "the"
+                | "some"
+                | "all"
+                | "each"
+                | "every"
+                | "these"
+                | "those"
+                | "my"
+                | "our"
+                | "your"
+                | "its"
+                | "his"
+                | "her"
+                | "their"
+                | "cached"
+                | "unchanged"
+        )
+}
+
 pub(super) fn primary_task_text(task: &str) -> String {
     let primary = task_clauses(task)
         .into_iter()
         .enumerate()
         .filter(|(position, clause)| {
-            clause_roles(clause, *position == 0).contains(&TaskRole::PrimaryChange)
+            clause_roles(clause.text, *position == 0, clause.inherited_instruction)
+                .contains(&TaskRole::PrimaryChange)
         })
-        .map(|(_, clause)| clause)
+        .map(|(_, clause)| clause.text)
         .collect::<Vec<_>>()
         .join(" ");
     if primary.is_empty() {
@@ -1076,3 +1511,6 @@ fn is_stop_word(term: &str) -> bool {
             | "with"
     )
 }
+
+#[cfg(test)]
+mod tests;
