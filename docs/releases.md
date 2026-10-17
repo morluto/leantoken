@@ -56,7 +56,8 @@ name; the PR title and package metadata determine the release identity.
 Every generated candidate explicitly dispatches CI on that branch: PR events
 made with `GITHUB_TOKEN` do not start the ordinary PR workflow. The dispatched
 run validates the candidate's exact source revision and uses the normal
-platform and owner bounds.
+platform and owner bounds. Its `Required checks` job validates every planned
+receipt and provides the same stable merge check as a pull-request run.
 
 To suppress a release on a particular commit, include `[no-release]` or
 `[skip ci]` in the commit message.

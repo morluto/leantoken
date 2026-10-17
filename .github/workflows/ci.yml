@@ -445,7 +445,7 @@ jobs:
 
   required:
     name: Required checks
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     needs: [changes, evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 10
