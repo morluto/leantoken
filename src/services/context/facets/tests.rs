@@ -241,6 +241,7 @@ fn mutation_prohibitions_keep_distinct_query_roles() {
         "Ensure that callers do not change unchanged files",
         "Ensure callers do not change files when idle",
         "Ensure unchanged files are definitely not modified",
+        "Ensure unchanged files are not to be modified",
     ] {
         let task = format!("Refactor the serializer; {prohibition}");
         let clauses = task_clauses(&task);
@@ -290,8 +291,12 @@ fn mutation_prohibition_observations_and_skipped_operations_stay_primary() {
         "Ensure callers do not process unchanged files",
         "Ensure that callers do not process unchanged files",
         "Ensure unchanged files are definitely not processed",
+        "Ensure unchanged files are not to be processed",
+        "Ensure unchanged files are not to modify records",
         "Find how unchanged files are definitely not modified",
+        "Find how unchanged files are not to be modified",
         "Ensure unchanged files are refreshed when records are definitely not modified",
+        "Ensure unchanged files are refreshed when records are not to be modified",
     ] {
         assert!(matches!(
             clause_roles(task, true, false).as_slice(),
@@ -427,7 +432,16 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
 
 #[test]
 fn coordinated_unchanged_modifiers_preserve_scoped_roles() {
-    for modifier in ["the", "the cached", "the entirely cached", "our"] {
+    for modifier in [
+        "the",
+        "the cached",
+        "the entirely cached",
+        "our",
+        "my",
+        "his",
+        "her",
+        "their",
+    ] {
         let task = format!(
             "Ensure unchanged records are refreshed and {modifier} unchanged files are not modified"
         );
@@ -447,22 +461,26 @@ fn coordinated_unchanged_modifiers_preserve_scoped_roles() {
             "Ensure unchanged records are refreshed"
         );
     }
-    let task = "Ensure unchanged records are refreshed and the unchanged files are not modified";
-    let queries = plan(task, 16).queries;
-    for value in ["records", "refreshed"] {
-        let query = queries
+    for determiner in ["the", "their"] {
+        let task = format!(
+            "Ensure unchanged records are refreshed and {determiner} unchanged files are not modified"
+        );
+        let queries = plan(&task, 16).queries;
+        for value in ["records", "refreshed"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("primary subject query");
+            assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+            assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
+        let files = queries
             .iter()
-            .find(|query| query.value == value)
-            .expect("primary subject query");
-        assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
-        assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+            .find(|query| query.value == "files")
+            .expect("preserved subject query");
+        assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+        assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
     }
-    let files = queries
-        .iter()
-        .find(|query| query.value == "files")
-        .expect("preserved subject query");
-    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
-    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
     for task in [
         "Ensure unchanged records are refreshed and the handler observes unchanged files are not modified",
         "Ensure unchanged records are refreshed and the files are unchanged records",
@@ -514,27 +532,52 @@ fn ordinary_ly_subjects_keep_preservation_predicates() {
 
 #[test]
 fn coordinated_instructions_keep_distinct_query_roles() {
-    let task =
-        "Find how unchanged records are refreshed and ensure unchanged files are not modified";
-    let queries = plan(task, 16).queries;
-    for value in ["records", "refreshed"] {
-        let query = queries
+    for (task, preserved, primary) in [
+        (
+            "Find how unchanged records are refreshed and ensure unchanged files are not modified",
+            "files",
+            "Find how unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged records are refreshed when stale, and ensure the wire format remains unchanged",
+            "format",
+            "Ensure unchanged records are refreshed when stale,",
+        ),
+        (
+            "Ensure unchanged records are refreshed when stale, and leave the wire format unchanged",
+            "format",
+            "Ensure unchanged records are refreshed when stale,",
+        ),
+    ] {
+        let clauses = task_clauses(task);
+        assert_eq!(clauses.len(), 2);
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        let queries = plan(task, 16).queries;
+        for value in ["records", "refreshed"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("primary subject query");
+            assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+            assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
+        let preserved = queries
             .iter()
-            .find(|query| query.value == value)
-            .expect("primary subject query");
-        assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
-        assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+            .find(|query| query.value == preserved)
+            .expect("preserved subject query");
+        assert!(
+            preserved.has_facet(FacetKind::PreserveConstraint),
+            "{preserved:?}"
+        );
+        assert!(
+            !preserved.has_facet(FacetKind::PrimaryChange),
+            "{preserved:?}"
+        );
+        assert_eq!(primary_task_text(task), primary);
     }
-    let files = queries
-        .iter()
-        .find(|query| query.value == "files")
-        .expect("preserved subject query");
-    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
-    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
-    assert_eq!(
-        primary_task_text(task),
-        "Find how unchanged records are refreshed"
-    );
     for (task, primary) in [
         (
             "Find unchanged records and leave family unchanged",
@@ -566,6 +609,25 @@ fn coordinated_instructions_keep_distinct_query_roles() {
                 .all(|query| !query.has_facet(FacetKind::PreserveConstraint))
         );
     }
+}
+
+#[test]
+fn resumed_instruction_restores_subject_scopes() {
+    let resumed = "Ensure unchanged records are refreshed when stale and ensure unchanged entries are refreshed and unchanged files are not modified";
+    let clauses = task_clauses(resumed);
+    assert_eq!(clauses.len(), 3);
+    assert!(matches!(
+        clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+        [TaskRole::PrimaryChange]
+    ));
+    assert!(matches!(
+        clause_roles(clauses[2].text, false, clauses[2].inherited_instruction).as_slice(),
+        [TaskRole::PreserveConstraint]
+    ));
+    assert_eq!(
+        primary_task_text(resumed),
+        "Ensure unchanged records are refreshed when stale ensure unchanged entries are refreshed"
+    );
 }
 
 #[test]
@@ -649,6 +711,9 @@ fn subordinate_unchanged_predicates_keep_governing_subject_roles() {
     for task in [
         "Ensure unchanged records are refreshed when unchanged files remain unchanged",
         "Ensure unchanged records are refreshed before unchanged files stay unchanged",
+        "Ensure unchanged records are refreshed when stale and unchanged files remain unchanged",
+        "Ensure unchanged records are refreshed when stale and unchanged files are not modified",
+        "Ensure unchanged records are refreshed when stale and a handler ensures unchanged files are not modified",
     ] {
         assert_eq!(task_clauses(task).len(), 1);
         assert!(matches!(

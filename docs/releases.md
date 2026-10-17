@@ -55,9 +55,12 @@ updated across version changes, even if its branch retains an older version
 name; the PR title and package metadata determine the release identity.
 Every generated candidate explicitly dispatches CI on that branch. Pull-request
 runs created with [`GITHUB_TOKEN`] require approval; `workflow_dispatch` starts
-directly. The dispatched run validates the candidate's exact source revision and uses the normal
-platform and owner bounds. Its `Required checks` job validates every planned
-receipt and provides the same stable merge check as a pull-request run.
+directly. The dispatched run validates the candidate's exact source revision and
+uses the normal platform and owner bounds. Its `Required checks` job validates
+every planned receipt. A passing dispatched run does not clear approval of the
+bot-triggered pull-request run or populate that run's PR check summary. After
+reviewing the exact candidate head, a maintainer approves its pull-request run
+and follows that run's `Required checks` before merging.
 
 To suppress a release on a particular commit, include `[no-release]` or
 `[skip ci]` in the commit message.

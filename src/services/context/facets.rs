@@ -419,6 +419,7 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
     let mut has_instruction = false;
     let mut subject_seen = false;
     let mut copula_seen = false;
+    let mut subordinate = false;
     let mut coordinator = None;
     let mut pending_split = None;
     for piece in normalized.split_inclusive(delimiter) {
@@ -429,7 +430,11 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             continue;
         }
         if subject_seen && unchanged_subordinate_boundary(word) {
-            break;
+            // Keep scanning for an independent coordinated instruction,
+            // without inheriting subjects or predicates from this condition.
+            subordinate = true;
+            coordinator = None;
+            pending_split = None;
         }
         let instruction = unchanged_instruction_marker(word);
         if instruction
@@ -446,7 +451,18 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             inherited_instruction = has_instruction;
             subject_seen = false;
             copula_seen = false;
+            subordinate = false;
             pending_split = None;
+        }
+        // Share the instruction-subject vocabulary; a real intervening subject
+        // or predicate closes this window. Retain the full right-hand slice.
+        coordinator = match word {
+            "and" | "or" => Some((word_start, word_start + word.len())),
+            _ if unchanged_subject_modifier(word) => coordinator,
+            _ => None,
+        };
+        if subordinate {
+            continue;
         }
         has_instruction |= instruction;
         if word == "unchanged" {
@@ -467,13 +483,6 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             }
             copula_seen = true;
         }
-        // Share the instruction-subject vocabulary; a real intervening subject
-        // or predicate closes this window. Retain the full right-hand slice.
-        coordinator = match word {
-            "and" | "or" => Some((word_start, word_start + word.len())),
-            _ if unchanged_subject_modifier(word) => coordinator,
-            _ => None,
-        };
     }
     clauses.push(TaskClause {
         text: part[start..].trim(),
@@ -532,6 +541,9 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
                 action += 1;
             } else if index == 0 || !matches!(words[index - 1], "not" | "never") {
                 return false;
+            }
+            if words.get(action) == Some(&"to") && words.get(action + 1) == Some(&"be") {
+                action += 1;
             }
             while words.get(action).is_some_and(|word| {
                 unchanged_predicate_adverb(word) || matches!(*word, "be" | "being")
@@ -798,9 +810,13 @@ fn unchanged_subject_modifier(word: &str) -> bool {
                 | "every"
                 | "these"
                 | "those"
+                | "my"
                 | "our"
                 | "your"
                 | "its"
+                | "his"
+                | "her"
+                | "their"
                 | "cached"
                 | "unchanged"
         )
