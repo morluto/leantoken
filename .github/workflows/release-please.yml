@@ -148,6 +148,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Validate generated release candidate
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_BRANCH: ${{ steps.branch.outputs.branch }}
+        run: gh workflow run ci.yml --ref "$RELEASE_BRANCH"
+
   create-tag:
     name: Create release tag
     runs-on: ubuntu-latest
