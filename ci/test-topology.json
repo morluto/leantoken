@@ -144,7 +144,7 @@
       "allowed_events": ["pull_request", "merge_group", "push", "manual"],
       "required_events": ["manual"],
       "command": "release-plan",
-      "paths": ["Cargo.toml", "Cargo.lock", "cliff.toml", "dist-workspace.toml", "npm/", "server.json", "scripts/build-npm-packages.mjs", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
+      "paths": ["Cargo.toml", "Cargo.lock", "cliff.toml", "dist-workspace.toml", "npm/", "server.json", "scripts/build-npm-packages.mjs", "scripts/plan_release.py", "scripts/test_plan_release.py", ".github/workflows/release-please.yml", ".github/workflows/release.yml", ".github/workflows/build-npm-packages.yml"],
       "matrix": [{"name": "ubuntu-latest"}],
       "depends_on": []
     },

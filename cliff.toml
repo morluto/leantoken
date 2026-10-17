@@ -12,9 +12,13 @@ body = """
 {% for group, commits in commits | filter(attribute="merge_commit", value=false) | group_by(attribute="group") %}
     ### {{ group | upper_first }}
     {% for commit in commits %}
-        - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
+        - {% if commit.breaking %}**BREAKING** {% endif %}\
+          {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
           {{ commit.message | upper_first }}\
           {% if commit.remote.pr_number %} ([#{{ commit.remote.pr_number }}](https://github.com/morluto/leantoken/pull/{{ commit.remote.pr_number }})){% endif %}\
+        {% if commit.breaking_description %}
+          **Migration:** {{ commit.breaking_description }}
+        {% endif %}
     {%- endfor -%}
 {% endfor %}
 """
@@ -41,3 +45,9 @@ sort_commits = "newest"
 link_parsers = [
     { pattern = "#(\\d+)", href = "https://github.com/morluto/leantoken/issues/$1" },
 ]
+
+[bump]
+# Keep compatible 0.x features in the same Cargo-compatible minor series.
+features_always_bump_minor = false
+# A breaking 0.x API advances its minor; stable releases advance their major.
+breaking_always_bump_major = false
