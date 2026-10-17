@@ -2212,10 +2212,11 @@ test path prior from marking every query in a mixed implementation/test clause.
 Coordinated `unchanged` subjects split at `and`/`or` boundaries with independent
 governing predicates, allowing only the existing instruction-subject modifiers
 before the later subject. Shared-copula subjects stay together. Recognized coordinated
-uninflected `ensure`/`leave` commands establish independent scopes. Subject/coordinator
-modifiers use a fixed vocabulary, so an `-ly` suffix alone does not discard a
-possible subject. Bound predicates retain contextual adverb handling after
-their governing copula or negation.
+uninflected `ensure`/`leave` commands establish independent scopes. A connective
+`then` retains the coordinator boundary and advances the later scope to its command.
+Subject/coordinator modifiers use a fixed vocabulary, so an `-ly` suffix alone
+does not discard a possible subject. Bound predicates retain contextual adverb
+handling after their governing copula or negation.
 Scope confirmation and role detection share the same fixed governor vocabulary;
 subordinate observations do not supply a preservation predicate for the leading
 `unchanged` subject. Ordinary coordinated instructions retain primary roles.
@@ -2225,9 +2226,10 @@ Ambiguous unpunctuated coordination stays with the observation. Constant state
 keeps subject inheritance disabled inside it. Negated perfect-passive constraints
 require `been`, so active mutations and possession do not become preservation.
 Role tokenization preserves raw apostrophe-containing word spans and expands a
-supported negative contraction into at most two borrowed logical words. External
-single quotes are ignored for matching, without replacing source text or moving
-scope coordinates. Scope confirmation uses the same logical-word producer.
+supported negative contraction or `cannot` into at most two borrowed logical
+words. External single quotes are ignored for matching, without replacing
+source text or moving scope coordinates. Scope confirmation uses the same
+logical-word producer.
 Object-first mutation prohibitions use the same fixed mutation vocabulary as
 passive constraints. A constant-state token pass accepts clause-leading commands
 or recognized leading instructions, stopping at subordinate boundaries except

@@ -469,6 +469,8 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
         // or predicate closes this window. Retain the full right-hand slice.
         coordinator = match word {
             "and" | "or" => Some((word_start, word_start + raw_word.len(), preceded_by_comma)),
+            "then" => coordinator
+                .map(|(boundary, _, comma)| (boundary, word_start + raw_word.len(), comma)),
             _ if unchanged_subject_modifier(word) => coordinator,
             _ => None,
         };
@@ -673,7 +675,7 @@ fn task_role_word(word: &str) -> [&str; 2] {
         "don't" | "don’t" => ["do", "not"],
         "doesn't" | "doesn’t" => ["does", "not"],
         "didn't" | "didn’t" => ["did", "not"],
-        "can't" | "can’t" => ["can", "not"],
+        "cannot" | "can't" | "can’t" => ["can", "not"],
         "couldn't" | "couldn’t" => ["could", "not"],
         "mightn't" | "mightn’t" => ["might", "not"],
         "mustn't" | "mustn’t" => ["must", "not"],

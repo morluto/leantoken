@@ -254,6 +254,8 @@ fn mutation_prohibitions_keep_distinct_query_roles() {
         "Ensure unchanged files won't be modified",
         "Ensure unchanged files mustn’t be modified",
         "Ensure unchanged files couldn't have been modified",
+        "ensure unchanged files cannot be modified",
+        "Ensure unchanged files cannot have been modified",
     ] {
         let task = format!("Refactor the serializer; {prohibition}");
         let clauses = task_clauses(&task);
@@ -340,6 +342,10 @@ fn mutation_prohibition_observations_and_skipped_operations_stay_primary() {
         "Find how unchanged files won't be modified",
         "Ensure unchanged files are refreshed when records mustn't be modified",
         "Ensure unchanged files ain't modified",
+        "Ensure unchanged callers cannot modify records",
+        "Ensure unchanged files cannot be processed",
+        "Find how unchanged files cannot be modified",
+        "Ensure unchanged files are refreshed when records cannot be modified",
     ] {
         assert!(matches!(
             clause_roles(task, true, false).as_slice(),
@@ -403,6 +409,10 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
         ),
         (
             "Ensure unchanged records are refreshed and unchanged files haven't been modified",
+            "Ensure unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files cannot be modified",
             "Ensure unchanged records are refreshed",
         ),
     ] {
@@ -656,6 +666,11 @@ fn coordinated_instructions_keep_distinct_query_roles() {
             "format",
             "Ensure unchanged records are refreshed when stale",
         ),
+        (
+            "Ensure unchanged records are refreshed when stale, and then ensure the wire format remains unchanged",
+            "format",
+            "Ensure unchanged records are refreshed when stale,",
+        ),
     ] {
         let clauses = task_clauses(task);
         assert_eq!(clauses.len(), 2);
@@ -706,6 +721,8 @@ fn coordinated_instructions_keep_distinct_query_roles() {
     }
     for task in [
         "Find how the handler refreshes unchanged records and ensures unchanged files are not modified",
+        "Find how the handler refreshes unchanged records and then ensures unchanged files are not modified",
+        "Find unchanged records and then the handler ensures unchanged files are not modified",
         "Find how unchanged records are refreshed and the handler ensures unchanged files are not modified",
         "Find how unchanged records are refreshed when a handler ensures unchanged files are not modified",
     ] {
@@ -740,6 +757,43 @@ fn resumed_instruction_restores_subject_scopes() {
 }
 
 #[test]
+fn coordinated_then_preservation_keeps_command_scope() {
+    let task = "Refactor the serializer and then ensure unchanged files are not modified";
+    let clauses = task_clauses(task);
+    assert_eq!(clauses.len(), 2);
+    assert_eq!(clauses[0].text, "Refactor the serializer");
+    assert_eq!(clauses[1].text, "ensure unchanged files are not modified");
+    assert!(matches!(
+        clause_roles(clauses[0].text, true, false).as_slice(),
+        [TaskRole::PrimaryChange]
+    ));
+    assert!(matches!(
+        clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+        [TaskRole::PreserveConstraint]
+    ));
+    let queries = plan(task, 16).queries;
+    let serializer = queries
+        .iter()
+        .find(|query| query.value == "serializer")
+        .expect("primary serializer query");
+    assert!(
+        serializer.has_facet(FacetKind::PrimaryChange),
+        "{serializer:?}"
+    );
+    assert!(
+        !serializer.has_facet(FacetKind::PreserveConstraint),
+        "{serializer:?}"
+    );
+    let files = queries
+        .iter()
+        .find(|query| query.value == "files")
+        .expect("preserved files query");
+    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+    assert_eq!(primary_task_text(task), "Refactor the serializer");
+}
+
+#[test]
 fn coordinated_ordinary_instructions_keep_primary_roles() {
     for (task, primary, preserve_left) in [
         (
@@ -752,9 +806,15 @@ fn coordinated_ordinary_instructions_keep_primary_roles() {
             "ensure cache entries are refreshed",
             true,
         ),
+        (
+            "Refactor the serializer and then ensure cache entries are refreshed",
+            "Refactor the serializer ensure cache entries are refreshed",
+            false,
+        ),
     ] {
         let clauses = task_clauses(task);
         assert_eq!(clauses.len(), 2);
+        assert_eq!(clauses[1].text, "ensure cache entries are refreshed");
         assert!(matches!(
             clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
             [TaskRole::PrimaryChange]
@@ -828,6 +888,8 @@ fn subordinate_unchanged_predicates_keep_governing_subject_roles() {
         "Find unchanged records when the handler waits and leaves unchanged files unchanged",
         "Find unchanged records when handlers wait and ensure unchanged files are not modified",
         "Find unchanged records when handlers wait and leave unchanged files unchanged",
+        "Find unchanged records when handlers wait and then ensure unchanged files are not modified",
+        "Find unchanged records when the handler waits, and then ensures unchanged files are not modified",
     ] {
         assert_eq!(task_clauses(task).len(), 1);
         assert!(matches!(
