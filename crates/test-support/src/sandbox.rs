@@ -95,13 +95,14 @@ fn stable_id(module: &str, callsite: &str) -> String {
 }
 
 fn rerun_command(module: &str, callsite: &str, test_name: Option<&str>) -> String {
-    let package = match module.split("::").next() {
-        Some("leantoken_test_support") => "leantoken-test-support",
-        Some("leantoken_test_suite") => "leantoken-test-suite",
-        _ => "leantoken",
-    };
     let selector = test_name
         .filter(|name| !name.is_empty())
         .unwrap_or(callsite);
-    format!("cargo test --locked --package {package} --all-features --lib {selector}")
+    match module.split("::").next() {
+        Some("leantoken_test_support") => format!(
+            "cargo test --locked --package leantoken-test-support --all-features --lib {selector}"
+        ),
+        Some("leantoken_test_suite") => format!("cargo test-focused suite::{selector}"),
+        _ => format!("cargo test-focused product::{selector}"),
+    }
 }

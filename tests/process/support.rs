@@ -195,6 +195,7 @@ pub(crate) struct McpProcess {
     last_sent: String,
     stderr_task: Option<std::thread::JoinHandle<()>>,
     stderr: Arc<Mutex<Vec<u8>>>,
+    spawned_at: Instant,
 }
 
 impl McpProcess {
@@ -275,10 +276,17 @@ impl McpProcess {
         Self::spawn_prepared(command, None)
     }
 
+    #[cfg(unix)]
+    pub(crate) fn spawn_hermetic_command(mut command: std::process::Command, root: &Path) -> Self {
+        let process_home = apply_hermetic_std_environment(&mut command, root);
+        Self::spawn_prepared(command, process_home)
+    }
+
     fn spawn_prepared(
         mut command: std::process::Command,
         process_home: Option<tempfile::TempDir>,
     ) -> Self {
+        let spawned_at = Instant::now();
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -319,6 +327,7 @@ impl McpProcess {
             last_sent: "no request sent".into(),
             stderr_task,
             stderr: captured_stderr,
+            spawned_at,
         }
     }
 
@@ -373,7 +382,8 @@ impl McpProcess {
                 "clientInfo": { "name": client_name, "version": client_version }
             }
         }));
-        let response = self.response(Duration::from_secs(5));
+        // Match the setup/doctor handshake bound documented in docs/architecture.md.
+        let response = self.response(Duration::from_secs(10));
         assert_eq!(response["id"], 1);
         assert!(response.get("result").is_some(), "{response}");
         response
@@ -484,7 +494,9 @@ impl McpProcess {
     pub(crate) fn message(&self, timeout: Duration) -> serde_json::Value {
         let line = self.lines.recv_timeout(timeout).unwrap_or_else(|error| {
             panic!(
-                "MCP message before deadline ({timeout:?}): {error:?}; last sent: {}; stderr (first 64 KiB): {}",
+                "MCP message before deadline ({timeout:?}): {error:?}; owned PID: {}; elapsed since spawn: {:?}; last sent: {}; stderr (first 64 KiB): {}",
+                self.child.id(),
+                self.spawned_at.elapsed(),
                 self.last_sent,
                 self.stderr_snapshot()
             )

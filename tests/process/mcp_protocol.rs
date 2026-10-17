@@ -1,5 +1,56 @@
 use super::support::{Command, Duration, McpProcess};
 
+#[cfg(unix)]
+#[test]
+fn mcp_initialize_accepts_startup_within_doctor_contract() {
+    let sandbox = leantoken_test_support::Sandbox::new(module_path!(), "delayed_mcp_startup")
+        .expect("sandbox");
+    std::fs::write(
+        sandbox.repo().join("lib.rs"),
+        "pub fn answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = sandbox.root().join("index.sqlite");
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg("IFS= read -r initialize || exit 1; sleep 6; { printf '%s\\n' \"$initialize\"; cat; } | \"$@\"")
+        .arg("leantoken-delayed-start")
+        .arg(assert_cmd::cargo::cargo_bin!("leantoken"))
+        .arg("--root")
+        .arg(sandbox.repo())
+        .arg("--database")
+        .arg(database)
+        .args(["--tokenizer", "estimate", "mcp"])
+        .current_dir(sandbox.repo())
+        .stderr(std::process::Stdio::piped());
+    let mut process = McpProcess::spawn_hermetic_command(command, sandbox.repo());
+    let initialized = process.initialize();
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "leantoken");
+    super::support::assert_runtime_version(&initialized["result"]["serverInfo"]["version"]);
+    process.send_initialized();
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
+    }));
+    let catalog = process.response(Duration::from_secs(5));
+    assert_eq!(catalog["id"], 2);
+    assert!(
+        catalog["result"]["tools"]
+            .as_array()
+            .expect("tool catalog")
+            .iter()
+            .any(|tool| tool["name"] == "context"),
+        "{catalog}"
+    );
+    drop(process.stdin.take());
+    let status = process
+        .wait_timeout(Duration::from_secs(15))
+        .expect("wait for MCP EOF")
+        .expect("owned MCP process exits after EOF");
+    assert!(status.success(), "MCP EOF exit: {status}");
+}
+
 #[test]
 fn mcp_overload_replies_follow_each_requests_protocol() {
     for stateless in [false, true] {
