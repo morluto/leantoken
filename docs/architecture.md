@@ -2210,12 +2210,15 @@ fragment, two failure-trace fragments, two test fragments, and two preservation
 fragments. Role parsing splits preservation transitions and keeps the generic
 test path prior from marking every query in a mixed implementation/test clause.
 Coordinated `unchanged` subjects split at `and`/`or` boundaries with independent
-copulas, allowing only the existing instruction-subject modifiers before the
-later subject. Shared-copula subjects stay together. Recognized coordinated
+governing predicates, allowing only the existing instruction-subject modifiers
+before the later subject. Shared-copula subjects stay together. Recognized coordinated
 `ensure`/`leave` commands establish independent scopes. Subject/coordinator
 modifiers use a fixed vocabulary, so an `-ly` suffix alone does not discard a
 possible subject. Bound predicates retain contextual adverb handling after
 their governing copula or negation.
+Scope confirmation and role detection share the same fixed governor vocabulary;
+subordinate observations do not supply a preservation predicate for the leading
+`unchanged` subject. Ordinary coordinated instructions retain primary roles.
 Object-first mutation prohibitions use the same fixed mutation vocabulary as
 passive constraints. A constant-state token pass accepts clause-leading commands
 or recognized leading instructions, stopping at subordinate boundaries except

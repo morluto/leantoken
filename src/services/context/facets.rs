@@ -454,7 +454,7 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
                 pending_split.get_or_insert((coordinator, subject_start, has_instruction));
             }
             subject_seen = true;
-        } else if subject_seen && matches!(word, "is" | "are" | "be" | "was" | "were") {
+        } else if subject_seen && unchanged_predicate_governor(word) {
             // Confirm a boundary only when both subjects have their own
             // predicate. Subjects sharing one copula remain in one scope.
             if let Some((boundary, next_start, instruction)) = pending_split.take() {
@@ -550,83 +550,72 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
         (start + 1..words.len()).find(|index| !unchanged_subject_modifier(words[*index]))
     });
     let mut copular_predicate = false;
-    let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
-        if matches!(
-            *word,
-            "remain"
-                | "remains"
-                | "remained"
-                | "remaining"
-                | "stay"
-                | "stays"
-                | "stayed"
-                | "staying"
-                | "is"
-                | "are"
-                | "be"
-                | "been"
-                | "being"
-                | "was"
-                | "were"
-                | "left"
-                | "kept"
-        ) {
-            // Existential there is/are introduces a subject after the
-            // copula, including coordinated adjective phrases.
-            copular_predicate =
-                !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
-            return false;
-        }
-        if copular_predicate && unchanged_predicate_adverb(word) {
-            return false;
-        }
-        let copular = std::mem::take(&mut copular_predicate);
-        if *word != "unchanged"
-            || words.get(index + 1).is_some_and(|next| {
-                !matches!(
-                    *next,
-                    "after"
-                        | "before"
-                        | "during"
-                        | "throughout"
-                        | "for"
-                        | "under"
-                        | "until"
-                        | "within"
-                        | "despite"
-                        | "except"
-                        | "in"
-                        | "on"
-                        | "at"
-                        | "by"
-                        | "with"
-                        | "from"
-                        | "since"
-                        | "and"
-                        | "or"
-                        | "but"
-                        | "if"
-                        | "unless"
-                        | "when"
-                        | "whenever"
-                        | "provided"
-                        | "although"
-                        | "though"
-                        | "as"
-                        | "because"
-                )
-            })
-        {
-            return false;
-        }
-        // A predicate ends the clause or precedes a circumstance, reason,
-        // coordinated clause, or condition.
-        // A following noun instead makes "unchanged" an attributive modifier.
+    let unchanged_predicate = words
+        .iter()
+        .enumerate()
+        // A later subordinate predicate does not govern the first subject.
+        .take_while(|(index, word)| {
+            unchanged_subject.is_none_or(|subject| *index <= subject)
+                || !unchanged_subordinate_boundary(word)
+        })
+        .any(|(index, word)| {
+            if unchanged_predicate_governor(word) {
+                // Existential there is/are introduces a subject after the
+                // copula, including coordinated adjective phrases.
+                copular_predicate =
+                    !matches!(*word, "is" | "are") || index == 0 || words[index - 1] != "there";
+                return false;
+            }
+            if copular_predicate && unchanged_predicate_adverb(word) {
+                return false;
+            }
+            let copular = std::mem::take(&mut copular_predicate);
+            if *word != "unchanged"
+                || words.get(index + 1).is_some_and(|next| {
+                    !matches!(
+                        *next,
+                        "after"
+                            | "before"
+                            | "during"
+                            | "throughout"
+                            | "for"
+                            | "under"
+                            | "until"
+                            | "within"
+                            | "despite"
+                            | "except"
+                            | "in"
+                            | "on"
+                            | "at"
+                            | "by"
+                            | "with"
+                            | "from"
+                            | "since"
+                            | "and"
+                            | "or"
+                            | "but"
+                            | "if"
+                            | "unless"
+                            | "when"
+                            | "whenever"
+                            | "provided"
+                            | "although"
+                            | "though"
+                            | "as"
+                            | "because"
+                    )
+                })
+            {
+                return false;
+            }
+            // A predicate ends the clause or precedes a circumstance, reason,
+            // coordinated clause, or condition.
+            // A following noun instead makes "unchanged" an attributive modifier.
 
-        // Direct ensure/leave instructions require a subject before the predicate.
-        let instruction = instruction_subject.is_some_and(|subject| subject < index);
-        copular || instruction
-    });
+            // Direct ensure/leave instructions require a subject before the predicate.
+            let instruction = instruction_subject.is_some_and(|subject| subject < index);
+            copular || instruction
+        });
     let preserve = has_word(&[
         "preserve",
         "preserved",
@@ -645,6 +634,7 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     let primary = !preserve
         && !test
         && (first
+            || unchanged_instruction == Some(0)
             || unchanged_subject.is_some()
             || has_word(&[
                 "fix",
@@ -687,6 +677,29 @@ fn unchanged_instruction_marker(word: &str) -> bool {
     matches!(
         word,
         "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+    )
+}
+
+fn unchanged_predicate_governor(word: &str) -> bool {
+    matches!(
+        word,
+        "remain"
+            | "remains"
+            | "remained"
+            | "remaining"
+            | "stay"
+            | "stays"
+            | "stayed"
+            | "staying"
+            | "is"
+            | "are"
+            | "be"
+            | "been"
+            | "being"
+            | "was"
+            | "were"
+            | "left"
+            | "kept"
     )
 }
 

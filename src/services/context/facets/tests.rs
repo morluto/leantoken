@@ -328,42 +328,66 @@ fn nominal_unchanged_requirements_keep_preservation_constraints() {
 
 #[test]
 fn coordinated_unchanged_constraints_follow_each_subject() {
-    let task = "Ensure unchanged records are refreshed and unchanged files are not modified";
-    let queries = plan(task, 16).queries;
-    for value in ["records", "refreshed"] {
-        let query = queries
+    for (task, primary) in [
+        (
+            "Ensure unchanged records are refreshed and unchanged files are not modified",
+            "Ensure unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files remain unchanged",
+            "Ensure unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged records are refreshed and unchanged files stay unchanged",
+            "Ensure unchanged records are refreshed",
+        ),
+        (
+            "Ensure unchanged files remain unchanged and unchanged records are refreshed",
+            "unchanged records are refreshed",
+        ),
+    ] {
+        assert_eq!(task_clauses(task).len(), 2);
+        let queries = plan(task, 16).queries;
+        for value in ["records", "refreshed"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("primary subject query");
+            assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+            assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
+        let files = queries
             .iter()
-            .find(|query| query.value == value)
-            .expect("primary subject query");
-        assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
-        assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+            .find(|query| query.value == "files")
+            .expect("preserved subject query");
+        assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+        assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+        assert_eq!(primary_task_text(task), primary);
     }
-    let files = queries
-        .iter()
-        .find(|query| query.value == "files")
-        .expect("preserved subject query");
-    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
-    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
-    assert_eq!(
-        primary_task_text(task),
-        "Ensure unchanged records are refreshed"
-    );
     assert!(matches!(
         clause_roles("Ensure unchanged files are not modified", true, false).as_slice(),
         [TaskRole::PreserveConstraint]
     ));
-    let shared = plan(
+    for task in [
         "Ensure unchanged records and unchanged files are not modified",
-        16,
-    )
-    .queries;
-    for value in ["records", "files"] {
-        let query = shared
-            .iter()
-            .find(|query| query.value == value)
-            .expect("shared-copula subject query");
-        assert!(query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        "Ensure unchanged records and unchanged files remain unchanged",
+    ] {
+        assert_eq!(task_clauses(task).len(), 1);
+        let queries = plan(task, 16).queries;
+        for value in ["records", "files"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("shared-copula subject query");
+            assert!(query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
     }
+    let shared = "Ensure unchanged records are refreshed and remain unchanged";
+    assert_eq!(task_clauses(shared).len(), 1);
+    assert!(matches!(
+        clause_roles(shared, true, false).as_slice(),
+        [TaskRole::PreserveConstraint]
+    ));
     for task in [
         "Ensure unchanged records are refreshed and unchanged files are not modified",
         "Ensure unchanged records are refreshed and unchanged values are hashed and unchanged files are not modified",
@@ -541,6 +565,119 @@ fn coordinated_instructions_keep_distinct_query_roles() {
                 .iter()
                 .all(|query| !query.has_facet(FacetKind::PreserveConstraint))
         );
+    }
+}
+
+#[test]
+fn coordinated_ordinary_instructions_keep_primary_roles() {
+    for (task, primary, preserve_left) in [
+        (
+            "Refactor the serializer and ensure cache entries are refreshed",
+            "Refactor the serializer ensure cache entries are refreshed",
+            false,
+        ),
+        (
+            "Ensure output unchanged and ensure cache entries are refreshed",
+            "ensure cache entries are refreshed",
+            true,
+        ),
+    ] {
+        let clauses = task_clauses(task);
+        assert_eq!(clauses.len(), 2);
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        let queries = plan(task, 16).queries;
+        for value in ["cache", "entries", "refreshed"] {
+            let query = queries
+                .iter()
+                .find(|query| query.value == value)
+                .expect("ordinary command query");
+            assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+            assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+        }
+        if preserve_left {
+            assert!(matches!(
+                clause_roles(clauses[0].text, true, false).as_slice(),
+                [TaskRole::PreserveConstraint]
+            ));
+            let output = queries
+                .iter()
+                .find(|query| query.value == "output")
+                .expect("preserved output query");
+            assert!(
+                output.has_facet(FacetKind::PreserveConstraint),
+                "{output:?}"
+            );
+            assert!(!output.has_facet(FacetKind::PrimaryChange), "{output:?}");
+        } else {
+            assert!(matches!(
+                clause_roles(clauses[0].text, true, false).as_slice(),
+                [TaskRole::PrimaryChange]
+            ));
+        }
+        assert_eq!(primary_task_text(task), primary);
+    }
+    let leave = "Refactor the serializer and leave cache entries in the scan";
+    let clauses = task_clauses(leave);
+    assert_eq!(clauses.len(), 2);
+    assert!(matches!(
+        clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+        [TaskRole::PrimaryChange]
+    ));
+    assert_eq!(
+        primary_task_text(leave),
+        "Refactor the serializer leave cache entries in the scan"
+    );
+    assert!(matches!(
+        clause_roles("ensure tests pass", false, false).as_slice(),
+        [TaskRole::TestIntent]
+    ));
+    assert!(
+        clause_roles(
+            "the handler ensures cache entries are refreshed",
+            false,
+            false
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn subordinate_unchanged_predicates_keep_governing_subject_roles() {
+    for task in [
+        "Ensure unchanged records are refreshed when unchanged files remain unchanged",
+        "Ensure unchanged records are refreshed before unchanged files stay unchanged",
+    ] {
+        assert_eq!(task_clauses(task).len(), 1);
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PrimaryChange]
+        ));
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .all(|query| !query.has_facet(FacetKind::PreserveConstraint))
+        );
+        assert_eq!(primary_task_text(task), task);
+    }
+    for task in [
+        "Ensure unchanged files remain unchanged when records are refreshed",
+        "while unchanged files stay unchanged",
+        "Ensure that unchanged files stay unchanged",
+    ] {
+        assert!(matches!(
+            clause_roles(task, true, false).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        let queries = plan(task, 16).queries;
+        let files = queries
+            .iter()
+            .find(|query| query.value == "files")
+            .expect("governing preservation query");
+        assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
     }
 }
 
