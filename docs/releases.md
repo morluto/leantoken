@@ -36,7 +36,7 @@ metadata second. The MCP Registry namespace is
 ## Release Cadence
 
 - **On every push to `main`**: the [Release Please] workflow determines the
-  next version (patch bump), generates the changelog with [git-cliff], bumps
+  next version from conventional commits, generates the changelog with [git-cliff], bumps
   the version in `Cargo.toml`, and opens a PR labeled `autorelease`. Merging
   the PR creates the tag and dispatches the [Release] workflow, which builds the
   platform archives and single npm tarball from that exact tag.
@@ -44,6 +44,20 @@ metadata second. The MCP Registry namespace is
   Monday at 09:00 UTC as a safety net to catch any unreleased changes.
 - **Manual trigger**: the workflow supports `workflow_dispatch` for ad-hoc
   releases.
+
+The version policy in `cliff.toml` preserves Cargo compatibility: compatible
+changes in `0.x` advance the patch, while a breaking change advances the minor
+(for example, `0.1.28` to `0.2.0`). Stable releases advance the minor for features
+and the major for breaking changes. `scripts/plan_release.py` uses the same
+git-cliff parser as the changelog and waits for the current package version's
+tag before planning another release. An existing open `autorelease` PR is
+updated across version changes, even if its branch retains an older version
+name; the PR title and package metadata determine the release identity.
+Every generated candidate explicitly dispatches CI on that branch. Pull-request
+runs created with [`GITHUB_TOKEN`] require approval; `workflow_dispatch` starts
+directly. The dispatched run validates the candidate's exact source revision and uses the normal
+platform and owner bounds. Its `Required checks` job validates every planned
+receipt and provides the same stable merge check as a pull-request run.
 
 To suppress a release on a particular commit, include `[no-release]` or
 `[skip ci]` in the commit message.
@@ -80,6 +94,14 @@ commit messages and posted as the release PR body. The configuration in
 | `ci`       | Continuous Integration |
 | `chore`    | Chores                 |
 | `bench`    | Benchmarks             |
+
+Use `!` or a `BREAKING CHANGE:` footer to mark an incompatible change. Include
+the caller migration in the footer: generated notes display both the breaking
+marker and that description. One generated file supplies the changelog entry
+and PR body, so the release-bump commit cannot describe itself as a user change.
+The release-plan CI lane runs disposable Git repositories through the actual
+planner and pinned git-cliff executable to check versioning, migration notes,
+and pending-tag behavior before validating the cargo-dist plan.
 
 ## Dependency Update Policy
 

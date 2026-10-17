@@ -450,8 +450,8 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
         );
         if word == "unchanged" {
-            if copula_seen && let Some(coordinator) = coordinator {
-                pending_split.get_or_insert((coordinator, word_start, has_instruction));
+            if copula_seen && let Some((coordinator, subject_start)) = coordinator {
+                pending_split.get_or_insert((coordinator, subject_start, has_instruction));
             }
             subject_seen = true;
         } else if subject_seen && matches!(word, "is" | "are" | "be" | "was" | "were") {
@@ -467,7 +467,13 @@ fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
             }
             copula_seen = true;
         }
-        coordinator = matches!(word, "and" | "or").then_some(word_start);
+        // Share the instruction-subject vocabulary; a real intervening subject
+        // or predicate closes this window. Retain the full right-hand slice.
+        coordinator = match word {
+            "and" | "or" => Some((word_start, word_start + word.len())),
+            _ if unchanged_subject_modifier(word) => coordinator,
+            _ => None,
+        };
     }
     clauses.push(TaskClause {
         text: part[start..].trim(),
@@ -566,28 +572,7 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     // subject by themselves. Locate its first subject word once, so repeated
     // occurrences of unchanged do not trigger repeated prefix scans.
     let instruction_subject = unchanged_instruction.and_then(|start| {
-        (start + 1..words.len()).find(|index| {
-            let word = words[*index];
-            !word.ends_with("ly")
-                && !matches!(
-                    word,
-                    "a" | "an"
-                        | "the"
-                        | "some"
-                        | "all"
-                        | "each"
-                        | "every"
-                        | "these"
-                        | "those"
-                        | "our"
-                        | "your"
-                        | "its"
-                        | "cached"
-                        | "unchanged"
-                        | "still"
-                        | "otherwise"
-                )
-        })
+        (start + 1..words.len()).find(|index| !unchanged_subject_modifier(words[*index]))
     });
     let mut copular_predicate = false;
     let unchanged_predicate = words.iter().enumerate().any(|(index, word)| {
@@ -725,6 +710,28 @@ fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<T
     .into_iter()
     .flatten()
     .collect()
+}
+
+fn unchanged_subject_modifier(word: &str) -> bool {
+    word.ends_with("ly")
+        || matches!(
+            word,
+            "a" | "an"
+                | "the"
+                | "some"
+                | "all"
+                | "each"
+                | "every"
+                | "these"
+                | "those"
+                | "our"
+                | "your"
+                | "its"
+                | "cached"
+                | "unchanged"
+                | "still"
+                | "otherwise"
+        )
 }
 
 pub(super) fn primary_task_text(task: &str) -> String {

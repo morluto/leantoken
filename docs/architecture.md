@@ -2209,8 +2209,9 @@ fragment when each exists and fits, before admitting at most one auxiliary
 fragment, two failure-trace fragments, two test fragments, and two preservation
 fragments. Role parsing splits preservation transitions and keeps the generic
 test path prior from marking every query in a mixed implementation/test clause.
-Coordinated `unchanged` subjects split only at immediate `and`/`or` boundaries
-with independent copulas; shared-copula subjects stay together. Role annotation
+Coordinated `unchanged` subjects split at `and`/`or` boundaries with independent
+copulas, allowing only the existing instruction-subject modifiers before the
+later subject. Shared-copula subjects stay together. Role annotation
 and primary-task text consume the same disjoint scopes, including inherited
 instruction context. Each existing clause gets one linear scan, one lowercase
 scratch string bounded by its byte length, and borrowed-scope metadata bounded

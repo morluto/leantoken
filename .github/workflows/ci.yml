@@ -248,6 +248,12 @@ jobs:
         with:
           tool: cargo-dist@0.32.0
 
+      - name: Install git-cliff for release planning checks
+        if: matrix.command == 'release-plan'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.13.1
+
       - name: Install cargo-llvm-cov
         if: matrix.command == 'coverage'
         uses: taiki-e/install-action@v2
@@ -339,6 +345,7 @@ jobs:
       - name: Validate release plan
         if: matrix.command == 'release-plan'
         run: |
+          python3 -m unittest scripts/test_plan_release.py
           dist plan
           mkdir -p target && touch target/ci-command-completed
 
@@ -438,7 +445,7 @@ jobs:
 
   required:
     name: Required checks
-    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     needs: [changes, evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 10

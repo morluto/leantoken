@@ -325,3 +325,68 @@ fn coordinated_unchanged_constraints_follow_each_subject() {
         );
     }
 }
+
+#[test]
+fn coordinated_unchanged_modifiers_preserve_scoped_roles() {
+    for modifier in ["the", "the cached", "the entirely cached", "our"] {
+        let task = format!(
+            "Ensure unchanged records are refreshed and {modifier} unchanged files are not modified"
+        );
+        let clauses = task_clauses(&task);
+        assert_eq!(clauses.len(), 2);
+        assert_eq!(
+            clauses[1].text,
+            format!("{modifier} unchanged files are not modified")
+        );
+        assert!(clauses[1].inherited_instruction);
+        assert!(matches!(
+            clause_roles(clauses[1].text, false, clauses[1].inherited_instruction).as_slice(),
+            [TaskRole::PreserveConstraint]
+        ));
+        assert_eq!(
+            primary_task_text(&task),
+            "Ensure unchanged records are refreshed"
+        );
+    }
+    let task = "Ensure unchanged records are refreshed and the unchanged files are not modified";
+    let queries = plan(task, 16).queries;
+    for value in ["records", "refreshed"] {
+        let query = queries
+            .iter()
+            .find(|query| query.value == value)
+            .expect("primary subject query");
+        assert!(query.has_facet(FacetKind::PrimaryChange), "{query:?}");
+        assert!(!query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+    }
+    let files = queries
+        .iter()
+        .find(|query| query.value == "files")
+        .expect("preserved subject query");
+    assert!(files.has_facet(FacetKind::PreserveConstraint), "{files:?}");
+    assert!(!files.has_facet(FacetKind::PrimaryChange), "{files:?}");
+    for task in [
+        "Ensure unchanged records are refreshed and the handler observes unchanged files are not modified",
+        "Ensure unchanged records are refreshed and the files are unchanged records",
+        "Ensure unchanged records are refreshed when the unchanged files are not modified",
+    ] {
+        assert_eq!(task_clauses(task).len(), 1);
+        assert_eq!(primary_task_text(task), task);
+        assert!(
+            plan(task, 16)
+                .queries
+                .iter()
+                .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
+            "a different subject, predicate or subordinate scope stays primary: {task}"
+        );
+    }
+    let shared = "Ensure unchanged records and the cached unchanged files are not modified";
+    assert_eq!(task_clauses(shared).len(), 1);
+    let queries = plan(shared, 16).queries;
+    for value in ["records", "files"] {
+        let query = queries
+            .iter()
+            .find(|query| query.value == value)
+            .expect("shared-copula subject query");
+        assert!(query.has_facet(FacetKind::PreserveConstraint), "{query:?}");
+    }
+}
