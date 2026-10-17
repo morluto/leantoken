@@ -9,7 +9,119 @@ const FAILOVER_LIVENESS_TIMEOUT: Duration = Duration::from_secs(60);
 const INDEX_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const PROCESS_FAILURE_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(super) fn mcp_initialize_precedes_storage_open() {
+#[test]
+fn mcp_stateless_discovery_starts_the_indexing_runtime() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn stateless_ready() {}\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+    let meta = serde_json::json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {"name": "leantoken-test", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {}
+    });
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+        "params": {"_meta": meta}
+    }));
+    let discovery = process.response(Duration::from_secs(5));
+    assert_eq!(discovery["id"], "discover");
+    assert_eq!(
+        discovery["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"], "leantoken",
+        "{discovery}"
+    );
+
+    for (id, method) in [(1, "resources/list"), (2, "tools/list")] {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": method,
+            "params": {"_meta": meta}
+        }));
+        let response = process.response(Duration::from_secs(5));
+        assert_eq!(response["id"], id);
+        assert!(response.get("result").is_some(), "{response}");
+    }
+
+    // Discovery replaces initialize and notifications/initialized. Even a
+    // non-retrieval tool must become available without activating an index call.
+    let deadline = Instant::now() + INDEX_READY_TIMEOUT;
+    let mut id = 3;
+    loop {
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": "savings", "arguments": {}, "_meta": meta}
+        }));
+        let response = process.response(Duration::from_secs(5));
+        assert_eq!(response["id"], id);
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        if response["result"]["structuredContent"]["reason"] != "index_starting" {
+            assert_ne!(
+                response["result"]["structuredContent"]["status"], "retryable",
+                "{response}"
+            );
+            assert!(
+                response["result"]["structuredContent"].is_object(),
+                "{response}"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "{response}");
+        id += 1;
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": id + 1, "method": "tools/call",
+        "params": {
+            "name": "files", "_meta": meta,
+            "arguments": {"operation": {"kind": "tree", "max_results": 10}}
+        }
+    }));
+    let files = process.response(INDEX_READY_TIMEOUT);
+    assert_eq!(files["result"]["resultType"], "complete");
+    assert_eq!(
+        files["result"]["structuredContent"]["entries"][0]["path"], "lib.rs",
+        "{files}"
+    );
+    assert!(
+        database_state(&database)
+            .is_some_and(|(generation, files, _)| generation == 1 && files == 1)
+    );
+    process.stop();
+}
+
+#[test]
+fn mcp_stateless_first_tool_call_starts_the_indexing_runtime() {
+    let root = tempfile::tempdir().expect("temporary repository");
+    std::fs::write(root.path().join("lib.rs"), "pub fn stateless_ready() {}\n")
+        .expect("write fixture");
+    let database = root.path().join("index.sqlite");
+    let mut process =
+        McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {"operation": {"kind": "tree", "max_results": 10}},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {}
+            }
+        }
+    }));
+    let response = process.response(INDEX_READY_TIMEOUT);
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["result"]["resultType"], "complete");
+    assert_eq!(
+        response["result"]["structuredContent"]["entries"][0]["path"], "lib.rs",
+        "{response}"
+    );
+    process.stop();
+}
+
+#[test]
+fn mcp_initialize_precedes_storage_open() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -48,7 +160,8 @@ pub(super) fn mcp_initialize_precedes_storage_open() {
     });
 }
 
-pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
+#[test]
+fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -138,7 +251,8 @@ pub(super) fn mcp_cold_first_call_completes_the_public_acceptance_flow() {
     }
 }
 
-pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
+#[test]
+fn mcp_recovers_when_startup_database_contention_clears() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -166,7 +280,8 @@ pub(super) fn mcp_recovers_when_startup_database_contention_clears() {
     process.wait_until_ready(INDEX_READY_TIMEOUT);
 }
 
-pub(super) fn mcp_eof_cancels_contended_startup_promptly() {
+#[test]
+fn mcp_eof_cancels_contended_startup_promptly() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -253,7 +368,8 @@ fn wait_until_lock_held(path: &std::path::Path, timeout: Duration, process: &mut
     }
 }
 
-pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
+#[test]
+fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -283,7 +399,8 @@ pub(super) fn mcp_runtime_failure_transitions_tools_out_of_starting_state() {
     );
 }
 
-pub(super) fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
+#[test]
+fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn answer() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -310,7 +427,8 @@ pub(super) fn cli_json_mcp_failure_is_one_document_after_a_logged_error() {
     assert_eq!(error.as_object().map(serde_json::Map::len), Some(2));
 }
 
-pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
+#[test]
+fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
     let home = directories::BaseDirs::new()
         .expect("home directories")
         .home_dir()
@@ -365,7 +483,8 @@ pub(super) fn mcp_rejects_home_root_after_initialize_without_opening_storage() {
     }
 }
 
-pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
+#[test]
+fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn original() {}\n").expect("fixture");
     std::fs::write(root.path().join("b.rs"), "fn crosses_limit() {}\n").expect("second file");
@@ -427,7 +546,8 @@ pub(super) fn mcp_index_limit_failure_is_terminal_and_does_not_retry() {
     assert!(process.child.try_wait().expect("poll process").is_none());
 }
 
-pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
+#[test]
+fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     let root = tempfile::tempdir().expect("temporary repository");
     write_rust_fixture_set(root.path(), "file", 20, 100);
     let database = root.path().join("index.sqlite");
@@ -461,7 +581,7 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
         }));
     }
 
-    wait_until(Duration::from_secs(15), || {
+    wait_until(INDEX_READY_TIMEOUT, || {
         database_state(&database)
             .is_some_and(|(generation, files, _)| generation == 1 && files == 20)
     });
@@ -475,7 +595,8 @@ pub(super) fn concurrent_mcp_startup_initializes_once_and_followers_read() {
     );
 }
 
-pub(super) fn mcp_follower_takes_over_after_leader_exit() {
+#[test]
+fn mcp_follower_takes_over_after_leader_exit() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "fn before_failover() {}\n").expect("write fixture");
     let database = root.path().join("index.sqlite");
@@ -505,7 +626,8 @@ pub(super) fn mcp_follower_takes_over_after_leader_exit() {
     });
 }
 
-pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
+#[test]
+fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("a.rs"), "fn first() {}\n").expect("first fixture");
     std::fs::write(root.path().join("b.rs"), "fn exceeds_limit() {}\n").expect("second fixture");
@@ -518,7 +640,9 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     let mut leader = McpProcess::spawn_with_args(root.path(), &database, &["--max-files", "1"]);
     leader.initialize();
     leader.send_initialized();
-    wait_until(Duration::from_secs(5), || {
+    // Fixture setup waits for background leader ownership, using the shared
+    // indexing liveness budget; initialize and terminal failover keep theirs.
+    wait_until(INDEX_READY_TIMEOUT, || {
         coordination
             .try_acquire_leadership()
             .expect("probe leadership")
@@ -541,7 +665,8 @@ pub(super) fn mcp_follower_does_not_hide_terminal_generation_zero_failover() {
     assert_eq!(database_state(&database).map(|state| state.0), Some(0));
 }
 
-pub(super) fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
+#[test]
+fn mcp_follower_rebuilds_after_leader_is_killed_during_reconciliation() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("old.rs"),

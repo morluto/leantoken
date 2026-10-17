@@ -1,6 +1,7 @@
 use super::support::Command;
 
-pub(super) fn setup_and_remove_do_not_require_a_repository() {
+#[test]
+fn setup_and_remove_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
 
     let setup = Command::cargo_bin("leantoken")
@@ -44,7 +45,8 @@ pub(super) fn setup_and_remove_do_not_require_a_repository() {
     assert!(!config.contains("\"leantoken\""));
 }
 
-pub(super) fn repository_options_are_rejected_by_repository_free_commands() {
+#[test]
+fn repository_options_are_rejected_by_repository_free_commands() {
     for arguments in [
         vec!["--json", "--root", ".", "setup", "--all", "--dry-run"],
         vec!["--json", "--root", ".", "remove", "--all", "--dry-run"],
@@ -80,7 +82,8 @@ pub(super) fn repository_options_are_rejected_by_repository_free_commands() {
     }
 }
 
-pub(super) fn episode_audit_is_repo_free_deterministic_and_read_only() {
+#[test]
+fn episode_audit_is_repo_free_deterministic_and_read_only() {
     let temp = tempfile::tempdir().expect("temporary working directory");
     let input = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("benchmarks/reports/multi-agent-context-suite-v1-codex-0.144.1.json");
@@ -156,9 +159,34 @@ pub(super) fn episode_audit_is_repo_free_deterministic_and_read_only() {
     let markdown = String::from_utf8(human.stdout).expect("Markdown UTF-8");
     assert!(markdown.starts_with("# LeanToken episode audit\n"));
     assert!(markdown.contains("| `provider_input_regression` | 20 | 50.93% |"));
+
+    let missing = command()
+        .args([
+            "--json",
+            "episode",
+            "audit",
+            "--adapter",
+            "multi-agent-suite-v1",
+            "--input",
+            "missing-report.json",
+        ])
+        .output()
+        .expect("audit missing report");
+    assert!(!missing.status.success());
+    assert!(missing.stdout.is_empty());
+    let error: serde_json::Value =
+        serde_json::from_slice(&missing.stderr).expect("structured file error");
+    assert_eq!(error["category"], "internal_error");
+    assert!(
+        error["error"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("I/O error:")),
+        "{error}"
+    );
 }
 
-pub(super) fn setup_requires_yes_before_non_interactive_mutation() {
+#[test]
+fn setup_requires_yes_before_non_interactive_mutation() {
     let temp = tempfile::tempdir().expect("temporary home");
     let output = Command::cargo_bin("leantoken")
         .expect("binary")
@@ -180,7 +208,12 @@ pub(super) fn setup_requires_yes_before_non_interactive_mutation() {
     assert_eq!(error["category"], "invalid_request");
 }
 
-pub(super) fn cache_list_and_prune_do_not_require_a_repository() {
+#[test]
+#[cfg(not(windows))]
+// Windows ProjectDirs resolves the known cache folder without honoring the
+// fixture's environment override; cache cleanup safety is covered by the
+// platform-independent cache module tests instead of touching a user cache.
+fn cache_list_and_prune_do_not_require_a_repository() {
     let temp = tempfile::tempdir().expect("temporary home");
     let command = || {
         let mut command = Command::cargo_bin("leantoken").expect("binary");

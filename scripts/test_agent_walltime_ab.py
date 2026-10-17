@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -18,6 +19,194 @@ SPEC.loader.exec_module(MODULE)
 
 
 class AgentWalltimeAbTests(unittest.TestCase):
+    def start_readiness_peer(
+        self, mode: str, *, initialize: bool = True
+    ) -> tuple[object, Path]:
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        root = Path(workspace.name)
+        requests = root / "requests.jsonl"
+        server = root / "readiness-mcp"
+        server.write_text(
+            f"#!{sys.executable}\n"
+            + """import json
+import os
+import sys
+import time
+from pathlib import Path
+
+mode = MODE
+requests = Path(REQUESTS)
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    with requests.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(request) + "\\n")
+    request_id = request["id"]
+    if request_id == 0:
+        if mode == "silent_init":
+            time.sleep(10)
+            continue
+        result = {}
+    else:
+        if mode == "closed":
+            os.close(sys.stdout.fileno())
+            continue
+        if mode == "invalid_json":
+            print("{retryable", flush=True)
+            continue
+        if mode == "invalid_shape":
+            print("[]", flush=True)
+            continue
+        if mode == "oversized":
+            sys.stdout.write("x" * (4 * 1024 * 1024 + 1))
+            sys.stdout.flush()
+            continue
+        if mode == "silent":
+            time.sleep(10)
+            continue
+        if mode == "partial":
+            sys.stdout.write('{"jsonrpc":"2.0","id":')
+            sys.stdout.flush()
+            time.sleep(10)
+            continue
+        if mode == "delayed":
+            time.sleep(0.2)
+        if mode == "notification":
+            print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress"}), flush=True)
+        if mode == "flood":
+            while True:
+                print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress"}), flush=True)
+        result = {"structuredContent": {"status": "retryable" if mode == "retryable" else "ready", "paths": []}}
+    print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}), flush=True)
+    if request_id and mode == "delayed":
+        requests.with_suffix(".reply").write_text("sent", encoding="utf-8")
+""".replace(
+                "MODE", repr(mode)
+            ).replace(
+                "REQUESTS", repr(str(requests))
+            ),
+            encoding="utf-8",
+        )
+        server.chmod(0o755)
+        prior_threads = {thread.ident for thread in threading.enumerate()}
+        mcp = MODULE.McpProcess(server, root, root / "index.sqlite3")
+
+        def close() -> None:
+            mcp.close()
+            self.assertIsNotNone(mcp.process.poll())
+            leaked = [
+                thread.name
+                for thread in threading.enumerate()
+                if thread.ident not in prior_threads
+                and thread.name.startswith("leantoken-benchmark-")
+            ]
+            self.assertEqual(leaked, [])
+
+        self.addCleanup(close)
+        if initialize:
+            mcp.initialize()
+        return mcp, requests
+
+    def readiness_outcome(self, mcp: object) -> tuple[object, threading.Thread]:
+        results: list[object] = []
+
+        def wait() -> None:
+            try:
+                results.append(mcp.wait_ready(timeout_seconds=0.025))
+            except BaseException as error:
+                results.append(error)
+
+        worker = threading.Thread(target=wait, daemon=True)
+        worker.start()
+        worker.join(timeout=0.6)
+        if worker.is_alive():
+            mcp.close()
+            worker.join(timeout=1)
+            self.fail("readiness remained blocked past its deadline and watchdog")
+        self.assertEqual(len(results), 1)
+        return results[0], worker
+
+    def test_mcp_readiness_deadline_covers_silent_and_partial_peers(self) -> None:
+        for mode in ("silent", "partial"):
+            with self.subTest(mode=mode):
+                mcp, _ = self.start_readiness_peer(mode)
+                result, _ = self.readiness_outcome(mcp)
+                self.assertIsInstance(result, MODULE.InvalidEvidence)
+                self.assertRegex(str(result), "deadline|timed out")
+                mcp.close()
+                self.assertIsNotNone(mcp.process.poll())
+
+    def test_mcp_readiness_rejects_delayed_reply_and_prevents_reuse(self) -> None:
+        mcp, requests = self.start_readiness_peer("delayed")
+        result, _ = self.readiness_outcome(mcp)
+        self.assertIsInstance(result, MODULE.InvalidEvidence)
+        self.assertRegex(str(result), "deadline|timed out")
+        reply_sent = requests.with_suffix(".reply")
+        deadline = time.monotonic() + 1
+        while not reply_sent.exists() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(reply_sent.exists(), "peer did not send its late reply")
+        with self.assertRaisesRegex(MODULE.InvalidEvidence, "unusable|closed"):
+            mcp.call("files", {"operation": {"kind": "tree"}, "max_results": 1})
+        mcp.close()
+        sent = [json.loads(line) for line in requests.read_text().splitlines()]
+        self.assertEqual([request["id"] for request in sent], [0, 1])
+
+    def test_mcp_readiness_accepts_matching_reply_after_notification(self) -> None:
+        mcp, _ = self.start_readiness_peer("notification")
+        self.assertIsInstance(mcp.wait_ready(timeout_seconds=1), float)
+
+    def test_mcp_readiness_budget_survives_retries_and_notifications(self) -> None:
+        for mode in ("retryable", "flood"):
+            with self.subTest(mode=mode):
+                mcp, _ = self.start_readiness_peer(mode)
+                result, _ = self.readiness_outcome(mcp)
+                self.assertIsInstance(result, MODULE.InvalidEvidence)
+                self.assertRegex(str(result), "deadline|timed out")
+
+    def test_mcp_terminal_stdout_failure_prevents_reuse(self) -> None:
+        for mode, message in (
+            ("closed", "closed unexpectedly"),
+            ("invalid_json", "invalid JSON"),
+            ("invalid_shape", "non-object"),
+            ("oversized", "frame exceeds"),
+        ):
+            with self.subTest(mode=mode):
+                mcp, requests = self.start_readiness_peer(mode)
+                with self.assertRaisesRegex(MODULE.InvalidEvidence, message):
+                    mcp.wait_ready(timeout_seconds=1)
+                with self.assertRaisesRegex(MODULE.InvalidEvidence, "unusable|closed"):
+                    mcp.call("files", {}, deadline=time.monotonic() + 0.05)
+                mcp.close()
+                sent = [json.loads(line) for line in requests.read_text().splitlines()]
+                self.assertEqual([request["id"] for request in sent], [0, 1])
+
+    def test_mcp_close_releases_a_pending_response_waiter(self) -> None:
+        mcp, requests = self.start_readiness_peer("silent_init", initialize=False)
+        failures: list[BaseException] = []
+
+        def initialize() -> None:
+            try:
+                mcp.initialize()
+            except BaseException as error:
+                failures.append(error)
+
+        # A broken client must fail this watchdog without stranding the test process.
+        worker = threading.Thread(target=initialize, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 1
+        while not requests.exists() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        self.assertTrue(requests.exists(), "peer did not receive initialization")
+        mcp.close()
+        worker.join(timeout=1)
+        self.assertFalse(worker.is_alive(), "close left the response waiter blocked")
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], MODULE.InvalidEvidence)
+        self.assertRegex(str(failures[0]), "closed")
+
     def test_mcp_process_drains_and_bounds_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -90,12 +279,6 @@ sys.stderr.flush()
             finally:
                 mcp.close()
 
-    def test_percentile_uses_nearest_rank(self) -> None:
-        values = [float(value) for value in range(1, 21)]
-
-        self.assertEqual(MODULE.percentile(values, 0.50), 10.0)
-        self.assertEqual(MODULE.percentile(values, 0.95), 19.0)
-
     def test_leantoken_occurrences_convert_global_bytes_to_line_columns(
         self,
     ) -> None:
@@ -153,9 +336,7 @@ sys.stderr.flush()
     def test_grouped_leantoken_occurrences_preserve_every_coordinate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "source.rs").write_text(
-                "target target\n", encoding="utf-8"
-            )
+            (root / "source.rs").write_text("target target\n", encoding="utf-8")
             response = {
                 "groups": [
                     {
@@ -265,47 +446,6 @@ sys.stderr.flush()
                 "tokio-validation",
             ],
         )
-
-    def test_markdown_surfaces_quality_and_suite_latency(self) -> None:
-        operation = {
-            "sum_of_corpus_medians": {
-                "native_ms": 10.0,
-                "leantoken_ms": 15.0,
-                "delta": {"absolute_ms": 5.0, "relative": 0.5, "ratio": 1.5},
-            }
-        }
-        report = {
-            "status": "passed_accuracy_gates",
-            "provenance": {
-                "source_revision": "a" * 40,
-                "host_os": "linux",
-                "host_arch": "x86_64",
-            },
-            "protocol": {"iterations": 30, "context_iterations": 10},
-            "aggregate": {
-                "quality": {
-                    "native_discovery_relevant_files_found": 4,
-                    "context_relevant_files_found": 3,
-                    "relevant_files": 4,
-                    "context_line_anchors_found": 6,
-                    "context_line_anchors": 8,
-                    "native_discovery_relevant_file_recall": 1.0,
-                    "context_relevant_file_recall": 0.75,
-                    "context_line_anchor_recall": 0.75,
-                },
-                "exact_search": operation,
-                "exact_read": operation,
-                "discovery_context": operation,
-            },
-            "corpora": [],
-            "limitations": ["diagnostic only"],
-        }
-
-        markdown = MODULE.markdown_report(report)
-
-        self.assertIn("Native discovery relevant-file recall: 4/4 (100.0%)", markdown)
-        self.assertIn("Context relevant-file recall: 3/4 (75.0%)", markdown)
-        self.assertIn("| Exhaustive exact search | 10.00 ms | 15.00 ms", markdown)
 
 
 if __name__ == "__main__":

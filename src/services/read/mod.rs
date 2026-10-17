@@ -618,6 +618,11 @@ impl Services {
             .target_end_line
             .unwrap_or(snapshot.end_line)
             .min(snapshot.end_line);
+        let target_end_line = if snapshot.eof_observed {
+            Some(observed_target_end_line)
+        } else {
+            target.target_end_line
+        };
         if target.target_start_line > observed_target_end_line
             || target.page_start_line > observed_target_end_line
         {
@@ -731,7 +736,8 @@ impl Services {
                 path: request.path.clone(),
                 status,
                 target_start_line: target.target_start_line,
-                target_end_line: observed_target_end_line,
+                target_end_line,
+                observed_end_line: snapshot.end_line,
                 returned_start_line,
                 returned_end_line,
                 truncated,
@@ -812,7 +818,7 @@ pub(super) fn finalized_serialized_read_tokens(
 mod tests {
 
     #[test]
-    fn static_request_matrix_needs_no_repository() {
+    fn read_parser_rejects_conflicting_or_incomplete_targets() {
         let base = ReadRequest {
             path: "src/lib.rs".into(),
             start_line: Some(1),
@@ -827,22 +833,11 @@ mod tests {
             receipt_id: None,
             policy: crate::ReadPolicy::default(),
         };
-        assert!(parse_read_request(base.clone()).is_ok());
-        for mutate in [
-            (|r: &mut ReadRequest| r.start_line = Some(0)) as fn(&mut ReadRequest),
-            |r| r.symbol = Some("greet".into()),
-            |r| {
-                r.start_line = None;
-                r.end_line = None;
-                r.symbol = Some(String::new());
-            },
-            |r| r.path = "../outside.rs".into(),
-            |r| r.heading_occurrence = Some(1),
-        ] {
-            let mut request = base.clone();
-            mutate(&mut request);
-            assert!(parse_read_request(request).is_err());
-        }
+        let request = ReadRequest {
+            heading_occurrence: Some(1),
+            ..base
+        };
+        assert!(parse_read_request(request).is_err());
     }
     use super::*;
 

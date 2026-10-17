@@ -15,6 +15,8 @@ pub enum CacheCommand {
     List(CacheListArgs),
     /// Remove inactive managed caches selected by explicit criteria.
     Prune(CachePruneArgs),
+    /// Compact explicitly selected inactive caches with worthwhile reusable space.
+    Compact(CacheCompactArgs),
 }
 
 /// Filters and response bounds for `cache list`.
@@ -158,6 +160,46 @@ impl From<CachePruneArgs> for CachePruneRequest {
             dry_run: args.dry_run || (args.incompatible_with_current && !args.yes),
             yes: args.yes,
             incompatible_with_current: args.incompatible_with_current,
+        }
+    }
+}
+
+/// Explicit selection and bounded work for `cache compact`.
+#[derive(Debug, Clone, Args)]
+pub struct CacheCompactArgs {
+    /// Exact managed cache identity (repeatable; at most eight).
+    #[arg(long, required = true, value_name = "CACHE_ID")]
+    pub id: Vec<String>,
+    /// Minimum reusable page bytes (both benefit thresholds must pass).
+    #[arg(long, default_value_t = DEFAULT_COMPACT_MIN_BYTES, value_name = "BYTES")]
+    pub min_reclaim_bytes: u64,
+    /// Minimum reusable page percentage (1-100).
+    #[arg(long, default_value_t = DEFAULT_COMPACT_MIN_PERCENT)]
+    pub min_reclaim_percent: u8,
+    /// Maximum logical database or artifact footprint to process.
+    #[arg(long, default_value_t = DEFAULT_COMPACT_MAX_BYTES, value_name = "BYTES")]
+    pub max_database_bytes: u64,
+    /// Cooperative per-cache deadline in seconds (1-3600).
+    #[arg(long, default_value_t = DEFAULT_COMPACT_MAX_SECONDS)]
+    pub max_seconds: u64,
+    /// Preview thresholds without VACUUM or checkpoints; default without --yes.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Apply eligible compaction without prompting.
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+}
+
+impl From<CacheCompactArgs> for CacheCompactRequest {
+    fn from(args: CacheCompactArgs) -> Self {
+        Self {
+            ids: args.id,
+            min_reclaim_bytes: args.min_reclaim_bytes,
+            min_reclaim_percent: args.min_reclaim_percent,
+            max_database_bytes: args.max_database_bytes,
+            max_seconds: args.max_seconds,
+            dry_run: args.dry_run || !args.yes,
+            yes: args.yes,
         }
     }
 }

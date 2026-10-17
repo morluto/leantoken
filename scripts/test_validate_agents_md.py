@@ -42,26 +42,12 @@ def write_fixture(root: Path) -> None:
 
 
 class ValidateAgentsMdTests(unittest.TestCase):
-    def test_valid_fixture_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write_fixture(root)
-            commands = {
-                "fmt",
-                "clippy",
-                "test-focused",
-                "test-product",
-                "test-contract",
-                "test-extras",
-            }
-
-            self.assertEqual(MODULE.validate(root, commands), [])
-
     def test_unknown_command_and_gate_drift_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write_fixture(root)
             agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+            valid_agents = agents
             agents = agents.replace(
                 "cargo test-product",
                 "cargo test-produt",
@@ -83,11 +69,7 @@ class ValidateAgentsMdTests(unittest.TestCase):
                 any("test-produt" in error for error in errors),
                 errors,
             )
-
-    def test_alias_drift_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write_fixture(root)
+            (root / "AGENTS.md").write_text(valid_agents, encoding="utf-8")
             config = (root / ".cargo" / "config.toml").read_text(
                 encoding="utf-8"
             )
@@ -99,15 +81,6 @@ class ValidateAgentsMdTests(unittest.TestCase):
                 config,
                 encoding="utf-8",
             )
-            commands = {
-                "fmt",
-                "clippy",
-                "test-focused",
-                "test-product",
-                "test-contract",
-                "test-extras",
-            }
-
             errors = MODULE.validate(root, commands)
 
             self.assertTrue(

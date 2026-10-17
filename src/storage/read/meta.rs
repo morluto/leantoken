@@ -1,3 +1,37 @@
+hot_query!(
+    SERVICE_FAILURES,
+    "service_failures",
+    &["tokenizer: text"],
+    "one record per operation/category for tokenizer in key order",
+    &["sqlite_autoindex_service_failures_1"],
+    "SELECT operation, error_category, failed_requests
+             FROM service_failures
+             WHERE tokenizer = ?1
+             ORDER BY operation, error_category"
+);
+
+hot_query!(
+    TOKEN_SAVINGS,
+    "token_savings",
+    &["tokenizer: text"],
+    "one record per operation for tokenizer in operation order",
+    &["sqlite_autoindex_token_savings_1"],
+    "SELECT operation, tracked_requests, response_tracked_requests,
+                    response_baseline_requests, baseline_source_tokens,
+                    response_baseline_source_tokens, emitted_source_tokens,
+                    estimated_source_tokens_saved, response_source_tokens,
+                    path_and_metadata_tokens, protocol_tokens,
+                    total_response_tokens, receipt_suppressed_exact,
+                    receipt_suppressed_overlap,
+                    expected_hash_not_modified_responses,
+                    expected_hash_suppressed_source_tokens,
+                    useful_requests, incomplete_requests,
+                    unsupported_requests, hash_suppressed_requests
+             FROM token_savings
+             WHERE tokenizer = ?1
+             ORDER BY operation"
+);
+
 impl ReadSession {
     /// Read metadata from this session's pinned repository snapshot.
     pub fn meta(&self) -> Result<MetaRecord> {
@@ -68,22 +102,7 @@ impl ReadSession {
         &self,
         tokenizer: &str,
     ) -> Result<HashMap<String, TokenSavingsRecord>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT operation, tracked_requests, response_tracked_requests,
-                    response_baseline_requests, baseline_source_tokens,
-                    response_baseline_source_tokens, emitted_source_tokens,
-                    estimated_source_tokens_saved, response_source_tokens,
-                    path_and_metadata_tokens, protocol_tokens,
-                    total_response_tokens, receipt_suppressed_exact,
-                    receipt_suppressed_overlap,
-                    expected_hash_not_modified_responses,
-                    expected_hash_suppressed_source_tokens,
-                    useful_requests, incomplete_requests,
-                    unsupported_requests, hash_suppressed_requests
-             FROM token_savings
-             WHERE tokenizer = ?1
-             ORDER BY operation",
-        )?;
+        let mut stmt = self.conn.prepare_cached(TOKEN_SAVINGS.sql)?;
         let rows = stmt.query_map(params![tokenizer], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -114,12 +133,7 @@ impl ReadSession {
     }
 
     pub(crate) fn service_failures(&self, tokenizer: &str) -> Result<Vec<ServiceFailureRecord>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT operation, error_category, failed_requests
-             FROM service_failures
-             WHERE tokenizer = ?1
-             ORDER BY operation, error_category",
-        )?;
+        let mut stmt = self.conn.prepare_cached(SERVICE_FAILURES.sql)?;
         let rows = stmt.query_map(params![tokenizer], |row| {
             Ok(ServiceFailureRecord {
                 operation: row.get(0)?,

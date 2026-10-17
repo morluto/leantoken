@@ -1953,6 +1953,7 @@ fn max_option(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     fn run_git(repository: &Path, args: &[&str]) {
         let status = Command::new("git")
             .arg("-C")
@@ -1963,6 +1964,7 @@ mod tests {
         assert!(status.success(), "git {args:?} failed with {status}");
     }
 
+    #[cfg(target_os = "linux")]
     fn fixture_repository() -> (tempfile::TempDir, String) {
         let repository = tempfile::tempdir().expect("repository");
         run_git(repository.path(), &["init", "--quiet"]);

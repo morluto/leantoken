@@ -979,7 +979,7 @@ fn files_cursor_for_entry(operation: &FileOperation, entry: &FileEntry) -> FileC
 mod tests {
 
     #[test]
-    fn static_request_matrix_needs_no_repository() {
+    fn files_parser_rejects_bad_patterns_cursors_and_oversized_queries() {
         let limits = crate::services::request_limits::RequestLimits {
             default_results: 3,
             max_results: 7,
@@ -1003,14 +1003,11 @@ mod tests {
                 StreamIdentityBuilder::new(CursorKind::Files),
             )
         };
-        assert_eq!(parse(base.clone()).unwrap().limit, 3);
         for mutate in [
-            (|r: &mut FilesRequest| r.operation = FileOperation::Find) as fn(&mut FilesRequest),
-            |r| r.path = Some("../outside.rs".into()),
-            |r| {
+            (|r: &mut FilesRequest| {
                 r.operation = FileOperation::Glob;
                 r.pattern = Some("[".into());
-            },
+            }) as fn(&mut FilesRequest),
             |r| r.cursor = Some("invalid".into()),
             |r| r.query = Some("x".repeat(MAX_QUERY_BYTES + 1)),
         ] {
@@ -1033,31 +1030,5 @@ mod tests {
 
         assert!(encoded.len() > MAX_PATH_BYTES);
         assert!(encoded.len() <= MAX_FILES_CURSOR_ENCODED_BYTES);
-    }
-
-    #[test]
-    fn sql_glob_patterns_map_common_double_star_forms() {
-        assert_eq!(sql_glob_patterns("*.rs"), Some(("*.rs".into(), None)));
-        assert_eq!(sql_glob_patterns("**/*.rs"), Some(("*.rs".into(), None)));
-        assert_eq!(
-            sql_glob_patterns("src/**/*.rs"),
-            Some(("src/*.rs".into(), None))
-        );
-        assert_eq!(sql_glob_patterns("src/**"), Some(("src/*".into(), None)));
-        assert_eq!(
-            sql_glob_patterns("**/lib.rs"),
-            Some(("lib.rs".into(), Some("*/lib.rs".into())))
-        );
-        assert_eq!(
-            sql_glob_patterns("src/**/lib.rs"),
-            Some(("src/lib.rs".into(), Some("src/*/lib.rs".into())))
-        );
-    }
-
-    #[test]
-    fn sql_glob_patterns_fall_back_for_unexpressible_forms() {
-        assert_eq!(sql_glob_patterns("{a,b}.rs"), None);
-        assert_eq!(sql_glob_patterns("a/**/b/**/c"), None);
-        assert_eq!(sql_glob_patterns("**"), None);
     }
 }

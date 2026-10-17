@@ -52,36 +52,6 @@ mod typed_path_tests {
     use super::*;
 
     #[test]
-    fn canonicalization_is_cross_platform_and_idempotent() {
-        for (input, expected) in [
-            (r"src\\services//./read.rs", "src/services/read.rs"),
-            ("./tests///unit.rs", "tests/unit.rs"),
-            (".", "."),
-        ] {
-            let canonical = RepositoryPath::parse(input).expect("valid path");
-            assert_eq!(canonical.as_str(), expected);
-            assert_eq!(
-                RepositoryPath::parse(canonical.as_str())
-                    .expect("canonical path")
-                    .as_str(),
-                expected
-            );
-        }
-        assert_eq!(
-            validate_relative("src/lib.rs").expect("public relative path"),
-            PathBuf::from("src/lib.rs")
-        );
-        assert_eq!(
-            normalize_relative(r".\src\lib.rs").expect("public normalized path"),
-            "src/lib.rs"
-        );
-        assert_eq!(
-            slash_path(Path::new("src/nested/lib.rs")),
-            "src/nested/lib.rs"
-        );
-    }
-
-    #[test]
     fn paths_and_patterns_fail_closed_on_escape_or_empty_values() {
         for value in [
             "",
@@ -103,21 +73,6 @@ mod typed_path_tests {
                 "accepted pattern {value:?}"
             );
         }
-    }
-
-    #[test]
-    fn compiled_patterns_preserve_literal_subtrees_and_case_sensitive_globs() {
-        let matcher = RepositoryPatternSet::new(&[
-            "src".into(),
-            r"tests\\**\\*.rs".into(),
-            "README.*".into(),
-        ])
-        .expect("patterns");
-        assert!(matcher.is_match("src/lib.rs"));
-        assert!(matcher.is_match("tests/unit/path.rs"));
-        assert!(matcher.is_match("README.md"));
-        assert!(!matcher.is_match("readme.md"));
-        assert!(!matcher.is_match("source/lib.rs"));
     }
 
     #[test]

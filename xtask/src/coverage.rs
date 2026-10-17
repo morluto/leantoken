@@ -36,7 +36,7 @@ pub(super) fn check_policy(root: &Path) -> Result<(), String> {
     policy(root).map(|_| ())
 }
 
-fn policy(root: &Path) -> Result<Policy, String> {
+fn policy(root: &Path) -> Result<(Policy, BTreeMap<String, bool>), String> {
     let policy: Policy =
         serde_json::from_slice(&fs::read(root.join(POLICY)).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -130,7 +130,7 @@ fn policy(root: &Path) -> Result<Policy, String> {
             ));
         }
     }
-    Ok(policy)
+    Ok((policy, inventory))
 }
 
 fn test_module(module: &syn::ItemMod) -> bool {
@@ -218,6 +218,10 @@ fn source_inventory(root: &Path) -> Result<BTreeMap<String, bool>, String> {
         }
         Ok(())
     }
+    // External module resolution returns canonical paths, including through an
+    // aliased temporary root or a root containing parent-directory components.
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = canonical_root.as_path();
     let mut inventory = BTreeMap::new();
     for name in ["src/lib.rs", "src/main.rs"] {
         let path = root.join(name);
@@ -239,7 +243,8 @@ fn source_inventory(root: &Path) -> Result<BTreeMap<String, bool>, String> {
 }
 
 fn assess(root: &Path, report: &Path) -> Result<(), String> {
-    let policy = policy(root)?;
+    let (policy, inventory) = policy(root)?;
+    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
     let report: serde_json::Value =
         serde_json::from_slice(&fs::read(report).map_err(|e| e.to_string())?)
             .map_err(|e| e.to_string())?;
@@ -257,11 +262,20 @@ fn assess(root: &Path, report: &Path) -> Result<(), String> {
         let filename = file["filename"]
             .as_str()
             .ok_or("missing coverage filename")?;
-        let Ok(relative) = Path::new(filename).strip_prefix(root) else {
+        let filename = Path::new(filename);
+        let Ok(relative) = filename
+            .strip_prefix(root)
+            .or_else(|_| filename.strip_prefix(&canonical_root))
+        else {
             continue;
         };
         let path = relative.to_string_lossy().replace('\\', "/");
-        if !path.starts_with("src/") {
+        // LLVM may report test-only modules, including helpers in declaration
+        // owners whose production syntax policy() has already validated.
+        if !path.starts_with("src/")
+            || inventory.get(&path) == Some(&true)
+            || policy.declarations.contains_key(&path)
+        {
             continue;
         }
         if !seen.insert(path.clone()) {
@@ -638,19 +652,6 @@ mod tests {
     }
 
     #[test]
-    fn report_warnings_invalidate_evidence() {
-        assert!(invalid_profile_diagnostics(
-            "warning: 11 functions have mismatched data"
-        ));
-        assert!(invalid_profile_diagnostics(
-            "Warning: unknown profile integrity issue"
-        ));
-        assert!(!invalid_profile_diagnostics(
-            "Finished report saved to coverage.json"
-        ));
-    }
-
-    #[test]
     fn coverage_preserves_product_selection_and_resource_profile() {
         let plan = super::super::TestPlan::product(super::super::CI_NEXTEST_PROFILE);
         let coverage = command(None);
@@ -746,7 +747,74 @@ mod tests {
     }
 
     #[test]
-    fn declaration_disposition_cannot_hide_new_executable_logic() {
+    fn reported_test_modules_cannot_hide_production_or_unknown_sources() {
+        let root = fixture();
+        let library = root.path().join("src/lib.rs");
+        let test_module = "pub mod critical;\n#[cfg(test)] mod query_plans;\n";
+        fs::write(&library, test_module).unwrap();
+        fs::write(
+            root.path().join("src/query_plans.rs"),
+            "pub fn query_plan_probe() {}\n",
+        )
+        .unwrap();
+        let policy_path = root.path().join(POLICY);
+        let mut policy: serde_json::Value =
+            serde_json::from_slice(&fs::read(&policy_path).unwrap()).unwrap();
+        policy["declarations"] = serde_json::json!({"src/lib.rs": "Module declarations only"});
+        fs::write(policy_path, policy.to_string()).unwrap();
+
+        let report_path = report(root.path(), 90);
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+        let metric = serde_json::json!({"count": 100, "covered": 0});
+        report["data"][0]["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "filename": root.path().join("src/query_plans.rs"),
+                "summary": {"lines": metric, "functions": metric, "regions": metric}
+            }));
+        fs::write(&report_path, report.to_string()).unwrap();
+        assess(root.path(), &report_path).unwrap();
+
+        // Reproduce a noncanonical root on every platform, without symlinks.
+        let child = root.path().join("child");
+        fs::create_dir(&child).unwrap();
+        let aliased_root = child.join("..");
+        let canonical_root = root.path().canonicalize().unwrap();
+        for report_root in [&aliased_root, &canonical_root] {
+            report["data"][0]["files"][0]["filename"] =
+                serde_json::json!(report_root.join("src/critical.rs"));
+            report["data"][0]["files"][1]["filename"] =
+                serde_json::json!(report_root.join("src/query_plans.rs"));
+            fs::write(&report_path, report.to_string()).unwrap();
+            assess(&aliased_root, &report_path).unwrap();
+        }
+
+        // The same reported file requires a budget when production can reach it.
+        fs::write(&library, "pub mod critical;\nmod query_plans;\n").unwrap();
+        assert!(
+            assess(root.path(), &report_path)
+                .unwrap_err()
+                .contains("production source lacks a coverage disposition: src/query_plans.rs")
+        );
+
+        // A report entry absent from the AST inventory must still fail closed.
+        fs::write(&library, test_module).unwrap();
+        report["data"][0]["files"][1]["filename"] =
+            serde_json::json!(canonical_root.join("src/unknown.rs"));
+        fs::write(&report_path, report.to_string()).unwrap();
+        for assessment_root in [root.path(), aliased_root.as_path()] {
+            assert!(
+                assess(assessment_root, &report_path).unwrap_err().contains(
+                    "new production file needs an explicit coverage budget: src/unknown.rs"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn reported_declaration_helpers_cannot_hide_new_executable_logic() {
         let root = fixture();
         let path = root.path().join(POLICY);
         let mut policy: serde_json::Value =
@@ -756,13 +824,26 @@ mod tests {
         fs::write(path, policy.to_string()).unwrap();
         fs::write(
             root.path().join("src/facade.rs"),
-            "pub use std::path::Path;\n",
+            "pub const VERSION: u64 = 1;\n\
+             #[cfg(test)] mod helpers { pub fn probe() {} }\n",
         )
         .unwrap();
-        check_policy(root.path()).unwrap();
+        let report_path = report(root.path(), 90);
+        let mut report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+        let metric = serde_json::json!({"count": 100, "covered": 0});
+        report["data"][0]["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "filename": root.path().join("src/facade.rs"),
+                "summary": {"lines": metric, "functions": metric, "regions": metric}
+            }));
+        fs::write(&report_path, report.to_string()).unwrap();
+        assess(root.path(), &report_path).unwrap();
         fs::write(root.path().join("src/facade.rs"), "pub fn hidden() {}\n").unwrap();
         assert!(
-            check_policy(root.path())
+            assess(root.path(), &report_path)
                 .unwrap_err()
                 .contains("gained executable logic")
         );

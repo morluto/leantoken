@@ -513,4 +513,74 @@ pub(crate) const MIGRATIONS_SLICE: &[M<'_>] = &[
 pub(crate) const CURRENT_MIGRATION_VERSION: i64 = 13;
 const _: () = assert!(MIGRATIONS_SLICE.len() == CURRENT_MIGRATION_VERSION as usize);
 pub(crate) const MIGRATIONS: Migrations<'_> = Migrations::from_slice(MIGRATIONS_SLICE);
+
 use super::*;
+
+/// Owner-local access to the authoritative migration chain for integration tests.
+#[cfg(test)]
+#[doc(hidden)]
+// Product unit tests and the private suite use different fixture capabilities.
+#[allow(dead_code)]
+pub mod migration_test_support {
+    use super::{MIGRATIONS, MIGRATIONS_SLICE};
+    use rusqlite::Connection;
+    use rusqlite_migration::Migrations;
+
+    /// Number of supported nonempty migration prefixes.
+    pub fn migration_count() -> usize {
+        MIGRATIONS_SLICE.len()
+    }
+
+    /// Apply the real migration entries through `version`, including their checks.
+    ///
+    /// The connection may be empty or contain an earlier authentic prefix. This
+    /// never opens current storage first or writes the migration cursor manually.
+    pub fn apply_prefix(
+        connection: &mut Connection,
+        version: usize,
+    ) -> std::result::Result<(), rusqlite_migration::Error> {
+        // The library rejects an empty migration list. Prefix zero represents
+        // the untouched empty database, rather than a migration to execute.
+        if version == 0 {
+            let current_version: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .expect("read the empty fixture cursor");
+            let schema_objects: i64 = connection
+                .query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))
+                .expect("inspect the empty fixture schema");
+            assert_eq!(
+                current_version, 0,
+                "prefix zero requires an unmigrated fixture"
+            );
+            assert_eq!(schema_objects, 0, "prefix zero requires an empty fixture");
+            return Ok(());
+        }
+        let prefix = MIGRATIONS_SLICE
+            .get(..version)
+            .expect("private fixture requested a prefix beyond the authoritative migration chain");
+        Migrations::from_slice(prefix).to_latest(connection)?;
+        Ok(())
+    }
+
+    /// Validate the complete ordered production chain on an empty database.
+    pub fn validate() -> std::result::Result<(), rusqlite_migration::Error> {
+        MIGRATIONS.validate()?;
+        Ok(())
+    }
+
+    /// BLAKE3 identities include exact SQL and migration-library check settings.
+    ///
+    /// `M`'s display representation includes its SQL, hooks, foreign-key policy,
+    /// and rollback definition. Its library version is pinned in Cargo.lock.
+    pub fn definition_digests() -> Vec<String> {
+        MIGRATIONS_SLICE
+            .iter()
+            .map(|migration| artifact_digest(migration.to_string().as_bytes()))
+            .collect()
+    }
+
+    /// Full BLAKE3 identity for immutable compatibility artifacts.
+    pub fn artifact_digest(bytes: &[u8]) -> String {
+        blake3::hash(bytes).to_hex().to_string()
+    }
+}

@@ -45,8 +45,10 @@ workflow.
   freshness, or deterministic results.
 - Treat MCP schema snapshots as protocol changes. Inspect the schema diff before
   accepting an `insta` update.
-- Prefer behavioral integration tests for observable contracts and unit tests
-  for private invariants.
+- Prioritize real-binary E2E tests, then integration tests across component
+  boundaries, then golden tests grounded in real data. Keep a private unit test
+  only when it proves a consequential invariant that these layers cannot
+  reasonably exercise. Prune implementation mirrors and redundant checks.
 - Match surrounding Rust naming, documentation, and comment conventions.
 
 ## Contributions

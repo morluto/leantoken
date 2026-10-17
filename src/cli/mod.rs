@@ -11,8 +11,9 @@ use clap::{Args, Command, Parser, Subcommand, ValueEnum};
 use crate::Config;
 use crate::Result;
 use crate::cache::{
-    CacheCompatibility, CacheListRequest, CachePruneRequest, CacheState, DEFAULT_CACHE_LIST_LIMIT,
-    MAX_CACHE_LIST_LIMIT,
+    CacheCompactRequest, CacheCompatibility, CacheListRequest, CachePruneRequest, CacheState,
+    DEFAULT_CACHE_LIST_LIMIT, DEFAULT_COMPACT_MAX_BYTES, DEFAULT_COMPACT_MAX_SECONDS,
+    DEFAULT_COMPACT_MIN_BYTES, DEFAULT_COMPACT_MIN_PERCENT, MAX_CACHE_LIST_LIMIT,
 };
 use crate::config::DEFAULT_CONTEXT_TOKENS;
 use crate::mcp::McpResultMode;
@@ -552,6 +553,7 @@ impl Cli {
             Commands::Cache(args) => match &args.command {
                 CacheCommand::List(args) => AppRequest::CacheList(args.clone().into()),
                 CacheCommand::Prune(args) => AppRequest::CachePrune(args.clone().into()),
+                CacheCommand::Compact(args) => AppRequest::CacheCompact(args.clone().into()),
             },
             Commands::Runtime(args) => match &args.command {
                 RuntimeCommand::List => AppRequest::RuntimeList,
@@ -636,6 +638,7 @@ pub enum AppRequest {
     Remove(SetupRequest),
     CacheList(CacheListRequest),
     CachePrune(CachePruneRequest),
+    CacheCompact(CacheCompactRequest),
     RuntimeList,
     RuntimePrune(crate::setup::RuntimePruneRequest),
     EpisodeAudit(crate::episode::EpisodeAuditRequest),

@@ -7,9 +7,10 @@ Inspect or prune centrally managed repository caches
 Usage: leantoken cache [OPTIONS] <COMMAND>
 
 Commands:
-  list   List managed caches, sizes, roots, access times, and active leases
-  prune  Remove inactive managed caches selected by explicit criteria
-  help   Print this message or the help of the given subcommand(s)
+  list     List managed caches, sizes, roots, access times, and active leases
+  prune    Remove inactive managed caches selected by explicit criteria
+  compact  Compact explicitly selected inactive caches with worthwhile reusable space
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --root <PATH>

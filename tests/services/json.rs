@@ -1069,3 +1069,89 @@ async fn json_cursors_and_incomplete_results_fail_loud_with_typed_diagnostics() 
         }
     ));
 }
+
+#[tokio::test]
+async fn nested_value_and_collapsed_projections_obey_recursive_item_bounds() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(
+        root.path().join("projection.json"),
+        r#"{"nested":{"values":[1,2,3]},"tail":true}"#,
+    )
+    .expect("JSON fixture");
+    let config =
+        Config::discover(root.path(), Some(root.path().join("index.sqlite"))).expect("config");
+    let services = Services::open(config).expect("services");
+    let value_operation = JsonOperation::Query {
+        path: "projection.json".into(),
+        selector: Some(JsonSelector::Pointer {
+            pointer: "/nested".into(),
+        }),
+        projection: JsonProjection::Value,
+    };
+
+    let too_small = services
+        .json(JsonRequest {
+            operation: value_operation.clone(),
+            max_tokens: Some(1_000),
+            max_items: Some(4),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect_err("all nested value nodes count toward the item bound");
+    assert!(matches!(
+        too_small,
+        Error::RequestLimitExceeded {
+            field: "selected JSON items",
+            requested: 5,
+            limit: 4,
+        }
+    ));
+
+    let complete = services
+        .json(JsonRequest {
+            operation: value_operation,
+            max_tokens: Some(1_000),
+            max_items: Some(5),
+            array_sample_size: None,
+            cursor: None,
+        })
+        .await
+        .expect("complete nested value");
+    assert!(complete.result_complete);
+    assert_eq!(
+        complete.value,
+        Some(serde_json::json!({"values": [1, 2, 3]}))
+    );
+
+    let collapsed = services
+        .json(JsonRequest {
+            operation: JsonOperation::Query {
+                path: "projection.json".into(),
+                selector: Some(JsonSelector::Pointer {
+                    pointer: "/nested".into(),
+                }),
+                projection: JsonProjection::Collapsed,
+            },
+            max_tokens: Some(1_000),
+            max_items: Some(2),
+            array_sample_size: Some(2),
+            cursor: None,
+        })
+        .await
+        .expect("bounded collapsed value");
+    assert!(!collapsed.result_complete);
+    assert_eq!(collapsed.total_items, Some(4));
+    assert_eq!(collapsed.returned_items, Some(2));
+    assert_eq!(collapsed.remaining_items, Some(2));
+    assert_eq!(
+        collapsed.incomplete_reason,
+        Some(JsonIncompleteReason::MaxItems)
+    );
+    assert_eq!(
+        collapsed.value,
+        Some(serde_json::json!({
+            "values": {"$array": {"count": 3, "sample": [], "omitted": 3}}
+        }))
+    );
+}

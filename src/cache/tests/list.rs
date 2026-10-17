@@ -149,10 +149,6 @@ fn list_separates_metadata_state_from_content_compatibility() {
         (CacheState::Current, CacheCompatibility::ObsoleteOlder)
     );
     assert_eq!(
-        project(&legacy_id),
-        (CacheState::Current, CacheCompatibility::Unversioned)
-    );
-    assert_eq!(
         project(&future_id),
         (
             CacheState::Unsupported,

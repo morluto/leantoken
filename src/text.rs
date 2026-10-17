@@ -535,11 +535,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_binary_by_nul_byte() {
-        assert_eq!(detect_kind(b"hello\x00world"), TextKind::Binary);
-    }
-
-    #[test]
     fn detects_binary_by_invalid_utf8() {
         assert_eq!(detect_kind(&[0xc0, 0x80]), TextKind::Binary);
     }
@@ -548,26 +543,6 @@ mod tests {
     fn detects_binary_by_control_ratio() {
         let bytes = vec![0x01; 100];
         assert_eq!(detect_kind(&bytes), TextKind::Binary);
-    }
-
-    #[test]
-    fn treats_plain_text_as_text() {
-        assert_eq!(detect_kind(b"fn main() {}\n"), TextKind::Text);
-    }
-
-    #[test]
-    fn empty_input_is_text() {
-        assert_eq!(detect_kind(b""), TextKind::Text);
-    }
-
-    #[test]
-    fn line_starts_handles_trailing_newline() {
-        assert_eq!(line_starts("a\nb\n"), vec![0, 2]);
-    }
-
-    #[test]
-    fn line_starts_handles_no_trailing_newline() {
-        assert_eq!(line_starts("a\nb"), vec![0, 2]);
     }
 
     #[test]
@@ -622,52 +597,6 @@ mod tests {
     }
 
     #[test]
-    fn chunks_respect_byte_and_line_limits() {
-        let text = "123\n4567\n890\n";
-        let chunks = chunk_text(text, 2, 5);
-        for chunk in &chunks {
-            assert!(chunk.end_line - chunk.start_line < 2);
-            assert!(chunk.content.len() <= 5 || chunk.content.len() <= 8); // UTF-8 char may force one extra
-        }
-    }
-
-    #[test]
-    fn chunks_hash_content() {
-        let chunks = chunk_text("hello\nworld\n", 1, 100);
-        for chunk in &chunks {
-            assert_eq!(chunk.hash, hash(&chunk.content));
-        }
-    }
-
-    #[test]
-    fn long_line_is_split_at_char_boundaries() {
-        let text = "café123456789"; // multi-byte 'é' at bytes 3-4
-        let chunks = chunk_text(text, 1, 4);
-        assert!(!chunks.is_empty());
-        let mut combined = String::new();
-        for chunk in &chunks {
-            combined.push_str(&chunk.content);
-            assert!(chunk.start_line == chunk.end_line);
-        }
-        assert_eq!(combined, text);
-    }
-
-    #[test]
-    fn excerpt_returns_lines() {
-        let text = "one\ntwo\nthree\n";
-        assert_eq!(excerpt(text, 1, 1), "one\n");
-        assert_eq!(excerpt(text, 2, 3), "two\nthree\n");
-        assert_eq!(excerpt(text, 5, 10), "three\n");
-    }
-
-    #[test]
-    fn excerpt_with_context_bounds() {
-        let text = "1\n2\n3\n4\n5\n";
-        assert_eq!(excerpt_with_context(text, 3, 3, 1, 0), "2\n3\n4\n");
-        assert_eq!(excerpt_with_context(text, 3, 3, 1, 2), "2\n3\n");
-    }
-
-    #[test]
     fn anchored_windows_keep_required_lines_and_rebalance_at_boundaries() {
         assert_eq!(anchored_line_window(10, 50, 30, 30, 20), (20, 39));
         assert_eq!(anchored_line_window(1, 22, 2, 2, 20), (1, 20));
@@ -677,26 +606,10 @@ mod tests {
     }
 
     #[test]
-    fn excerpt_around_byte_range() {
-        let text = "alpha\nbeta\ngamma\n";
-        assert_eq!(excerpt_around(text, 7, 11, 1), "alpha\nbeta\ngamma\n");
-    }
-
-    #[test]
     fn identifier_words_split_camel_and_snake() {
         assert_eq!(identifier_words("fooBar_baz"), vec!["foo", "Bar", "baz"]);
         assert_eq!(identifier_words("XMLParser"), vec!["XML", "Parser"]);
         assert_eq!(identifier_words("foo123bar"), vec!["foo", "123", "bar"]);
-    }
-
-    #[test]
-    fn expand_identifier_produces_terms() {
-        let terms = expand_identifier("fooBar_baz");
-        assert!(terms.contains(&"foo".to_string()));
-        assert!(terms.contains(&"bar".to_string()));
-        assert!(terms.contains(&"baz".to_string()));
-        assert!(terms.contains(&"foo_bar_baz".to_string()));
-        assert!(terms.contains(&"foobarbaz".to_string()));
     }
 
     #[test]
@@ -710,25 +623,9 @@ mod tests {
     }
 
     #[test]
-    fn prepared_text_chunks_and_counts_lines() {
-        let prepared = PreparedText::from_bytes(b"a\nbb\nccc\n", 2, 100);
-        assert_eq!(prepared.kind, TextKind::Text);
-        assert_eq!(prepared.line_count, 3);
-        assert_eq!(prepared.chunks.len(), 2);
-    }
-
-    #[test]
     fn prepared_text_marks_binary() {
         let prepared = PreparedText::from_bytes(b"bin\x00ary", 2, 100);
         assert_eq!(prepared.kind, TextKind::Binary);
         assert!(prepared.chunks.is_empty());
-    }
-
-    #[test]
-    fn hash_is_stable_hex() {
-        let h = hash("hello");
-        assert_eq!(h.len(), CONTENT_FINGERPRINT_HEX_LEN);
-        assert_eq!(h, hash("hello"));
-        assert_ne!(h, hash("world"));
     }
 }

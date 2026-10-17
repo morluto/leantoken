@@ -85,6 +85,10 @@ MCP dispatch to the SDK. LeanToken retains only the product-specific four-MiB
 input bound and pre-dispatch tool-call admission that the stock unbounded stdio
 reader does not provide.
 
+Direct overload replies use the rejected request's protocol version from `_meta`
+when present, falling back to the initialized session version. Per-request
+versions do not overwrite session state or add retained transport metadata.
+
 Direct admission rejections and invalid-shape errors retain at most one write
 task on the transport, with no outbound queue. Its encoded frame, byte cursor,
 and writer ownership survive cancellation of the SDK's receive future. The task
@@ -329,6 +333,78 @@ The connection is configured with:
 - file/range, reverse-import, and path lookup indexes added through versioned
   migrations so existing databases receive the same query plan as new databases.
 
+`src/storage/schema.rs` owns the ordered migration chain. The independently
+selectable `storage_migrations` test owner compiles those exact declarations
+through a test-only `#[path]` module and applies their authoritative prefixes;
+the database under test then opens through the normal product `Storage::open`.
+There is no product test feature or public fixture API. Historical fixtures
+never start at latest and remove newer objects or rewrite `user_version`.
+The matrix includes the empty prefix and every current migration entry, with
+direct upgrades and adjacent forward steps. It checks canonical schema and
+FTS virtual/shadow objects, representative records, usage counters, constraints,
+foreign keys, idempotent reopen, and normal reconciliation afterward. Failure
+cases cover transaction rollback after migration writes and conflicting DDL
+through the normal opener, preserving both version markers and historical data.
+
+The fixture compatibility manifest freezes each released migration's BLAKE3
+identity, including exact SQL and migration-library check settings. An appended
+migration automatically expands the matrix and requires explicit migration,
+schema-identity, and release-fixture compatibility review in that manifest.
+Existing entries cannot be edited or reordered as an implicit compatibility
+change. Removing a supported predecessor requires a compatibility decision and
+changelog entry. Canonical comparison permits only the manifest's reviewed
+physical column-order differences in `meta` and `token_savings`: runtime identity
+and additive accounting fields historically arrived between numbered migrations.
+Their complete column declarations, defaults, checks, keys, and index ordering
+remain checked; other table column order remains significant.
+
+Immutable release anchors additionally retain databases actually indexed by the
+published v0.1.15, v0.1.27, and v0.1.28 executables. Each provenance record binds
+the tag commit, published archive and executable checksums, schema source and
+Cargo.lock checksums, dependency identities, creation command, source scenario,
+SQLite writer identity, schema digest, and exact main/WAL bytes. The previous
+package release is v0.1.27; the v0.1.28 anchor independently covers shipped bytes
+even while the working package retains that version. Committed WAL is preserved
+with its main file and copied before opening; Python never checkpoints or
+rewrites these release artifacts. SHM is a derived index. The compatibility
+manifest also freezes each provenance record's digest. Before any download,
+the generator validates the fixed version/tag/commit against its checked-in
+provenance record and uses that record's archive and executable SHA256 digests
+as execution pins. The adjacent endpoint checksum is a consistency check;
+replacing both an archive and its endpoint checksum cannot replace these pins.
+Pin changes require explicit provenance and compatibility-manifest review.
+
+Release preparation uses a fresh private workspace and independent per-release
+limits: a 16 KiB trusted provenance record, a 4 KiB checksum response, a 16 MiB
+compressed archive, 64 tar members,
+96 MiB of total declared member bytes, a 128 MiB expanded tar, and a 64 MiB
+executable. Downloads and executable extraction count actual streamed bytes;
+the executable's declared size is checked separately. Copies and SHA256 hashing
+use fixed 64 KiB chunks, tar metadata reads are limited to that buffer, and the
+XZ decoder has a 128 MiB memory limit. Tar entries are iterated under the member
+cap, with one matching regular executable required before extraction. These
+limits apply without trusting Content-Length, declared executable size alone,
+or Python assertions. The three pinned archives have six members each; their
+largest compressed archive and executable are 8,295,356 and 45,890,808 bytes.
+The workspace retains at most 208 MiB of preparation files per release
+(archive, expanded tar, and executable), plus fixture/log evidence; success
+removes the workspace and failure preserves the available bounded files.
+
+Release generation indexes one small source file with one worker, isolated home,
+configuration, data, and temporary directories, a 60-second process timeout, and
+a 4 MiB per-file output limit. Stdout and stderr go directly to private regular
+log files opened before the child, so the same kernel limit bounds each log.
+Successful stdout is read back in 64 KiB chunks with a separate 4 MiB cap before
+JSON parsing; failure leaves both bounded logs in the workspace. Checked-in
+anchors allow at most 1 MiB of main database and 4 MiB of WAL each. Prefix cases
+run sequentially within the matrix,
+retain one historical and one fresh database per case, and limit each database
+to 256 default 4096-byte pages. Schema inventories allow at most 256 objects and
+1024 rows per query. Case metadata and schema inventories accompany the sandbox
+database on failure; failed release generation retains its disposable workspace
+and logs. Ordinary compatibility tests require no network, historical binary,
+Python runtime, or production data.
+
 Repository-aware service startup binds each database to its canonical
 repository root and complete normalized index-scope digest. Default cache paths
 are already repository-and-scope-specific; an explicit database path claimed
@@ -391,6 +467,15 @@ response fitting probes. It does not rescan the remaining live file, fan out to
 other paths, or create an additional request. Full-policy reads that verify the
 indexed file report exact live guidance; bounded reads label it as an indexed-
 generation estimate.
+
+Read target coordinates do not claim that a bounded scan frontier is a complete
+end. `target_end_line` preserves a finite line, symbol, or heading boundary until
+an observed live EOF shortens it; an open-ended bounded target reports `null`
+until EOF is observed. `observed_end_line` reports the live scan frontier, while
+`returned_start_line`/`returned_end_line` describe only emitted source. Full-policy
+verification may observe lines beyond a finite target. This metadata requires
+no extra scan, retained source, worker, or cursor state: the existing 64 KiB token
+check cadence, 8 MiB selected-source cap, and continuation guarantees are unchanged.
 
 Fuzzy file discovery retains a bounded `max_results + 1` ranking map while it
 scans the already bounded indexed file set. Path classification adds one linear
@@ -521,6 +606,57 @@ Add a custom data structure only after a release-mode profile identifies a
 remaining bottleneck and the replacement preserves snapshot, ordering, and
 limit semantics.
 
+### Production SQL plan evidence
+
+Storage statements with contractual query plans have private `HotQuery`
+declarations beside their production owners. Each declaration supplies the SQL,
+bind shape, semantic operation, result/order contract, and schema indexes.
+Production prepares that declaration's SQL directly through rusqlite;
+`storage::query_plans` explains and measures the same text. Scoped-regex fallback
+uses one production-owned template and path-clause builder for execution and
+inspection. SQL remains private, and these declarations add no execution or
+caching framework.
+
+Plan diagnostics retain every raw node ID, parent ID, and detail, then normalize
+accesses, named/primary/virtual indexes, covering indexes, and FTS5 MATCH
+constraints. Contracts reject unexpected scans, automatic indexes,
+materialization, and temporary B-trees, require approved indexes in both
+qualified-symbol union branches, and reject a full virtual-table scan that lacks
+the required MATCH constraint. Explicit allowances cover JSON inputs, FTS
+candidates, ordered path filtering, streaming partition digests, quota-bounded
+oldest-base lookup, and scoped-regex fallback. A depth-index tree search may use
+one ordering sort; an ordered path-index tree access and glob pagination permit
+none. Neither tree alternative guarantees that scanned work is bounded by the
+returned page size.
+
+Planner policy uses the bundled SQLite build recorded by the lockfile and
+version/source-ID evidence. QPSG remains disabled on writers and readers;
+LeanToken does not run `ANALYZE` or `PRAGMA optimize`, and the diagnostic fixture
+checks that no statistics tables exist. SQLite/schema changes require review of
+the resulting plans. Complete human-readable EQP text is diagnostic output,
+not a stable snapshot or a latency guarantee.
+
+The independently selectable plan owner pairs its 25 statements with real
+storage-API behavior. Its disposable fixture contains 256 irrelevant files plus
+a target and two importers, four chunks/imports per file, tied symbols, all 128
+read-delta base slots, 24 retrieval receipts, 24 query receipts, and 32 irrelevant
+accounting tokenizers. It covers absent/selective/high-cardinality matches,
+duplicate inputs, union branches, output caps, pagination, structural-candidate
+overflow, cancellation, LRU/expiry, exact-only receipt rebasing, and snapshots
+across publication. Per-statement materialized-row and fullscan limits, zero
+automatic-index rows, and a 250,000 VM-step ceiling bound this fixed fixture;
+all named failures and raw plans are collected before failing the owner.
+
+A separate paired fixture compares unchanged production tree SQL with derived
+diagnostic path-index and depth-index variants on 64/256-file flat/deep shapes.
+Results must match the storage API; work must stay within the fixture projection
+size for fullscan steps and `80 * projected_rows + 256` VM steps. These are
+cardinality-dependent work checks, not universal per-request limits or hosted
+runner timing thresholds. The checked descriptor inventory requires plan/API
+pairing, production use, bind/index validity, and an explicit disposition when
+storage SQL owners or keyword counts change. That source inventory is a review
+tripwire, rather than a general SQL parser.
+
 Index-backed MCP and CLI retrievals expose an explicit consistency boundary.
 For long-lived MCP clients, `indexed_generation` is the default and opens the
 latest completed snapshot immediately without implying Git HEAD. One-shot CLI
@@ -629,12 +765,15 @@ inspection only after the exact filename shape matches.
 Canonical filesystem roots, the current user's home directory, and ancestors of
 that home directory are rejected before cache or watcher initialization unless
 the caller explicitly opts into broad-root indexing. MCP performs this check
-after the protocol initialize exchange so a bad host working directory fails
+after accepting the opening protocol request so a bad host working directory fails
 closed without recreating the startup handshake timeout.
 
-MCP starts the stdio protocol before opening SQLite or indexing. It answers the
-mandatory initialize exchange first, then starts repository services after the
-client's initialized notification. A generation-zero retrieval waits up to 30
+MCP starts the stdio protocol before opening SQLite or indexing. It answers
+`initialize` or stateless `server/discover` before starting repository services;
+stateless clients do not send an initialized notification. A first request that
+is itself a validated retrieval can activate the runtime while the SDK waits for
+that response. These signals start the existing single runtime task without
+adding workers or queues. A generation-zero retrieval waits up to 30
 seconds for the first publication and release of the repository operation lock,
 with caller cancellation, before running the retrieval once more. It does not
 poll by repeatedly executing the retrieval. If the bound expires, it returns a
@@ -710,9 +849,29 @@ are queued between the stdout reader and doctor consumer. A full queue backpress
 bounding queued protocol content to 32 MiB; an over-limit unterminated record
 terminates the probe without unbounded allocation.
 
-Private-runtime inventory is repository-free and bounded to 512 entries below
-the application runtime root and eight entries within any recognized semantic
-version directory. Setup and inventory reads are capped at 8 MiB per client
+Private-runtime artifact identity combines a semantic version with the complete
+BLAKE3 digest of the executable bytes. New installations use
+`<runtime_root>/<version>_<64 lowercase digest characters>/leantoken[.exe]`.
+The underscore cannot occur in semantic versions, so parsing remains unambiguous
+for legacy prerelease versions. Installation verifies the complete digest before
+no-clobber hard-link publication and again before accepting an existing artifact;
+it never overwrites a different executable. Identical new-layout artifacts
+share one path, while different source builds of one version coexist. Selected
+client registrations pin that exact path. Legacy `<version>/leantoken[.exe]`
+directories remain readable and are neither renamed nor overwritten; setup may
+install an identical digest-addressed sibling before transactionally updating
+selected registrations.
+
+Inventory is repository-free and bounded to 512 runtime-root entries, including
+coordination entries, and eight entries within each recognized artifact
+directory. Each executable is hashed serially with a 64 KiB buffer; aggregate
+hash I/O is the sum of recognized executable sizes, without whole-binary memory
+allocation or recursive fan-out. List and prune report version, full actual
+digest, exact path, and legacy layout. Inventory order is descending semantic
+version, then ascending digest and path. Retention counts unreferenced artifacts
+in that order; it does not collapse same-version variants into one slot. A
+runtime whose bytes disagree with its digest-addressed name is retained as an
+unrecognized artifact. Setup and inventory reads are capped at 8 MiB per client
 configuration or discovery file before parsing, and generated replacements are
 validated against that same bound before a plan can apply. Planning retains at
 most nine bounded configuration snapshots: one for five fixed-path clients and
@@ -733,28 +892,80 @@ retains every completed decision and the exact remaining-byte count, exposes a
 transaction-wide apply error, and stops before the next deletion. Pruning
 defaults to a non-mutating plan, rejects a symlinked or
 non-directory runtime root before locking, inventory, and each applied
-deletion, serializes applied deletion with setup, retains the active executable
-and every referenced runtime, and deletes only a version directory whose exact
+deletion, serializes applied deletion with setup, retains the current executable
+and every referenced artifact, and deletes only an artifact directory whose exact
 contents are its one expected native executable. Private installation applies
 the same runtime-root validation. A successful new install retains its pinned
-runtime-root and version-directory handles until the setup transaction commits;
+runtime-root and artifact-directory handles until the setup transaction commits;
 rollback revalidates both ambient identities and unlinks only through the pinned
-version handle. A retry removes only exact setup staging names
-within the existing eight-entry version-directory bound before accepting an
-already-published executable, so an interrupted staging cleanup cannot make the
-runtime permanently unprunable. Applied deletion compares the current runtime
-root path with the pinned root-handle identity before every removal,
-snapshot-matches the version directory handle, then unlinks the executable
-relative to that handle so a concurrent path swap cannot redirect deletion.
-The setup lock owns the same root handle used for every applied deletion, so
-serialization and mutation cannot be redirected to separate runtime roots. At
-most one version handle is open at a time.
+artifact handle. A retry removes only exact setup staging names within the
+eight-entry artifact-directory bound before accepting an already-published
+executable, so an interrupted staging cleanup cannot make the runtime permanently
+unprunable. Applied deletion compares the current runtime root path with the
+pinned root-handle identity before every removal, snapshot-matches the artifact
+directory handle, and rechecks the complete executable digest before unlinking
+relative to that handle. A concurrent path swap therefore cannot redirect
+deletion. The setup lock owns the same root handle used for every applied
+deletion, so serialization and mutation cannot be redirected to separate runtime
+roots. Each install, rollback, or prune step opens at most one artifact handle.
 If unlinking succeeds but a concurrent directory change prevents the final
 directory removal, the report uses a distinct partial-removal action, subtracts
 the removed executable bytes, and returns the cleanup error. Unknown root
 entries, malformed client configuration, unexpected directory contents, and
 interrupted setup journals fail closed or remain untouched. The retention
-request is capped at 64 versions.
+request is capped at 64 unreferenced artifacts.
+
+A lease-aware process running a verified managed artifact holds one shared OS
+lease through command execution. Inventory probes existing lease files without
+creating them; prune and rollback require a nonblocking exclusive lease held
+across post-lease identity/digest revalidation and removal. A live holder retains
+its artifact even after client refresh removes the last reference. Process exit,
+including a crash, releases the OS lock. Startup may wait for an in-progress
+exclusive deletion and must revalidate the artifact after obtaining shared
+ownership before serving requests. Startup does not acquire the setup lock, so
+a verification child cannot deadlock with its setup parent.
+Setup's native launchers carry the parsed `--managed-by-setup` marker. Marked
+startup recognizes only a canonical native executable directly inside a
+validated legacy or digest-addressed artifact directory whose parent is named
+`runtimes`. It derives the installation root from that path, so a host need not
+inherit installation-time `HOME` or data-directory variables to lease the exact
+artifact. The marker opts into this lifecycle protocol; it does not bypass
+release/digest, capability, or sidecar identity checks. Marked legacy layouts
+retain the same full-file digest and post-acquisition revalidation as before.
+Unmarked manual startup instead requires a setup home resolved through `HOME`,
+Windows `USERPROFILE`, or platform directories and an exact match with the
+configured runtime root. Without a resolvable home, an unmarked version-shaped
+executable path does not establish ownership and acquires no lease.
+Successful executable-path canonicalization still resolves symlinks before
+ownership checks. A missing standalone path outside the runtime artifact layout
+needs no lease, while a potentially managed missing path retains its error,
+including Linux's ` (deleted)` image suffix. Other path-resolution errors also
+fail closed; this fallback creates no sidecars and performs no home lookup.
+
+Stable sidecars live outside artifact directories at
+`<runtime_root>/.leases/<BLAKE3(complete artifact directory name)>.lock`.
+Each basename has 64 digest characters plus `.lock`, and each file has zero
+payload bytes. These identities survive pruning and reinstall; deleting a lock
+file could split ownership between old and new handles. Inventory performs at
+most one direct lease lookup/probe per recognized artifact, while startup and
+each applied deletion open one lease file. The lease directory is never
+enumerated, so stale sidecars add no scan fan-out. Persistent sidecar count grows
+by at most one per distinct artifact directory identity ever leased or pruned;
+there is no sidecar garbage collection or fixed lifetime inode-count bound.
+Unexpected lease-directory content is untouched. Targeted nonempty, symlinked,
+or identity-changed leases fail closed; Unix additionally requires one link and
+opens with `O_NOFOLLOW`. Windows uses type/path/handle revalidation and the
+existing creation/write-time identity checks without the Unix-only link-count
+check. Root, lease-directory, and lease-file handles are revalidated after lock
+acquisition before authorizing an operation.
+
+Older, noncooperating binaries cannot advertise their lifetime to another
+inventory command. The current-executable fallback and client-reference
+protection remain, but no PID or process-table scan discovers an unreferenced
+older process. Lease-aware executables also acquire leases from the legacy
+version-only layout; this does not retrofit an already-running older binary.
+List/prune byte totals count recognized executable pathnames, exclude lease and
+directory metadata, and do not claim physical filesystem block reclamation.
 
 Index limit violations are terminal configuration failures: the leader shuts
 down its watcher, releases leadership, and moves MCP tools to unavailable
@@ -791,9 +1002,117 @@ criterion after acquiring the exclusive lease. Corrupt/unknown, future,
 unexpected, identity-mismatched, and lease-unavailable entries are never
 automatically deleted.
 
+Explicit cache compaction is owned by the cache manager, not retrieval or
+service initialization. Requests require one to eight unique, strictly parsed
+managed identities; they inspect only those directories, never inventory all
+repositories. Results are emitted in stable identity order. Both freelist
+thresholds must pass (64 MiB and 10% by default); logical database and artifact
+work is capped at a configurable 1 GiB by default. Processing is serial, with a
+120-second cooperative SQLite progress deadline per cache (configurable up to
+3600 seconds) and a 1 ms pause per 10,000 VM instructions. This pacing is not a
+hard CPU quota and filesystem/commit work can overrun the callback deadline.
+
+Apply acquires the exclusive cache lifetime lease and re-inspects ownership and
+compatibility without opening `Services`, binding access metadata, or migrating
+schemas. Entries whose access age falls back to artifact mtimes are skipped,
+so VACUUM cannot refresh legacy retention/LRU order. A bounded 20-byte read
+from the pinned main file requires an existing WAL header before metadata or
+SQLite inspection; rollback-mode databases are skipped without creating,
+recovering, or opening their journals. Older readable WAL metadata remains
+eligible without migration. Empty WAL sidecars created
+by read-only inspection do not count as access timestamps; nonempty WALs do. No-follow capability directory validation, held filesystem identity
+handles, SQLite no-follow opening, canonical filename checks, and rejection of
+multiply linked artifacts reject filesystem aliases observed during validation.
+Before pinning on Unix, a descriptor snapshot refuses a main database already
+open in the calling process, including preview and rollback-mode skips. This
+avoids open/close side effects on an existing connection's POSIX locks.
+The validated main file remains pinned throughout maintenance. Unix verifies
+SQLite's actual newly opened regular-file identities for apply using `/proc/self/fd` or
+`/dev/fd`, with at most three observations of 1024 descriptors each per cache.
+Each numeric descriptor is inspected with the safe `nix::sys::stat::fstat`
+wrapper, obtaining the underlying device/inode on all Unix platforms without
+duplicating or closing SQLite descriptors (which could release POSIX locks).
+Unknown existing regular descriptors outside standard streams, selected SQLite
+artifacts, and the zero-byte lease lock are refused before opening, since SQLite
+can reuse deferred descriptors. Unidentified new regular descriptors, missing
+enumeration, and inability to identify the main file also fail closed. Unrelated
+open regular files can therefore make maintenance ineligible. Windows pins with read/write sharing but
+without delete sharing, preventing replacement before SQLite opens the file.
+Identity and held-file link count are rechecked before VACUUM. Unix path
+identity checks use metadata rather than opening/closing another database
+handle; header reads borrow the pinned handle so neither check releases
+process-wide POSIX locks. This adds no
+retrieval-time descriptor scan or process-global configuration change.
+SQLite exclusive locking also refuses connections outside the lease protocol.
+Previews use read-only connections and neither VACUUM nor checkpoint. An
+outside SQLite connection in another process can still preview; a connection
+already open in the calling Unix process makes maintenance active/ineligible.
+
+Filesystem ownership is a trust boundary: in-place maintenance requires an
+owner-controlled cache root and quiescent filesystem tools, with cache clients
+cooperating through the lifetime lease. Identity/link checks are observations;
+held handles and advisory leases cannot prevent another process with the same
+filesystem permissions from creating links or replacing files afterward. Such
+uncoordinated mutations can affect new aliases during VACUUM/checkpoint. This
+operation does not provide isolation from arbitrary same-owner filesystem writes.
+Detached compaction would require a separate atomic publication design for the
+database/WAL pair, lease identity, and outside-reader snapshots.
+
+
+Maintenance connections disable mmap, use an 8 MiB page-cache target and
+file-backed SQLite temporary work, and wait at most 100 ms for SQLite locks.
+Free-space preflight checks the database volume (twice logical page bytes plus
+32 MiB) and SQLite temporary volume (logical page bytes plus 32 MiB). When they
+share a volume, require their combined headroom from both observations; unknown
+volume identity conservatively uses the combined requirement. Unix device IDs
+and Windows volume serial numbers identify the volumes. The Unix
+candidate order matches the bundled VFS: configured SQLite temp directory,
+`SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp`, `/tmp`, then the working
+directory. Windows selects a configured SQLite directory or the first nonempty
+`TMP`, `TEMP`, then `USERPROFILE` value before checking access, matching
+GetTempPathW precedence; an unusable selected path never falls through. Unknown
+system-directory fallback is refused. Writability is checked with an owned
+disposable probe. Neither SQLite globals nor process environment are
+mutated. Available-space checks do not reserve space or cover every quota.
+
+In-place SQLite VACUUM preserves atomic transaction behavior and avoids a new
+file-generation swap protocol. Pre/post quick checks and bounded metadata/schema
+fingerprints verify retained ownership, generation, schema, and migration state;
+no source scan, index publication, FTS rebuild, or content-version change occurs.
+Fingerprints retain at most 32 metadata columns (16 KiB per text/blob value) and
+256 schema objects (16 KiB per text field). SQLite itself and OS file cache are not hard heap-capped by
+the page-cache setting. Differential fixtures verify data and FTS preservation.
+The report records actual artifact size before/after close, zero actual savings
+for previews, and whether VACUUM committed before any later checkpoint failure.
+Stable cache lease identities are retained throughout.
+
 An explicit database path preserves the caller-selected identity and is not
 rewritten by the managed-cache policy. Callers must not concurrently share one
 explicit database across incompatible index-content versions.
+
+Explicit cache list/prune inventory admits at most 4,096 managed-root directory
+entries (including ignored names), 1,024 candidate caches, 32,768 artifact
+entries across both inspection passes, and 1,024 read-only SQLite opens. These
+bounds apply before pagination, filters, and summaries; retained inspection
+entries are bounded by candidate admission. Metadata strings share an 8 MiB
+inventory budget, recorded roots are limited to 8 KiB, and SQLite values/rows
+and SQL statements are limited to 64 KiB per inspection connection. Connections
+are opened serially with a 256 KiB page-cache target and a 100 ms busy timeout.
+An inventory also has a cooperative ten-second elapsed limit and a progress
+handler admitting at most two million SQLite VM steps. Inside SQLite,
+cancellation and elapsed time are checked every 1,000 steps. Filesystem
+system calls and OS scheduling can delay cooperative checks; this is not a hard
+wall-clock or whole-process heap guarantee for SQLite internals.
+
+Reaching any inventory bound returns `incomplete_inventory` rather than a
+complete-looking page or summary. Prune obtains the complete bounded inventory
+before selecting or deleting anything, so initial overflow cannot apply a
+partial LRU/byte policy. Post-lease revalidation shares a separate budget with
+the same limits across all selected caches; a failed revalidation retains that
+cache and is recorded in the prune report. Library cancellation is observed at
+inventory boundaries and inside SQLite execution. Completed per-cache removals
+remain reported if cancellation arrives during pruning; later cancelled
+revalidations cannot authorize another removal.
 
 MCP processes sharing one cache compete for a repository-scoped leadership
 lock. The leader alone owns automatic indexing and one filesystem watcher;
@@ -886,6 +1205,21 @@ selected watcher diagnostic lines. Plain lines borrow their existing bytes;
 each colored-line copy is no larger than its input. Missing counters remain
 unobserved, and unrelated or incomplete control sequences remain intact. This
 adds no process fan-out or production watcher work.
+
+The agent wall-time measurement client owns one stdout reader per MCP child,
+a queue retaining at most one complete frame, and at most one additional frame
+waiting for delivery. Queue backpressure checks the stop flag every 20 ms;
+stdout reads stop after 4,194,305 characters and reject a frame over 4,194,304
+characters, including an unterminated frame. EOF, decoding errors, malformed
+JSON-RPC, oversized frames, and response timeouts invalidate the client before
+another request can be sent. Invalid-JSON diagnostics retain only 256 characters.
+The existing stderr reader retains at most 65,536 characters. Readiness uses
+one absolute deadline (30 seconds by default) across response waits and retries,
+with terminal failures excluded from readiness retries. Cleanup wakes a waiting
+response caller through the same bounded queue, stops reader delivery,
+terminates and waits for the child, then joins both readers before closing their
+streams. These are measurement-client bounds; see the
+[agent wall-time methodology](measurement.md#agent-wall-time-microbenchmark).
 
 MCP response-parity comparison makes at most two passes over the existing result
 content array. It inspects structured content and parses one text payload at a
@@ -1089,8 +1423,11 @@ Tree and glob pages use the indexed
 SQLite `GLOB` (patterns that cannot map, such as brace expansion, fall back to a
 bounded globset scan). Find still scans indexed files with a lean path-only
 projection (`id`, `path`, `language`, `size_bytes`) because fuzzy nucleo scoring
-does not map to SQL. The numbers are safety limits, not monorepo performance
-claims.
+does not map to SQL. Tree `LIMIT` caps returned rows, not entries visited: SQLite
+may filter an ordered path-index scan or search the depth index and sort the
+eligible matches. Shallow requests can favor the latter, while early pages in
+flat trees can favor path order. The numbers are safety limits, not monorepo
+performance claims.
 
 Git revision resolution uses the shared process-group capture owner with a
 128-byte stdout cap and the caller's timeout. Symbol history pins subsequent
@@ -1872,6 +2209,13 @@ fragment when each exists and fits, before admitting at most one auxiliary
 fragment, two failure-trace fragments, two test fragments, and two preservation
 fragments. Role parsing splits preservation transitions and keeps the generic
 test path prior from marking every query in a mixed implementation/test clause.
+Coordinated `unchanged` subjects split only at immediate `and`/`or` boundaries
+with independent copulas; shared-copula subjects stay together. Role annotation
+and primary-task text consume the same disjoint scopes, including inherited
+instruction context. Each existing clause gets one linear scan, one lowercase
+scratch string bounded by its byte length, and borrowed-scope metadata bounded
+by the number of confirmed boundaries. No source suffixes are copied per
+subject, and the existing query limit and repository fan-out remain unchanged.
 The reservations require at most thirteen linear passes over the already bounded
 candidate pool. They apply only after explicit required/focus evidence is
 selected, add no repository scan or candidate fan-out, and never relax
@@ -1963,11 +2307,17 @@ database path only where its filesystem permissions and retention policy are
 appropriate for that repository.
 
 The product test orchestrator starts exactly one Cargo build planner and one
-nextest scheduler for the complete product graph. Its global execution bound is
-four tests on Linux, three on macOS, and two on Windows. Within that pool,
+nextest scheduler for the complete product graph. Local compilation defaults
+to one Cargo build job; local product and focused libtest execution is bounded
+to two tests. Explicit focused-owner selectors compile only the selected
+package's harnesses. CI retains a global execution bound of four tests on Linux,
+three on macOS, and two on Windows. Within that pool,
 checked groups cap cheap work at eight, cold-index/SQLite and Git fixtures at
 two each, filesystem/watcher and extended work at one each, and process/MCP
-work at four. The extended owner alone reserves the whole pool; the other
+work at four. The service budget and consistency integration owners construct
+fresh SQLite indexes and use the cold-index/SQLite group's two-test admission
+and two-minute hang bound; their compiled nextest assignments are checked.
+The extended owner alone reserves the whole pool; the other
 groups rely on their explicit semaphore bound so unrelated cheap work can use
 remaining capacity. Named local, CI, stress, and profiling
 policies all disable retries and write JUnit evidence. CI and profiling continue

@@ -182,7 +182,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install project Rust
-        if: contains(fromJSON('["product","contract","examples","release-plan","stress","profile"]'), matrix.command)
+        if: contains(fromJSON('["product","contract","examples","release-plan","stress","profile","npm"]'), matrix.command)
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
@@ -207,7 +207,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust dependencies
-        if: contains(fromJSON('["rust-quality","product","contract","examples","coverage","dependency-audit","stress","profile"]'), matrix.command)
+        if: contains(fromJSON('["rust-quality","product","contract","examples","coverage","dependency-audit","stress","profile","npm"]'), matrix.command)
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: evidence-${{ matrix.lane }}-${{ matrix.runner }}
@@ -261,6 +261,8 @@ jobs:
           python3 -m unittest \
             scripts/test_report_target_footprint.py \
             scripts/test_validate_agents_md.py
+          python3 -m unittest discover -s crates/test-suite/fixtures/storage-migrations -p test_generate.py
+          python3 -O -m unittest discover -s crates/test-suite/fixtures/storage-migrations -p test_generate.py
           bash scripts/test-ci-secret-scan-range.sh
           bash scripts/validate-agents-md.sh
           mkdir -p target && touch target/ci-command-completed

@@ -1233,35 +1233,6 @@ mod tests {
     }
 
     #[test]
-    fn every_event_has_explicit_static_and_lifecycle_selection() {
-        let root = workspace_root();
-        for event in [
-            Event::PullRequest,
-            Event::MergeGroup,
-            Event::Push,
-            Event::Schedule,
-            Event::Manual,
-        ] {
-            let mut value = input(event, &["src/config.rs"]);
-            if event == Event::Schedule {
-                value.schedule = Some("0 3 * * *".to_owned());
-            }
-            let plan = build_plan(&root, value).expect("plan");
-            validate_plan(&root, &plan).expect("valid plan");
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .any(|lane| lane.lane == "quality")
-            );
-            assert!(
-                plan.selected_lanes
-                    .iter()
-                    .any(|lane| lane.lane == "secret-scan")
-            );
-        }
-    }
-
-    #[test]
     fn pull_request_policy_has_exact_owner_and_job_selection() {
         let cases = [
             (
@@ -1465,13 +1436,10 @@ mod tests {
                 .iter()
                 .any(|lane| lane.lane == "scheduled-stress")
         );
-    }
 
-    #[test]
-    fn schedule_requires_a_known_cron_identity() {
-        let mut value = input(Event::Schedule, &[]);
-        value.schedule = Some("0 5 * * *".to_owned());
-        assert!(build_plan(&workspace_root(), value).is_err());
+        let mut unknown = input(Event::Schedule, &[]);
+        unknown.schedule = Some("0 5 * * *".to_owned());
+        assert!(build_plan(&workspace_root(), unknown).is_err());
     }
 
     #[test]
@@ -1563,12 +1531,6 @@ mod tests {
             reason: "bad test plan".to_owned(),
         });
         assert!(validate_plan(&workspace_root(), &plan).is_err());
-    }
-
-    #[test]
-    fn receipt_statuses_include_missing_and_cancellation() {
-        assert_ne!(ReceiptStatus::Missing, ReceiptStatus::Passed);
-        assert_ne!(ReceiptStatus::Cancelled, ReceiptStatus::Passed);
     }
 
     #[test]

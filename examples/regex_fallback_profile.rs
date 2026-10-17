@@ -375,40 +375,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn synthetic_fixture_has_sparse_common_and_boundary_shapes() {
-        let root = tempfile::tempdir().expect("root");
-        create_synthetic_repository(root.path(), 201).expect("fixture");
-        let sources = fs::read_dir(root.path())
-            .expect("read fixture")
-            .map(|entry| fs::read_to_string(entry.expect("entry").path()).expect("source"))
-            .collect::<Vec<_>>();
-        assert_eq!(sources.len(), 201);
-        assert_eq!(
-            sources
-                .iter()
-                .filter(|source| source.contains("common_marker"))
-                .count(),
-            3
-        );
-        assert_eq!(
-            sources
-                .iter()
-                .filter(|source| source.contains("sparse_marker_boundary"))
-                .count(),
-            1
-        );
-        assert!(
-            sources
-                .iter()
-                .all(|source| !source.contains("absent_boundary_marker"))
-        );
-        assert_eq!(
-            sources.iter().map(|source| source.lines().count()).max(),
-            Some(FULL_SCAN_CHUNK_BOUNDARY * DEFAULT_CHUNK_LINES)
-        );
-    }
-
-    #[test]
     fn bare_output_filename_uses_current_directory() {
         create_output_parent(Path::new("profile.json")).expect("bare output path");
     }

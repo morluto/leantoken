@@ -167,31 +167,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_symbol_identity_requires_an_exact_owner_boundary() {
-        assert!(symbol_identity_matches("run", "run", Some("Service")));
-        assert!(symbol_identity_matches(
-            "Service.run",
-            "run",
-            Some("Service")
-        ));
-        assert!(!symbol_identity_matches(
-            "Other.run",
-            "run",
-            Some("Service")
-        ));
-        assert!(!symbol_identity_matches(
-            "MyService.run",
-            "run",
-            Some("Service")
-        ));
-        assert_eq!(
-            split_qualified_symbol("module.Service.run"),
-            Some(("module.Service", "run"))
-        );
-        assert_eq!(split_qualified_symbol("run"), None);
-    }
-
-    #[test]
     fn case_fold_literals_expand_only_the_unicode_equivalence_classes() {
         let ordinary = case_fold_literal_variants("Alpha").expect("ordinary variants");
         assert_eq!(ordinary.values, ["alpha"]);

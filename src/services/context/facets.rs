@@ -338,14 +338,14 @@ impl TaskRole {
 fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
     let clauses = task_clauses(task);
     for (position, clause) in clauses.iter().enumerate() {
-        let roles = clause_roles(clause, position == 0);
+        let roles = clause_roles(clause.text, position == 0, clause.inherited_instruction);
         if roles.is_empty() {
             continue;
         }
-        let normalized = clause.to_ascii_lowercase();
-        let terms = task_terms(clause)
+        let normalized = clause.text.to_ascii_lowercase();
+        let terms = task_terms(clause.text)
             .into_iter()
-            .chain(technical_atoms(clause))
+            .chain(technical_atoms(clause.text))
             .flat_map(|term| std::iter::once(term.clone()).chain(expand_terms(&term)))
             .map(|term| term.to_ascii_lowercase())
             .collect::<HashSet<_>>();
@@ -373,12 +373,18 @@ fn annotate_task_roles(task: &str, queries: &mut [ContextQuery]) {
     }
 }
 
-fn task_clauses(task: &str) -> Vec<&str> {
+struct TaskClause<'a> {
+    text: &'a str,
+    inherited_instruction: bool,
+}
+
+fn task_clauses(task: &str) -> Vec<TaskClause<'_>> {
     task.split(['\n', ';'])
         .flat_map(|part| part.split(". "))
         .flat_map(split_role_transitions)
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
+        .flat_map(split_coordinated_unchanged_subjects)
         .collect()
 }
 
@@ -400,7 +406,77 @@ fn split_role_transitions(part: &str) -> Vec<&str> {
     clauses
 }
 
-fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
+fn split_coordinated_unchanged_subjects(part: &str) -> Vec<TaskClause<'_>> {
+    // ASCII case folding preserves the original source's byte offsets.
+    // Scan once with constant state and return disjoint borrowed scopes,
+    // avoiding copied or repeatedly scanned subject suffixes.
+    let normalized = part.to_ascii_lowercase();
+    let delimiter = |character: char| !character.is_alphanumeric() && character != '_';
+    let mut clauses = Vec::new();
+    let mut start = 0;
+    let mut offset = 0;
+    let mut inherited_instruction = false;
+    let mut has_instruction = false;
+    let mut subject_seen = false;
+    let mut copula_seen = false;
+    let mut coordinator = None;
+    let mut pending_split = None;
+    for piece in normalized.split_inclusive(delimiter) {
+        let word = piece.trim_end_matches(delimiter);
+        let word_start = offset;
+        offset += piece.len();
+        if word.is_empty() {
+            continue;
+        }
+        if subject_seen
+            && matches!(
+                word,
+                "when"
+                    | "while"
+                    | "if"
+                    | "unless"
+                    | "because"
+                    | "where"
+                    | "which"
+                    | "that"
+                    | "before"
+                    | "after"
+            )
+        {
+            break;
+        }
+        has_instruction |= matches!(
+            word,
+            "ensure" | "ensures" | "ensured" | "ensuring" | "leave" | "leaves" | "leaving" | "left"
+        );
+        if word == "unchanged" {
+            if copula_seen && let Some(coordinator) = coordinator {
+                pending_split.get_or_insert((coordinator, word_start, has_instruction));
+            }
+            subject_seen = true;
+        } else if subject_seen && matches!(word, "is" | "are" | "be" | "was" | "were") {
+            // Confirm a boundary only when both subjects have their own
+            // predicate. Subjects sharing one copula remain in one scope.
+            if let Some((boundary, next_start, instruction)) = pending_split.take() {
+                clauses.push(TaskClause {
+                    text: part[start..boundary].trim(),
+                    inherited_instruction,
+                });
+                start = next_start;
+                inherited_instruction = instruction;
+            }
+            copula_seen = true;
+        }
+        coordinator = matches!(word, "and" | "or").then_some(word_start);
+    }
+    clauses.push(TaskClause {
+        text: part[start..].trim(),
+        inherited_instruction,
+    });
+    clauses
+}
+
+fn clause_roles(clause: &str, first: bool, inherited_instruction: bool) -> Vec<TaskRole> {
     let clause = clause.to_ascii_lowercase();
     let has_any = |markers: &[&str]| markers.iter().any(|marker| clause.contains(marker));
     let words = clause
@@ -450,7 +526,8 @@ fn clause_roles(clause: &str, first: bool) -> Vec<TaskRole> {
             }
             // An explicit instruction can prohibit changing this subject.
             // Observations and unrelated subordinate predicates stay primary.
-            if unchanged_instruction.is_none_or(|start| start >= subject) {
+            if !inherited_instruction && unchanged_instruction.is_none_or(|start| start >= subject)
+            {
                 return false;
             }
             let mut action = index + 1;
@@ -655,9 +732,10 @@ pub(super) fn primary_task_text(task: &str) -> String {
         .into_iter()
         .enumerate()
         .filter(|(position, clause)| {
-            clause_roles(clause, *position == 0).contains(&TaskRole::PrimaryChange)
+            clause_roles(clause.text, *position == 0, clause.inherited_instruction)
+                .contains(&TaskRole::PrimaryChange)
         })
-        .map(|(_, clause)| clause)
+        .map(|(_, clause)| clause.text)
         .collect::<Vec<_>>()
         .join(" ");
     if primary.is_empty() {
@@ -1262,553 +1340,4 @@ fn is_stop_word(term: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn exact_atoms(task: &str) -> Vec<String> {
-        technical_atoms(task)
-    }
-
-    fn facet(kind: FacetKind, original: &str, variants: Vec<String>) -> TaskFacet {
-        let mut facets = Vec::new();
-        push_facet(&mut facets, kind, original, variants, 1.0);
-        facets.pop().expect("non-empty facet")
-    }
-
-    #[test]
-    fn extracts_required_technical_atoms_without_stripping_exact_forms() {
-        let task = "Fix Rack::Deflater, _.cloneDeep, res.send, #[serde(untagged)], \
-            _pytest.monkeypatch.notset, renameTable, WithRequiredStructEnabled, \
-            src/services/context.rs, snake_case, kebab-case, camelCase, PascalCase, \
-            ERR_INVALID_CONFIG, and Result<Option<T>,Error>.";
-        let atoms = exact_atoms(task);
-        for expected in [
-            "Rack::Deflater",
-            "_.cloneDeep",
-            "res.send",
-            "#[serde(untagged)]",
-            "_pytest.monkeypatch.notset",
-            "renameTable",
-            "WithRequiredStructEnabled",
-            "src/services/context.rs",
-            "snake_case",
-            "kebab-case",
-            "camelCase",
-            "PascalCase",
-            "ERR_INVALID_CONFIG",
-            "Result<Option<T>,Error>",
-        ] {
-            assert!(
-                atoms.iter().any(|atom| atom == expected),
-                "missing {expected}: {atoms:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn exact_atom_is_the_first_variant_even_when_not_scheduled_as_a_query() {
-        for atom in ["CONFIG", "#[serde(untagged)]"] {
-            let facet = facet(FacetKind::ExactAtom, atom, vec![atom.to_owned()]);
-            assert_eq!(facet.variants.first(), Some(&facet.original));
-        }
-    }
-
-    #[test]
-    fn punctuation_adjacent_calls_and_generic_signatures_keep_atom_boundaries() {
-        let atoms =
-            exact_atoms("Fix (res.send(payload)), `Rack::Deflater`, and Result<Option<T>,Error>.");
-
-        assert!(atoms.iter().any(|atom| atom == "res.send"));
-        assert!(atoms.iter().any(|atom| atom == "Rack::Deflater"));
-        assert!(atoms.iter().any(|atom| atom == "Result<Option<T>,Error>"));
-    }
-
-    #[test]
-    fn quoted_error_text_and_annotations_create_bounded_queries() {
-        let task = "Handle @retry and report \"Failed to lookup view\" without changing behavior.";
-        let plan = plan(task, 12);
-        let annotation = technical_atoms(task)
-            .into_iter()
-            .find(|atom| atom == "@retry")
-            .expect("configuration annotation");
-        assert_eq!(classify_atom(&annotation), FacetKind::Configuration);
-        let phrase = quoted_phrases(task)
-            .into_iter()
-            .find(|phrase| phrase == "Failed to lookup view")
-            .expect("quoted behavior");
-        let annotation = facet(
-            FacetKind::Configuration,
-            &annotation,
-            technical_variants(&annotation),
-        );
-        let phrase = facet(FacetKind::Behavior, &phrase, phrase_variants(&phrase));
-        assert!(plan.queries.len() <= 12);
-        assert!(annotation.variants.len() <= MAX_FACET_VARIANTS);
-        assert!(phrase.variants.len() <= MAX_FACET_VARIANTS);
-    }
-
-    #[test]
-    fn expansion_is_deterministic_and_strictly_bounded() {
-        let first = plan(
-            "Fix Rack::Deflater and WithRequiredStructEnabled with regression coverage",
-            8,
-        );
-        let second = plan(
-            "Fix Rack::Deflater and WithRequiredStructEnabled with regression coverage",
-            8,
-        );
-        assert_eq!(first.queries, second.queries);
-        assert!(first.queries.len() <= 8);
-        assert!(first.queries.len() > 3, "{first:?}");
-        assert_eq!(
-            first.queries.last().map(|query| query.value.as_str()),
-            Some("test")
-        );
-    }
-
-    #[test]
-    fn technical_tasks_keep_exact_and_bounded_natural_query_lanes() {
-        let plan = plan(
-            "Trace render.AsciiJSON while snapshot consistency protects concurrent readers",
-            8,
-        );
-
-        assert!(
-            plan.queries
-                .iter()
-                .any(|query| query.value == "render.AsciiJSON" && query.exact_variant)
-        );
-        assert!(plan.queries.iter().any(|query| {
-            query.value == "snapshot consistency" || query.value == "concurrent readers"
-        }));
-    }
-
-    #[test]
-    fn natural_language_terms_are_selected_across_the_complete_task() {
-        let plan = plan(
-            "Ensure ordinary behavior before bounded candidate generation and deterministic selection",
-            12,
-        );
-
-        assert!(
-            plan.queries
-                .iter()
-                .any(|query| query.value == "candidate generation")
-        );
-        assert!(
-            plan.queries
-                .iter()
-                .any(|query| query.value == "deterministic selection")
-        );
-        assert!(plan.queries.len() <= 12);
-    }
-
-    #[test]
-    fn qualified_atoms_keep_exact_owner_and_bounded_symbol_expansions() {
-        let plan = plan(
-            "Fix render.AsciiJSON for non-BMP JSON with UTF-16 while preserving BMP and ASCII behavior",
-            10,
-        );
-        let facet = facet(
-            FacetKind::Symbol,
-            "render.AsciiJSON",
-            technical_variants("render.AsciiJSON"),
-        );
-
-        assert_eq!(
-            facet.variants.first().map(String::as_str),
-            Some("render.AsciiJSON")
-        );
-        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
-        assert!(plan.queries.iter().any(|query| {
-            query.value == "render.AsciiJSON"
-                && query.exact_variant
-                && query.has_facet(FacetKind::ExactAtom)
-                && query.has_facet(FacetKind::Symbol)
-        }));
-    }
-
-    #[test]
-    fn kebab_case_error_atoms_retain_a_bounded_phrase_variant() {
-        let plan = plan(
-            "Report the failed-to-lookup-view error through the callback",
-            8,
-        );
-        let facet = facet(
-            FacetKind::Symbol,
-            "failed-to-lookup-view",
-            technical_variants("failed-to-lookup-view"),
-        );
-
-        assert!(
-            facet
-                .variants
-                .iter()
-                .any(|value| value == "failed to lookup view")
-        );
-        assert!(facet.variants.len() <= MAX_FACET_VARIANTS);
-        assert!(plan.queries.len() <= 8);
-    }
-
-    #[test]
-    fn workflow_evidence_reserves_deterministic_typed_query_lanes() {
-        let evidence = WorkflowEvidence::new()
-            .with_failure_traces(["error: default_values_if is missing".to_owned()])
-            .with_symbols(["default_values_if".to_owned()])
-            .with_paths(["tests/builder/default_vals.rs".to_owned()])
-            .with_test_intents(["default values regression".to_owned()]);
-
-        let first = plan_with_workflow_evidence("cargo test failed", &evidence, 12);
-        let second = plan_with_workflow_evidence("cargo test failed", &evidence, 12);
-
-        assert_eq!(first.queries, second.queries);
-        assert!(first.queries.len() <= 12);
-        for kind in [
-            FacetKind::FailureTrace,
-            FacetKind::Symbol,
-            FacetKind::Path,
-            FacetKind::TestIntent,
-        ] {
-            assert!(
-                first.queries.iter().any(|query| query.has_facet(kind)),
-                "missing {kind:?}: {:?}",
-                first.queries
-            );
-        }
-        assert_eq!(
-            first.queries.first().map(|query| query.value.as_str()),
-            Some("default_values_if")
-        );
-    }
-
-    #[test]
-    fn empty_workflow_evidence_preserves_the_existing_plan() {
-        let task = "fix Parser::parse for src/parser.rs";
-
-        assert_eq!(
-            plan(task, 12).queries,
-            plan_with_workflow_evidence(task, &WorkflowEvidence::default(), 12).queries
-        );
-    }
-
-    #[test]
-    fn unchanged_subjects_do_not_become_preservation_constraints() {
-        for task in [
-            "watcher periodic polling full reconciliation unchanged file hashing cooldown CPU",
-            "Find how unchanged records are refreshed hashed and published",
-            "Investigate unchanged entries that remain in the cache",
-            "Ensure unchanged records are refreshed, hashed, and published",
-            "Ensure cached unchanged records are refreshed",
-            "Leave unchanged files out of the scan",
-            "Leave cached unchanged files out of the scan",
-            "Find where there are unchanged records",
-            "Investigate why these are unchanged files",
-            "Find where there are entirely unchanged records",
-            "Find which files are completely unchanged records",
-            "Find unchanged and stale records",
-            "Ensure unchanged and stale records are refreshed",
-            "Find how unchanged records and stale files are processed",
-            "Find why files are not unchanged",
-        ] {
-            let queries = plan(task, 16).queries;
-            assert!(
-                queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
-            );
-            assert!(
-                queries
-                    .iter()
-                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
-                "an unchanged subject is not a preservation instruction: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn coordinated_unchanged_subjects_keep_primary_roles() {
-        for task in [
-            "Ensure cached unchanged and stale records are refreshed",
-            "Ensure the cached unchanged and fresh entries are hashed",
-            "Ensure the unchanged and stale files are published",
-            "Find where there are unchanged and stale records",
-        ] {
-            let queries = plan(task, 16).queries;
-            assert!(
-                queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
-            );
-            assert!(
-                queries
-                    .iter()
-                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
-                "coordinated unchanged subjects must stay primary: {task}"
-            );
-        }
-        for task in [
-            "Ensure cached records unchanged and clients remain compatible",
-            "Ensure output unchanged and clients remain compatible",
-            "Ensure the cached output unchanged and error messages stable",
-            "The wire format is unchanged and clients remain compatible",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "a real subject precedes the preservation predicate: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn nominal_requirement_stops_at_the_subject_predicate() {
-        for task in [
-            "Find how unchanged records are processed when a full scan is required",
-            "Find how unchanged records are refreshed because a retry is necessary",
-            "Find unchanged entries when a full scan is required",
-            "Find unchanged files if a retry is mandatory",
-        ] {
-            let queries = plan(task, 16).queries;
-            assert!(
-                queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
-            );
-            assert!(
-                queries
-                    .iter()
-                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
-                "a subordinate requirement does not govern unchanged subjects: {task}"
-            );
-        }
-        for task in [
-            "An unchanged API contract is required during the migration",
-            "Unchanged response fields and stable error codes are mandatory",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "a directly governed nominal requirement stays a constraint: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn unchanged_predicates_keep_preservation_constraints() {
-        for task in [
-            "The output must remain unchanged",
-            "The output remains unchanged",
-            "The output should stay unchanged",
-            "The output stays unchanged",
-            "The wire format is unchanged",
-            "The serialized fields are unchanged",
-            "The response must be unchanged",
-            "Ensure the wire format is unchanged",
-            "Ensure the wire format unchanged",
-            "Ensuring the wire format unchanged",
-            "The update ensures the wire format unchanged",
-            "Leave the wire format unchanged",
-            "Leaving the wire format unchanged",
-            "Ensure unchanged records remain unchanged",
-            "Leave unchanged files unchanged",
-            "The output is unchanged during the refactor",
-            "Ensure the output unchanged throughout the refactor",
-            "Leave the output unchanged for compatibility",
-            "Refactor the serializer while the wire format should remain completely unchanged",
-            "The output should remain entirely unchanged during the refactor",
-            "The serialized fields are fully unchanged",
-            "The output is still unchanged",
-            "The output remains otherwise unchanged",
-            "The output is exactly unchanged",
-            "Leave the wire format completely unchanged",
-            "Refactor the serializer while the wire format is unchanged and clients remain compatible",
-            "The wire format is unchanged and stable",
-            "The output is unchanged unless the input changes",
-            "The output is unchanged if the input is identical",
-            "The output remains unchanged when the input is identical",
-            "The output is unchanged in the new release",
-            "The output is unchanged as specified",
-            "Refactor the serializer while ensuring the wire format is unchanged",
-            "Keep the output unchanged",
-            "Preserve unchanged source files",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "preservation predicate must remain a constraint: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn unchanged_passive_and_inflected_predicates_preserve_constraints() {
-        for task in [
-            "Refactor the serializer while the wire format should be left unchanged",
-            "The wire format has remained unchanged",
-            "Refactor the serializer while remaining unchanged",
-            "The output remained unchanged",
-            "The output stayed unchanged",
-            "The output is staying unchanged",
-            "The output is being left entirely unchanged",
-            "The output must be kept unchanged",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "passive or inflected preservation predicate must remain a constraint: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn later_unchanged_subjects_retain_primary_change_queries() {
-        let queries = plan(
-            "Fix watcher polling; unchanged records are refreshed hashed and published",
-            16,
-        )
-        .queries;
-        let subject_queries = queries
-            .iter()
-            .filter(|query| query.value == "records")
-            .collect::<Vec<_>>();
-        assert!(
-            !subject_queries.is_empty(),
-            "subject evidence must be queried"
-        );
-        assert!(subject_queries.iter().all(|query| {
-            query.has_facet(FacetKind::PrimaryChange)
-                && !query.has_facet(FacetKind::PreserveConstraint)
-        }));
-    }
-
-    #[test]
-    fn unchanged_subject_prohibitions_keep_preservation_constraints() {
-        for task in [
-            "Refactor the serializer; ensure unchanged files are not modified",
-            "Ensure unchanged records are never altered",
-            "Ensure unchanged output is not deliberately rewritten",
-            "Ensure unchanged files must not be modified",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "an explicit prohibition must retain preservation evidence: {task}"
-            );
-        }
-        for task in [
-            "Find how unchanged files are not modified",
-            "Ensure unchanged records are not processed",
-            "Ensure unchanged files are processed when a scan is not modified",
-        ] {
-            let queries = plan(task, 16).queries;
-            assert!(
-                queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PrimaryChange))
-            );
-            assert!(
-                queries
-                    .iter()
-                    .all(|query| !query.has_facet(FacetKind::PreserveConstraint)),
-                "a fact, skipped operation or subordinate predicate stays primary: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn nominal_unchanged_requirements_keep_preservation_constraints() {
-        for task in [
-            "Refactor the serializer; unchanged wire format is required",
-            "The unchanged response shape is mandatory",
-            "An unchanged API contract is necessary",
-            "An unchanged output is needed",
-        ] {
-            assert!(
-                plan(task, 16)
-                    .queries
-                    .iter()
-                    .any(|query| query.has_facet(FacetKind::PreserveConstraint)),
-                "nominal preservation requirement must remain a constraint: {task}"
-            );
-        }
-    }
-
-    #[test]
-    fn task_roles_separate_primary_preserve_and_test_queries() {
-        let facet_plan = plan(
-            "Fix direct context initialization instead of index_not_ready. Preserve MCP startup \
-             and snapshot consistency. Add a regression test.",
-            16,
-        );
-
-        assert!(facet_plan.queries.iter().any(|query| {
-            query.has_facet(FacetKind::PrimaryChange)
-                && (query.value == "context" || query.value == "initialization")
-        }));
-        assert!(facet_plan.queries.iter().any(|query| {
-            query.has_facet(FacetKind::FailureTrace) && query.value.contains("index_not_ready")
-        }));
-        assert!(
-            facet_plan
-                .queries
-                .iter()
-                .any(|query| query.has_facet(FacetKind::PreserveConstraint))
-        );
-        assert!(
-            facet_plan
-                .queries
-                .iter()
-                .any(|query| query.has_facet(FacetKind::TestIntent))
-        );
-        assert_eq!(
-            primary_task_text("Which test suite verifies the MCP tool schemas?"),
-            "Which test suite verifies the MCP tool schemas?"
-        );
-        assert!(
-            plan("Test direct context initialization", 8)
-                .queries
-                .iter()
-                .any(|query| query.has_facet(FacetKind::TestIntent))
-        );
-
-        let mixed = plan(
-            "Add SearchCompactResponse compact output while preserving full ranking and regression tests",
-            16,
-        );
-        let exact = mixed
-            .queries
-            .iter()
-            .find(|query| query.value == "SearchCompactResponse")
-            .expect("exact implementation query");
-        assert!(exact.has_facet(FacetKind::PrimaryChange));
-        assert!(!exact.has_facet(FacetKind::TestIntent));
-        assert!(mixed.queries.iter().any(|query| {
-            query.has_facet(FacetKind::PreserveConstraint)
-                && !query.has_facet(FacetKind::TestIntent)
-        }));
-        let primary_phrase = ["search", "projection"].join(" ");
-        let natural_task = format!(
-            "Add a source-free compact {primary_phrase} to CLI and MCP while preserving full ranking"
-        );
-        let natural = plan(&natural_task, 16);
-        assert!(natural.queries.iter().any(|query| {
-            query.value == primary_phrase && query.has_facet(FacetKind::PrimaryChange)
-        }));
-        assert_eq!(
-            primary_task_text(
-                "Add SearchCompactResponse compact output while preserving full ranking"
-            ),
-            "Add SearchCompactResponse compact output"
-        );
-    }
-}
+mod tests;

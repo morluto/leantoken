@@ -53,6 +53,7 @@ pub enum HistoryCommand {
     /// Diff an ordered symbol set across two revisions.
     DiffSymbols {
         /// JSON array of targets; each object has path, symbol, and optional head_path and head_symbol.
+        #[arg(value_parser = validate_diff_symbols_targets)]
         targets: String,
         /// Base Git revision.
         base_revision: String,
@@ -62,6 +63,13 @@ pub enum HistoryCommand {
         #[arg(long)]
         cursor: Option<String>,
     },
+}
+
+fn validate_diff_symbols_targets(value: &str) -> std::result::Result<String, String> {
+    serde_json::from_str::<Vec<crate::model::DiffSymbolsTarget>>(value).map_err(|error| {
+        format!("targets must be a JSON array of valid symbol targets: {error}")
+    })?;
+    Ok(value.to_owned())
 }
 
 impl HistoryArgs {

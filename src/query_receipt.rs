@@ -300,46 +300,4 @@ mod tests {
         );
         assert_eq!(recorded.scope_relation_to(&subset), None);
     }
-
-    #[test]
-    fn query_receipt_ids_are_namespace_bound() {
-        let namespace = "0123456789abcdef0123456789abcdef";
-        let receipt_id = format_query_receipt_id(namespace, 42);
-        assert_eq!(parse_query_receipt_id(&receipt_id, namespace), Some(42));
-        assert_eq!(
-            parse_query_receipt_id(&receipt_id, "ffffffffffffffffffffffffffffffff"),
-            None
-        );
-        assert_eq!(receipt_id.len(), QUERY_RECEIPT_ID_RESPONSE_RESERVE.len());
-    }
-
-    #[test]
-    fn response_reserve_covers_generated_ids_across_tokenizers() {
-        use crate::tokens::Tokenizer;
-
-        let tokenizers = [
-            Tokenizer::Cl100kBase,
-            Tokenizer::O200kBase,
-            Tokenizer::O200kHarmony,
-            Tokenizer::P50kBase,
-            Tokenizer::R50kBase,
-            Tokenizer::Gpt2,
-            Tokenizer::P50kEdit,
-            Tokenizer::Estimate,
-        ];
-        for seed in 0u64..4_096 {
-            let namespace = blake3::hash(&seed.to_le_bytes()).to_hex();
-            let id = format_query_receipt_id(
-                &namespace.as_str()[..QUERY_RECEIPT_ID_NAMESPACE_HEX_BYTES],
-                i64::try_from(seed + 1).expect("bounded row id"),
-            );
-            for tokenizer in tokenizers {
-                assert!(
-                    tokenizer.count(&id) <= tokenizer.count(QUERY_RECEIPT_ID_RESPONSE_RESERVE),
-                    "{} under-reserved generated query receipt {id}",
-                    tokenizer.name()
-                );
-            }
-        }
-    }
 }

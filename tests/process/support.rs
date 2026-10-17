@@ -107,14 +107,14 @@ pub(crate) fn assert_runtime_version(value: &serde_json::Value) {
     assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
 }
 
-pub(crate) fn run(
+fn run_json_command(
     root: &std::path::Path,
     database: &std::path::Path,
     arguments: &[&str],
-) -> serde_json::Value {
+) -> std::process::Output {
     let mut command = Command::cargo_bin("leantoken").expect("binary");
     let _process_home = apply_hermetic_environment(&mut command, root);
-    let output = command
+    command
         .args([
             "--root",
             root.to_str().expect("root UTF-8"),
@@ -124,7 +124,15 @@ pub(crate) fn run(
         ])
         .args(arguments)
         .output()
-        .expect("run leantoken");
+        .expect("run leantoken")
+}
+
+pub(crate) fn run(
+    root: &std::path::Path,
+    database: &std::path::Path,
+    arguments: &[&str],
+) -> serde_json::Value {
+    let output = run_json_command(root, database, arguments);
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -138,19 +146,7 @@ pub(crate) fn run_error(
     database: &std::path::Path,
     arguments: &[&str],
 ) -> serde_json::Value {
-    let mut command = Command::cargo_bin("leantoken").expect("binary");
-    let _process_home = apply_hermetic_environment(&mut command, root);
-    let output = command
-        .args([
-            "--root",
-            root.to_str().expect("root UTF-8"),
-            "--database",
-            database.to_str().expect("database UTF-8"),
-            "--json",
-        ])
-        .args(arguments)
-        .output()
-        .expect("run leantoken");
+    let output = run_json_command(root, database, arguments);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     serde_json::from_slice(&output.stderr).expect("structured error")
@@ -199,6 +195,7 @@ pub(crate) struct McpProcess {
     last_sent: String,
     stderr_task: Option<std::thread::JoinHandle<()>>,
     stderr: Arc<Mutex<Vec<u8>>>,
+    spawned_at: Instant,
 }
 
 impl McpProcess {
@@ -211,7 +208,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_options(root, database, arguments, false)
+        Self::spawn_with_command_args(root, database, arguments, &[], Stdio::null())
     }
 
     pub(crate) fn spawn_with_mcp_args(
@@ -219,7 +216,7 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_command_args(root, database, &[], arguments, false)
+        Self::spawn_with_command_args(root, database, &[], arguments, Stdio::null())
     }
 
     pub(crate) fn spawn_with_captured_stderr(
@@ -227,16 +224,15 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
     ) -> Self {
-        Self::spawn_with_options(root, database, arguments, true)
+        Self::spawn_with_command_args(root, database, arguments, &[], Stdio::piped())
     }
 
-    pub(crate) fn spawn_with_options(
+    pub(crate) fn spawn_with_diagnostic_stderr(
         root: &std::path::Path,
         database: &std::path::Path,
-        arguments: &[&str],
-        capture_stderr: bool,
+        filter: &str,
     ) -> Self {
-        Self::spawn_with_command_args(root, database, arguments, &[], capture_stderr)
+        Self::spawn_with_log_filter(root, database, &[], &[], Stdio::piped(), Some(filter))
     }
 
     pub(crate) fn spawn_with_command_args(
@@ -244,10 +240,24 @@ impl McpProcess {
         database: &std::path::Path,
         arguments: &[&str],
         mcp_arguments: &[&str],
-        capture_stderr: bool,
+        stderr: Stdio,
+    ) -> Self {
+        Self::spawn_with_log_filter(root, database, arguments, mcp_arguments, stderr, None)
+    }
+
+    fn spawn_with_log_filter(
+        root: &std::path::Path,
+        database: &std::path::Path,
+        arguments: &[&str],
+        mcp_arguments: &[&str],
+        stderr: Stdio,
+        filter: Option<&str>,
     ) -> Self {
         let mut command = std::process::Command::new(assert_cmd::cargo::cargo_bin!("leantoken"));
         let process_home = apply_hermetic_std_environment(&mut command, root);
+        if let Some(filter) = filter {
+            command.env("RUST_LOG", filter);
+        }
         command
             .args([
                 "--root",
@@ -258,11 +268,25 @@ impl McpProcess {
             .args(arguments)
             .arg("mcp")
             .args(mcp_arguments);
-        command.stderr(if capture_stderr {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        });
+        command.stderr(stderr);
+        Self::spawn_prepared(command, process_home)
+    }
+
+    pub(crate) fn spawn_command(command: std::process::Command) -> Self {
+        Self::spawn_prepared(command, None)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn spawn_hermetic_command(mut command: std::process::Command, root: &Path) -> Self {
+        let process_home = apply_hermetic_std_environment(&mut command, root);
+        Self::spawn_prepared(command, process_home)
+    }
+
+    fn spawn_prepared(
+        mut command: std::process::Command,
+        process_home: Option<tempfile::TempDir>,
+    ) -> Self {
+        let spawned_at = Instant::now();
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -303,6 +327,7 @@ impl McpProcess {
             last_sent: "no request sent".into(),
             stderr_task,
             stderr: captured_stderr,
+            spawned_at,
         }
     }
 
@@ -357,7 +382,8 @@ impl McpProcess {
                 "clientInfo": { "name": client_name, "version": client_version }
             }
         }));
-        let response = self.response(Duration::from_secs(5));
+        // Match the setup/doctor handshake bound documented in docs/architecture.md.
+        let response = self.response(Duration::from_secs(10));
         assert_eq!(response["id"], 1);
         assert!(response.get("result").is_some(), "{response}");
         response
@@ -468,7 +494,9 @@ impl McpProcess {
     pub(crate) fn message(&self, timeout: Duration) -> serde_json::Value {
         let line = self.lines.recv_timeout(timeout).unwrap_or_else(|error| {
             panic!(
-                "MCP message before deadline ({timeout:?}): {error:?}; last sent: {}; stderr (first 64 KiB): {}",
+                "MCP message before deadline ({timeout:?}): {error:?}; owned PID: {}; elapsed since spawn: {:?}; last sent: {}; stderr (first 64 KiB): {}",
+                self.child.id(),
+                self.spawned_at.elapsed(),
                 self.last_sent,
                 self.stderr_snapshot()
             )

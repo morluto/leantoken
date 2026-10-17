@@ -1,6 +1,133 @@
 use super::support::{Command, Duration, McpProcess};
 
-pub(super) fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
+#[cfg(unix)]
+#[test]
+fn mcp_initialize_accepts_startup_within_doctor_contract() {
+    let sandbox = leantoken_test_support::Sandbox::new(module_path!(), "delayed_mcp_startup")
+        .expect("sandbox");
+    std::fs::write(
+        sandbox.repo().join("lib.rs"),
+        "pub fn answer() -> u8 { 42 }\n",
+    )
+    .expect("write fixture");
+    let database = sandbox.root().join("index.sqlite");
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg("IFS= read -r initialize || exit 1; sleep 6; { printf '%s\\n' \"$initialize\"; cat; } | \"$@\"")
+        .arg("leantoken-delayed-start")
+        .arg(assert_cmd::cargo::cargo_bin!("leantoken"))
+        .arg("--root")
+        .arg(sandbox.repo())
+        .arg("--database")
+        .arg(database)
+        .args(["--tokenizer", "estimate", "mcp"])
+        .current_dir(sandbox.repo())
+        .stderr(std::process::Stdio::piped());
+    let mut process = McpProcess::spawn_hermetic_command(command, sandbox.repo());
+    let initialized = process.initialize();
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "leantoken");
+    super::support::assert_runtime_version(&initialized["result"]["serverInfo"]["version"]);
+    process.send_initialized();
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}
+    }));
+    let catalog = process.response(Duration::from_secs(5));
+    assert_eq!(catalog["id"], 2);
+    assert!(
+        catalog["result"]["tools"]
+            .as_array()
+            .expect("tool catalog")
+            .iter()
+            .any(|tool| tool["name"] == "context"),
+        "{catalog}"
+    );
+    drop(process.stdin.take());
+    let status = process
+        .wait_timeout(Duration::from_secs(15))
+        .expect("wait for MCP EOF")
+        .expect("owned MCP process exits after EOF");
+    assert!(status.success(), "MCP EOF exit: {status}");
+}
+
+#[test]
+fn mcp_overload_replies_follow_each_requests_protocol() {
+    for stateless in [false, true] {
+        let root = tempfile::tempdir().expect("temporary repository");
+        std::fs::write(root.path().join("lib.rs"), "pub fn answer() {}\n").expect("write fixture");
+        let database = root.path().join("index.sqlite");
+        let blocker = rusqlite::Connection::open(&database).expect("blocking connection");
+        blocker
+            .execute_batch("CREATE TABLE startup_blocker(value INTEGER); BEGIN EXCLUSIVE;")
+            .expect("hold startup behind a write lock");
+        let mut process =
+            McpProcess::spawn_with_args(root.path(), &database, &["--max-index-workers", "1"]);
+        let meta = serde_json::json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {}
+        });
+        if stateless {
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+                "params": {"_meta": meta}
+            }));
+            let discovery = process.response(Duration::from_secs(5));
+            assert_eq!(discovery["id"], "discover");
+            assert_eq!(discovery["result"]["resultType"], "complete", "{discovery}");
+        } else {
+            process.initialize();
+            process.send_initialized();
+        }
+
+        // The documented dispatch capacity is 16. Each retrieval stays in
+        // startup while SQLite is locked, keeping that capacity occupied.
+        for id in 100..116 {
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {
+                    "name": "files", "_meta": meta,
+                    "arguments": {"operation": {"kind": "tree", "max_results": 1}}
+                }
+            }));
+        }
+        for (id, protocol, modern) in [(116, "2026-07-28", true), (117, "2025-11-25", false)] {
+            let mut request_meta = meta.clone();
+            request_meta["io.modelcontextprotocol/protocolVersion"] = protocol.into();
+            process.send(serde_json::json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {
+                    "name": "files", "_meta": request_meta,
+                    "arguments": {"operation": {"kind": "tree", "max_results": 1}}
+                }
+            }));
+            let response = process.response(Duration::from_secs(5));
+            assert_eq!(response["id"], id, "{response}");
+            assert_eq!(response["result"]["isError"], false, "{response}");
+            assert_eq!(
+                response["result"]["structuredContent"]["reason"], "retrieval_capacity_exhausted",
+                "{response}"
+            );
+            assert_eq!(
+                response.pointer("/result/resultType"),
+                modern.then_some(&serde_json::json!("complete")),
+                "{response}"
+            );
+        }
+        process.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": 118, "method": "tools/list",
+            "params": {"_meta": meta}
+        }));
+        let catalog = process.response(Duration::from_secs(5));
+        assert_eq!(catalog["id"], 118, "{catalog}");
+        assert!(catalog["result"]["tools"].is_array(), "{catalog}");
+        blocker.execute_batch("ROLLBACK").expect("release database");
+        process.stop();
+    }
+}
+
+#[test]
+fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -25,7 +152,8 @@ pub(super) fn mcp_repeatedly_exits_cleanly_on_stdio_eof() {
     }
 }
 
-pub(super) fn mcp_approved_repository_contexts_are_isolated() {
+#[test]
+fn mcp_approved_repository_contexts_are_isolated() {
     let primary_root = tempfile::tempdir().expect("primary repository");
     let docs_root = tempfile::tempdir().expect("approved repository");
     std::fs::write(
@@ -113,7 +241,8 @@ pub(super) fn mcp_approved_repository_contexts_are_isolated() {
     process.stop();
 }
 
-pub(super) fn mcp_survives_malformed_and_invalid_messages() {
+#[test]
+fn mcp_survives_malformed_and_invalid_messages() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -148,7 +277,8 @@ pub(super) fn mcp_survives_malformed_and_invalid_messages() {
     assert!(process.child.try_wait().expect("poll process").is_none());
 }
 
-pub(super) fn mcp_result_modes_project_exact_wire_shapes() {
+#[test]
+fn mcp_result_modes_project_exact_wire_shapes() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(root.path().join("lib.rs"), "pub fn answer() -> u8 { 42 }\n")
         .expect("write fixture");
@@ -198,9 +328,150 @@ pub(super) fn mcp_result_modes_project_exact_wire_shapes() {
         );
         process.stop();
     }
+
+    let mut process = McpProcess::spawn(root.path(), &database);
+    process.initialize();
+    process.send_initialized();
+    process.wait_until_ready(Duration::from_secs(30));
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 910,
+        "method": "tools/call",
+        "params": {
+            "name": "files",
+            "arguments": {
+                "operation": {
+                    "kind": "find",
+                    "query": "lib",
+                    "max_results": 1,
+                    "projection": "paths"
+                }
+            }
+        }
+    }));
+    let files_response = process.response(Duration::from_secs(10));
+    let files_result = &files_response["result"];
+    let files = &files_result["structuredContent"];
+    assert_eq!(files_result["isError"], false, "{files_response}");
+    assert_eq!(files["paths"][0], "lib.rs", "{files_response}");
+    assert!(
+        files["paths"]
+            .as_array()
+            .is_some_and(|paths| !paths.is_empty())
+    );
+    assert!(files.get("entries").is_none(), "{files_response}");
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 911,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "operation": {
+                    "kind": "identifier",
+                    "query": "answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000,
+                    "projection": "compact"
+                }
+            }
+        }
+    }));
+    let compact_response = process.response(Duration::from_secs(10));
+    let compact_result = &compact_response["result"];
+    let compact = &compact_result["structuredContent"];
+    assert_eq!(compact_result["isError"], false, "{compact_response}");
+    assert!(
+        compact["hits"]
+            .as_array()
+            .is_some_and(|hits| !hits.is_empty()),
+        "{compact_response}"
+    );
+    assert_eq!(compact["meta"]["source_tokens"], 0, "{compact_response}");
+    assert!(
+        compact["hits"][0].get("excerpt").is_none(),
+        "{compact_response}"
+    );
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 912,
+        "method": "tools/call",
+        "params": {
+            "name": "search",
+            "arguments": {
+                "operation": {
+                    "kind": "text",
+                    "query": "answer",
+                    "max_results": 5,
+                    "max_tokens": 1_000,
+                    "projection": "grouped"
+                }
+            }
+        }
+    }));
+    let grouped_response = process.response(Duration::from_secs(10));
+    let grouped_result = &grouped_response["result"];
+    let grouped = &grouped_result["structuredContent"];
+    assert_eq!(grouped_result["isError"], false, "{grouped_response}");
+    assert!(
+        grouped["groups"]
+            .as_array()
+            .is_some_and(|groups| !groups.is_empty()),
+        "{grouped_response}"
+    );
+    assert!(
+        grouped["groups"][0]["total_hits"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0
+    );
+    assert!(grouped.get("hits").is_none(), "{grouped_response}");
+
+    process.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 913,
+        "method": "tools/call",
+        "params": {
+            "name": "outline",
+            "arguments": {
+                "paths": ["lib.rs"],
+                "projection": "signatures"
+            }
+        }
+    }));
+    let outline_response = process.response(Duration::from_secs(10));
+    let outline_result = &outline_response["result"];
+    let outline = &outline_result["structuredContent"];
+    assert_eq!(outline_result["isError"], false, "{outline_response}");
+    assert!(
+        outline["files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty()),
+        "{outline_response}"
+    );
+    assert!(
+        outline["files"][0]["signatures"]
+            .as_array()
+            .is_some_and(|signatures| !signatures.is_empty()),
+        "{outline_response}"
+    );
+    assert!(
+        outline["files"][0].get("symbols").is_none(),
+        "{outline_response}"
+    );
+    assert!(
+        outline["files"][0].get("imports").is_none(),
+        "{outline_response}"
+    );
+
+    process.stop();
 }
 
-pub(super) fn mcp_receipt_created_by_one_process_is_reused_by_another() {
+#[test]
+fn mcp_receipt_created_by_one_process_is_reused_by_another() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -283,7 +554,8 @@ pub(super) fn mcp_receipt_created_by_one_process_is_reused_by_another() {
     assert_eq!(second_result["meta"]["receipt_id"], receipt_id);
 }
 
-pub(super) fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
+#[test]
+fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -364,7 +636,9 @@ pub(super) fn mcp_query_receipt_created_by_one_process_is_reused_by_another() {
     assert_eq!(second_result["occurrences_total"], 1);
 }
 
-pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
+#[test]
+fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
+    const DIAGNOSTIC_FILTER: &str = "warn,leantoken::services::receipt_rebase=debug,leantoken::services::reconciliation=debug,leantoken::indexer=debug";
     let root = tempfile::tempdir().expect("temporary repository");
     std::fs::write(
         root.path().join("lib.rs"),
@@ -406,7 +680,8 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
 
     std::fs::write(root.path().join("unrelated.rs"), "fn unrelated() {}\n")
         .expect("write unrelated source");
-    let mut second = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
+    let mut second =
+        McpProcess::spawn_with_diagnostic_stderr(root.path(), &database, DIAGNOSTIC_FILTER);
     second.initialize();
     second.send_initialized();
     second.wait_until_ready(Duration::from_secs(30));
@@ -438,6 +713,47 @@ pub(super) fn mcp_receipt_rebase_is_cross_process_and_exact_only() {
         .expect("rebased receipt")
         .to_owned();
     second.stop();
+    let diagnostics = String::from_utf8(second.take_stderr()).expect("UTF-8 diagnostics");
+    let mut progress = diagnostics
+        .lines()
+        .filter(|line| line.contains("receipt rebase progress"));
+    for phase in [
+        "consistency",
+        "worker_admission",
+        "load_source",
+        "classify",
+        "response_budget",
+        "persist_receipt",
+        "finalize_response",
+        "record_savings",
+        "complete",
+    ] {
+        assert!(
+            progress.next().is_some_and(|line| line.contains(phase)),
+            "missing or out-of-order {phase}: {diagnostics}"
+        );
+    }
+    let mut reconciliation = diagnostics
+        .lines()
+        .filter(|line| line.contains("reconciliation progress"));
+    for phase in ["admission", "operation_lock", "release_operation"] {
+        assert!(
+            reconciliation
+                .next()
+                .is_some_and(|line| line.contains(phase)),
+            "missing or out-of-order reconciliation {phase}: {diagnostics}"
+        );
+    }
+    assert!(
+        diagnostics.lines().any(|line| {
+            line.contains("repository reconciliation profile") && line.contains("total_ms")
+        }),
+        "missing indexer timings: {diagnostics}"
+    );
+    assert!(
+        !diagnostics.contains("pub fn cross_process_rebase_answer"),
+        "diagnostics must not include source text"
+    );
 
     let mut third = McpProcess::spawn_with_captured_stderr(root.path(), &database, &[]);
     third.initialize();

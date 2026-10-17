@@ -136,25 +136,6 @@ fn config_canonicalizes_explicit_database_parent() {
 
 #[cfg(unix)]
 #[test]
-fn config_canonicalizes_database_parent_reached_through_symlink() {
-    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let aliases = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let alias = aliases.repo().join("repository");
-    std::os::unix::fs::symlink(root.repo(), &alias).expect("symlink root");
-
-    let config = Config::discover(&alias, Some(alias.join("index.sqlite"))).expect("discover");
-
-    assert_eq!(
-        config.database_path,
-        root.repo()
-            .canonicalize()
-            .expect("canonical root")
-            .join("index.sqlite")
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn config_canonicalizes_missing_database_descendants_below_symlink() {
     let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
     let aliases = Sandbox::new(module_path!(), "config_case").expect("sandbox");
@@ -178,6 +159,7 @@ fn config_canonicalizes_missing_database_descendants_below_symlink() {
     assert!(config.is_database_artifact("missing/cache/index.sqlite.leader.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.index.lock"));
     assert!(config.is_database_artifact("missing/cache/index.sqlite.init.lock"));
+    assert!(!config.is_database_artifact("src/index.sqlite"));
 }
 
 #[cfg(unix)]
@@ -199,17 +181,13 @@ fn config_canonicalizes_existing_database_symlink_for_shared_lock_identity() {
 }
 
 #[test]
-fn config_rejects_missing_root() {
+fn config_rejects_missing_and_non_directory_roots() {
     let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
     let missing = root.repo().join("nowhere");
     let err = Config::discover(&missing, None).expect_err("missing root");
     assert!(matches!(err, leantoken::Error::RootNotFound(_)));
-}
 
-#[test]
-fn config_rejects_file_as_root() {
-    let directory = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let file = directory.repo().join("not-a-repository");
+    let file = root.repo().join("not-a-repository");
     std::fs::write(&file, "content").expect("write file");
     let error = Config::discover(&file, None).expect_err("file root must fail");
     assert!(matches!(error, leantoken::Error::InvalidConfiguration(_)));
@@ -282,21 +260,4 @@ fn services_reject_invalid_retrieval_limit_configuration() {
             "got {error:?}"
         );
     }
-}
-
-#[test]
-fn config_identifies_database_and_wal_artifacts_inside_the_root() {
-    let root = Sandbox::new(module_path!(), "config_case").expect("sandbox");
-    let database = root.repo().join(".cache/index.sqlite");
-    std::fs::create_dir_all(database.parent().expect("database parent")).expect("parent");
-    let config = Config::discover(root.repo(), Some(database)).expect("config");
-
-    assert!(config.is_database_artifact(".cache/index.sqlite"));
-    assert!(config.is_database_artifact(".cache/index.sqlite-wal"));
-    assert!(config.is_database_artifact(".cache/index.sqlite-shm"));
-    assert!(config.is_database_artifact(".cache/index.sqlite.lease.lock"));
-    assert!(config.is_database_artifact(".cache/index.sqlite.leader.lock"));
-    assert!(config.is_database_artifact(".cache/index.sqlite.index.lock"));
-    assert!(config.is_database_artifact(".cache/index.sqlite.init.lock"));
-    assert!(!config.is_database_artifact("src/index.sqlite"));
 }

@@ -107,11 +107,7 @@ const DEPENDENCY_OWNERS: &[&str] = &[
 /// Exact BLAKE3 identity of code and dependencies that can change persisted rows.
 pub(crate) fn index_derivation_fingerprint() -> &'static str {
     static FINGERPRINT: OnceLock<String> = OnceLock::new();
-    FINGERPRINT.get_or_init(compute_fingerprint)
-}
-
-fn compute_fingerprint() -> String {
-    compute_fingerprint_with_source(None)
+    FINGERPRINT.get_or_init(|| compute_fingerprint_with_source(None))
 }
 
 fn compute_fingerprint_with_source(source_override: Option<(&str, &str)>) -> String {
@@ -182,21 +178,13 @@ mod tests {
     }
 
     #[test]
-    fn derivation_fingerprint_is_stable_and_full_width() {
-        let fingerprint = index_derivation_fingerprint();
-        assert_eq!(fingerprint.len(), 64);
-        assert!(fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_eq!(fingerprint, compute_fingerprint());
-    }
-
-    #[test]
     fn same_version_derivation_source_changes_cannot_reuse_the_fingerprint() {
         let current = include_str!("parser/hierarchy.rs");
         let previous_semantics_fixture =
             format!("{current}\n// previous enclosing-owner semantics");
 
         assert_ne!(
-            compute_fingerprint(),
+            compute_fingerprint_with_source(None),
             compute_fingerprint_with_source(Some((
                 "src/parser/hierarchy.rs",
                 &previous_semantics_fixture,

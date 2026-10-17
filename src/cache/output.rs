@@ -127,3 +127,37 @@ pub fn print_prune(report: &CachePruneReport, json_output: bool) -> Result<()> {
     }
     Ok(())
 }
+
+/// Print measured compaction decisions without presenting estimates as savings.
+pub fn print_compact(report: &CacheCompactReport, json_output: bool) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    if json_output {
+        serde_json::to_writer(&mut output, report)?;
+        output.write_all(b"\n")?;
+        return Ok(());
+    }
+    writeln!(
+        output,
+        "Managed cache compact{}: {} bytes reclaimed",
+        if report.dry_run { " preview" } else { "" },
+        report.reclaimed_bytes
+    )?;
+    for result in &report.results {
+        writeln!(
+            output,
+            "{}  {}  reusable={} bytes  reclaimed={} bytes{}",
+            result.id,
+            result.outcome.label(),
+            result
+                .reusable_bytes
+                .map_or_else(|| "unknown".into(), |bytes| bytes.to_string()),
+            result.reclaimed_bytes,
+            result
+                .outcome
+                .diagnostic()
+                .map_or_else(String::new, |detail| format!("  {detail}"))
+        )?;
+    }
+    Ok(())
+}

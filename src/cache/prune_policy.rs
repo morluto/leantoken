@@ -191,7 +191,9 @@ fn open_real_child(parent: Dir, name: &OsStr) -> std::result::Result<Dir, String
     Ok(Dir::from_std_file(file))
 }
 
-fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
+pub(super) fn open_managed_artifacts(
+    directory: &Path,
+) -> std::result::Result<(Dir, Vec<(OsString, u64)>), String> {
     ensure_real_directory(directory)?;
     let managed_root = directory
         .parent()
@@ -276,7 +278,7 @@ fn prepare_removal(directory: &Path) -> std::result::Result<(Dir, Vec<(OsString,
 }
 
 pub(super) fn remove_managed_artifacts(directory: &Path) -> RemovalOutcome {
-    let (directory, artifacts) = match prepare_removal(directory) {
+    let (directory, artifacts) = match open_managed_artifacts(directory) {
         Ok(value) => value,
         Err(error) => {
             return RemovalOutcome {

@@ -293,18 +293,22 @@ impl SetupReport {
     }
 }
 
-/// One versioned private runtime managed by LeanToken setup.
+/// One exact private runtime artifact managed by LeanToken setup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeEntryReport {
     /// Semantic LeanToken release stored in this directory.
     pub version: String,
+    /// Full BLAKE3 digest of the native executable bytes.
+    pub digest: String,
+    /// Whether this artifact uses the legacy version-only directory layout.
+    pub legacy_layout: bool,
     /// Exact native executable path.
     pub path: PathBuf,
     /// Native executable size in bytes.
     pub size_bytes: u64,
     /// Configured clients whose launcher references this runtime.
     pub referenced_by: Vec<SetupClient>,
-    /// Whether this executable is running the current command.
+    /// Whether this command or another cooperating process uses this artifact.
     pub active: bool,
     /// Whether the directory has the exact safe managed layout required for pruning.
     pub safely_prunable: bool,
@@ -313,7 +317,7 @@ pub struct RuntimeEntryReport {
 /// Bounded inventory of application-owned private runtimes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeListReport {
-    /// Versioned runtime root inspected by the command.
+    /// Application-owned runtime root inspected by the command.
     pub runtime_root: PathBuf,
     /// Recognized runtime directories.
     pub total_entries: usize,
@@ -321,14 +325,14 @@ pub struct RuntimeListReport {
     pub total_bytes: u64,
     /// Unrecognized root entries retained without inspection or mutation.
     pub ignored_entries: usize,
-    /// Runtime entries in descending semantic-version order.
+    /// Runtime entries in descending semantic-version, then ascending digest/path order.
     pub entries: Vec<RuntimeEntryReport>,
 }
 
 /// Selection and consent for private-runtime pruning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimePruneRequest {
-    /// Newest unreferenced runtimes to retain in addition to every referenced runtime.
+    /// Unreferenced artifacts to retain in inventory order, in addition to protected artifacts.
     pub keep_latest: usize,
     /// Resolve the exact deletion plan without mutation.
     pub dry_run: bool,
@@ -341,6 +345,10 @@ pub struct RuntimePruneRequest {
 pub struct RuntimePruneResult {
     /// Runtime release considered.
     pub version: String,
+    /// Full BLAKE3 digest of the native executable considered.
+    pub digest: String,
+    /// Whether this artifact uses the legacy version-only directory layout.
+    pub legacy_layout: bool,
     /// Exact executable path.
     pub path: PathBuf,
     /// Bytes represented by this decision.
@@ -393,7 +401,7 @@ impl RuntimePruneOutcome {
 /// Outcome of a bounded private-runtime prune operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimePruneReport {
-    /// Versioned runtime root inspected by the command.
+    /// Application-owned runtime root inspected by the command.
     pub runtime_root: PathBuf,
     /// Whether this report is a non-mutating plan.
     pub dry_run: bool,

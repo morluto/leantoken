@@ -637,7 +637,8 @@ pub(super) fn registered_version(command: &str, args: &[String]) -> Option<Strin
                 .windows(2)
                 .find(|components| components[0].as_os_str() == "runtimes")
                 .and_then(|components| components[1].as_os_str().to_str())
-                .map(str::to_owned)
+                .and_then(parse_runtime_directory_name)
+                .map(|(version, _)| version.to_string())
         })
 }
 

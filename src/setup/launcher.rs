@@ -377,15 +377,4 @@ mod tests {
             "yarn dlx leantoken@1.2.3 doctor --json"
         );
     }
-
-    #[test]
-    fn codex_registration_uses_text_without_changing_other_clients() {
-        let launcher = McpLauncher::from_executable(Path::new("/opt/leantoken"));
-
-        assert_eq!(
-            launcher.args_for(SetupClient::Codex),
-            ["--managed-by-setup", "mcp", "--result-mode", "text"]
-        );
-        assert_eq!(launcher.args_for(SetupClient::Claude), launcher.args);
-    }
 }

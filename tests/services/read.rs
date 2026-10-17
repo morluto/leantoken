@@ -1368,7 +1368,7 @@ async fn token_truncated_read_reports_the_returned_line_range() {
     assert!(response.truncated);
     assert_eq!(
         (response.target_start_line, response.target_end_line),
-        (2, 4)
+        (2, Some(4))
     );
     assert!(response.next_start_line.is_some());
     assert!(response.continuation_cursor.is_some());
@@ -1675,7 +1675,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
             .expect("read symbol page");
         pages += 1;
         assert_eq!(response.target_start_line, 1);
-        assert_eq!(response.target_end_line, 4);
+        assert_eq!(response.target_end_line, Some(4));
         assert_eq!(response.returned_start_line, response.returned_start_line);
         assert_eq!(response.returned_end_line, response.returned_end_line);
         reconstructed.push_str(response.content.as_deref().expect("page content"));

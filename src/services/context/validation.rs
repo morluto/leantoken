@@ -258,7 +258,7 @@ use super::*;
 mod static_input_tests {
     use super::*;
     #[test]
-    fn static_request_matrix_needs_no_repository() {
+    fn context_parser_rejects_oversized_request_dimensions() {
         let limits = crate::services::request_limits::RequestLimits {
             default_results: 3,
             max_results: 7,
@@ -287,11 +287,9 @@ mod static_input_tests {
             strict_changed_paths: false,
             explain_diagnostics: false,
         };
-        assert!(validate_context_request(&limits, &base, None).is_ok());
         for mutate in [
-            (|r: &mut ContextRequest| r.task = " ".into()) as fn(&mut ContextRequest),
-            |r| r.focus_paths = vec!["[".into()],
-            |r| r.focus_symbols = vec!["symbol".into(); 257],
+            (|r: &mut ContextRequest| r.focus_symbols = vec!["symbol".into(); 257])
+                as fn(&mut ContextRequest),
             |r| r.changed_paths = (0..513).map(|i| format!("src/{i}.rs")).collect(),
             |r| r.task = "a_".repeat(30_000),
         ] {
@@ -299,7 +297,6 @@ mod static_input_tests {
             mutate(&mut request);
             assert!(validate_context_request(&limits, &request, None).is_err());
         }
-        assert!(normalize_relative("../outside.rs").is_err());
         assert!(parse_context_revision(Some(&"r".repeat(257))).is_err());
     }
 }

@@ -1,5 +1,41 @@
 # Testing architecture
 
+## Test selection
+
+Prefer evidence in this order:
+
+1. Real-binary E2E tests: CLI and stdio MCP workflows with actual repository,
+   filesystem, Git, and SQLite behavior.
+2. Integration tests: public service, storage, parser, and protocol behavior
+   across component boundaries, using disposable repositories and databases.
+3. Golden tests: checked-in source corpora, versioned reports, and stable
+   external wire or help snapshots.
+
+Keep private unit tests only for consequential invariants that are impractical
+to reach through these layers, such as deterministic cancellation interleavings
+or exact boundary accounting. A test's directory does not determine its layer:
+colocated tests that use real databases or transports provide integration
+evidence. Simple getters, defaults, builder assignments, enum conversions, and
+implementation helpers do not need separate tests when an observable contract
+already exercises them.
+
+Before adding a test, identify the failure mode and its existing owner. Extend
+that owner's scenario or golden corpus when possible. Remove duplicate checks
+without losing distinct failure modes; combining tests alone does not reduce
+maintenance if it retains the same redundant assertions. Test count and line
+coverage are execution evidence, not measures of correctness.
+
+Assertions must distinguish the failure being tested. Require nonempty fixtures
+before checking every item, require metadata that the contract promises, and
+keep expected results independent of the implementation. An optional branch
+must assert each supported outcome rather than silently skipping the contract.
+
+Use barriers, channels, or paused time to establish concurrency ordering. Native
+watcher smoke tests must account for documented reconciliation fallback; precise
+filtering and coalescing assertions belong in deterministic event cases. Keep
+enforced production deadlines and generous deadlock guards, while avoiding
+machine-speed assertions in functional tests.
+
 ## Coverage evidence
 
 `cargo xtask coverage` instruments the same nextest product command, features,
@@ -140,16 +176,16 @@ startup, readiness, contention, and failover, `repository_free.rs` owns
 repository-independent commands, and `runtime.rs` owns private-runtime setup
 and cache lifecycle behavior. `support.rs` contains only the shared process
 capabilities (hermetic launch, MCP transport, bounded readiness, and fixture
-builders). The root `tests/process.rs` remains a thin test-owner registry so
-the target and its stable test identities do not change when a semantic module
-moves.
+builders). The root `tests/process.rs` declares those modules; each owner holds
+its own `#[test]` functions, without forwarding wrappers. Lifecycle stress
+selection uses the `process::mcp_lifecycle::` module boundary.
 
 ## Commands
 
 The contributor-facing aliases are locked and remain short:
 
 ```text
-cargo test-focused services::search
+cargo test-focused product::services::search
 cargo test-focused protocol
 cargo test-product
 cargo test-contract
@@ -164,8 +200,13 @@ cargo xtask test profile
 status. Focused selectors for named suite domains build only the owning suite;
 other filters search both product and suite packages. Zero matches and
 cross-package ambiguity are errors. `plan --dry-run` performs no test work and
-prints an explicitly named `local` or `ci` profile. The
-contract benchmark is an explicit `test = false` example and is run only by
+prints an explicitly named `local` or `ci` profile.
+Explicit `product::` and `suite::` selector prefixes probe only that package;
+unqualified selectors still check both packages for ambiguity. Focused runs
+limit libtest execution to two threads. Local builds use one compiler job and
+the local product scheduler runs at most two tests; CI retains its platform
+bounds. Run heavy validation commands serially on a shared workstation.
+The contract benchmark is an explicit `test = false` example and is run only by
 `cargo test-contract`; it is not an ignored default test. The product plan has
 one Cargo build graph and one scheduler spanning library and binary units,
 private domains, ordinary integration, and executable or MCP process behavior.
@@ -300,10 +341,11 @@ start synchronization, cancellation owner, committed-state expectation, and
 failure diagnostics. Internal hooks remain typed and owner-local. At least one
 integration or process test proves every externally important transition.
 
-Use the lowest sufficient seam: parser invariants stay unit-local, SQL
-invariants use real SQLite, CLI contracts launch the binary, and watcher claims
-use the native watcher. Do not initialize or index a repository when a lower
-boundary proves the behavior.
+Use real SQLite for SQL contracts, the executable for CLI workflows, and the
+native watcher for event-delivery claims. For exceptional private invariants,
+use the smallest fixture that proves the failure mode; pure checks need no
+indexed repository. Prefer existing integration evidence when it already
+proves the same behavior.
 
 ## CI lanes
 

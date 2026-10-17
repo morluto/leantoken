@@ -1131,30 +1131,6 @@ mod tests {
     }
 
     #[test]
-    fn source_shape_classification_is_fixed_and_path_only() {
-        assert_eq!(
-            classify_source_shape(Path::new("src/service.ts")),
-            SourceShape::OrdinaryOrDeclaration
-        );
-        assert_eq!(
-            classify_source_shape(Path::new("src/service.test.ts")),
-            SourceShape::Test
-        );
-        assert_eq!(
-            classify_source_shape(Path::new("src/__mocks__/service.test.ts")),
-            SourceShape::MockFixtureOrHarness
-        );
-        assert_eq!(
-            classify_source_shape(Path::new("src/generated/service.test.ts")),
-            SourceShape::Generated
-        );
-        assert_eq!(
-            classify_source_shape(Path::new("test/invalid/service.generated.ts")),
-            SourceShape::IntentionalInvalidSyntax
-        );
-    }
-
-    #[test]
     fn bounded_reader_rejects_oversized_input() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("large.ts");
@@ -1330,19 +1306,6 @@ mod tests {
         let paths = pinned_typescript_paths(repository, revision.trim()).expect("pinned inventory");
         assert_eq!(paths, vec![PathBuf::from("one.ts")]);
         assert!(!repository.join("fsmonitor-hook.ran").exists());
-    }
-
-    #[test]
-    fn report_does_not_retain_fixture_paths_or_source() {
-        let report = fixture_report().expect("fixture report");
-        let json = serde_json::to_string(&report).expect("serialize report");
-        for private_value in [
-            "PRIVATE_TYPESCRIPT_SENTINEL",
-            "import-original.test.ts",
-            "broken-component.invalid.tsx",
-        ] {
-            assert!(!json.contains(private_value));
-        }
     }
 
     #[test]

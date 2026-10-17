@@ -8,4 +8,4 @@ mod git;
 mod sandbox;
 
 pub use git::GitFixture;
-pub use sandbox::{Sandbox, SandboxError};
+pub use sandbox::Sandbox;

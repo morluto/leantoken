@@ -430,12 +430,18 @@ async fn json_keys_response_budget_preserves_cursor_completeness() {
         })
         .await
         .expect("continue keys page");
+    let remaining_items = continuation
+        .remaining_items
+        .expect("continuation remaining item count");
+    let returned_items = continuation
+        .returned_items
+        .expect("continuation returned item count");
     assert_eq!(
         bounded
             .returned_items
             .expect("bounded item count")
-            .saturating_add(continuation.remaining_items.unwrap_or_default())
-            .saturating_add(continuation.returned_items.unwrap_or_default()),
+            .saturating_add(remaining_items)
+            .saturating_add(returned_items),
         full.total_items.expect("total keys"),
     );
 }

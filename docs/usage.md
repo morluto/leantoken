@@ -49,6 +49,9 @@ leantoken remove [--claude] [--cursor] [--opencode] [--codex] [--gemini]
                  [--antigravity] [--all] [--yes] [--dry-run] [--force-unmanaged]
 leantoken runtime list
 leantoken runtime prune [--keep-latest COUNT] [--dry-run] [--yes]
+leantoken cache compact --id CACHE_ID [--dry-run | --yes]
+                        [--min-reclaim-bytes BYTES] [--min-reclaim-percent PERCENT]
+                        [--max-database-bytes BYTES] [--max-seconds SECONDS]
 leantoken cache list [--summary] [--state STATE] [--repository-root PATH]
                      [--compatibility CLASS] [--index-content-version VERSION]
                      [--incompatible-with-current] [--limit COUNT] [--cursor CURSOR]
@@ -296,28 +299,50 @@ npx --yes leantoken@latest setup --codex --private-runtime --dry-run
 npx --yes leantoken@latest setup --codex --private-runtime --yes
 ```
 
-Dry-run reports the exact versioned application-data path and BLAKE3 digest.
+Dry-run reports the exact application-data path and full BLAKE3 digest. New
+artifacts use `<runtime_root>/<version>_<64 lowercase digest characters>/leantoken`
+(`leantoken.exe` on Windows), so distinct source builds with the same package
+version can coexist. Reinstalling identical bytes reuses that exact path.
 Setup copies the native executable already verified by the running package,
-activates it with an atomic no-clobber rename, then updates all selected client
-registrations as one rollback-capable transaction. A process lock serializes
-setup, and a durable journal restores pre-transaction contents on the next
+verifies its complete digest, publishes it with an atomic no-clobber hard link,
+then updates all selected client registrations as one rollback-capable
+transaction. A process lock serializes setup, and a durable journal restores pre-transaction contents on the next
 setup invocation after an interruption; recovery refuses to overwrite a file
 changed independently after the interruption. The registered command launches
 that native executable directly. Removal deletes registrations but retains
-versioned runtimes for explicit rollback; it never selects `latest`. Private
-installation rejects a runtime root that is a symlink or is not a directory.
+runtime artifacts for explicit rollback; it never selects `latest`. Existing
+`<version>/leantoken[.exe]` artifacts remain readable and referenced paths are
+never renamed or overwritten. New setup installs a digest-addressed sibling and
+updates only selected registrations. Private installation rejects a runtime root
+that is a symlink or is not a directory.
 JSON reports a transaction-wide `apply_error` even when an orphan discovery
 skill was the only planned mutation and no client result rows exist.
 
-`runtime list` reports installed versions, executable bytes, active state, and
-client references. `runtime prune` is a dry-run unless `--yes` is present; it
-always retains referenced and active runtimes, keeps the newest two
-unreferenced versions by default, and refuses directories containing anything
-other than the expected native executable. Applied pruning rechecks every
-supported client configuration immediately before deletion and removes through
-snapshot-matched open directory handles, so a concurrent registration or path
-swap fails closed. Change the bounded retention window with `--keep-latest` (0
-through 64):
+`runtime list` reports each artifact's version, full digest, exact path,
+executable bytes, legacy-layout marker, active state, and client references.
+`runtime prune` is a dry-run unless `--yes` is present. It retains every
+referenced artifact and the current executable. It also retains artifacts held
+by lease-aware running processes, even after refresh removes their last client
+reference. Older processes without lease support cannot advertise activity to
+another command; keep their client references while they run.
+Setup's marked native launchers recognize their validated absolute installation
+path and acquire the same artifact lease even when the host's home or data
+environment differs from installation. Unmarked manual launches require a
+resolvable setup home and matching data-directory settings to recognize the
+configured runtime root; with no resolvable home, they acquire no runtime lease.
+
+Retention keeps two additional unreferenced artifacts by default, sorted by
+semantic version descending, then digest and path ascending. Same-version
+variants count separately. Directories containing anything other than the
+expected native executable, or bytes that disagree with a digest-addressed name,
+are retained. Applied pruning takes the artifact's exclusive lease, rechecks
+every supported client configuration and the complete executable digest, and
+removes through snapshot-matched directory handles. A detected client edit or
+artifact identity change stops deletion; a live lease holder retains its
+artifact. Stable zero-byte lease sidecars stay in a separate `.leases` directory
+after removal and are reused on reinstall. Byte totals describe executable pathnames rather
+than physical disk allocation. Change the bounded retention window with
+`--keep-latest` (0 through 64):
 
 ```bash
 leantoken runtime list
@@ -325,8 +350,13 @@ leantoken runtime prune --keep-latest 2 --dry-run
 leantoken runtime prune --keep-latest 2 --yes
 ```
 
-Choose upgrades and rollbacks explicitly by running the desired version, then
-refresh only entries that already exist:
+To refresh a private runtime from a chosen native or source-built executable,
+run `leantoken setup --refresh --private-runtime --yes`. This pins existing
+registrations to that executable's exact digest-addressed artifact, including
+when its semantic version is unchanged. Other referenced variants remain usable.
+
+Choose published upgrades and rollbacks explicitly by running the desired
+version, then refresh only entries that already exist:
 
 ```bash
 npx --yes leantoken@latest setup --refresh --yes
@@ -360,6 +390,21 @@ OR filters, and `--repository-root` matches one exact recorded root.
 At most five compatibility and 32 exact-version filters are accepted. All
 filters are bound into the versioned cursor and cannot be changed between
 pages.
+
+Pagination limits response size independently from inventory work. Each list,
+summary, or prune inventory admits at most 4,096 root entries, 1,024 candidate
+caches/SQLite opens, and 32,768 artifact entries across both inspection passes.
+It also limits metadata, SQLite execution, and cooperative elapsed work; see
+the architecture bounds. Overflow fails with `incomplete_inventory` and JSON
+`complete: false`, the limiting `field`, observed lower bound (`requested`),
+and `limit`. Lowering `--limit` or adding filters does not raise these limits.
+An incomplete inventory has no page cursor or trustworthy aggregate totals,
+and prune refuses it before deleting any cache.
+
+Each page re-inspects the filesystem. Stable identifier cursors avoid skipped
+or repeated entries while the inventory is unchanged; they are not filesystem
+snapshots. Restart listing after inventory mutation to include newly added
+identifiers before the cursor boundary.
 
 Entry pages retain the existing metadata `state` and separately expose content
 `compatibility`, full/scoped index identity, recorded root, schema, last
@@ -403,6 +448,81 @@ identity so a returning repository cannot race a new process through a replaced
 lock file. Explicit `--database` files outside the managed directory are never
 enumerated. Stop older LeanToken versions that predate cache leases before
 pruning during a mixed-version rollout.
+
+## Selective cache compaction
+
+`cache compact` shrinks a retained SQLite index without rebuilding source or
+migrating its schema. It is an explicit maintenance operation; retrieval and
+service startup never run it automatically. Specify one to eight exact cache
+identities from `cache list`, rather than selecting every cache by version.
+Different pinned CLI/MCP versions can still legitimately use different caches.
+
+```bash
+leantoken cache list
+leantoken cache compact --id v15-0123456789abcdef
+leantoken cache compact --id v15-0123456789abcdef --yes
+```
+
+Without `--yes`, the command previews benefit and eligibility. `--dry-run`
+always wins, including when combined with `--yes`. Preview does not VACUUM or
+checkpoint; inspection can still touch coordination/SQLite SHM sidecars.
+`reusable_bytes` is an estimate from a consistent SQLite read transaction;
+`reclaimed_bytes` reports actual artifact reduction and is zero in previews.
+
+Both minimum thresholds must pass: by default, at least **64 MiB** of free pages
+and **10%** of logical database pages. Default work bounds are **1 GiB** for
+either logical database pages or database-plus-sidecar footprint, and a
+**120-second cooperative deadline** per cache. Override these with
+`--min-reclaim-bytes`, `--min-reclaim-percent`, `--max-database-bytes`, and
+`--max-seconds` (1–3600). Caches are processed sequentially in identity order.
+The deadline uses SQLite progress callbacks; a blocked filesystem call or final
+commit can overrun it. Callbacks also yield briefly to reduce sustained work;
+use OS quotas when a hard CPU or memory ceiling is required.
+
+Apply requires the same exclusive lifetime lease used by pruning, plus a SQLite
+exclusive locking mode. Active leaders/followers, unsupported ownership,
+unexpected artifacts, symlinks, and multiply linked artifacts are skipped.
+Only existing WAL databases are eligible. Rollback-mode databases are skipped
+before SQLite inspection; their journal mode and journal contents remain untouched.
+On Unix, a database already open in the calling process is skipped as active
+before opening another handle, including preview; this preserves existing
+SQLite process locks. CLI preview can still inspect outside connections in
+other processes. Connections outside the lease protocol can block maintenance and produce a
+failure; their snapshots are never forcibly released. Explicit databases outside
+the managed cache root are not eligible. Keep backup/linking/file-move tools
+quiescent during maintenance. The cache root must be controlled by its owner;
+leases and link checks cannot prevent another same-account process from creating
+new aliases after inspection. In-place VACUUM can modify those new aliases.
+
+Apply checks free space on **both** the database filesystem and SQLite's actual
+temporary directory, requiring twice the logical database size plus 32 MiB on
+the database volume and one database size plus 32 MiB on the temporary volume.
+If both directories share a volume, their requirements are added (three database
+sizes plus 64 MiB). An unknown volume identity also uses the combined requirement.
+The preflight is conservative, not a reservation against other writers or disk
+quotas. On Unix, configure `SQLITE_TMPDIR` before launching to select a suitable
+disk location; no SQLite global or process environment is changed by the command:
+
+```bash
+SQLITE_TMPDIR=/path/on/disk leantoken cache compact --id v15-0123456789abcdef --yes
+```
+
+On Windows SQLite selects the first nonempty `TMP`, `TEMP`, or `USERPROFILE`
+value without checking access. The selected directory must be writable and have
+sufficient space; an unusable `TMP` never falls through to a writable `TEMP`.
+If no environment candidate is known, maintenance refuses to guess the system
+directory. A small RAM-backed temporary volume can prevent compaction
+although the database volume has ample space. Temporary-file failures interrupt
+SQLite maintenance rather than causing a source reindex or schema upgrade.
+
+Apply validates SQLite integrity and retained schema/metadata, VACUUMs in place,
+and checkpoints under the held lease. Reports distinguish `vacuum_committed`
+from the final outcome: a later validation/checkpoint failure does not imply
+VACUUM was rolled back. Older supported WAL metadata layouts with a persisted access timestamp and repository
+generations remain unchanged. Caches whose access age comes from database/WAL
+mtimes are skipped, so maintenance cannot make them appear recently accessed. Stop clients predating cache leases before any
+maintenance. Compaction is not source-text compression; dense databases may
+save very little and are normally skipped by the benefit thresholds.
 
 ## First-run doctor
 
@@ -1012,8 +1132,14 @@ Reads an exact source range.
 `content_hash` identifies the returned range. `indexed_hash` identifies the
 whole indexed file. `index_stale` is true when the live file differs from the
 indexed version (for example after an edit that has not been reindexed yet).
-`target_start_line` and `target_end_line` describe the complete resolved target;
-`returned_start_line` and `returned_end_line` describe the current page.
+`target_start_line` identifies the first line of the resolved target.
+`target_end_line` preserves an explicit range, symbol, or heading end until an
+observed live EOF proves a shorter target. For an open-ended bounded read that
+stops before EOF, `target_end_line` is `null`; clients must accept an unknown end.
+`observed_end_line` is the live scan frontier, which can extend beyond a finite
+target during full-policy verification. It is not evidence that the target ends
+there. `returned_start_line` and `returned_end_line` describe only the source
+emitted in the current page.
 `status: "truncated"`, `truncated: true`, `next_start_line`, and
 `continuation_cursor` fail loudly whenever source remains. Continuation cursors
 are bound to the repository generation, path, and requested verification
@@ -1630,6 +1756,7 @@ Current category values are:
 | `retryable_conflict` | Concurrent repository state requires a retry |
 | `serialization_failure` | A response or persisted value could not be serialized |
 | `response_accounting_invariant` | Response token accounting failed to converge |
+| `cache_compact_failure` | Explicit cache compaction failed |
 | `cache_prune_failure` | Cache maintenance could not prune an artifact |
 | `setup_failure` | Setup or installation state violated an invariant |
 | `operation_failure` | A product operation reached an unexpected state |

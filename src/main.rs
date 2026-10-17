@@ -76,7 +76,12 @@ async fn main() {
     }
     let json = cli.json;
     init_tracing(json);
-    if let Err(error) = run(cli).await {
+    let (result, _runtime_lease) = match setup::acquire_current_runtime_lease(cli.managed_by_setup)
+    {
+        Ok(lease) => (run(cli).await, lease),
+        Err(error) => (Err(error), None),
+    };
+    if let Err(error) = result {
         if json {
             eprintln!("{}", serde_json::json!(cli_error_response(&error)));
         } else {

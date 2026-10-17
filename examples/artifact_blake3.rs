@@ -24,21 +24,3 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn hash_file(path: &Path) -> Result<String, Box<dyn Error>> {
     Ok(blake3::hash(&fs::read(path)?).to_hex().to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hash_file_matches_in_memory_blake3() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let artifact = directory.path().join("artifact.bin");
-        let content = b"frozen experiment artifact\0with binary data";
-        std::fs::write(&artifact, content).expect("write artifact");
-
-        assert_eq!(
-            hash_file(&artifact).expect("artifact hash"),
-            blake3::hash(content).to_hex().to_string()
-        );
-    }
-}

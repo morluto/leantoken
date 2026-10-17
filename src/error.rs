@@ -406,9 +406,24 @@ pub enum Error {
     /// Final response accounting could not reach a valid fixed point.
     #[error("response accounting invariant failed: {0}")]
     ResponseAccountingInvariant(String),
+    /// A bounded cache inventory stopped before the complete population was known.
+    #[error(
+        "cache inventory incomplete: {dimension} reached at least {observed}, limit {limit}; no complete inventory is available"
+    )]
+    CacheInventoryIncomplete {
+        /// Admission or execution resource that stopped the inventory.
+        dimension: &'static str,
+        /// Observed quantity, or a lower bound when SQLite rejects an oversized value.
+        observed: usize,
+        /// Inclusive inventory resource bound, independent of response pagination.
+        limit: usize,
+    },
     /// A best-effort cache maintenance operation failed.
     #[error("cache pruning failed: {0}")]
     CachePruneFailure(String),
+    /// Explicit cache compaction failed.
+    #[error("cache compaction failed: {0}")]
+    CacheCompactFailure(String),
     /// Setup or installation state failed an ownership or recovery invariant.
     #[error("setup failed: {0}")]
     SetupFailure(String),
@@ -586,7 +601,9 @@ impl Error {
             Self::StaleReconciliation { .. } | Self::RetryableConflict(_) => "retryable_conflict",
             Self::SerializationFailure(_) => "serialization_failure",
             Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
+            Self::CacheInventoryIncomplete { .. } => "incomplete_inventory",
             Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::CacheCompactFailure(_) => "cache_compact_failure",
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
             Self::ShutdownTimeout { .. } => "shutdown_timeout",
@@ -635,7 +652,9 @@ impl Error {
             Self::InvalidRequest(_) => "invalid_request",
             Self::SerializationFailure(_) => "serialization_failure",
             Self::ResponseAccountingInvariant(_) => "response_accounting_invariant",
+            Self::CacheInventoryIncomplete { .. } => "incomplete_inventory",
             Self::CachePruneFailure(_) => "cache_prune_failure",
+            Self::CacheCompactFailure(_) => "cache_compact_failure",
             Self::SetupFailure(_) => "setup_failure",
             Self::OperationFailure(_) => "operation_failure",
             Self::DoctorFailure { .. } => "doctor_failure",

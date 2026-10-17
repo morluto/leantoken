@@ -1,15 +1,38 @@
 use super::*;
 
+// Declare constant query owners before the sibling readers import the macro.
+macro_rules! hot_query {
+    ($name:ident, $operation:literal, $parameters:expr, $result:literal, $indexes:expr, $sql:literal) => {
+        pub(super) const $name: super::hot_query::HotQuery = super::hot_query::HotQuery {
+            sql: $sql,
+            #[cfg(test)]
+            contract: super::hot_query::QueryContract {
+                operation: $operation,
+                parameters: $parameters,
+                result: $result,
+                indexes: $indexes,
+            },
+        };
+    };
+}
+
 const IMPORT_REPAIR_PAGE_SIZE: usize = 32;
 
-pub(super) const IMPORT_CANDIDATE_RESOLUTION_SQL: &str = "WITH requested(priority, path) AS (
+hot_query!(
+    IMPORT_CANDIDATE_RESOLUTION,
+    "import_candidate_resolution",
+    &["candidate_paths: JSON text[]"],
+    "zero or one existing path selected in candidate priority order",
+    &["sqlite_autoindex_files_1"],
+    "WITH requested(priority, path) AS (
          SELECT CAST(key AS INTEGER), value FROM json_each(?1)
      )
      SELECT requested.path
      FROM requested
      JOIN files ON files.path = requested.path
      ORDER BY requested.priority
-     LIMIT 1";
+     LIMIT 1"
+);
 
 impl Storage {
     pub(crate) fn ensure_path_projection(conn: &mut Connection) -> Result<()> {
@@ -321,7 +344,7 @@ impl ReconciliationWriter<'_, '_> {
             {
                 let mut resolve = self
                     .transaction
-                    .prepare_cached(IMPORT_CANDIDATE_RESOLUTION_SQL)?;
+                    .prepare_cached(IMPORT_CANDIDATE_RESOLUTION.sql)?;
                 for (seed, resolved_path) in stored {
                     let candidate_paths = derive_candidates(&seed, &membership)?;
                     if candidate_paths.len() > MAX_IMPORT_CANDIDATES_PER_IMPORT

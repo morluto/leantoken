@@ -11,6 +11,10 @@ import { PLATFORMS } from "../scripts/build-npm-packages.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function run(program, args, options = {}) {
+  if (program === "npm" && process.platform === "win32") {
+    program = process.env.ComSpec ?? "cmd.exe";
+    args = ["/d", "/c", "npm.cmd", ...args];
+  }
   const result = spawnSync(program, args, {
     encoding: "utf8",
     ...options,
@@ -24,25 +28,15 @@ function run(program, args, options = {}) {
   return result;
 }
 
-function runNpm(args, options = {}) {
-  if (process.platform === "win32") {
-    return run(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", "npm.cmd", ...args], options);
-  }
-  return run("npm", args, options);
-}
-
 test("installs and runs the host-native npm package without lifecycle scripts", async () => {
   const platform = PLATFORMS.find(
     ({ os, cpu }) => os === process.platform && cpu === process.arch,
   );
   assert.ok(platform, `No npm target for ${process.platform}-${process.arch}`);
 
-  const version = "9.8.7";
   const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-install-e2e-"));
   const packageDir = join(workspace, "package");
   const nativeDir = join(packageDir, "bin", "native", platform.target);
-  const fixtureSource = join(workspace, "fixture.rs");
-  const fixtureBinary = join(workspace, platform.binary);
   const outputDir = join(workspace, "output");
   const installDir = join(workspace, "install");
   const npmCache = join(workspace, "npm-cache");
@@ -52,17 +46,30 @@ test("installs and runs the host-native npm package without lifecycle scripts", 
     NPM_CONFIG_CACHE: npmCache,
     NPM_CONFIG_UPDATE_NOTIFIER: "false",
   };
+  delete env.CARGO_BUILD_TARGET;
 
   try {
-    await writeFile(
-      fixtureSource,
-      'fn main() { println!("fake-leantoken:{:?}", std::env::args().skip(1).collect::<Vec<_>>()); }\n',
+    const metadata = JSON.parse(
+      run("cargo", ["metadata", "--no-deps", "--locked", "--format-version", "1"], {
+        cwd: ROOT,
+        env,
+      }).stdout,
     );
-    run("rustc", [fixtureSource, "-o", fixtureBinary]);
+    const manifest = resolve(ROOT, "Cargo.toml");
+    const product = metadata.packages.find(
+      ({ name, manifest_path }) => name === "leantoken" && resolve(manifest_path) === manifest,
+    );
+    assert.ok(product, `Cargo metadata has no product package at ${manifest}`);
+    const { version } = product;
+    run("cargo", ["build", "--locked", "-p", "leantoken", "--bin", "leantoken"], {
+      cwd: ROOT,
+      env,
+    });
+    const productBinary = join(metadata.target_directory, "debug", platform.binary);
     await mkdir(nativeDir, { recursive: true });
     await mkdir(outputDir);
     await mkdir(installDir);
-    await copyFile(fixtureBinary, join(nativeDir, platform.binary));
+    await copyFile(productBinary, join(nativeDir, platform.binary));
     if (process.platform !== "win32") {
       await chmod(join(nativeDir, platform.binary), 0o755);
     }
@@ -79,7 +86,9 @@ test("installs and runs the host-native npm package without lifecycle scripts", 
       })}\n`,
     );
 
-    runNpm(["pack", "--silent", "--pack-destination", outputDir, packageDir], { env });
+    run("npm", ["pack", "--offline", "--silent", "--pack-destination", outputDir, packageDir], {
+      env,
+    });
     const tarball = join(outputDir, `leantoken-${version}.tgz`);
     await writeFile(
       join(installDir, "package.json"),
@@ -89,20 +98,53 @@ test("installs and runs the host-native npm package without lifecycle scripts", 
       })}\n`,
     );
 
-    const install = runNpm(
+    const install = run(
+      "npm",
       ["install", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"],
       { cwd: installDir, env },
     );
     assert.doesNotMatch(install.stderr, /allow-scripts|lifecycle script|postinstall/i);
 
-    const execution = runNpm(
-      ["exec", "--offline", "--", "leantoken", "status", "two words", "--flag=value"],
-      { cwd: installDir, env },
+    const cli = ["exec", "--offline", "--", "leantoken"];
+    const versionOutput = run("npm", [...cli, "--version"], { cwd: installDir, env });
+    assert.ok(versionOutput.stdout.includes(version), "launcher did not report Cargo version");
+
+    const repository = join(workspace, "repository with spaces");
+    const database = join(workspace, "explicit index.sqlite3");
+    const repositoryOptions = ["--root", repository, "--database", database, "--json"];
+    await mkdir(join(repository, "src"), { recursive: true });
+    await writeFile(
+      join(repository, "src", "npm_install_fixture.rs"),
+      "pub fn npm_install_e2e_unique_marker() -> &'static str { \"installed launcher\" }\n",
     );
-    assert.equal(
-      execution.stdout.trim(),
-      'fake-leantoken:["status", "two words", "--flag=value"]',
+    run("npm", [...cli, ...repositoryOptions, "index"], { cwd: installDir, env });
+    const status = JSON.parse(
+      run(
+        "npm",
+        [...cli, ...repositoryOptions, "status"],
+        { cwd: installDir, env },
+      ).stdout,
     );
+    assert.equal(status.file_count, 1);
+
+    const search = JSON.parse(
+      run(
+        "npm",
+        [
+          ...cli,
+          ...repositoryOptions,
+          "search",
+          "npm_install_e2e_unique_marker",
+          "--mode",
+          "identifier",
+          "--max-tokens",
+          "100",
+        ],
+        { cwd: installDir, env },
+      ).stdout,
+    );
+    assert.equal(search.hits[0].path, "src/npm_install_fixture.rs");
+    assert.ok(search.meta.source_tokens <= 100, "search exceeded --max-tokens");
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }

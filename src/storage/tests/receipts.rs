@@ -199,7 +199,7 @@ fn receipt_successors_leave_retryable_immutable_sources() {
 }
 
 #[test]
-fn sqlite_decisions_match_the_previous_in_memory_oracle() {
+fn sqlite_receipt_decisions_cover_exact_overlap_and_semantic_duplicates() {
     let directory = tempfile::tempdir().expect("directory");
     let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
     let first = ReceiptEvidence::new(
@@ -213,7 +213,6 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
         .evaluate_receipt(None, 7, std::slice::from_ref(&first), true)
         .expect("create receipt")
         .receipt_id;
-    let mut oracle = vec![first.clone()];
     let candidates = vec![
         first,
         ReceiptEvidence::new("src/lib.rs", 20, 30, "second", Some("unrelated words here")),
@@ -222,7 +221,7 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
             1,
             2,
             "third",
-            Some("alpha beta gamma delta epsilon zeta"),
+            Some("epsilon delta gamma beta alpha"),
         ),
         ReceiptEvidence::new(
             "src/new.rs",
@@ -232,28 +231,31 @@ fn sqlite_decisions_match_the_previous_in_memory_oracle() {
             Some("completely separate implementation detail"),
         ),
     ];
-    for suppress_overlap in [true, false] {
-        let expected = candidates
-            .iter()
-            .map(|candidate| oracle_decide(&oracle, candidate, suppress_overlap))
-            .collect::<Vec<_>>();
+    for (suppress_overlap, expected) in [
+        (
+            true,
+            vec![
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::SuppressOverlap,
+                ReceiptDecision::ReturnNearDuplicate,
+                ReceiptDecision::Return,
+            ],
+        ),
+        (
+            false,
+            vec![
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::Return,
+                ReceiptDecision::SuppressExact,
+                ReceiptDecision::SuppressExact,
+            ],
+        ),
+    ] {
         let actual = storage
             .evaluate_receipt(Some(&receipt_id), 7, &candidates, suppress_overlap)
             .expect("persistent evaluation");
         assert_eq!(actual.decisions, expected);
         receipt_id = actual.receipt_id;
-        oracle.extend(
-            candidates
-                .iter()
-                .zip(expected)
-                .filter(|(_, decision)| {
-                    matches!(
-                        decision,
-                        ReceiptDecision::Return | ReceiptDecision::ReturnNearDuplicate
-                    )
-                })
-                .map(|(candidate, _)| candidate.clone()),
-        );
     }
 }
 
@@ -448,15 +450,14 @@ fn receipt_schema_contains_metadata_only() {
         let mut statement = connection
             .prepare(&format!("PRAGMA table_info({table})"))
             .expect("table info");
-        columns.extend(
-            statement
-                .query_map([], |row| row.get::<_, String>(1))
-                .expect("column rows")
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .expect("columns"),
-        );
+        let table_columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("column rows")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("columns");
+        assert!(!table_columns.is_empty(), "missing receipt table {table}");
+        columns.extend(table_columns);
     }
-    assert!(!columns.is_empty());
     for forbidden in ["task", "query", "source", "content", "prompt", "message"] {
         assert!(
             columns.iter().all(|column| column != forbidden),
@@ -1020,170 +1021,67 @@ fn poisoned_process_local_writer_mutex_does_not_corrupt_receipts() {
 }
 
 #[test]
-fn receipt_lookup_append_and_prune_query_plans_use_bounded_indexes() {
-    let directory = tempfile::tempdir().expect("directory");
-    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
-    let connection = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for (sql, expected) in [
-        (
-            "SELECT id FROM retrieval_receipts WHERE id = 1",
-            "USING INTEGER PRIMARY KEY",
-        ),
-        (
-            "SELECT path FROM retrieval_receipt_evidence
-             WHERE receipt_id = 1 ORDER BY ordinal",
-            "USING INDEX sqlite_autoindex_retrieval_receipt_evidence_1",
-        ),
-        (
-            "DELETE FROM retrieval_receipts WHERE expires_unix_millis <= 1",
-            "retrieval_receipts_expiry_idx",
-        ),
-        (
-            "DELETE FROM retrieval_receipts
-             WHERE expires_unix_millis <= 1 AND id != 2",
-            "retrieval_receipts_expiry_idx",
-        ),
-        (
-            "SELECT id FROM retrieval_receipts
-             WHERE access_sequence > 0
-             ORDER BY access_sequence, id LIMIT 1",
-            "USING COVERING INDEX retrieval_receipts_lru_idx",
-        ),
-    ] {
-        let mut statement = connection
-            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-            .expect("query plan");
-        let details = statement
-            .query_map([], |row| row.get::<_, String>(3))
-            .expect("plan rows")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("plan details")
-            .join(" | ");
-        assert!(
-            details.contains(expected),
-            "expected {expected:?} in query plan {details:?} for {sql}"
-        );
-        assert!(
-            !details.contains("SCAN retrieval_receipt"),
-            "unbounded receipt scan: {details}"
-        );
-    }
-}
-
-#[test]
-fn receipt_rebase_structural_lookup_uses_file_bounded_indexes() {
-    let directory = tempfile::tempdir().expect("directory");
-    let storage = Storage::open(directory.path().join("index.sqlite")).expect("storage");
-    let connection = storage
-        .writer
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let sql = "SELECT content
-               FROM (
-                   SELECT COALESCE(signature, name) AS content, rowid AS stable_id, 0 AS kind
-                   FROM symbols
-                   WHERE file_id = 1 AND start_line = 2 AND end_line = 3
-                   UNION ALL
-                   SELECT raw_target AS content, id AS stable_id, 1 AS kind
-                   FROM imports
-                   WHERE file_id = 1 AND line = 2 AND line = 3
-               )
-               ORDER BY kind, stable_id
-               LIMIT 65";
-    let mut statement = connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
-        .expect("query plan");
-    let details = statement
-        .query_map([], |row| row.get::<_, String>(3))
-        .expect("plan rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("plan details")
-        .join(" | ");
-    assert!(
-        details.contains("symbols_file_start_idx"),
-        "symbol lookup must stay file-bounded: {details}"
-    );
-    assert!(
-        details.contains("imports_file_line_idx"),
-        "import lookup must stay file/line-bounded: {details}"
-    );
-    assert!(!details.contains("SCAN symbols"), "{details}");
-    assert!(!details.contains("SCAN imports"), "{details}");
-}
-
-#[test]
-fn receipt_migration_preserves_existing_index_and_failed_migration_rolls_back() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    {
-        let storage = Storage::open(&database).expect("storage");
-        storage
-            .full_reconcile("config", vec![sample_file("lib.rs", "fn indexed() {}\n")])
-            .expect("index");
-    }
-    downgrade_receipt_schema(&database, false);
-    let migrated = Storage::open(&database).expect("migrate receipts");
-    assert!(migrated.find_file("lib.rs").expect("find").is_some());
-    drop(migrated);
-
-    downgrade_receipt_schema(&database, true);
-    assert!(Storage::open(&database).is_err());
-    let connection = Connection::open(&database).expect("inspect failed migration");
-    assert_eq!(
-        connection
-            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get::<_, i64>(0))
-            .expect("file count"),
-        1
-    );
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .expect("migration version"),
-        7
-    );
-}
-
-#[test]
 fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
-    let directory = tempfile::tempdir().expect("directory");
-    let database = directory.path().join("index.sqlite");
-    let storage = Storage::open(&database).expect("storage");
-    let generation = storage
-        .full_reconcile("config", vec![sample_file("lib.rs", "fn indexed() {}\n")])
-        .expect("index");
+    let directory = leantoken_test_support::Sandbox::new(module_path!(), "exact_only_migration")
+        .expect("sandbox");
+    let database = directory.root().join("index.sqlite");
+    let mut connection = Connection::open(&database).expect("historical connection");
+    migration_test_support::apply_prefix(&mut connection, 9)
+        .expect("authoritative prefix before exact-only evidence");
     let prior = evidence(1);
-    let receipt_id = storage
-        .evaluate_receipt(None, generation, std::slice::from_ref(&prior), true)
-        .expect("receipt")
-        .receipt_id;
-    drop(storage);
-
-    let connection = Connection::open(&database).expect("downgrade connection");
+    let legacy_evidence_bytes =
+        i64::try_from(prior.logical_bytes() - 8).expect("bounded pre-exact-only evidence bytes");
     connection
         .execute_batch(
-            "DROP TABLE query_coverage_receipts;
-             DROP TABLE query_coverage_receipt_usage;
-             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
-             ALTER TABLE meta DROP COLUMN index_scope_includes;
-             ALTER TABLE meta DROP COLUMN index_scope_excludes;
-             ALTER TABLE retrieval_receipt_evidence DROP COLUMN exact_only;
-             UPDATE retrieval_receipt_evidence
-             SET logical_bytes = logical_bytes - 8;
-             UPDATE retrieval_receipts
-             SET evidence_bytes = evidence_bytes - evidence_count * 8;
-             UPDATE retrieval_receipt_usage
-             SET evidence_bytes = evidence_bytes - evidence_count * 8
-             WHERE id = 1;
-             UPDATE meta SET schema_version = 8 WHERE id = 1;
-             PRAGMA user_version = 9;",
+            "PRAGMA foreign_keys = ON;
+             PRAGMA max_page_count = 256;
+             UPDATE meta SET repository_identity='historical-repository',repository_generation=1;",
         )
-        .expect("downgrade exact-only migration");
+        .expect("historical repository metadata");
+    connection.execute(
+        "INSERT INTO retrieval_receipts(id,repository_identity,repository_generation,created_unix_millis,last_access_unix_millis,expires_unix_millis,access_sequence,logical_bytes,evidence_count,evidence_bytes)
+         VALUES (1,'historical-repository',1,1000,1000,9223372036854775807,1,?1,1,?2)",
+        params![
+            usize_to_i64(RECEIPT_HEADER_FIXED_LOGICAL_BYTES + "historical-repository".len())
+                .expect("bounded header bytes"),
+            legacy_evidence_bytes,
+        ],
+    ).expect("historical receipt header");
+    connection.execute(
+        "INSERT INTO retrieval_receipt_evidence(receipt_id,ordinal,path,start_line,end_line,content_hash,semantic_signature,logical_bytes)
+         VALUES (1,0,?1,?2,?3,?4,?5,?6)",
+        params![
+            prior.path.as_str(),
+            usize_to_i64(prior.start_line).expect("line"),
+            usize_to_i64(prior.end_line).expect("line"),
+            prior.content_hash.as_str(),
+            prior.semantic_signature().map(|signature| signature as i64),
+            legacy_evidence_bytes,
+        ],
+    ).expect("ordinary historical evidence without an exact-only column");
+    connection.execute(
+        "UPDATE retrieval_receipt_usage SET next_access_sequence=1,evidence_count=1,evidence_bytes=?1 WHERE id=1",
+        [legacy_evidence_bytes],
+    ).expect("historical evidence usage");
     drop(connection);
 
     let migrated = Storage::open(&database).expect("migrate exact-only column");
+    let namespace: String = migrated
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM retrieval_receipt_usage WHERE id=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("current namespace after first identity recording");
+    let receipt_id = crate::receipt::format_receipt_id(&namespace, 1);
+    let stored = migrated
+        .read_receipt(&receipt_id, 1_001)
+        .expect("upgraded evidence");
+    assert_eq!(stored.evidence.as_slice(), std::slice::from_ref(&prior));
+    assert!(!stored.evidence[0].exact_only());
     let overlapping = ReceiptEvidence::new(
         prior.path,
         prior.start_line,
@@ -1192,70 +1090,7 @@ fn exact_only_migration_keeps_existing_evidence_as_ordinary() {
         Some("unrelated replacement"),
     );
     let evaluation = migrated
-        .evaluate_receipt(Some(&receipt_id), generation, &[overlapping], true)
+        .evaluate_receipt_at(Some(&receipt_id), 1, &[overlapping], true, 1_001)
         .expect("evaluate migrated ordinary evidence");
     assert_eq!(evaluation.decisions, vec![ReceiptDecision::SuppressOverlap]);
-}
-
-fn downgrade_receipt_schema(database: &Path, conflicting_table: bool) {
-    let connection = Connection::open(database).expect("downgrade connection");
-    connection
-        .execute_batch(
-            "DROP TABLE IF EXISTS query_coverage_receipts;
-             DROP TABLE IF EXISTS query_coverage_receipt_usage;
-             DROP TABLE IF EXISTS read_delta_bases;
-             DROP TABLE IF EXISTS read_delta_base_usage;
-             DROP TABLE IF EXISTS retrieval_receipt_evidence;
-             DROP TABLE IF EXISTS retrieval_receipts;
-             DROP TABLE IF EXISTS retrieval_receipt_usage;
-             ALTER TABLE meta DROP COLUMN derivation_fingerprint;
-             ALTER TABLE meta DROP COLUMN index_scope_includes;
-             ALTER TABLE meta DROP COLUMN index_scope_excludes;
-             UPDATE meta SET schema_version = 6 WHERE id = 1;
-             PRAGMA user_version = 7;",
-        )
-        .expect("downgrade receipt schema");
-    if conflicting_table {
-        connection
-            .execute(
-                "CREATE TABLE retrieval_receipts(conflicting_value TEXT)",
-                [],
-            )
-            .expect("conflicting migration table");
-    }
-}
-
-fn oracle_decide(
-    previous: &[ReceiptEvidence],
-    candidate: &ReceiptEvidence,
-    suppress_overlap: bool,
-) -> ReceiptDecision {
-    if !candidate.content_hash.is_empty()
-        && previous
-            .iter()
-            .any(|seen| seen.content_hash == candidate.content_hash)
-    {
-        return ReceiptDecision::SuppressExact;
-    }
-    if suppress_overlap
-        && previous.iter().any(|seen| {
-            !seen.exact_only()
-                && seen.path == candidate.path
-                && seen.start_line <= candidate.end_line
-                && candidate.start_line <= seen.end_line
-        })
-    {
-        return ReceiptDecision::SuppressOverlap;
-    }
-    if candidate.semantic_signature().is_some_and(|signature| {
-        previous.iter().any(|seen| {
-            !seen.exact_only()
-                && seen
-                    .semantic_signature()
-                    .is_some_and(|prior| (signature ^ prior).count_ones() <= 8)
-        })
-    }) {
-        return ReceiptDecision::ReturnNearDuplicate;
-    }
-    ReceiptDecision::Return
 }

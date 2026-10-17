@@ -137,9 +137,14 @@ pub struct ReadResponse {
     /// First line in the complete resolved target.
     #[serde(default)]
     pub target_start_line: usize,
-    /// Last line in the complete resolved target.
+    /// Last line in the resolved target, clamped only when live EOF is observed.
+    /// `None` for an open-ended bounded read that stops before EOF.
     #[serde(default)]
-    pub target_end_line: usize,
+    pub target_end_line: Option<usize>,
+    /// Last line observed in the live file, not the complete target end.
+    /// Full-policy verification can scan beyond a finite target.
+    #[serde(default)]
+    pub observed_end_line: usize,
     /// First line represented by this response page.
     #[serde(default)]
     pub returned_start_line: usize,

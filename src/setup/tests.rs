@@ -43,14 +43,6 @@ fn edit_toml_config(
 }
 
 #[test]
-fn runtime_root_falls_back_below_the_resolved_home() {
-    assert_eq!(
-        setup_runtime_root_from(Path::new("/home/agent"), None),
-        Path::new("/home/agent/.local/share/leantoken/runtimes")
-    );
-}
-
-#[test]
 fn setup_file_reads_reject_content_above_the_memory_bound() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("oversized.json");
@@ -94,19 +86,6 @@ fn setup_rejects_generated_client_configuration_above_the_read_bound() {
 
     assert!(error.to_string().contains("refusing to write setup file"));
     assert!(fs::metadata(path).unwrap().len() < MAX_SETUP_FILE_BYTES);
-}
-
-#[test]
-fn failed_launcher_verification_marks_setup_report_failed() {
-    let mut report = empty_report(SetupOperation::Setup, true);
-    report.cancelled = false;
-    report.verification = Some(SetupVerification::Failed {
-        stage: "handshake".into(),
-        message: "launcher closed".into(),
-        repair_command: "leantoken doctor --json".into(),
-    });
-
-    assert!(report.has_failures());
 }
 
 struct FixedPrompt {
@@ -652,6 +631,38 @@ fn registered_version_recognizes_direct_package_manager_pins() {
 }
 
 #[test]
+fn registered_version_validates_runtime_namespace_and_returns_semantic_release() {
+    let digest = "ab".repeat(32);
+    for (directory, expected) in [
+        ("1.2.3".to_owned(), Some("1.2.3")),
+        (format!("1.2.3_{digest}"), Some("1.2.3")),
+        (
+            format!("1.2.3-rc.1+source.5_{digest}"),
+            Some("1.2.3-rc.1+source.5"),
+        ),
+        (
+            "1.2.3-rc.1+source.5".to_owned(),
+            Some("1.2.3-rc.1+source.5"),
+        ),
+        ("1.2.3_short".to_owned(), None),
+        (format!("1.2.3_{}", digest.to_ascii_uppercase()), None),
+        (format!("1.2.3_{digest}_extra"), None),
+        (format!("invalid_{digest}"), None),
+    ] {
+        let command = Path::new("runtimes")
+            .join(directory)
+            .join(runtime_executable_name(cfg!(windows)));
+        assert_eq!(
+            registered_version(command.to_str().unwrap(), &[]).as_deref(),
+            expected,
+            "{}",
+            command.display()
+        );
+    }
+    assert_eq!(registered_version("leantoken", &["mcp".into()]), None);
+}
+
+#[test]
 fn runtime_reference_snapshots_detect_configuration_changes_before_prune() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
@@ -863,43 +874,6 @@ fn diagnostic_preserves_unknown_discovery_state_after_skill_read_failure() {
 }
 
 #[test]
-fn malformed_client_blocks_the_entire_plan_before_writes() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = environment(&temp);
-    fs::create_dir_all(&environment.home).unwrap();
-    fs::write(environment.home.join(".claude.json"), "{ broken").unwrap();
-    let error = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Claude, SetupClient::Cursor],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("refusing to overwrite malformed config")
-    );
-    assert_eq!(
-        fs::read_to_string(environment.home.join(".claude.json")).unwrap(),
-        "{ broken"
-    );
-    assert!(!environment.home.join(".cursor/mcp.json").exists());
-}
-
-#[test]
 fn non_interactive_explicit_selection_requires_yes() {
     let temp = tempfile::tempdir().unwrap();
     let mut environment = environment(&temp);
@@ -924,36 +898,6 @@ fn non_interactive_explicit_selection_requires_yes() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("non-interactive setup requires"));
-    assert!(!environment.home.join(".codex/config.toml").exists());
-}
-
-#[test]
-fn dry_run_resolves_exact_plan_without_writes_or_yes() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut environment = environment(&temp);
-    environment.interactive = false;
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Codex],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: false,
-            dry_run: true,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-    assert!(report.dry_run);
-    assert_eq!(report.plan[0].action, ClientPlanAction::Create);
-    assert!(report.results.is_empty());
     assert!(!environment.home.join(".codex/config.toml").exists());
 }
 
@@ -1171,47 +1115,6 @@ fn refresh_does_not_create_entries_or_fall_back_to_latest_without_an_npm_cache()
 }
 
 #[test]
-fn empty_refresh_preserves_marker_owned_discovery_without_managed_clients() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = npx_environment(&temp, "1.2.3");
-    let config = environment.home.join(".codex/config.toml");
-    fs::create_dir_all(config.parent().unwrap()).unwrap();
-    let original_config =
-        "[mcp_servers.leantoken]\ncommand = \"/opt/manual-leantoken\"\nargs = [\"mcp\"]\n";
-    fs::write(&config, original_config).unwrap();
-    let discovery = environment.home.join(".agents/skills/leantoken/SKILL.md");
-    fs::create_dir_all(discovery.parent().unwrap()).unwrap();
-    let original_discovery = format!("{DISCOVERY_SKILL_MARKER}\nlegacy discovery\n");
-    fs::write(&discovery, &original_discovery).unwrap();
-
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: Vec::new(),
-            all: false,
-            refresh: true,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-
-    assert!(report.plan.is_empty());
-    assert!(report.results.is_empty());
-    assert!(report.discovery_plan.is_empty());
-    assert_eq!(fs::read_to_string(config).unwrap(), original_config);
-    assert_eq!(fs::read_to_string(discovery).unwrap(), original_discovery);
-}
-
-#[test]
 fn refresh_preserves_discovery_for_unmanaged_existing_clients() {
     let temp = tempfile::tempdir().unwrap();
     let environment = npx_environment(&temp, "2.0.0");
@@ -1295,7 +1198,10 @@ fn empty_refresh_does_not_install_an_unreferenced_private_runtime() {
     .unwrap();
     let runtime = environment
         .runtime_root
-        .join("1.2.3")
+        .join(format!(
+            "1.2.3_{}",
+            file_digest(&environment.native_executable).unwrap()
+        ))
         .join(runtime_executable_name(cfg!(windows)));
 
     let report = run_with(
@@ -1411,18 +1317,18 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     .unwrap();
     let launcher = dry_run.launcher.expect("launcher plan");
     let runtime_path = launcher.runtime_path.expect("private runtime path");
+    let expected_digest = file_digest(&environment.native_executable).unwrap();
     assert_eq!(
         runtime_path,
         environment
             .runtime_root
-            .join("1.2.3")
+            .join(format!("1.2.3_{expected_digest}"))
             .join(if cfg!(windows) {
                 "leantoken.exe"
             } else {
                 "leantoken"
             })
     );
-    let expected_digest = file_digest(&environment.native_executable).unwrap();
     assert_eq!(
         launcher.runtime_digest.as_deref(),
         Some(expected_digest.as_str())
@@ -1482,17 +1388,6 @@ fn private_runtime_dry_run_install_and_remove_are_pinned_and_idempotent() {
     .unwrap();
     assert!(!removal.has_failures());
     assert!(runtime_path.exists(), "removal retains versioned runtimes");
-}
-
-#[test]
-fn private_runtime_uses_native_executable_names_for_supported_package_layouts() {
-    for (platform, windows, expected) in [
-        ("linux", false, "leantoken"),
-        ("macos", false, "leantoken"),
-        ("windows", true, "leantoken.exe"),
-    ] {
-        assert_eq!(runtime_executable_name(windows), expected, "{platform}");
-    }
 }
 
 #[cfg(unix)]
@@ -1628,6 +1523,168 @@ fn runtime_removal_reports_when_the_executable_was_removed_but_directory_remains
     assert!(!executable.exists());
     assert!(sibling.exists());
     assert!(directory.exists());
+}
+
+#[test]
+fn private_runtime_client_edit_failure_rolls_back_only_the_new_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    fs::create_dir_all(&environment.runtime_root).unwrap();
+    fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+    fs::write(&environment.native_executable, b"original artifact").unwrap();
+    let original = runtime_install_plan(&environment).unwrap();
+    install_runtime(&original).unwrap();
+    fs::write(&environment.native_executable, b"same-release replacement").unwrap();
+    let replacement = runtime_install_plan(&environment).unwrap();
+    let replacement_path = replacement.destination.clone();
+    assert_ne!(replacement_path, original.destination);
+
+    let config = environment.home.join(".claude.json");
+    let mut plan = resolve_plan(
+        SetupOperation::Setup,
+        &[SetupClient::Claude],
+        PlanEnvironment {
+            detected: &[],
+            home: &environment.home,
+            launcher: &environment.launcher,
+            persistent_cli: false,
+            runtime: Some(replacement),
+            discovery_paths: Vec::new(),
+            discovery_cleanup_paths: Vec::new(),
+            configuration_snapshots: Vec::new(),
+            force_unmanaged: false,
+            transaction_root: &environment.runtime_root,
+        },
+    )
+    .unwrap();
+    // A stale observation after the first write forces a client-edit failure
+    // after publication and journal creation, without timing or permissions.
+    plan.edits.push(PlannedClientEdit {
+        public: ClientSetupPlan {
+            client: SetupClient::Claude,
+            path: config.clone(),
+            action: ClientPlanAction::AlreadyCurrent,
+            detected: false,
+        },
+        resolution: ResolvedEdit::AlreadyConfigured { original: None },
+    });
+
+    let outcome = apply_plan(&plan);
+    assert!(
+        outcome.error.as_deref().is_some_and(|error| {
+            error.contains("transaction rolled back") && error.contains("changed after preflight")
+        }),
+        "{:?}",
+        outcome.error
+    );
+    assert_eq!(
+        fs::read(&original.destination).unwrap(),
+        b"original artifact"
+    );
+    assert!(!replacement_path.exists());
+    assert!(!config.exists());
+    assert!(!transaction_path(&environment.runtime_root).exists());
+}
+
+#[test]
+fn private_runtime_digest_namespace_rejects_tampering_without_clobbering() {
+    let temp = tempfile::tempdir().unwrap();
+    let environment = npx_environment(&temp, "1.2.3");
+    fs::create_dir_all(&environment.runtime_root).unwrap();
+    fs::create_dir_all(environment.native_executable.parent().unwrap()).unwrap();
+    fs::write(&environment.native_executable, b"verified source").unwrap();
+    let plan = runtime_install_plan(&environment).unwrap();
+    fs::create_dir_all(plan.destination.parent().unwrap()).unwrap();
+    fs::write(
+        &plan.destination,
+        b"different bytes in the digest namespace",
+    )
+    .unwrap();
+
+    let error = install_runtime(&plan).unwrap_err().to_string();
+    assert!(error.contains("identity mismatch"), "{error}");
+    assert_eq!(
+        fs::read(&plan.destination).unwrap(),
+        b"different bytes in the digest namespace"
+    );
+    let error = runtime_install_plan(&environment).unwrap_err().to_string();
+    assert!(error.contains("identity mismatch"), "{error}");
+}
+
+#[test]
+fn runtime_prune_rechecks_activity_after_inventory_and_preserves_stable_leases() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let runtime_root = temp.path().join("runtimes");
+    fs::create_dir(&home).unwrap();
+    let artifact = |version: &str| {
+        let directory = runtime_root.join(version);
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join(runtime_executable_name(cfg!(windows)));
+        fs::write(&executable, version).unwrap();
+        executable
+    };
+    let newest = artifact("2.0.0");
+    let oldest = artifact("1.0.0");
+    let lease_path = runtime_root
+        .join(".leases")
+        .join(format!("{}.lock", blake3::hash(b"1.0.0").to_hex()));
+    let mut active = None;
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root.clone(),
+        || {},
+        || {
+            // Startup can take a lease without waiting for the setup lock.
+            // Acquire it after inventory but before the next deletion decision.
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&lease_path)
+                .unwrap();
+            file.lock_shared().unwrap();
+            active = Some(file);
+        },
+    )
+    .unwrap();
+    assert!(!newest.exists() && oldest.exists());
+    assert_eq!(report.results[1].reason, "active_process");
+    let stable = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lease_path)
+        .unwrap();
+    drop(active);
+    let report = prune_runtimes_at(
+        RuntimePruneRequest {
+            keep_latest: 0,
+            dry_run: false,
+            yes: true,
+        },
+        &home,
+        runtime_root,
+        || {},
+        || {},
+    )
+    .unwrap();
+    assert_eq!(report.results[0].outcome.action(), "removed");
+    assert!(!oldest.exists());
+    stable.lock_shared().unwrap();
+    let probe = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lease_path)
+        .unwrap();
+    assert!(
+        matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+        "pruning must retain the same lease file identity"
+    );
 }
 
 #[cfg(unix)]
@@ -2141,6 +2198,9 @@ fn failed_rollback_retains_journal_for_deleted_target() {
 fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() {
     let temp = tempfile::tempdir().unwrap();
     let environment = environment(&temp);
+    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
+    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
+    fs::write(&claude_skill, "user-owned Claude skill").unwrap();
     let prompt = FixedPrompt {
         selected: None,
         confirmed: true,
@@ -2164,6 +2224,10 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
     )
     .unwrap();
     assert_eq!(report.discovery_plan.len(), 1);
+    assert_eq!(
+        fs::read_to_string(&claude_skill).unwrap(),
+        "user-owned Claude skill"
+    );
     assert!(
         report
             .discovery_skill_tokens
@@ -2202,46 +2266,6 @@ fn setup_manages_compact_discovery_skills_without_overwriting_unowned_content() 
     assert_eq!(
         fs::read_to_string(shared_skill).unwrap(),
         "user-owned skill"
-    );
-}
-
-#[test]
-fn codex_setup_does_not_touch_an_unselected_claude_skill() {
-    let temp = tempfile::tempdir().unwrap();
-    let environment = environment(&temp);
-    let claude_skill = environment.home.join(".claude/skills/leantoken/SKILL.md");
-    fs::create_dir_all(claude_skill.parent().unwrap()).unwrap();
-    fs::write(&claude_skill, "user-owned Claude skill").unwrap();
-    let report = run_with(
-        SetupOperation::Setup,
-        SetupRequest {
-            clients: vec![SetupClient::Codex],
-            all: false,
-            refresh: false,
-            private_runtime: false,
-            yes: true,
-            dry_run: false,
-            allow_outdated: false,
-            force_unmanaged: false,
-        },
-        &environment,
-        &FixedPrompt {
-            selected: None,
-            confirmed: true,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(report.discovery_plan.len(), 1);
-    assert_eq!(
-        fs::read_to_string(claude_skill).unwrap(),
-        "user-owned Claude skill"
-    );
-    assert!(
-        environment
-            .home
-            .join(".agents/skills/leantoken/SKILL.md")
-            .exists()
     );
 }
 

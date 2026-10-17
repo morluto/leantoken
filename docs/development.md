@@ -51,17 +51,32 @@ cargo fmt --all -- --check
 Run a focused test module while developing:
 
 ```bash
-cargo test-focused services::
+cargo test-focused product::services::
 cargo test-focused platform
 ```
 
 Named suite domains (`indexing_repository`, `storage`, `retrieval`, `protocol`,
 `platform`, and `contracts`) route directly to their owning package. Other
 module or exact-test filters search both the product and domain-suite packages.
+Prefix a filter with `product::` or `suite::` to select its owner explicitly
+and avoid compiling unrelated test harnesses merely to discover their names.
 Zero matches fail instead of returning false-green; a name present in both
 packages fails as ambiguous and asks for a domain-qualified selector. Use the
 ownership map under [Test responsibilities](#test-responsibilities), and run
 each affected filter when a change crosses boundaries.
+
+`Sandbox` preserves failed fixtures under `target/test-failures` and prints an
+owner-qualified focused rerun that selects integration tests as well as library
+tests. Set `LEANTOKEN_TEST_KEEP=1` to inspect a successful fixture too. The native
+runtime lifecycle fixture retains its installed executable, configuration,
+database, and two small phase reports identifying EOF versus crash, the owned
+PID, and the last stage reached. CI uploads these alongside nextest JUnit.
+
+The MCP process helper allows 10 seconds for `initialize`, matching the existing
+setup/doctor verification contract, including cold executable startup. Other
+RPC calls retain their own deadlines. A Unix real-executable test delays startup
+by six seconds before the handshake to exercise this distinction without
+changing production startup or retrying failed tests.
 
 When the exact owner is already known, use its target directly to avoid
 building unrelated harnesses:
@@ -105,15 +120,28 @@ inventory, and rejects actual `include!()` syntax without matching comments or
 strings. The raw SQLite read session is private to storage, so the compiler—not
 a source-text scan—enforces the service snapshot boundary.
 
+Local Cargo builds default to one compiler job; direct libtest runs default
+to two test threads. Override Cargo's build bound with `-j` when appropriate.
+Keep compilation, full product tests, extras, and coverage serial on a shared
+development machine. Coverage uses a separate instrumented build and should
+run only when its evidence is needed.
+
 The product runner starts one `cargo nextest run` for product units, private
 domain suites, ordinary integration, and executable/MCP process behavior. That
-single Cargo build graph and nextest scheduler has one platform-wide bound:
-four tests on Linux, three on macOS, and two on Windows. Nested nextest groups
+single Cargo build graph and nextest scheduler has a two-test local bound.
+CI retains its platform bounds: four tests on Linux, three on macOS, and two
+on Windows. Nested nextest groups
 reserve capacity for cold indexing/SQLite, Git fixtures, filesystem/watcher,
 real-process/MCP, extended, and cheap tests. No second Cargo planner competes
 for package-cache or artifact locks. Local runs select the `local` profile; CI
 passes `--profile ci`. Both produce owner- and test-level JUnit metadata under
 `target/nextest/`. Doctests stay on their explicit Cargo command.
+
+The `services::budgets` and `services::consistency` integration owners build
+fresh SQLite indexes. They use the cold-index/SQLite group's two-test admission
+and two-minute hang bound, rather than the cheap group's thirty-second bound.
+The architecture check resolves representative compiled tests from both owners
+through nextest, so a missed module selector fails the check.
 
 The runner prints elapsed time and preserves the scheduler's exit code. It also
 owns the opt-in profile and stress commands. Checked-in corpora and benchmark
@@ -135,6 +163,14 @@ reports slow owners. Cheap tests retain a 30-second hang bound; cold
 indexing/SQLite, Git, and filesystem owners have documented two-minute bounds;
 real-process/MCP tests have three minutes; and the opt-in extended owner has ten
 minutes. Retries remain disabled in every profile.
+
+The cross-process receipt-rebase MCP test captures scoped debug diagnostics for
+receipt phases, reconciliation admission and operation-lock waits, and indexer
+timings. Only that child enables these targets; the existing 64 KiB stderr cap
+and request/readiness deadlines remain in effect. Phase events contain fixed
+labels, not receipt IDs or source text. A timeout preserves the last request
+identity and the phase reached inside the child, so a passing rerun must not be
+treated as a fix for an unexplained timeout (see issue #623).
 
 Run the token-economy contract explicitly when changing retrieval accounting or
 its fixture. CI selects this lane for its owned source, suite, fixture, and
@@ -393,16 +429,27 @@ Tests are organized around observable behavior:
 Integration test files are modules of one `integration` target so Cargo can
 run them in parallel rather than starting one executable per file.
 
-- `crates/test-suite/src/domains/storage.rs`: migrations, WAL/foreign keys,
-  FTS5, atomic replacement, rollback, stale-plan rejection, reopen, query-plan
-  evidence, and generation behavior;
+- `crates/test-suite/src/domains/storage.rs`: WAL/foreign keys,
+  FTS5, atomic replacement, rollback, stale-plan rejection, reopen, and
+  generation behavior;
+- `crates/test-suite/src/domains/storage_migrations.rs`: authoritative migration
+  prefix matrix, immutable released main/WAL fixtures, canonical schema and data
+  compatibility, migration rollback, and append-only history. Select it with
+  `cargo test-focused storage_migrations`; the few private receipt migration
+  checks retain crate-private evaluation and namespace semantics;
+- `src/storage/query_plans.rs`: production-owned SQL plans, checked hot-query
+  inventory, adversarial storage-API/cardinality behavior, and paired tree-index
+  work evidence; select it with
+  `cargo test-focused product::storage::query_plans`, independently of migration
+  and general storage lifecycle tests;
 - `crates/test-suite/src/domains/indexing_repository.rs`: discovery and path
   safety, Git diffs, initial/unchanged/changed/deleted/rebuilt indexing,
   bounded chunking, targeted reconciliation, and dependency invalidation;
 - `crates/test-suite/src/domains/retrieval.rs`: public retrieval primitive
   compatibility plus cross-component budget, scope, known-hash omission, and
-  receipt composition; detailed tokenizer and ranking behavior stays with the
-  owning production modules;
+  receipt composition;
+- `src/cache/tests/compact.rs` and `tests/cli.rs`: selective maintenance eligibility,
+  leases, preservation, cancellation, and CLI consent/preview contracts;
 - `crates/test-suite/src/domains/platform.rs`: public configuration path,
   cache identity, safety, and limit boundaries plus native watcher delivery
   and shutdown;
@@ -417,14 +464,25 @@ run them in parallel rather than starting one executable per file.
 - `tests/process.rs`: CLI JSON flow, concurrent and contended cold-cache MCP
   initialization, runtime-failure visibility, single-leader generation
   publication, leader failover, MCP EOF shutdown, and repository-free episode
-  audit behavior through the executable;
+  audit behavior through the executable. `tests/process/runtime.rs` owns private
+  runtime artifact coexistence, refresh, legacy migration, reference retention,
+  and process-lifetime lease release using the unmodified installed executable
+  on each native platform, including hosts that omit installation data-directory
+  settings. Linux validates same-version executable variants
+  with harmless ELF overlays rather than a second Rust build;
+- `src/setup/tests.rs`: deterministic client-edit rollback and capability/lease
+  races that cannot be driven reliably through the process boundary;
+- `src/setup/runtime/lease.rs`: deterministic marked/unmarked ownership and
+  unavailable-home cases without mutating the test process environment;
 - `tests/benchmark_contract.rs`: explicit token-economy and known-hash regression executable;
-`src/episode.rs` owns unit coverage for versioned analyzer adapters, published
+`src/episode.rs` owns golden and boundary coverage for versioned analyzer adapters, published
 60-run replay, exact/proxy classification boundaries, binding/privacy failure,
 resource caps, and deterministic JSON/Markdown normalization.
 
-Pure parsing, text-range, ranking, tokenization, and watcher state behavior is
-covered next to the owning module where private invariants matter.
+Prioritize real-binary E2E, component integration, and real-data golden tests
+in that order. Keep colocated private checks only for consequential invariants
+that these layers cannot reasonably exercise. See
+[test selection](testing.md#test-selection) before adding or duplicating tests.
 
 CI runs the complete suite on Linux, macOS, and Windows. A local Linux pass is
 not evidence for native watcher or path behavior on the other platforms; rely
@@ -436,7 +494,7 @@ Treat the SQLite schema and retrieval ordering as behavioral contracts, not
 implementation details. When changing them:
 
 - for schema changes, use a versioned migration and test both a new database
-  and an upgraded one;
+  and every supported migration prefix through `cargo test-focused storage_migrations`;
 - keep multi-query responses inside one storage-owned snapshot capability;
 - bind public pagination cursors to the committed generation and operation
   parameters, even when the underlying query uses a simpler keyset;
@@ -461,6 +519,94 @@ Prefer query-plan evidence (`EXPLAIN QUERY PLAN`) and focused integration tests
 for storage changes. A faster microbenchmark is insufficient if it weakens
 atomic publication, stale-plan rejection, bounded memory, or deterministic
 results.
+
+Migration fixtures have one SQL owner: the private suite compiles the real
+`src/storage/schema.rs` declarations through `#[path]` for prefix generation,
+then upgrades using the normal product opener. Its helper is `cfg(test)` only;
+do not add a product test feature, copy migration SQL, subtract newer schema
+objects, or assign a predecessor's `user_version` manually. The matrix expands
+with the authoritative chain. Append a migration rather than editing or
+reordering a released entry, and explicitly update the migration digests,
+latest schema identity, and release-fixture review cursor in
+`crates/test-suite/fixtures/storage-migrations/compatibility.json`. Dropping a
+supported predecessor needs a compatibility decision and changelog entry.
+
+Release anchors in that directory are immutable main/WAL outputs of official
+executables, with source, tool, command, schema, and byte provenance. Before
+publishing a schema change, exercise at least the previous released format.
+The v0.1.15 anchor also proves genuine source-only savings accounting upgrades;
+v0.1.27 is the previous package release, and v0.1.28 records the shipped current
+format independently of later changes under the same package version.
+
+Intentional fixture regeneration runs `generate.py` from that directory on
+Linux with Python 3.11 or newer and the generator-only `blake3==1.0.11` package
+in a disposable virtual environment. The only accepted argument lists are zero
+arguments for generation and exactly `--prepare` for preparation; unknown,
+extra, or duplicate options fail before workspace creation or network access.
+`--prepare` downloads and verifies the pinned release archives without executing
+them; running without that option indexes one small source file per official
+executable. Before network access,
+the generator reads each checked-in `vVERSION.json` provenance record (at most
+16 KiB), validates its fixed version/tag/commit, and uses its archive/executable
+SHA256 values as execution pins. Endpoint checksums cannot update those pins;
+adding or changing a pin requires explicit provenance and compatibility-manifest
+review. Each accepted invocation uses a
+fresh atomically created private workspace (0700) for downloads, extraction, and
+execution. Successful `--prepare` runs discard their verified downloads;
+generation redownloads and verifies without reusing an executable cache. Failures
+preserve that private workspace and the available fixture/log evidence.
+Preparation independently caps the checksum response at 4 KiB, compressed
+archive at 16 MiB, expanded tar at 128 MiB, member count at 64, total declared
+member bytes at 96 MiB, and executable at 64 MiB. Actual download/executable
+bytes are counted in 64 KiB copy/hash chunks; the executable's declared size is
+checked before extraction. Tar metadata reads are capped at 64 KiB and XZ decoder
+memory at 128 MiB. The largest pinned official archive/executable are
+8,295,356/45,890,808 bytes, leaving reviewable headroom. Normal CI quality runs
+the offline limit/refusal tests in ordinary and optimized Python modes.
+Home/configuration/data and temporary paths are isolated, each process has a
+60-second timeout and a 4 MiB output-file limit. Child stdout/stderr are private
+regular files covered by that limit; successful stdout readback is independently
+capped at 4 MiB before JSON parsing. Failure preserves the workspace and logs.
+Review the resulting artifacts and provenance, then explicitly update each
+`release_anchors[*].metadata_blake3` in the compatibility manifest. Regeneration
+does not reproduce random namespaces or timestamps byte for byte; normal tests
+verify the exact committed artifact identities and need no generator, network,
+Python, or released executable. Preserve committed WAL with the main database;
+never consolidate it using a different SQLite writer and label it untouched
+release output.
+
+Keep hot SQL in its private owner-local `HotQuery` declaration and prepare that
+same statement in production and plan diagnostics. Do not paste an independent
+SELECT into an EQP test. Scoped-regex statements share their production template
+and builder. Add the descriptor to the checked inventory, pair it with actual
+storage-API behavior, and review the complete normalized plan: every access,
+approved index, branch, scan, temporary sort, and automatic-index/materialization
+decision matters. Inventory changes require an explicit SQL-owner disposition;
+its keyword-count check is a review tripwire, not a parser or proof of bounds.
+
+Run the independent evidence owner with:
+
+```bash
+cargo test-focused product::storage::query_plans
+```
+
+The `product::` prefix is required here: an unqualified `storage::` selector
+routes to the domain-suite storage owner. The plan owner exercises a bounded
+256-irrelevant-file fixture, persistent quotas, duplicates/ties, absent and
+high-cardinality matches, limits, cancellation, and publication snapshots.
+It records SQLite version/source identity, raw node/parent/detail rows, output
+cardinality, fullscan/VM/sort counters, and automatic-index rows. All 25 named
+plan/work contracts are checked before one aggregated failure. The policy uses
+bundled SQLite, leaves QPSG disabled, and does not collect `ANALYZE`/`PRAGMA optimize`
+statistics. Review these identities and all operator failures when SQLite or
+schema changes; do not accept a whole EQP text snapshot as the contract.
+
+Tree plans have two reviewed alternatives: ordered path access without a sort,
+or a depth-index search with one ordering sort. The paired 64/256-file flat/deep
+fixture checks both against the real storage API and records cardinality-based
+work limits. Tree output `LIMIT` does not bound visited entries, and neither
+index wins for every request shape. Keep that distinction in performance claims
+and preserve the explicit tree-sort condition when updating plan allowances.
 
 ## MCP schema snapshots
 
@@ -596,3 +742,10 @@ timing workflow runs only by manual dispatch.
 
 Keep negative results. Do not tune prompts, labels, or budgets after seeing a
 result without recording a new manifest version.
+
+Selective-compaction inode-proof tests observe process-wide Unix descriptors.
+Run their module through nextest, which isolates each test process, or use
+`cargo test-focused` with an exact test name. A shared-process Cargo module run
+can legitimately reject maintenance when another fixture opens an unrelated
+regular file during the proof window. Keep the production fail-closed guard and
+all maintenance assertions intact when selecting this isolation.
