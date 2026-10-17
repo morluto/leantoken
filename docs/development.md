@@ -65,6 +65,19 @@ packages fails as ambiguous and asks for a domain-qualified selector. Use the
 ownership map under [Test responsibilities](#test-responsibilities), and run
 each affected filter when a change crosses boundaries.
 
+`Sandbox` preserves failed fixtures under `target/test-failures` and prints an
+owner-qualified focused rerun that selects integration tests as well as library
+tests. Set `LEANTOKEN_TEST_KEEP=1` to inspect a successful fixture too. The native
+runtime lifecycle fixture retains its installed executable, configuration,
+database, and two small phase reports identifying EOF versus crash, the owned
+PID, and the last stage reached. CI uploads these alongside nextest JUnit.
+
+The MCP process helper allows 10 seconds for `initialize`, matching the existing
+setup/doctor verification contract, including cold executable startup. Other
+RPC calls retain their own deadlines. A Unix real-executable test delays startup
+by six seconds before the handshake to exercise this distinction without
+changing production startup or retrying failed tests.
+
 When the exact owner is already known, use its target directly to avoid
 building unrelated harnesses:
 

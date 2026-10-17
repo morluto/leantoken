@@ -189,18 +189,23 @@ fn empty_setup_refresh_reports_unrecognized_clients_without_mutation() {
 
 #[test]
 fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
-    let temp = tempfile::tempdir().expect("temporary home");
-    let data_home = temp.path().join("data");
-    let runtime = temp.path().join("node runtime");
-    std::fs::create_dir(temp.path().join(".codex")).unwrap();
+    let sandbox = leantoken_test_support::Sandbox::new(
+        module_path!(),
+        "private_runtime_setup_installs_and_registers_the_verified_native_binary",
+    )
+    .expect("private runtime sandbox");
+    let home = sandbox.root();
+    let data_home = home.join("data");
+    let runtime = home.join("node runtime");
+    std::fs::create_dir(home.join(".codex")).unwrap();
     std::fs::write(
-        temp.path().join(".codex/config.toml"),
+        home.join(".codex/config.toml"),
         "fixture_user_setting = \"preserve\"\n[mcp_servers.fixture_user_tool]\ncommand = \"fixture-user-tool\"\nargs = [\"--fixture\"]\n",
     ).unwrap();
     let setup = Command::cargo_bin("leantoken")
         .expect("binary")
-        .env("HOME", temp.path())
-        .env("USERPROFILE", temp.path())
+        .env("HOME", home)
+        .env("USERPROFILE", home)
         .env("XDG_DATA_HOME", &data_home)
         .env("LOCALAPPDATA", &data_home)
         .env("npm_lifecycle_event", "npx")
@@ -234,7 +239,7 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
         .expect("run installed native executable");
     assert!(version.status.success());
     assert!(String::from_utf8_lossy(&version.stdout).contains(env!("CARGO_PKG_VERSION")));
-    let repository = temp.path().join("workspace");
+    let repository = home.join("workspace");
     std::fs::create_dir(&repository).expect("workspace");
     std::fs::write(
         repository.join("lib.rs"),
@@ -242,16 +247,15 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
     )
     .expect("workspace source");
     let doctor = Command::new(&runtime_path)
-        .env("HOME", temp.path())
-        .env("USERPROFILE", temp.path())
+        .env("HOME", home)
+        .env("USERPROFILE", home)
         .env("XDG_DATA_HOME", &data_home)
         .env("LOCALAPPDATA", &data_home)
         .args([
             "--root",
             repository.to_str().expect("repository UTF-8"),
             "--database",
-            temp.path()
-                .join("private-runtime.sqlite")
+            home.join("private-runtime.sqlite")
                 .to_str()
                 .expect("database UTF-8"),
             "--json",
@@ -298,12 +302,12 @@ fn private_runtime_setup_installs_and_registers_the_verified_native_binary() {
         ])
     );
     assert_eq!(doctor_report["first_call"]["status"], "ready");
-    let codex = std::fs::read_to_string(temp.path().join(".codex/config.toml"))
-        .expect("Codex configuration");
+    let codex =
+        std::fs::read_to_string(home.join(".codex/config.toml")).expect("Codex configuration");
     assert!(codex.contains(runtime_path.to_str().expect("UTF-8 runtime path")));
     assert!(!codex.contains("npm-cli"));
     assert_private_runtime_process_lifetime(
-        temp.path(),
+        home,
         &data_home,
         &runtime_path,
         &repository,
@@ -369,6 +373,26 @@ impl ManagedRuntimeLeaseFixture<'_> {
             .args(["--tokenizer", "estimate", "--managed-by-setup", "mcp"])
             .stderr(std::process::Stdio::piped());
         super::support::McpProcess::spawn_command(command)
+    }
+
+    fn record_phase(&self, crash: bool, omit_home: bool, pid: u32, stage: &str) {
+        let phase = if crash { "crash" } else { "eof" };
+        // Two small metadata files survive a failed test alongside its installed
+        // artifact, configuration and database. Do not hash the executable here:
+        // diagnostics must not add another read to the cold startup path.
+        let report = serde_json::json!({
+            "phase": phase,
+            "stage": stage,
+            "pid": pid,
+            "omit_home": omit_home,
+            "artifact": self.artifact,
+            "artifact_bytes": std::fs::metadata(self.artifact).unwrap().len(),
+        });
+        std::fs::write(
+            self.home.join(format!("runtime-lifecycle-{phase}.json")),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .expect("runtime lifecycle diagnostics");
     }
 
     fn remove_registration_preserving_user_entries(&self) {
@@ -469,12 +493,15 @@ fn assert_private_runtime_process_lifetime(
         repository,
     };
     // One installed copy and database, with at most one live MCP child. Each
-    // phase uses the existing five-second initialize and bounded exit helpers.
+    // phase uses the setup/doctor initialize contract and bounded exit helpers.
     // Both launches omit installation data-directory variables. The Windows
     // crash phase also omits HOME while retaining the fixture USERPROFILE.
     for (crash, omit_home) in [(false, false), (true, cfg!(windows))] {
         let mut process = fixture.spawn(omit_home);
+        let pid = process.child.id();
+        fixture.record_phase(crash, omit_home, pid, "initialize");
         let initialized = process.initialize();
+        fixture.record_phase(crash, omit_home, pid, "active lease assertions");
         assert_eq!(
             &initialized["result"]["serverInfo"]["version"],
             expected_mcp_version
@@ -484,7 +511,9 @@ fn assert_private_runtime_process_lifetime(
             fixture.remove_registration_preserving_user_entries();
         }
         fixture.assert_active_retention();
+        fixture.record_phase(crash, omit_home, pid, "termination and lease release");
         fixture.finish_and_assert_inactive(process, crash);
+        fixture.record_phase(crash, omit_home, pid, "complete");
     }
     fixture.assert_removed_after_exit();
 }
