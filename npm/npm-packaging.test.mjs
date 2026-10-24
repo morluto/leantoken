@@ -176,6 +176,20 @@ test("builds one script-free package containing every native binary", async () =
   }
 });
 
+test("exits with status 1 when the native binary cannot be started", async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-missing-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  // The launcher and manifest are installed, but no native binary is present.
+  await mkdir(join(workspace, "bin"));
+  const launcher = join(workspace, "bin", "leantoken.cjs");
+  await writeFile(launcher, await readFile(new URL("./leantoken.cjs", import.meta.url)));
+  await writeFile(join(workspace, "platforms.json"), JSON.stringify(PLATFORMS));
+
+  const result = spawnSync(process.execPath, [launcher, "status"], { encoding: "utf8" });
+  assert.match(result.stderr, /Failed to start LeanToken: .*ENOENT/);
+  assert.equal(result.status, 1);
+});
+
 test("forwards a later termination signal while the native child remains alive", {
   skip: process.platform === "win32",
   timeout: 10_000,

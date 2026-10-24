@@ -43,7 +43,9 @@ const signalHandlers = new Map(
 );
 for (const [signal, handler] of signalHandlers) process.on(signal, handler);
 
+let failedToStart = false;
 child.once("error", (error) => {
+  failedToStart = true;
   console.error(`Failed to start LeanToken: ${error.message}`);
   process.exitCode = 1;
 });
@@ -51,6 +53,9 @@ child.once("error", (error) => {
 child.once("close", (code, signal) => {
   for (const [forwarded, handler] of signalHandlers) process.removeListener(forwarded, handler);
 
+  // A spawn failure still emits "close", with the negative errno as the code
+  // (-2 for ENOENT, -13 for EACCES); keep the exit status set by "error".
+  if (failedToStart) return;
   if (signal && process.platform !== "win32") {
     process.kill(process.pid, signal);
     return;
