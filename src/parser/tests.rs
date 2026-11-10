@@ -465,6 +465,21 @@ Setext
 }
 
 #[test]
+fn empty_markdown_heading_closes_the_previous_section() -> Result<()> {
+    let source = "# Root\n## Section\nbefore\n##\nafter\n# Next\n";
+    let output = parse("README.md", source)?;
+
+    let section = output
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "Section")
+        .expect("Section heading");
+    assert_eq!(section.end_line, 3);
+    assert!(!output.symbols.iter().any(|symbol| symbol.name.is_empty()));
+    Ok(())
+}
+
+#[test]
 fn latex_single_pass_indexes_structure_references_and_imports() -> Result<()> {
     let source = r#"\section{Introduction}
 intro \cite{smith2024, doe2023}.
