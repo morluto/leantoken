@@ -1022,6 +1022,13 @@ fn python_wildcard_imports_preserve_their_module() -> Result<()> {
 }
 
 #[test]
+fn python_import_aliases_resolve_to_the_imported_module() -> Result<()> {
+    let out = parse_language("python", "import pkg.mod as local_name\n")?;
+    assert_eq!(import_targets(&out), vec!["pkg.mod"]);
+    Ok(())
+}
+
+#[test]
 fn python_relative_import_members_preserve_their_source_lines() -> Result<()> {
     let out = parse_language("python", "from . import (\n    helpers,\n    tools,\n)\n")?;
     assert_eq!(

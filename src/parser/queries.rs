@@ -35,7 +35,11 @@ pub(super) const RUST_IMPORT_QUERY: &str = r#"
 
 pub(super) const PYTHON_IMPORT_QUERY: &str = r#"
 (import_statement
-  name: (_) @raw) @import
+  name: (dotted_name) @raw) @import
+
+(import_statement
+  name: (aliased_import
+    name: (dotted_name) @raw)) @import
 
 (import_from_statement
   module_name: (_) @python_module
