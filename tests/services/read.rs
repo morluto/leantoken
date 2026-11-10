@@ -1655,6 +1655,7 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
     let mut cursor = None;
     let mut reconstructed = String::new();
     let mut pages = 0usize;
+    let mut expected_page_start_line = 1usize;
     loop {
         let response = services
             .read(ReadRequest {
@@ -1676,13 +1677,23 @@ async fn truncated_symbol_cursor_reconstructs_partial_lines_and_rejects_live_cha
         pages += 1;
         assert_eq!(response.target_start_line, 1);
         assert_eq!(response.target_end_line, Some(4));
-        assert_eq!(response.returned_start_line, response.returned_start_line);
-        assert_eq!(response.returned_end_line, response.returned_end_line);
-        reconstructed.push_str(response.content.as_deref().expect("page content"));
+        let content = response.content.as_deref().expect("page content");
+        assert_eq!(response.returned_start_line, expected_page_start_line);
+        let newline_count = content.bytes().filter(|byte| *byte == b'\n').count();
+        let expected_page_end_line = expected_page_start_line
+            .saturating_add(newline_count)
+            .saturating_sub(usize::from(content.ends_with('\n') && newline_count > 0));
+        assert_eq!(response.returned_end_line, expected_page_end_line);
+        reconstructed.push_str(content);
 
         if response.truncated {
             assert_eq!(response.status, ReadStatus::Truncated);
-            assert!(response.next_start_line.is_some());
+            expected_page_start_line = if content.ends_with('\n') {
+                expected_page_end_line.saturating_add(1)
+            } else {
+                expected_page_end_line
+            };
+            assert_eq!(response.next_start_line, Some(expected_page_start_line));
             cursor = response.continuation_cursor;
             assert!(cursor.is_some());
         } else {
