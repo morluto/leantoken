@@ -541,16 +541,20 @@ fn latex_argument_value(source: &str, start: usize, end: usize) -> String {
 
 fn skip_latex_verb(source: &str, offset: usize) -> usize {
     let bytes = source.as_bytes();
-    let Some(&delimiter) = bytes.get(offset) else {
-        return offset;
-    };
-    if delimiter.is_ascii_whitespace() || delimiter == b'*' {
-        return offset + 1;
+    let mut cursor = offset;
+    if bytes.get(cursor) == Some(&b'*') {
+        cursor += 1;
     }
-    bytes[offset + 1..]
+    let Some(&delimiter) = bytes.get(cursor) else {
+        return cursor;
+    };
+    if delimiter.is_ascii_whitespace() {
+        return cursor + 1;
+    }
+    bytes[cursor + 1..]
         .iter()
         .position(|byte| *byte == delimiter)
-        .map_or(bytes.len(), |relative| offset + relative + 2)
+        .map_or(bytes.len(), |relative| cursor + relative + 2)
 }
 
 fn latex_command_allows_optional_arguments(command: &str) -> bool {

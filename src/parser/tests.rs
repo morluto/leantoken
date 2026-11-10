@@ -596,6 +596,26 @@ fn latex_recovers_bounded_structure_without_indexing_comments_or_verbatim() -> R
 }
 
 #[test]
+fn latex_verb_star_skips_commands_in_literal_text() -> Result<()> {
+    let source = r#"\section{Visible}
+\verb*|\section{Hidden}| literal text
+\section{Recovered}
+"#;
+    let output = parse("paper.tex", source)?;
+
+    assert!(output.structurally_complete);
+    assert!(output.symbols.iter().any(|symbol| symbol.name == "Visible"));
+    assert!(
+        output
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "Recovered")
+    );
+    assert!(!output.symbols.iter().any(|symbol| symbol.name == "Hidden"));
+    Ok(())
+}
+
+#[test]
 fn css_indexes_selectors_custom_properties_conditions_and_keyframes() -> Result<()> {
     let source = r#"
 :root {
