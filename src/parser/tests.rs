@@ -681,6 +681,27 @@ fn css_indexes_selectors_custom_properties_conditions_and_keyframes() -> Result<
 }
 
 #[test]
+fn css_at_rule_header_keeps_braces_inside_quoted_condition() -> Result<()> {
+    let source = r#"
+@supports selector([data-label="{"]) {
+  .brace-safe { color: red; }
+}
+"#;
+    let output = parse_language("css", source)?;
+    let expected = r#"@supports selector([data-label="{"])"#;
+    let supports = output
+        .symbols
+        .iter()
+        .find(|symbol| symbol.kind == "css_supports")
+        .expect("supports at-rule");
+
+    assert_eq!(supports.name, expected);
+    assert_eq!(supports.signature.as_deref(), Some(expected));
+    assert!(output.structurally_complete);
+    Ok(())
+}
+
+#[test]
 fn html_indexes_sections_controls_actions_anchors_and_resources() -> Result<()> {
     let source = r##"
 <!doctype html>

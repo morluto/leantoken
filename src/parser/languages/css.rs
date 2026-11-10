@@ -136,9 +136,12 @@ pub(super) fn push_css_at_rule(
 }
 
 pub(super) fn css_header(source: &str, node: Node<'_>) -> String {
-    node_text(source, node)
-        .split_once('{')
-        .map_or_else(|| node_text(source, node), |(header, _)| header.to_string())
-        .trim()
-        .to_string()
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| matches!(child.kind(), "block" | "keyframe_block_list"))
+        .and_then(|body| source.get(node.start_byte()..body.start_byte()))
+        .map(str::trim)
+        .filter(|header| !header.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| node_text(source, node))
 }
