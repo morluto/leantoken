@@ -34,12 +34,13 @@ async fn supervise_mcp_tasks(
     tokio::select! {
         server = &mut server_task => {
             cancellation.cancel();
-            let server = server?;
+            let server = server.map_err(leantoken::Error::from);
             let runtime = tokio::time::timeout(PRODUCTION_SHUTDOWN_TIMEOUT, runtime_task)
                 .await
                 .map_err(|_| leantoken::Error::ShutdownTimeout {
                     component: "MCP indexing runtime",
                 })??;
+            let server = server?;
             server?;
             match runtime {
                 Ok(()) | Err(leantoken::Error::Cancelled) => Ok(()),
@@ -344,6 +345,45 @@ mod tests {
             task.await.unwrap(),
             Err(leantoken::Error::McpRuntimeStopped)
         ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn transport_task_panic_waits_for_runtime_shutdown() {
+        let cancellation = CancellationToken::new();
+        let runtime_cancellation = cancellation.clone();
+        let (runtime_started, started) = tokio::sync::oneshot::channel();
+        let (runtime_stopped, stopped) = tokio::sync::oneshot::channel();
+        let runtime = tokio::spawn(async move {
+            runtime_started.send(()).unwrap();
+            runtime_cancellation.cancelled().await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            runtime_stopped.send(()).unwrap();
+            Ok(())
+        });
+        let server = tokio::spawn(async {
+            panic!("transport task panicked");
+            #[allow(unreachable_code)]
+            Ok(())
+        });
+        let task = tokio::spawn(supervise_mcp_tasks(
+            server,
+            runtime,
+            mcp::McpServices::starting_default(),
+            cancellation,
+        ));
+
+        started.await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !task.is_finished(),
+            "supervisor must wait for runtime shutdown after transport panic"
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+
+        assert!(task.await.unwrap().is_err());
+        stopped
+            .await
+            .expect("runtime shutdown completed before return");
     }
 
     #[tokio::test(start_paused = true)]
