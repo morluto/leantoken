@@ -67,6 +67,7 @@ const COMPONENTS: &[DerivationComponent] = &[
         name: "imports_and_projections",
         version: 1,
         sources: &[
+            ("src/indexer/imports.rs", include_str!("indexer/imports.rs")),
             (
                 "src/indexer/import_resolution.rs",
                 include_str!("indexer/import_resolution.rs"),
@@ -187,6 +188,21 @@ mod tests {
             compute_fingerprint_with_source(None),
             compute_fingerprint_with_source(Some((
                 "src/parser/hierarchy.rs",
+                &previous_semantics_fixture,
+            )))
+        );
+    }
+
+    #[test]
+    fn same_version_import_projection_owner_changes_cannot_reuse_the_fingerprint() {
+        let current = include_str!("indexer/imports.rs");
+        let previous_semantics_fixture =
+            format!("{current}\n// previous import projection semantics");
+
+        assert_ne!(
+            compute_fingerprint_with_source(None),
+            compute_fingerprint_with_source(Some((
+                "src/indexer/imports.rs",
                 &previous_semantics_fixture,
             )))
         );
