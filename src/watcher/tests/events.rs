@@ -74,9 +74,23 @@ fn access_events_are_ignored_and_changed_paths_are_normalized_and_coalesced() {
     let file = nested.join("a.txt");
     std::fs::write(&file, "contents").unwrap();
 
+    let access =
+        Event::new(EventKind::Access(notify::event::AccessKind::Read)).add_path(file.clone());
+    assert!(!raw_event_is_relevant(
+        &Ok(access.clone()),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+    let other = Event::new(EventKind::Other).add_path(file.clone());
+    assert!(!raw_event_is_relevant(
+        &Ok(other.clone()),
+        root.path(),
+        &DiscoveryPolicy::default(),
+    ));
+
     let mut pending = PendingReconciliation::empty();
     process_raw_event(
-        Ok(Event::new(EventKind::Access(notify::event::AccessKind::Read)).add_path(file.clone())),
+        Ok(access),
         root.path(),
         &DiscoveryPolicy::default(),
         &mut pending,
@@ -85,6 +99,13 @@ fn access_events_are_ignored_and_changed_paths_are_normalized_and_coalesced() {
         pending.is_empty(),
         "access-only events must not be delivered"
     );
+    process_raw_event(
+        Ok(other),
+        root.path(),
+        &DiscoveryPolicy::default(),
+        &mut pending,
+    );
+    assert!(pending.is_empty(), "other events must not be delivered");
 
     for _ in 0..2 {
         process_raw_event(
