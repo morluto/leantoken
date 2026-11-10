@@ -72,6 +72,7 @@ pub(super) fn raw_event_is_relevant(
 ) -> bool {
     match event {
         Ok(event) if event.need_rescan() => true,
+        Ok(event) if event.kind.is_access() || event.kind.is_other() => false,
         Ok(event) if !event.paths.is_empty() => event.paths.iter().any(|path| {
             !matches!(
                 relative_path(root, path, policy, event_path_is_directory(event)),
