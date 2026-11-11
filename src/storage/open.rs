@@ -747,13 +747,15 @@ fn database_identity(path: &Path) -> Result<String> {
     }
     #[cfg(windows)]
     {
-        // The Windows file-index APIs are unstable, so the canonical path is
-        // the stable clone signal on this platform: an ordinary reopen keeps
-        // it, while a copy or replacement resolves to a different path.
-        Ok(fs::canonicalize(path)
-            .unwrap_or_else(|_| path.to_path_buf())
-            .to_string_lossy()
-            .into_owned())
+        // Keep the physical file identity stable across reopens while
+        // detecting a copy or replacement even when it uses the same path.
+        let file = fs::File::open(path)?;
+        let information = winapi_util::file::information(&file)?;
+        Ok(format!(
+            "{:08x}{:016x}",
+            information.volume_serial_number(),
+            information.file_index()
+        ))
     }
     #[cfg(not(any(unix, windows)))]
     {

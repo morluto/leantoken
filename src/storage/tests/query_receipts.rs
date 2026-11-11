@@ -189,6 +189,79 @@ fn cloned_databases_regenerate_receipt_namespaces() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn replaced_database_at_same_path_regenerates_receipt_namespaces() {
+    let directory = tempfile::tempdir().expect("directory");
+    let database = directory.path().join("index.sqlite");
+    let storage = indexed_storage(&database);
+    storage
+        .persist_query_receipt_at(&record(&storage, "before replacement"), 1_000)
+        .expect("persist receipt");
+    let namespace_before: String = storage
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace");
+    drop(storage);
+
+    let snapshot = directory.path().join("snapshot.sqlite");
+    std::fs::copy(&database, &snapshot).expect("snapshot main database");
+    for extension in ["-wal", "-shm"] {
+        let sidecar = database.with_extension("sqlite".to_owned() + extension);
+        if sidecar.exists() {
+            std::fs::copy(
+                &sidecar,
+                snapshot.with_extension("sqlite".to_owned() + extension),
+            )
+            .expect("snapshot sidecar");
+        }
+    }
+
+    // Keep both original identities allocated while restoring the snapshot
+    // over the same path, so its replacement receives a distinct file index.
+    let original = directory.path().join("original.sqlite");
+    std::fs::rename(&database, &original).expect("move original database aside");
+    for extension in ["-wal", "-shm"] {
+        let sidecar = database.with_extension("sqlite".to_owned() + extension);
+        if sidecar.exists() {
+            std::fs::remove_file(sidecar).expect("remove original sidecar");
+        }
+    }
+    std::fs::copy(&snapshot, &database).expect("restore snapshot at original path");
+    for extension in ["-wal", "-shm"] {
+        let sidecar = snapshot.with_extension("sqlite".to_owned() + extension);
+        if sidecar.exists() {
+            std::fs::copy(
+                &sidecar,
+                database.with_extension("sqlite".to_owned() + extension),
+            )
+            .expect("restore snapshot sidecar");
+        }
+    }
+
+    let reopened = Storage::open(&database).expect("reopen replaced database");
+    let namespace_after: String = reopened
+        .writer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .query_row(
+            "SELECT namespace FROM query_coverage_receipt_usage WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query namespace after replacement");
+    assert_ne!(
+        namespace_before, namespace_after,
+        "a snapshot replacement at the same path must regenerate the receipt namespace"
+    );
+}
+
 #[test]
 fn first_identity_recording_rotates_legacy_receipt_namespaces() {
     let directory =

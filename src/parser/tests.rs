@@ -465,6 +465,21 @@ Setext
 }
 
 #[test]
+fn empty_markdown_heading_closes_the_previous_section() -> Result<()> {
+    let source = "# Root\n## Section\nbefore\n##\nafter\n# Next\n";
+    let output = parse("README.md", source)?;
+
+    let section = output
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "Section")
+        .expect("Section heading");
+    assert_eq!(section.end_line, 3);
+    assert!(!output.symbols.iter().any(|symbol| symbol.name.is_empty()));
+    Ok(())
+}
+
+#[test]
 fn latex_single_pass_indexes_structure_references_and_imports() -> Result<()> {
     let source = r#"\section{Introduction}
 intro \cite{smith2024, doe2023}.
@@ -596,6 +611,26 @@ fn latex_recovers_bounded_structure_without_indexing_comments_or_verbatim() -> R
 }
 
 #[test]
+fn latex_verb_star_skips_commands_in_literal_text() -> Result<()> {
+    let source = r#"\section{Visible}
+\verb*|\section{Hidden}| literal text
+\section{Recovered}
+"#;
+    let output = parse("paper.tex", source)?;
+
+    assert!(output.structurally_complete);
+    assert!(output.symbols.iter().any(|symbol| symbol.name == "Visible"));
+    assert!(
+        output
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "Recovered")
+    );
+    assert!(!output.symbols.iter().any(|symbol| symbol.name == "Hidden"));
+    Ok(())
+}
+
+#[test]
 fn css_indexes_selectors_custom_properties_conditions_and_keyframes() -> Result<()> {
     let source = r#"
 :root {
@@ -676,6 +711,27 @@ fn css_indexes_selectors_custom_properties_conditions_and_keyframes() -> Result<
             .as_deref()
             .is_some_and(|parent| parent.starts_with("@media"))
     );
+    assert!(output.structurally_complete);
+    Ok(())
+}
+
+#[test]
+fn css_at_rule_header_keeps_braces_inside_quoted_condition() -> Result<()> {
+    let source = r#"
+@supports selector([data-label="{"]) {
+  .brace-safe { color: red; }
+}
+"#;
+    let output = parse_language("css", source)?;
+    let expected = r#"@supports selector([data-label="{"])"#;
+    let supports = output
+        .symbols
+        .iter()
+        .find(|symbol| symbol.kind == "css_supports")
+        .expect("supports at-rule");
+
+    assert_eq!(supports.name, expected);
+    assert_eq!(supports.signature.as_deref(), Some(expected));
     assert!(output.structurally_complete);
     Ok(())
 }
@@ -977,6 +1033,13 @@ fn python_imports_preserve_module_semantics() -> Result<()> {
 fn python_wildcard_imports_preserve_their_module() -> Result<()> {
     let out = parse_language("python", "from pkg.mod import *\nfrom . import *\n")?;
     assert_eq!(import_targets(&out), vec!["pkg.mod", "."]);
+    Ok(())
+}
+
+#[test]
+fn python_import_aliases_resolve_to_the_imported_module() -> Result<()> {
+    let out = parse_language("python", "import pkg.mod as local_name\n")?;
+    assert_eq!(import_targets(&out), vec!["pkg.mod"]);
     Ok(())
 }
 

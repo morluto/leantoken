@@ -39,9 +39,7 @@ pub(super) fn parse_markdown(
             MarkdownEvent::End(TagEnd::Heading(_)) => {
                 if let Some(mut heading) = pending.take() {
                     heading.name = heading.name.trim().to_owned();
-                    if !heading.name.is_empty() {
-                        headings.push(heading);
-                    }
+                    headings.push(heading);
                 }
             }
             _ => {}
@@ -53,6 +51,9 @@ pub(super) fn parse_markdown(
 
     let mut symbols = Vec::with_capacity(headings.len());
     for (index, heading) in headings.iter().enumerate() {
+        if heading.name.is_empty() {
+            continue;
+        }
         let end_byte = headings[index + 1..]
             .iter()
             .find(|next| next.level <= heading.level)

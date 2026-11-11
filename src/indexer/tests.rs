@@ -599,6 +599,19 @@ fn rust_module_forms_resolve_to_indexed_files() {
 }
 
 #[test]
+fn rust_nested_group_imports_resolve_concrete_targets() {
+    let paths = ["src/foo/bar/baz.rs", "src/foo/bar/qux.rs"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+
+    assert_eq!(
+        resolve_import("src/app.rs", "crate::foo::{bar::{baz, qux}}", &paths,).as_deref(),
+        Some("src/foo/bar/baz.rs")
+    );
+}
+
+#[test]
 fn python_import_from_preserves_the_repository_submodule_edge() {
     let root = tempfile::tempdir().expect("root");
     fs::create_dir(root.path().join("app")).expect("package directory");

@@ -3,6 +3,8 @@ use super::*;
 pub(super) const MAX_IMPORT_TARGET_BYTES: usize = 16 * 1024;
 // Every Rust module base expands to at most `path.rs` and `path/mod.rs`.
 pub(super) const MAX_RUST_MODULE_BASES: usize = MAX_IMPORT_CANDIDATES_PER_IMPORT / 2;
+// Keep malformed or adversarially deep use trees from exhausting the stack.
+const MAX_RUST_USE_TREE_DEPTH: usize = 64;
 // A go.mod must fit this bound or its module metadata is ignored.
 pub(super) const MAX_GO_MOD_BYTES: u64 = 64 * 1024;
 // The upward go.mod walk stops at this many ancestors regardless of path depth.
@@ -412,41 +414,8 @@ pub(super) fn rust_module_paths(
     };
 
     let mut targets = Vec::new();
-    let before_brace = stripped
-        .split('{')
-        .next()
-        .unwrap_or("")
-        .trim_end_matches(':');
-    let group_body = stripped.find('{').and_then(|_| {
-        stripped
-            .split('{')
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-    });
-
-    if let Some(group) = group_body {
-        let prefix = before_brace.trim_end_matches(':');
-        for item in group.split(',') {
-            let item = item.trim();
-            let item = item.split(" as ").next().unwrap_or(item).trim();
-            if item.is_empty() {
-                continue;
-            }
-            let full = if prefix.is_empty() {
-                item.to_string()
-            } else {
-                format!("{prefix}::{item}")
-            };
-            targets.push(full);
-            if targets.len() > MAX_RUST_MODULE_BASES {
-                return Vec::new();
-            }
-        }
-    } else {
-        let single = stripped.split(" as ").next().unwrap_or(stripped).trim();
-        if !single.is_empty() {
-            targets.push(single.to_string());
-        }
+    if !expand_rust_use_tree(stripped, "", &mut targets, 0) {
+        return Vec::new();
     }
 
     let mut parsed_targets = Vec::with_capacity(targets.len());
@@ -476,6 +445,79 @@ pub(super) fn rust_module_paths(
         }
     }
     bases
+}
+
+/// Expand a Rust use tree into concrete paths, preserving source order and
+/// refusing malformed or excessively large groups.
+fn expand_rust_use_tree(tree: &str, parent: &str, targets: &mut Vec<String>, depth: usize) -> bool {
+    if depth > MAX_RUST_USE_TREE_DEPTH {
+        return false;
+    }
+    let tree = tree.trim();
+    let Some(open) = tree.find('{') else {
+        let leaf = tree.split(" as ").next().unwrap_or(tree).trim();
+        if leaf.is_empty() {
+            return true;
+        }
+        let target = if parent.is_empty() {
+            leaf.to_string()
+        } else {
+            format!("{parent}::{leaf}")
+        };
+        targets.push(target);
+        return targets.len() <= MAX_RUST_MODULE_BASES;
+    };
+
+    let prefix = tree[..open].trim().trim_end_matches(':').trim();
+    let prefix = if prefix.is_empty() {
+        parent.to_string()
+    } else if parent.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{parent}::{prefix}")
+    };
+
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in tree[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(open + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    if !tree[close + 1..].trim().is_empty() {
+        return false;
+    }
+
+    let body = &tree[open + 1..close];
+    let mut item_start = 0usize;
+    let mut nested = 0usize;
+    for (offset, ch) in body.char_indices() {
+        match ch {
+            '{' => nested += 1,
+            '}' => {
+                nested = nested.saturating_sub(1);
+            }
+            ',' if nested == 0 => {
+                if !expand_rust_use_tree(&body[item_start..offset], &prefix, targets, depth + 1) {
+                    return false;
+                }
+                item_start = offset + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    expand_rust_use_tree(&body[item_start..], &prefix, targets, depth + 1)
 }
 
 pub(super) fn rust_source_module_dir(

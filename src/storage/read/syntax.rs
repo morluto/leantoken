@@ -122,17 +122,16 @@ impl ReadSession {
             usize_to_i64(limit.saturating_add(1))?,
         ])?;
         let mut count = 0usize;
+        let mut matched = false;
         while let Some(row) = rows.next()? {
             count = count.saturating_add(1);
             let content: String = row.get(0)?;
-            if crate::text::hash(&content) == content_hash {
-                return Ok(Some(true));
-            }
+            matched |= crate::text::hash(&content) == content_hash;
         }
         if count > limit {
             return Ok(None);
         }
-        Ok(Some(false))
+        Ok(Some(matched))
     }
 
     pub fn get_chunks_for_file(

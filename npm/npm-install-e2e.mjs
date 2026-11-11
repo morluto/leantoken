@@ -28,11 +28,20 @@ function run(program, args, options = {}) {
   return result;
 }
 
-test("installs and runs the host-native npm package without lifecycle scripts", async () => {
-  const platform = PLATFORMS.find(
-    ({ os, cpu }) => os === process.platform && cpu === process.arch,
-  );
-  assert.ok(platform, `No npm target for ${process.platform}-${process.arch}`);
+const libc = process.platform === "linux"
+  ? process.report?.getReport?.().header?.glibcVersionRuntime ? "glibc" : "musl"
+  : undefined;
+const platform = PLATFORMS.find(
+  ({ os, cpu, libc: requiredLibc }) =>
+    os === process.platform &&
+    cpu === process.arch &&
+    (requiredLibc === undefined || requiredLibc === libc),
+);
+const runtime = [process.platform, process.arch, libc].filter(Boolean).join("-");
+
+test("installs and runs the host-native npm package without lifecycle scripts", {
+  skip: platform ? false : `No npm target for ${runtime}`,
+}, async () => {
 
   const workspace = await mkdtemp(join(tmpdir(), "leantoken-npm-install-e2e-"));
   const packageDir = join(workspace, "package");

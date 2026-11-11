@@ -278,7 +278,12 @@ fn ensure_effective_cache_ignore(path: &std::path::Path) -> Result<()> {
         Err(error) => return Err(error.into()),
     }
     let contents = fs::read_to_string(path)?;
-    if contents.lines().any(|line| line.trim() == "*") {
+    let last_rule = contents
+        .lines()
+        .map(str::trim)
+        .rev()
+        .find(|line| !line.is_empty() && !line.starts_with('#'));
+    if last_rule == Some("*") {
         return Ok(());
     }
     let mut ignore = OpenOptions::new().append(true).open(path)?;
@@ -479,6 +484,28 @@ mod tests {
 
         // Preparation is idempotent and never replaces an existing ignore file.
         prepare_repository_cache_fallback(&config).expect("repeat fallback preparation");
+    }
+
+    #[test]
+    fn repository_cache_ignore_appends_final_rule_after_existing_exceptions() {
+        let root = tempfile::tempdir().expect("repository");
+        let config = Config::discover(root.path(), None).expect("managed config");
+        let ignore_path = root.path().join(".leantoken/.gitignore");
+        fs::create_dir_all(ignore_path.parent().expect("ignore parent")).expect("cache root");
+        fs::write(&ignore_path, "*\n!v1/\n!v1/index.sqlite\n").expect("existing ignore rules");
+
+        prepare_repository_cache_fallback(&config).expect("fallback config");
+
+        let expected = "*\n!v1/\n!v1/index.sqlite\n*\n";
+        assert_eq!(
+            fs::read_to_string(&ignore_path).expect("updated ignore"),
+            expected
+        );
+        prepare_repository_cache_fallback(&config).expect("repeat fallback preparation");
+        assert_eq!(
+            fs::read_to_string(&ignore_path).expect("stable ignore"),
+            expected
+        );
     }
 
     #[test]

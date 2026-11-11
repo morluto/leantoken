@@ -1305,6 +1305,17 @@ fn verify_receipts(storage: &Storage, session: ReadSession, fixture: &Fixture) {
     );
     assert_eq!(
         session
+            .receipt_structural_hash_matches(
+                fixture.target_id,
+                8,
+                8,
+                &crate::text::hash("overflow_0")
+            )
+            .expect("matching candidate overflow"),
+        None
+    );
+    assert_eq!(
+        session
             .receipt_structural_hash_matches(-1, 1, 1, &crate::text::hash("absent"))
             .expect("missing structural evidence"),
         Some(false)
