@@ -2038,8 +2038,9 @@ Every candidate is a normalized repository-relative path and no policy performs
 a filesystem walk. A captured target is admitted only through 16 KiB, each
 candidate path through 4 KiB, and every policy emits at most 64 candidates per
 import. Python emits at most eight candidates, ordinary JavaScript at most
-eight, and TypeScript at most ten. Rust first counts grouped targets and
-module prefixes, rejecting the projection before expansion if its at-most-32
+eight, and TypeScript at most ten. Rust bounds nested `use`-tree expansion to
+64 levels and caps concrete grouped targets at 32. It counts module prefixes
+before candidate materialization, rejecting the projection if its at-most-32
 module bases would overflow the shared candidate cap; this prevents quadratic
 prefix materialization from a pathological `use` tree. Resolution selects the
 first candidate present in publication membership. Candidate vectors are
